@@ -205,8 +205,8 @@ describe("the instance", () => {
       expect(program.headers.get("content-type"), accept).toContain(
         "application/json",
       );
-      // The description of statements 1, 3 and 4, whole: the identity, the
-      // features and the contract version.
+      // The description, whole: the identity, the features and the contract
+      // version.
       expect(await program.json(), accept).toEqual(description);
     }
   });

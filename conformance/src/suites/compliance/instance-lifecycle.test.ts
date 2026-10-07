@@ -1011,7 +1011,7 @@ describe("starting with a setting outside its rule", () => {
       "SQLITE_BUSY_BUDGET_MS",
       "not a number",
       "soon",
-      'SQLITE_BUSY_BUDGET_MS must be a whole number, 0 or more (got "soon")',
+      'SQLITE_BUSY_BUDGET_MS must be a whole number, from 0 to 2147483647 (got "soon")',
     ],
     [
       "MARFA_ENRICHMENT_ENABLED",

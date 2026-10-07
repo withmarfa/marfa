@@ -138,3 +138,25 @@ describe("Vary: Accept", () => {
     expect(elsewhere.headers.get("vary") ?? "").not.toContain("Accept");
   });
 });
+
+describe("Vary at the root with an origin allowed", () => {
+  it("names Origin beside Accept, so a cache keeps one origin's answer from another", async () => {
+    const withCors = await createTestContext({
+      corsOrigins: ["https://a.example"],
+    });
+    try {
+      const res = await withCors.app.request("/", {
+        headers: { Origin: "https://a.example" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBe(
+        "https://a.example",
+      );
+      const vary = (res.headers.get("vary") ?? "")
+        .split(",")
+        .map((part) => part.trim());
+      expect(vary).toEqual(expect.arrayContaining(["Accept", "Origin"]));
+    } finally {
+      await withCors.cleanup();
+    }
+  });
+});

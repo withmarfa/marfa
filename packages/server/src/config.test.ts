@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CONNECTOR_HOLD_MS,
+  MAX_RETENTION_MS,
   SETTING_NAMES,
   SettingsError,
   defaultTessdataDir,
@@ -487,16 +488,16 @@ describe("inbound retained capacity settings", () => {
   });
 });
 
-it("bounds inbound date horizons and the native timer interval", () => {
+it("bounds inbound date horizons and the cleanup cadence", () => {
   const maximum = loadConfig({
     MARFA_INBOUND_HANDLED_RETENTION_DAYS: "36500",
     MARFA_INBOUND_PENDING_RETENTION_DAYS: "36500",
-    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483647",
+    MARFA_INBOUND_CLEANUP_INTERVAL_MS: String(MAX_RETENTION_MS),
   });
   expect(maximum.inbound).toMatchObject({
     handledRetentionDays: 36500,
     pendingRetentionDays: 36500,
-    cleanupIntervalMs: 2147483647,
+    cleanupIntervalMs: MAX_RETENTION_MS,
   });
   for (const name of [
     "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
@@ -504,7 +505,9 @@ it("bounds inbound date horizons and the native timer interval", () => {
   ])
     expect(refusal({ [name]: "36501" })).toContain(name);
   expect(
-    refusal({ MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483648" }),
+    refusal({
+      MARFA_INBOUND_CLEANUP_INTERVAL_MS: String(MAX_RETENTION_MS + 1),
+    }),
   ).toContain("MARFA_INBOUND_CLEANUP_INTERVAL_MS");
 });
 

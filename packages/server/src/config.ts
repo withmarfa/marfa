@@ -571,7 +571,16 @@ function setting<T>(
  * signature with something other than what was set. Surrounding whitespace
  * is refused instead, so neither reading happens silently.
  */
-function secretSetting(description: string, defaultNote?: string) {
+const DEFAULT_SALT = "dev-salt-change-in-production";
+/** Every process signs with `MARFA_AUTH_SECRET` (`crypto/derive-key.ts`
+ * and Better Auth), so a short one is refused outside production too. */
+const SECRET_MIN_LENGTH = 32;
+
+function secretSetting(
+  description: string,
+  defaultNote?: string,
+  minLength?: number,
+) {
   const schema = z
     .string()
     .optional()
@@ -582,6 +591,13 @@ function secretSetting(description: string, defaultNote?: string) {
           code: "custom",
           message:
             "has whitespace around it, which would be part of the secret; remove it",
+        });
+        return z.NEVER;
+      }
+      if (minLength !== undefined && raw.length < minLength) {
+        ctx.addIssue({
+          code: "custom",
+          message: `must be at least ${String(minLength)} characters; generate one with \`openssl rand -hex 32\``,
         });
         return z.NEVER;
       }
@@ -854,7 +870,7 @@ const settingsShape = {
   SQLITE_PATH: setting(
     text,
     () => "./data/marfa.db",
-    "The path of the database file. The value `:memory:` or one starting with `file:` is passed to the database as written.",
+    "The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.",
   ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
@@ -868,12 +884,12 @@ const settingsShape = {
   ),
   MARFA_MAX_REQUEST_BYTES: count(
     1_048_576,
-    "The largest body the JSON write surface accepts. A larger body is answered `413 request_too_large`. Blob uploads and the inbound webhook door have their own limits.",
+    "The largest body the JSON write surface accepts. A larger body is answered `413 request_too_large`. Blob uploads and inbound webhook deliveries have their own limits.",
     { unit: "bytes" },
   ),
   MARFA_MAX_BULK_REQUEST_BYTES: count(
     16 * 1024 * 1024,
-    "The largest body the bulk doors accept.",
+    "The largest body the bulk operations accept.",
     { unit: "bytes" },
   ),
 
@@ -1003,6 +1019,7 @@ const settingsShape = {
   MARFA_AUTH_SECRET: secretSetting(
     "The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
     "None. Required in production.",
+    SECRET_MIN_LENGTH,
   ),
   MARFA_AUTH_BASE_URL: optionalUrl(
     "The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL falls back to `http://localhost:<PORT>`.",
@@ -1035,11 +1052,11 @@ const settingsShape = {
   }),
   RATE_LIMIT_KEYS_REQUESTS: count(
     DEFAULT_KEYS_RATE_LIMIT,
-    "The requests one credential may make in each window to the doors under `/keys`.",
+    "The requests one credential may make in each window to the operations under `/keys`.",
   ),
   RATE_LIMIT_AGGREGATE_MULTIPLIER: count(
     4,
-    "The multiplier of `RATE_LIMIT_REQUESTS` that caps a credential across every door in a window. At 0 there is no such cap.",
+    "The multiplier of `RATE_LIMIT_REQUESTS` that caps a credential across every operation in a window. At 0 there is no such cap.",
     { min: 0 },
   ),
   MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(
@@ -1055,7 +1072,7 @@ const settingsShape = {
   ),
   MARFA_INBOUND_MAX_BYTES: count(
     DEFAULT_INBOUND_LIMITS.maxBytes,
-    "The largest delivery the inbound webhook door stores.",
+    "The largest inbound webhook delivery the server stores.",
     { unit: "bytes" },
   ),
   RATE_LIMIT_INBOUND_REQUESTS: count(
@@ -1064,11 +1081,11 @@ const settingsShape = {
   ),
   MARFA_INBOUND_BACKLOG_DELIVERIES: count(
     DEFAULT_INBOUND_LIMITS.backlogDeliveries,
-    "The unhandled deliveries one registration may hold before the inbound door refuses more.",
+    "The unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
   ),
   MARFA_INBOUND_BACKLOG_BYTES: count(
     DEFAULT_INBOUND_LIMITS.backlogBytes,
-    "The bytes of unhandled deliveries one registration may hold before the inbound door refuses more.",
+    "The bytes of unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
     { unit: "bytes" },
   ),
   MARFA_INBOUND_RETAINED_DELIVERIES: count(
@@ -1082,12 +1099,12 @@ const settingsShape = {
   ),
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
     DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
-    "How often the `inbound-delivery-cleanup` job runs. The upper bound is the longest delay a Node.js timer supports.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    "How often the `inbound-delivery-cleanup` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_INBOUND_IN_FLIGHT_BYTES: count(
     DEFAULT_INBOUND_LIMITS.inFlightBytes,
-    "The most bytes the inbound door holds in memory across all receipts at once.",
+    "The most bytes of inbound webhook deliveries the server holds in memory at once.",
     { unit: "bytes" },
   ),
   MARFA_INBOUND_READ_TIMEOUT_MS: count(
@@ -1324,8 +1341,6 @@ const SECRET_SETTINGS = new Set(
     .map((described) => described.name),
 );
 
-const DEFAULT_SALT = "dev-salt-change-in-production";
-const SECRET_MIN_LENGTH = 32;
 const SECRET_MIN_BITS = 96;
 
 /**
@@ -1371,17 +1386,6 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     ctx.addIssue({ code: "custom", path: [name], message });
   };
   const generate = "; generate one with `openssl rand -hex 32`";
-  // Outside production a short secret is still refused, because
-  // `crypto/derive-key.ts` and Better Auth both sign with it.
-  const shortSecret =
-    s.MARFA_AUTH_SECRET !== undefined &&
-    s.MARFA_AUTH_SECRET.length < SECRET_MIN_LENGTH;
-  if (shortSecret) {
-    refuse(
-      "MARFA_AUTH_SECRET",
-      `must be at least ${String(SECRET_MIN_LENGTH)} characters${generate}`,
-    );
-  }
   if (s.NODE_ENV === "production") {
     // MARFA_AUTH_SECRET signs Better Auth's cookies and authorize query and
     // keys the credential-free blob link, so a readable one lets anyone
@@ -1389,7 +1393,7 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     const salt = weakSecret(s.API_KEY_SALT);
     if (salt) refuse("API_KEY_SALT", salt + generate);
     const secret = weakSecret(s.MARFA_AUTH_SECRET);
-    if (secret && !shortSecret) refuse("MARFA_AUTH_SECRET", secret + generate);
+    if (secret) refuse("MARFA_AUTH_SECRET", secret + generate);
     // Unset, the issuer, cookie domain and every minted link would name
     // localhost.
     if (s.MARFA_AUTH_BASE_URL === undefined) {

@@ -191,7 +191,7 @@ export function createApp(
       c.req.path === "/" &&
       (c.req.method === "GET" || c.req.method === "HEAD")
     ) {
-      c.res.headers.set("Vary", "Accept");
+      c.res.headers.append("Vary", "Accept");
     }
   });
 
