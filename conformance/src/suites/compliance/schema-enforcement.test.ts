@@ -163,6 +163,38 @@ describe("the configuration door", () => {
     expect(r.error?.error.code).toBe("validation_error");
   });
 
+  it("refuses a configuration key it does not know, and keeps the configuration", async () => {
+    const lever = {
+      enforcement: { strict_mode: { types: ["core.bookmark"] } },
+    };
+    const held = await setConfig(lever);
+    const before = await client.getConfig();
+    expect(before.data).toEqual(held);
+
+    const bodies: Record<string, unknown>[] = [
+      { not_a_setting: 1 },
+      { ...lever, not_a_setting: 1 },
+      { enforcement: { ...lever.enforcement, not_a_lever: true } },
+    ];
+    for (const body of bodies) {
+      const r = await client.updateConfig(body);
+      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(r.error?.error.code, JSON.stringify(body)).toBe(
+        "validation_error",
+      );
+      const after = await client.getConfig();
+      expect(after.data, JSON.stringify(body)).toEqual(held);
+    }
+
+    // The witness: the same body without the unknown key replaces the
+    // configuration, so what was refused is the key.
+    const accepted = await client.updateConfig({
+      ...lever,
+      audit_retention_days: 31,
+    });
+    expect(accepted.status, JSON.stringify(accepted.error)).toBe(200);
+  });
+
   it("refuses both doors to a key without config.manage", async () => {
     const narrowed = await clientWithSource(
       "config-no-settings",
@@ -564,6 +596,77 @@ describe("strict_mode lever", () => {
   });
 });
 
+describe("the levers that name a type", () => {
+  it("holds strict mode and the source allow-list to the type named, not its subtypes", async () => {
+    const parentId = `user.lever-parent-${ctx.runId}`;
+    const childId = `${parentId}.child`;
+    expect(
+      (
+        await client.registerType({
+          id: parentId,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: childId,
+          parent: parentId,
+          fields: { extra: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const undeclared = { name: "kept", not_a_real_field: "x" };
+
+    try {
+      await setConfig({
+        enforcement: { strict_mode: { types: [parentId] } },
+      });
+      // The witness: the lever bites on the type it names.
+      const named = await client.createItem({
+        type: parentId,
+        properties: undeclared,
+      });
+      expect(named.status).toBe(400);
+      expect(named.error?.error.code).toBe("invalid_properties");
+      const sub = await client.createItem({
+        type: childId,
+        properties: undeclared,
+      });
+      expect(sub.status, JSON.stringify(sub.error)).toBe(201);
+      trackItem(ctx, sub.data.item.id);
+      expect(sub.data.item.properties.not_a_real_field).toBe("x");
+
+      const allowed = `${ctx.source}-lever-allowed`;
+      await setConfig({
+        enforcement: {
+          source_allowlist: { types: [parentId], sources: [allowed] },
+        },
+      });
+      const outsider = await client.createItem({
+        type: parentId,
+        properties: { name: "kept" },
+      });
+      expect(outsider.status).toBe(403);
+      expect(outsider.error?.error.code).toBe("forbidden");
+      const insider = await (
+        await clientWithSource("lever-allowed", allowed)
+      ).createItem({ type: parentId, properties: { name: "kept" } });
+      expect(insider.status, JSON.stringify(insider.error)).toBe(201);
+      trackItem(ctx, insider.data.item.id);
+      const subOutsider = await client.createItem({
+        type: childId,
+        properties: { name: "kept" },
+      });
+      expect(subOutsider.status, JSON.stringify(subOutsider.error)).toBe(201);
+      trackItem(ctx, subOutsider.data.item.id);
+    } finally {
+      await setConfig(originalConfig);
+    }
+  });
+});
+
 describe("source_allowlist lever", () => {
   it("rejects writes from non-listed source", async () => {
     await setConfig({
@@ -847,6 +950,79 @@ describe("source_filter lever", () => {
     const tagsAfter = await tagCounts();
     expect(tagsAfter[marker]).toBe(1);
     expect(tagsAfter[`${marker}-hidden-only`]).toBeUndefined();
+  });
+
+  it("narrows only the types the source filter names, and their subtypes", async () => {
+    const parentId = `user.filter-parent-${ctx.runId}`;
+    const childId = `${parentId}.child`;
+    expect(
+      (
+        await client.registerType({
+          id: parentId,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: childId,
+          parent: parentId,
+          fields: { extra: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const shown = await clientWithSource(
+      "filter-types-shown",
+      `${ctx.source}-types-shown`,
+    );
+    const other = await clientWithSource(
+      "filter-types-other",
+      `${ctx.source}-types-other`,
+    );
+    const tag = `filter-types-${ctx.runId}`;
+    const write = async (
+      writer: MarfaClient,
+      type: string,
+      properties: Record<string, unknown>,
+    ): Promise<string> => {
+      const r = await writer.createItem({ type, properties, tags: [tag] });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+
+    try {
+      await setConfig({});
+      const named = await write(shown, parentId, { name: "named, shown" });
+      const sub = await write(shown, childId, { name: "subtype, shown" });
+      const namedHidden = await write(other, parentId, {
+        name: "named, other",
+      });
+      const subHidden = await write(other, childId, { name: "subtype, other" });
+      const unnamed = await write(other, "core.note", { body: "unnamed" });
+      const listed = async (): Promise<string[]> => {
+        const r = await client.listItems({ tags: [tag], limit: 100 });
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        return r.data.data.map((i) => i.id).sort();
+      };
+      // The witness: nothing narrows until the lever is set.
+      expect(await listed()).toEqual(
+        [named, sub, namedHidden, subHidden, unnamed].sort(),
+      );
+
+      await setConfig({
+        enforcement: {
+          source_filter: {
+            types: [parentId],
+            sources: [`${ctx.source}-types-shown`],
+          },
+        },
+      });
+      expect(await listed()).toEqual([named, sub, unnamed].sort());
+    } finally {
+      await setConfig(originalConfig);
+    }
   });
 
   /**

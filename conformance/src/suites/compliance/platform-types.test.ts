@@ -27,9 +27,10 @@ afterAll(async () => {
 
 /**
  * A drifted row is a platform type the database holds and the build no
- * longer ships. Nothing over the wire can register a platform type, so the
- * removal's success path is unreachable here; the listing and every refusal
- * are asserted.
+ * longer ships. Nothing over the wire can register a platform type, so a
+ * drifted row is arranged on a server of its own in
+ * `platform-type-drift.test.ts`; the shared server's listing and the
+ * refusals that need none are asserted here.
  */
 describe("platform type maintenance", () => {
   it("lists no drift on an instance whose platform types match the build", async () => {
@@ -82,6 +83,27 @@ describe("platform type maintenance", () => {
     const r = await operator.deletePlatformType("core.never-existed");
     expect(r.status).toBe(404);
     expect(r.error?.error.code).toBe("type_not_found");
+  });
+
+  it("answers 409 for a type registered at run time, which no platform row carries", async () => {
+    const id = `user.platform-door-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { name: { type: "string" } },
+    });
+    expect(registered.status).toBe(201);
+
+    const r = await operator.deletePlatformType(id);
+    expect(r.status).toBe(409);
+    expect(r.error?.error.code).toBe("conflict");
+    expect(r.error?.error.details?.type).toBe(id);
+    // The witness: an identifier no row carries is the `404` beside it, and
+    // the registration is still there after the refusal.
+    const absent = await operator.deletePlatformType(
+      `user.platform-door-absent-${ctx.runId}`,
+    );
+    expect(absent.status).toBe(404);
+    expect((await client.getType(id)).status).toBe(200);
   });
 
   it("refuses removal to a working key", async () => {

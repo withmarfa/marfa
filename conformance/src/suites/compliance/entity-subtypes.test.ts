@@ -134,4 +134,31 @@ describe("entity subtypes", () => {
       Array<{ field: string }> | undefined;
     expect(errors?.map((e) => e.field)).toContain("name");
   });
+
+  it("requires an entity's name on a person and a place too", async () => {
+    for (const type of ["core.entity.person", "core.entity.place"]) {
+      // The witness: the same properties with a name are taken.
+      const accepted = await client.createItem({
+        type,
+        properties: { name: "Named", description: "With a name" },
+        source: ctx.source,
+      });
+      expect(accepted.status, type).toBe(201);
+      trackItem(ctx, accepted.data.item.id);
+
+      const r = await client.createItem({
+        type,
+        properties: { description: "Missing name" },
+        source: ctx.source,
+      });
+      expect(r.status, type).toBe(400);
+      expect(r.error?.error.code, type).toBe("invalid_properties");
+      const errors = r.error?.error.details?.errors as
+        Array<{ field: string }> | undefined;
+      expect(
+        errors?.map((e) => e.field),
+        type,
+      ).toContain("name");
+    }
+  });
 });

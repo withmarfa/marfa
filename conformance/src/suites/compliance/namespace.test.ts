@@ -2,11 +2,11 @@
  * Conformance for the five-tier namespace grammar.
  *
  * The grammar:
- *   core.<segment>            — exactly two segments
- *   system.<segment>          — exactly two segments
+ *   core.<segment>...         — two or more segments
+ *   system.<segment>...       — two or more segments
  *   app.<app-name>.<type>     — exactly three segments
- *   user.<segment>            — exactly two segments
- *   <publisher>.<type>        — exactly two segments where first is a
+ *   user.<segment>...         — two or more segments
+ *   <publisher>.<type>...     — two or more segments where the first is a
  *                                non-reserved-root handle
  *
  * Reserved roots (`core`, `system`, `app`, `user`, `marfa`) cannot be
@@ -123,6 +123,47 @@ describe("namespace grammar", () => {
         { path: string }[] | undefined;
       expect(errors?.[0]?.path, root).toBe("type");
     }
+  });
+
+  it("refuses an app type with more than one segment after app.", async () => {
+    // The witness: three segments is the one form `app.` takes, and it clears
+    // the grammar to stop at the registration gate.
+    const witness = await client.createItem({
+      type: "app.a.b",
+      properties: {},
+    });
+    expect(witness.status).toBe(400);
+    expect(witness.error?.error.code).toBe("unknown_type");
+
+    const r = await client.createItem({
+      type: "app.a.b.c",
+      properties: {},
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("validation_error");
+    const errors = r.error?.error.details?.errors as
+      { path: string }[] | undefined;
+    expect(errors?.[0]?.path).toBe("type");
+  });
+
+  it("refuses to register a type under a root the grammar reserves", async () => {
+    const fields = { name: { type: "string" as const } };
+    for (const root of REFUSED_ROOTS) {
+      const r = await client.registerType({ id: `${root}.thing`, fields });
+      expect(r.status, root).toBe(400);
+      expect(r.error?.error.code, root).toBe("validation_error");
+      const errors = r.error?.error.details?.errors as
+        { path: string }[] | undefined;
+      expect(errors?.[0]?.path, root).toBe("id");
+    }
+
+    // The witness: the same body under a root the grammar does not reserve
+    // registers, so what was refused is the root.
+    const accepted = await client.registerType({
+      id: `user.thing-${ctx.runId}`,
+      fields,
+    });
+    expect(accepted.status).toBe(201);
   });
 
   it("still answers unknown_type for a publisher root that merely looks reserved", async () => {
