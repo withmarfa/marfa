@@ -433,3 +433,50 @@ describe("GET /health while the write outlasts its two seconds", () => {
     expect(after.httpStatus).toBe(200);
   }, 120_000);
 });
+
+describe("GET /health when the free space cannot be read", () => {
+  let own: FreshServer;
+
+  beforeAll(async () => {
+    own = await bootFreshServer("health-disk");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  async function ask(): Promise<Answer> {
+    const response = await fetch(`${own.apiUrl}/health`, {
+      headers: { Authorization: `Bearer ${own.operatorKey}` },
+    });
+    return {
+      httpStatus: response.status,
+      body: (await response.json()) as Health,
+    };
+  }
+
+  it("answers the disk component degraded, never down, and the status 200 when the free space of the blob folder's volume cannot be read, and ok once it can", async () => {
+    // The witness: the same folder, present, is measured and is `ok`.
+    const before = await ask();
+    expect(before.httpStatus).toBe(200);
+    expect(before.body.status).toBe("ok");
+    expect(before.body.components.disk?.status).toBe("ok");
+
+    // A folder that is gone cannot be measured. The database's volume cannot
+    // be made unreadable the same way without taking the database with it.
+    const blobs = join(dirname(own.sqlitePath), "blobs");
+    const away = `${blobs}-away`;
+    renameSync(blobs, away);
+    let unknown: Answer;
+    try {
+      unknown = await ask();
+    } finally {
+      renameSync(away, blobs);
+    }
+    expect(unknown.httpStatus).toBe(200);
+    expect(unknown.body.status).toBe("degraded");
+    expect(unknown.body.components.disk?.status).toBe("degraded");
+    expect(unknown.body.components.disk?.error).toMatch(/^free space unknown/);
+    expect(othersOf(unknown, "disk")).toEqual(["ok", "ok", "ok"]);
+
+    const after = await ask();
+    expect(after.httpStatus).toBe(200);
+    expect(after.body.components.disk?.status).toBe("ok");
+  }, 120_000);
+});
