@@ -12,6 +12,7 @@ import {
 } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
 import { readTarGzEntry } from "../../utils/archive.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 /** The shape `generateId` mints, which is what the identity is. */
 const UUID_V7 =
@@ -20,9 +21,13 @@ const UUID_V7 =
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext("compliance", "instance"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "instance",
+  ));
 });
 
 afterAll(async () => {
@@ -132,10 +137,26 @@ describe("the instance", () => {
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
     await expectMatchesSchema("GET", "/", 200, r.data);
+    // The contract version is an integer, and the case that names it holds
+    // it to the document; here it is only that the root carries one.
+    expect(Number.isInteger(r.data.contract)).toBe(true);
     // Every entry held against a door, by the case below.
     expect([...(r.data.features as string[])].sort()).toEqual(
       FEATURE_DOORS.map((door) => door.feature).sort(),
     );
+  });
+
+  it("advertises its features as an array of strings, each named once", async () => {
+    const r = await client.root();
+    expect(r.ok).toBe(true);
+    const features: unknown = r.data.features;
+    expect(Array.isArray(features)).toBe(true);
+    const named = features as unknown[];
+    expect(named.length).toBeGreaterThan(0);
+    for (const feature of named) {
+      expect(typeof feature, String(feature)).toBe("string");
+    }
+    expect(new Set(named).size).toBe(named.length);
   });
 
   it("answers a browser at the root with a page and a program with the JSON", async () => {
@@ -271,6 +292,69 @@ describe("the instance", () => {
     }
   });
 
+  it("sends its contract version on every kind of answer, not only a JSON body", async () => {
+    // The statement says every answer, and the header is set by the layer
+    // ahead of the credential, the body cap and the sign-in library, so the
+    // answers below come from places that layer does not own: a page, a
+    // stream, a file, a body-less answer, a refusal made before a handler
+    // runs, and the sign-in library's own.
+    const root = await client.root();
+    const contract = String(root.data.contract);
+    const bytes = new TextEncoder().encode(
+      `a blob for the header ${Date.now()}`,
+    );
+    const uploaded = await uploadReferenced(client, ctx, bytes, "text/plain");
+    expect(uploaded.ok, JSON.stringify(uploaded.error)).toBe(true);
+    const auth = { Authorization: `Bearer ${apiKey}` };
+    const asBrowser = { accept: "text/html" };
+
+    const stream = await fetch(`${apiUrl}/events`, { headers: auth });
+    await stream.body?.cancel();
+    const tooLarge = await fetch(`${apiUrl}/items`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(1_048_576) }),
+    });
+    const answers: [string, number, Response][] = [
+      ["a page", 200, await fetch(`${apiUrl}/`, { headers: asBrowser })],
+      [
+        "a sign-in page",
+        200,
+        await fetch(`${apiUrl}/auth/sign-in`, { headers: asBrowser }),
+      ],
+      [
+        "the sign-in library's own answer",
+        200,
+        await fetch(`${apiUrl}/auth/get-session`),
+      ],
+      ["an event stream", 200, stream],
+      ["a body past the cap", 413, tooLarge],
+      [
+        "a HEAD at the root",
+        200,
+        await fetch(`${apiUrl}/`, { method: "HEAD" }),
+      ],
+      [
+        "a HEAD of a read",
+        200,
+        await fetch(`${apiUrl}/items?limit=1`, {
+          method: "HEAD",
+          headers: auth,
+        }),
+      ],
+      [
+        "a blob download",
+        200,
+        await fetch(`${apiUrl}/blobs/${uploaded.data.hash}`, { headers: auth }),
+      ],
+      ["a request to /health", 200, await fetch(`${apiUrl}/health`)],
+    ];
+    for (const [label, status, response] of answers) {
+      expect(response.status, label).toBe(status);
+      expect(response.headers.get("X-Marfa-Contract"), label).toBe(contract);
+    }
+  });
+
   it("names itself the same way at the root, at /config and in an archive", async () => {
     // One identity, three doors, and the third is the one the first two
     // cannot stand in for: the manifest is written into a file nothing
@@ -291,6 +375,11 @@ describe("the instance", () => {
     expect((config.data as { instance_id: string }).instance_id).toBe(
       root.instance_id,
     );
+    // The same value is a UUIDv7 at the other two doors, whether or not the
+    // equality above holds the shape.
+    expect((config.data as { instance_id: string }).instance_id).toMatch(
+      UUID_V7,
+    );
 
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.ok).toBe(true);
@@ -305,6 +394,7 @@ describe("the instance", () => {
     // for the wrong reason.
     expect(manifest.version).toBe(0);
     expect(manifest.instance_id).toBe(root.instance_id);
+    expect(manifest.instance_id).toMatch(UUID_V7);
   });
 
   it("serves its OpenAPI document, with and without a credential", async () => {
