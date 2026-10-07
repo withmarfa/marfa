@@ -106,7 +106,7 @@ If a credential that the operation admits sends `POST /items/bulk-actions`, othe
 
 ### `search-and-filters/empty-narrowing-bulk-before-action`
 
-If a credential that the operation admits sends `POST /items/bulk-actions` with an empty `filter` field and an `update_tags` naming neither `add` nor `remove`, or an `occurred_at` that is not a timestamp, then the server MUST answer the empty field's `400 validation_error`.
+If a credential that the operation admits sends `POST /items/bulk-actions` with an empty `filter` field and an `update_tags` naming neither `add` nor `remove`, then the server MUST answer the empty field's `400 validation_error`.
 
 **Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
 
