@@ -6,9 +6,14 @@ import { createNote, generateId } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "validation"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "validation",
+  ));
 });
 
 afterAll(async () => {
@@ -309,6 +314,59 @@ describe("validation edge cases", () => {
       const refused = await client.rawRequest<unknown>(`/search?q=${q}`);
       expect(refused.status, `q=${q}`).toBe(400);
       expect(refused.error?.error.code, `q=${q}`).toBe("validation_error");
+    }
+  });
+
+  it("refuses an empty type, source, tags or filter rather than reading everything", async () => {
+    const window = "from=2031-01-01T00:00:00Z&to=2031-01-02T00:00:00Z";
+    const filter = encodeURIComponent('properties.body eq "x"');
+    // Every door that declares a narrowing key, with a value each takes.
+    const doors: { path: string; key: string; value: string }[] = [
+      { path: "/items", key: "type", value: "core.note" },
+      { path: "/items", key: "source", value: ctx.source },
+      { path: "/items", key: "tags", value: "kept" },
+      { path: "/items", key: "filter", value: filter },
+      { path: "/items/stats", key: "type", value: "core.note" },
+      { path: "/items/stats", key: "source", value: ctx.source },
+      { path: "/items/stats", key: "tags", value: "kept" },
+      { path: "/items/stats", key: "filter", value: filter },
+      { path: "/search?q=note", key: "type", value: "core.note" },
+      { path: "/search?q=note", key: "tags", value: "kept" },
+      { path: "/search?q=note", key: "filter", value: filter },
+      { path: `/occurrences?${window}`, key: "type", value: "core.event" },
+      { path: "/export", key: "type", value: "core.note" },
+      { path: "/export", key: "source", value: ctx.source },
+      { path: "/events", key: "type", value: "core.note" },
+    ];
+    const ask = async (path: string, query: string) => {
+      const response = await fetch(
+        `${apiUrl}${path}${path.includes("?") ? "&" : "?"}${query}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      // A stream that opened never ends, so the status is read and the body closed.
+      if (response.status === 200) {
+        await response.body?.cancel();
+        return { status: response.status, body: undefined };
+      }
+      return {
+        status: response.status,
+        body: (await response.json()) as {
+          error: { code: string; details?: { empty_parameters?: string[] } };
+        },
+      };
+    };
+
+    for (const { path, key, value } of doors) {
+      const where = `${path} ${key}`;
+      // The witness: the same request with a value is answered.
+      expect((await ask(path, `${key}=${value}`)).status, where).toBe(200);
+
+      const refused = await ask(path, `${key}=`);
+      expect(refused.status, where).toBe(400);
+      expect(refused.body?.error.code, where).toBe("validation_error");
+      expect(refused.body?.error.details?.empty_parameters, where).toEqual([
+        key,
+      ]);
     }
   });
 
