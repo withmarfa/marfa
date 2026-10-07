@@ -207,6 +207,7 @@ describe("the configuration door", () => {
     const write = await narrowed.updateConfig({});
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("forbidden");
+    expect(write.error?.error.details?.required_scope).toBe("config.manage");
   });
 });
 

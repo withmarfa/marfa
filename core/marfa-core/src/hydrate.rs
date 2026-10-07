@@ -383,9 +383,9 @@ fn register_declared(
 /// What a type is, said where a name is refused for breaking the grammar.
 pub(crate) const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
 
-/// The server's type pattern grammar (`types.md` 1): a type identifier, or a
-/// namespace under `.*`. The bare `*` is no pattern here; each caller says
-/// what it means.
+/// The server's type pattern grammar (`types/id-grammar` and
+/// `types/id-reserved-scope-root`): a type identifier, or a namespace under
+/// `.*`. The bare `*` is no pattern here; each caller says what it means.
 pub(crate) fn type_pattern(name: &str) -> Result<bool> {
     let segment = |part: &str| {
         let mut characters = part.chars();

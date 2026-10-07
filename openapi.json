@@ -3334,7 +3334,7 @@
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier."
+            "description": "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier."
           },
           "description": {
             "type": "string",
@@ -3507,7 +3507,7 @@
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier."
+            "description": "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier."
           },
           "description": {
             "type": "string",

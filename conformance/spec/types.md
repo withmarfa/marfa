@@ -1,186 +1,689 @@
 # Types
 
-The registry of item types: identifiers, fields, inheritance, merge policy, and the instance-wide enforcement levers.
+The registry of item types: identifiers, fields, inheritance, merge and version policies, and the instance's enforcement levers.
 
 ## Identifiers
 
-1. A type identifier is two or more lowercase dotted segments, each of letters, digits, hyphens and underscores, at most 128 characters in all. The grammar gate runs before the registration gate: a well-formed identifier nothing registered answers `400 unknown_type`, so `app.example.bookmark`, `com.example.bookmark`, `acme.deal` and a deep `com.example.app.category.subcategory.item` are all well-formed; a single segment, an uppercase letter, a slash, or `app.<x>` with one segment after `app.` answers `400 validation_error`, naming the field. Twelve roots are refused by the grammar itself rather than reaching the registration gate — `schema`, `keys`, `items`, `webhooks`, `config`, `audit` and `grants`, which head the seven permission families, `content`, `metadata`, `edge` and `profile`, which head the other scope families, and `space`, which heads nothing and is reserved so nobody may claim it — because a type under any of them could be written and never granted; the check is on the root segment and not on a prefix, so `keys-pub.deal` is an ordinary publisher type and answers `unknown_type`. `compliance/type-identifier-validation.test.ts › accepts a two-part type identifier (core.bookmark)`, `› accepts a three-part app-namespaced type identifier (app.example.bookmark)`, `› rejects a non-tiered three-part type identifier (com.example.bookmark)`, `› rejects a one-part type identifier (bookmark)`, `› rejects uppercase characters in type identifier (Core.Bookmark)`, `› accepts underscores in type identifier segments (eval.custom_type)`, `› accepts hyphens in type identifier segments (local.my-custom-type)`, `› accepts community type format (acme.deal)`, `› rejects slash-separated type identifiers`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`, `› rejects type identifier with fewer than 2 segments`, `› accepts type identifier with exactly 2 segments`, `› rejects type identifier exceeding 128 characters`, `› accepts type identifier at exactly 128 characters (grammar boundary)`, `› accepts hyphens in type identifier segments (grammar boundary)`, `compliance/namespace.test.ts › accepts user.<type>`, `› rejects app.<X> with only one segment after app.`, `› rejects forward-slash type identifiers`, `› refuses a two-segment type under every root the grammar reserves`, `› still answers unknown_type for a publisher root that merely looks reserved`, `compliance/publisher-types.test.ts › accepts a two-segment publisher type identifier`.
-2. The reserved roots are `core`, `system` and `marfa`, and none of them can be registered by any key — not by the broadest credential the suite holds, which is what makes it a property of the build rather than of the request. The refusal is `403 forbidden` with `details.namespace` naming the root. The check is on the root segment, not a prefix: `core-pub.deal` is an ordinary publisher type. `compliance/namespace.test.ts › refuses %s.* registration from the broadest credential the suite holds`, `› refuses a reserved-namespace registration from a narrower credential too`, `compliance/publisher-types.test.ts › reserved-root prefix-match heuristic does not false-positive`.
+### `types/id-grammar`
 
-## Registration
+The server MUST take as a type identifier two or more dot-separated segments, each starting with a lowercase letter and holding only lowercase letters, digits, hyphens and underscores, at most 128 characters in all, with exactly two segments after an `app` root.
 
-3. `POST /types` with an `id` and `fields` answers `201` with `type`; the type then lists at `GET /types`, reads at `GET /types/{id}`, and validates items. `compliance/types.test.ts › registers a custom type`, `compliance/type-registry.test.ts › registers a new custom type`, `› lists registered types including core types`, `› gets a single type by type identifier`, `› creates item with valid properties for a registered type`, `› rejects item with invalid properties for a registered type`. A field may take any name an object's built-in member has, `toString`, `valueOf`, `constructor` and `hasOwnProperty` among them, and an item of the type is written, read and updated with or without it, as with any other name. `compliance/types.test.ts › writes and reads items of a type whose fields share a name with an object's built-in members`, and a type that has a subtype takes such a field too, `compliance/type-evolution.test.ts › takes fields named like an object's built-in members`.
-4. Registration takes `metadata.types:write`; a key without it is refused `403 forbidden` with `details.metadata_subresource: "types"`. `compliance/type-registry.test.ts › rejects type registration from a key without metadata.types:write`.
-5. A duplicate id answers `409`; an invalid identifier answers `400 validation_error` naming `id`; a body without `fields` answers `400 missing_required_field`; a field whose name shadows a first-class item field answers `400 property_shadows_field`. `compliance/type-registry.test.ts › rejects duplicate type registration with 409`, `compliance/types.test.ts › rejects type registration with invalid type identifier`, `› rejects type registration without fields`, `› rejects type registration whose property name shadows a first-class Item field`.
-6. A `label` is stored when given and derived from the id when not (the last segment, hyphen-separated words capitalized); the shipped types carry one. `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`, `› register custom type with label`, `› register custom type without label`, `› label appears in type list`.
-7. An unregistered id answers `404 type_not_found`. `compliance/types.test.ts › answers 404 for a type that is not registered`, `compliance/type-registry.test.ts › returns 404 for a non-existent type identifier`.
+**Tests:** `compliance/type-identifier-validation.test.ts › accepts a three-part app-namespaced type identifier (app.example.bookmark)`, `› rejects a non-tiered three-part type identifier (com.example.bookmark)`, `› accepts underscores in type identifier segments (eval.custom_type)`, `› accepts hyphens in type identifier segments (local.my-custom-type)`, `› accepts community type format (acme.deal)`, `› accepts a two-part type identifier (core.bookmark)`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`, `› accepts type identifier at exactly 128 characters (grammar boundary)`, `› accepts hyphens in type identifier segments (grammar boundary)`, `› accepts type identifier with exactly 2 segments`, `compliance/namespace.test.ts › accepts user.<type>`, `compliance/publisher-types.test.ts › accepts a two-segment publisher type identifier`.
+
+### `types/id-malformed`
+
+If an item write, a listing filter or `POST /types` names a type identifier the grammar refuses, then the server MUST answer `400 validation_error` naming the field, `type` or `id`.
+
+**Tests:** `compliance/type-identifier-validation.test.ts › rejects a one-part type identifier (bookmark)`, `› rejects uppercase characters in type identifier (Core.Bookmark)`, `› rejects slash-separated type identifiers`, `› refuses a segment that does not start with a letter, an empty segment and a trailing dot`, `compliance/namespace.test.ts › refuses an app type with more than one segment after app.`, `compliance/validation.test.ts › rejects type identifier with fewer than 2 segments`, `› rejects type identifier exceeding 128 characters`, `compliance/namespace.test.ts › rejects app.<X> with only one segment after app.`, `› rejects forward-slash type identifiers`, `compliance/types.test.ts › rejects type registration with invalid type identifier`.
+
+### `types/id-unknown`
+
+If an item write or a listing filter names a well-formed type identifier nothing registered, then the server MUST answer `400 unknown_type`.
+
+**Tests:** `compliance/type-registry.test.ts › rejects item with an unregistered type`, `compliance/type-identifier-validation.test.ts › accepts community type format (acme.deal)`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`.
+
+### `types/id-reserved-scope-root`
+
+If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `content`, `metadata`, `edge`, `profile` or `space`, then the server MUST refuse it as `types/id-malformed` refuses an identifier the grammar refuses.
+
+**Reason:** each heads a permission or scope family, so a type under it could be written and never granted.
+
+**Tests:** `compliance/namespace.test.ts › refuses a two-segment type under every root the grammar reserves`, `› still answers unknown_type for a publisher root that merely looks reserved`, `› refuses to register a type under a root the grammar reserves`.
+
+### `types/id-reserved-namespace`
+
+If `POST /types` names an identifier under `core`, `system` or `marfa`, then the server MUST answer `403 forbidden` with `details.namespace` naming the root, whatever the credential.
+
+**Tests:** `compliance/namespace.test.ts › refuses %s.* registration from the broadest credential the suite holds`, `› refuses a reserved-namespace registration from a narrower credential too`.
+
+### `types/id-root-not-prefix`
+
+The server MUST judge a reserved root by the whole first segment, so `core-pub` or `keys-pub` is an ordinary root.
+
+**Tests:** `compliance/publisher-types.test.ts › reserved-root prefix-match heuristic does not false-positive`, `› registers a publisher type whose root only looks reserved`, `compliance/namespace.test.ts › still answers unknown_type for a publisher root that merely looks reserved`.
+
+## Registering a type
+
+### `types/register`
+
+When a key sends `POST /types` with an `id` and `fields` it may register, the server MUST answer `201` with the `type` as stored.
+
+**Tests:** `compliance/type-registry.test.ts › registers a new custom type`, `compliance/types.test.ts › registers a custom type`.
+
+### `types/register-effective`
+
+When a type is registered, the server MUST list it at `GET /types`, answer it at `GET /types/{id}` and validate items of it against it.
+
+**Tests:** `compliance/type-label.test.ts › label appears in type list`, `› register custom type with label`, `compliance/type-registry.test.ts › creates item with valid properties for a registered type`, `› rejects item with invalid properties for a registered type`.
+
+### `types/register-permission`
+
+If a key without `metadata.types:write` sends `POST /types`, then the server MUST answer `403 forbidden` with `details.metadata_subresource` `types`.
+
+**Tests:** `compliance/type-registry.test.ts › rejects type registration from a key without metadata.types:write`.
+
+### `types/register-reach`
+
+If a key whose type map does not grant write on an identifier sends `POST /types` for it, then the server MUST answer `403 type_not_permitted` naming the identifier, whether or not another key registered it.
+
+**Reason:** one key cannot take an identifier first and leave the key it was meant for unable to register it.
+
+**Tests:** `compliance/type-registry.test.ts › registers only the ids the key's own type map grants write on`, `› refuses an identifier another key registered with 403 to a key whose map does not reach it`.
+
+### `types/register-duplicate`
+
+If `POST /types` names a valid schema under an identifier already registered, then the server MUST answer `409 type_already_exists`.
+
+**Tests:** `compliance/type-registry.test.ts › rejects duplicate type registration with 409`, `compliance/types.test.ts › refuses a duplicate registration with a bad schema as the bad schema`.
+
+### `types/register-no-fields`
+
+If `POST /types` names no `fields`, then the server MUST answer `400 missing_required_field`.
+
+**Tests:** `compliance/types.test.ts › rejects type registration without fields`.
+
+### `types/register-no-id`
+
+If `POST /types` names `fields` and no `id`, then the server MUST answer `400 invalid_schema`.
+
+**Tests:** `compliance/types.test.ts › refuses a registration with no id as an invalid schema`.
+
+### `types/field-shadows-item`
+
+If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_by_cascade` or `trashed_with`, then the server MUST answer `400 property_shadows_field` naming each such field.
+
+**Reason:** a row would carry two values under one key, with nothing to say which is authoritative.
+
+**Tests:** `compliance/types.test.ts › rejects type registration whose property name shadows a first-class Item field`, `› refuses each field named like one every item has`, `› refuses a replacement whose property name shadows a first-class Item field, as registration does`.
+
+### `types/field-builtin-names`
+
+The server MUST take a field named like a built-in member of an object, such as `toString`, `valueOf`, `constructor` or `hasOwnProperty`, and write, read and update it as any other field.
+
+**Tests:** `compliance/types.test.ts › writes and reads items of a type whose fields share a name with an object's built-in members`, `compliance/type-evolution.test.ts › takes fields named like an object's built-in members`.
+
+### `types/refused-unchanged`
+
+If the server refuses `POST /types` or `PUT /types/{id}`, then the server MUST leave the registry as it was.
+
+**Tests:** `compliance/version-policy.test.ts › refuses the same on a replacement and keeps the type as it was`, `› names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+
+### `types/write-race`
+
+When `POST /types`, `PUT /types/{id}` or `DELETE /types/{id}` races another registry write, the server MUST judge each against the registry as it stands when that write lands.
+
+**Reason:** a parent deleted while a child registers, a child registered while its parent is deleted, or two re-parents closing a loop would otherwise leave a registry no single write could make.
+
+**Tests:** waiting on #1444.
+
+### `types/label`
+
+When `POST /types` or `PUT /types/{id}` names no `label`, or an empty one, the server MUST give the type one made from the last segment of its identifier, with each hyphen and underscore made a space and each word capitalized.
+
+**Tests:** `compliance/type-label.test.ts › register custom type without label`, `› makes a label from the identifier when a replacement names none`.
+
+### `types/label-kept`
+
+When `POST /types` or `PUT /types/{id}` names a non-empty `label`, the server MUST store it and answer it on every read of the type.
+
+**Tests:** `compliance/type-label.test.ts › register custom type with label`, `› label appears in type list`.
+
+## Reading the registry
+
+### `types/read`
+
+When a credential sends `GET /types/{id}` for a registered type, the server MUST answer it with the fields, `version_policy` and `merge_policy` its parents give it merged beside its own.
+
+**Tests:** `compliance/type-inheritance.test.ts › a child reads back with the parent's fields merged beside its own`, `compliance/types.test.ts › a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`.
+
+### `types/read-display-hints`
+
+When a type declares no `display_hints`, the server MUST answer on `GET /types/{id}` those of its nearest ancestor that declares any, whole.
+
+**Reason:** a type that names only a body hint gets no title hint from its parent, so a reader falls back to `title` (`device.md` 47).
+
+**Tests:** `compliance/type-inheritance.test.ts › answers the display hints of the nearest type that declares any, whole`.
+
+### `types/read-missing`
+
+If `GET /types/{id}` or `DELETE /types/{id}` names an identifier nothing registered, or `PUT /types/{id}` names a well-formed one nothing registered, then the server MUST answer `404 type_not_found`, whatever the key's type map.
+
+**Tests:** `compliance/types.test.ts › answers 404 for a type that is not registered`, `compliance/type-registry.test.ts › returns 404 for a non-existent type identifier`, `› answers 404 deleting a type identifier that was never registered`, `› answers 404 to a replacement of a type nothing registered, whatever the key's map`.
+
+### `types/registry-open`
+
+The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
+
+**Reason:** a registered type and an unregistered one are already told apart, a schema holds no item data, and a device resolves an inherited field by walking `parent` (`device.md` 47).
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.
 
 ## Inheritance
 
-8. A type may declare a `parent`; its read carries the parent's fields merged beside its own and an item of it accepts the parent's properties; it may add fields, may redeclare an inherited field unchanged, and may not change an inherited field's shape (`400 inheritance_violation`). The rule holds from the parent's side too: an update giving a parent a field under a name a type inheriting from it already declares with another shape is refused `400 inheritance_violation`, the code registration answers, its error naming the field. A `parent` nothing registered is refused `400 validation_error`, and nothing is registered. `POST /types`, `PUT /types/{id}` and an archive restore check the parent chain in the transaction that writes the type, so a parent deleted while the write is in flight refuses it, a delete of the parent arriving while the write is in flight is refused `409 type_has_subtypes` (14), and two re-parents in flight cannot close a loop between them. The inheritance rule is judged in the same transaction from both ends: a parent gaining a field that a subtype registered meanwhile declares with another shape is refused `400 inheritance_violation`, and so is a subtype whose field clashes with one its parent gained meanwhile, so the two never both land. The server's own suite asserts these (`packages/server/src/routes/type-references.test.ts`, and for the restore `packages/server/src/routes/archive-type-registrations.test.ts`). `compliance/type-inheritance.test.ts › refuses a parent nothing registered, and accepts the same child under one that is`, `› a child reads back with the parent's fields merged beside its own`, `› accepts a child type that adds a field not present on the parent`, `› accepts a child that redeclares an inherited field without changing it`, `› rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `compliance/entity-subtypes.test.ts › person inherits all entity fields`.
-9. A listing by a parent type returns its subtypes' items; a listing by the subtype returns only its own. `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `› querying core.entity.person returns only persons`.
-10. `compatible_with` asserts a structural superset of another type and is validated at registration: an unknown target and a missing required ancestor field answer `422 compatible_with_violation`. `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› rejects compatible_with target that does not exist`, `› rejects compatible_with when a required ancestor field is missing`.
-11. Items of a custom type follow the universal lifecycle. `compliance/types.test.ts › items of a custom type follow the universal lifecycle`.
+### `types/parent`
+
+When a type names a registered `parent`, the server MUST let its items take the parent's fields.
+
+**Tests:** `compliance/type-inheritance.test.ts › a child reads back with the parent's fields merged beside its own`, `compliance/entity-subtypes.test.ts › person inherits all entity fields`.
+
+### `types/parent-required`
+
+When a parent requires a field, the server MUST require it of its subtypes' items.
+
+**Tests:** `compliance/entity-subtypes.test.ts › requires an entity's name on a person and a place too`.
+
+### `types/parent-unknown`
+
+If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that changes the stored `parent`, names a `parent` nothing registered that the key's type map grants write on, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/type-inheritance.test.ts › refuses a parent nothing registered, and accepts the same child under one that is`, `compliance/type-evolution.test.ts › asks write on a parent nothing registered, before saying it is unknown`.
+
+### `types/parent-chain`
+
+If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that changes the stored `parent`, names a parent `types/parent-reach` admits and would make a type its own ancestor, or give any type more than ten ancestors, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/type-inheritance.test.ts › refuses a parent chain deeper than ten, and a circular one`.
+
+### `types/child-adds`
+
+The server MUST let a subtype add fields, redeclare an inherited field unchanged or with a new `description`, and make an inherited field required.
+
+**Tests:** `compliance/type-inheritance.test.ts › accepts a child type that adds a field not present on the parent`, `› accepts a child that redeclares an inherited field without changing it`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`.
+
+### `types/child-shape`
+
+If a type would give a field another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
+
+**Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`.
+
+### `types/listing-subtree`
+
+When a listing names a type, the server MUST answer the items of that type and of every type under it.
+
+**Tests:** `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `› querying core.entity.person returns only persons`.
+
+### `types/compatible-with`
+
+When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail` or `enum` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; and, where both name a `format`, the same one.
+
+**Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`.
+
+### `types/compatible-with-refused`
+
+If a type's `compatible_with` names a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
+
+**Tests:** `compliance/type-inheritance.test.ts › rejects compatible_with target that does not exist`, `› rejects compatible_with when a required ancestor field is missing`, `› refuses a compatible_with claim whose target field the type declares in another shape, or optional where the target requires it`, `compliance/types.test.ts › refuses a replacement that breaks its compatible_with claim, as registration does`.
+
+### `types/custom-lifecycle`
+
+The server MUST hold an item of a registered type to the lifecycle of `items/transition`.
+
+**Tests:** `compliance/types.test.ts › items of a custom type follow the universal lifecycle`.
 
 ## Merge policy
 
-12. `merge_policy` on a type names per-field strategies and a default; `POST /types` accepts a valid one and refuses `400` one naming an unknown field or an unknown strategy; `GET /types/{id}` returns it resolved through the parent chain, for a shipped child and a registered child alike. `compliance/types.test.ts › GET /types/core.note returns the artifact-declared merge_policy`, `› POST /types accepts a custom type with a valid merge_policy`, `› POST /types rejects a merge_policy referencing an unknown field`, `› POST /types rejects a merge_policy with an unknown strategy`, `› a core child type exposes the parent's resolved merge_policy on GET`, `› a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `correctness/merge-policy.test.ts › a child of core.note can override body from keep_both_copies to last_writer_wins`.
+### `types/merge-policy`
 
-## Updating and deleting
+When a type names a `merge_policy` of a `default` and per-field strategies, each `last_writer_wins` or `keep_both_copies`, the server MUST store it and answer it on `GET /types/{id}` merged through the parent chain, a field the type names overriding its parents.
 
-13. `PUT /types/{id}` replaces a type and keeps whatever `version` the replacement names, 0 where it names none, as `POST /types` registers a type that names none at 0; no change demands that the version move, so a field added, a field removed, a relabel and a resubmission with no change all land at the version the type already holds. A malformed identifier answers `400 validation_error` and a schema the validator refuses `400 invalid_schema`, except that a field shadowing a first-class item field answers `400 property_shadows_field` and a broken `compatible_with` `422 compatible_with_violation`, as registration answers them (5, 10). `compliance/types.test.ts › refuses a replacement whose property name shadows a first-class Item field, as registration does`, `› refuses a replacement that breaks its compatible_with claim, as registration does`. An identifier nothing registers answers `404 type_not_found`, and that is asked again in the transaction that writes the replacement, so a type deleted while the replacement is in flight stays deleted and the replacement is refused `404`; the server's own suite asserts it (`packages/server/src/routes/type-references.test.ts`). `compliance/type-versioning.test.ts › registers a type that names no version at 0`, `› replaces a type at the version it already holds, whatever the change`, `› keeps the version a replacement names, and 0 where it names none`, `› refuses a malformed identifier and a schema the validator refuses with 400`, `compliance/type-registry.test.ts › updates type schema: adding a field succeeds`. The door takes `schema.write`, or `metadata.types:write` for the replacements 35 allows, refusing a key holding neither `403 forbidden`, and refuses a platform-shipped identifier `403 core_type_immutable`. `compliance/type-registry.test.ts › refuses both schema.write doors to a key without it, and declares the refusal`, `› refuses both schema.write doors a platform-shipped type, and declares that refusal too`, `compliance/type-versioning.test.ts › refuses a malformed identifier and a schema the validator refuses with 400`. **The permission admits a key to the door, and its type map decides which types**, as registration asks it (30): a registered identifier the map leaves at `read` or `none` is refused `403 type_not_permitted`, its message naming the identifier, and the type stays as it was. An identifier nothing registers still answers `404 type_not_found` whatever the map. `compliance/type-registry.test.ts › replaces and deletes only the types the key's own type map grants write on`.
-14. `DELETE /types/{id}` removes a type with no items; a type with items is refused `409 type_in_use` unless `force=true`, after which the rows persist and a new write of the type answers `400 unknown_type`, which the door's own description names, and so does every write that sets a field of a row the delete left: `PATCH /items/{id}`, a natural-key upsert on `POST /items` or `POST /items/bulk`, and a bulk-action update. Until the type is registered again the row's properties, tier, time and natural key stay as they were; once it is, a write to the row is held to the shape it is registered with. Its tags, extensions and lifecycle stay writable, so a row nothing can describe can still be put away; a type another declares as parent is refused `409 type_has_subtypes` naming them in `details.subtype_ids`, and `force` does not cover that case; an unknown id answers `404`. `compliance/type-registry.test.ts › deletes a type with no items`, `› rejects deleting a type that has items`, `› force-deletes a type that has items`, `› refuses deleting a parent while a subtype still declares it`, `› refuses a create of a type that was force-deleted under it`, `› refuses a write to a row a forced delete left, until its type is registered again`, `› answers 404 deleting a type identifier that was never registered`, `compliance/type-evolution.test.ts › refuses the delete to a key without schema.write, force included`. The door looks the type up, asks for items and deletes in one transaction. Without `force`, an item written while a delete is in flight either lands first and the delete is refused `409 type_in_use`, or lands after and is refused `400 unknown_type`, so no write leaves a row naming a type the delete removed; with `force`, nothing is counted, and only the second half holds. Of two deletes in flight, the second answers `404`. The referee cannot hold a delete open between the two, so the server's own suite asserts it (`packages/server/src/routes/type-delete-atomic.test.ts`). It takes `schema.write`, refuses a platform-shipped identifier and asks the key's type map on the same terms as the replacement beside it, `force=true` included, so a key deletes only the types its map grants write on. `compliance/type-registry.test.ts › refuses both schema.write doors to a key without it, and declares the refusal`, `› refuses both schema.write doors a platform-shipped type, and declares that refusal too`, `› replaces and deletes only the types the key's own type map grants write on`.
+**Tests:** `compliance/types.test.ts › POST /types accepts a custom type with a valid merge_policy`, `› GET /types/core.note returns the artifact-declared merge_policy`, `› a core child type exposes the parent's resolved merge_policy on GET`, `› a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `correctness/merge-policy.test.ts › a child of core.note can override body from keep_both_copies to last_writer_wins`.
 
-## Full-text searchability
+### `types/merge-policy-refused`
 
-15. A field declared `searchable: false` is excluded from full-text matches and still readable on the item. `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`, `› content remains retrievable on the item even when not searchable`.
+If a `merge_policy` names a field the type does not declare or inherit, or a strategy other than `last_writer_wins` and `keep_both_copies`, then the server MUST answer `400 invalid_schema`.
 
-## Enforcement levers
+**Tests:** `compliance/types.test.ts › POST /types rejects a merge_policy referencing an unknown field`, `› POST /types rejects a merge_policy with an unknown strategy`, `› refuses a merge_policy naming an unknown field or strategy on a replacement too`.
 
-16. `GET /config` reads the instance configuration and `PUT /config` replaces it wholesale and echoes it, both beside the instance's identity (`instance.md` 2); a lever of the wrong shape answers `400 validation_error`; both doors take `config.manage`. `compliance/schema-enforcement.test.ts › PUT replaces the configuration wholesale and GET reads it back`, `› refuses a lever of the wrong shape`, `› refuses both doors to a key without config.manage`.
-17. `enforcement.strict_mode.types` makes `POST /items` refuse an undeclared property on the named types with `400 invalid_properties`; off by default. `compliance/schema-enforcement.test.ts › default-off accepts unknown property on core.note write`, `› strict-on rejects unknown property with invalid_properties`.
-18. `enforcement.source_allowlist` refuses creates on the named types from a `source` not listed with `403 forbidden`, `details` naming the `type`, the `source` and the `allowed` list, on `POST /items` and on each entry of `POST /items/bulk`, judged on the source the write resolves to (`items/source-allow-list`). `compliance/schema-enforcement.test.ts › rejects writes from non-listed source`, `› accepts writes from listed source`, `› asks it of every bulk entry, under the source the entry resolves to`.
-19. When `enforcement.source_filter` is configured, the server MUST narrow every read that returns a set (listing, search, export, stats, the tag listing) to the listed sources. The server MUST NOT apply this filter to a read by id. When a tag occurs only on rows hidden by the filter, the tag listing MUST omit it. When a tag occurs on visible and hidden rows, its count MUST include only the visible rows. `compliance/schema-enforcement.test.ts › narrows reads to listed sources`, `› narrows every read that returns a set, not just the list route`, `› does not narrow a read by id`.
+## Field definitions
 
-## Shipped types the fixtures pin
+### `types/field-grammar`
 
-20. `GET /types` lists every shipped type the fixtures write against, each with a non-empty `fields` object: `core.bookmark`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file.image`, `core.highlight`, `core.media.article`, `core.media.book`, `core.message`, `core.note` and `core.task`. `compliance/types.test.ts › lists every shipped type the suite writes against`, `compliance/type-registry.test.ts › lists registered types including core types`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`.
-21. `core.message` requires `body` and `from`, accepts `to` in any identifier format, and declares `body` as its display body. `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required body and from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› declares body as its display body field`, `› declares body and from as required in the registry`.
-22. `core.highlight` requires `text`, accepts `note`, `color`, `start_location`, `end_location` and each `locator_type`, carries the moment it was made as the item `occurred_at`, and has no `highlighted_at`. `compliance/highlight.test.ts › creates with only the required text property`, `› roundtrips all optional properties`, `› accepts an optional note alongside text`, `› accepts each locator_type variant`, `compliance/highlight.test.ts › core.highlight property-level` (the item's own time and the absent `highlighted_at`).
-23. `core.entity` requires `name`; `core.entity.person` and `core.entity.place` inherit it and add their own fields. `compliance/entity-subtypes.test.ts › creates a generic entity with required name field`, `› creates a person entity with person-specific fields`, `› creates a place entity with place-specific fields`, `› person inherits all entity fields`.
-24. A shipped type's description is part of what the server publishes about itself, so where one names behavior the fixtures hold it to the sentence and not only to the field list. The system types shipped are the two the server writes, `system.connection` and `system.folder`; `system.account_holder`, `system.app`, `system.device` and `system.webhook` answer `404 type_not_found`. `system.connection` is written when a person approves an app's consent or device sign-in, its `kind` declares `app` alone, and its description does not name a connector. It declares none of `attached_device`, `feed_activity`, `last_error_at`, `last_sync_at`, `mapping_reapply_until`, `next_run_at`, `runtime_status`, `triggers`, `connector_id`, `credential_id`, `configuration`, `direction` and `mapping`, which no door accepts and no server path stamps; its description names none of them, and no row the server serves carries one. `compliance/system-types.test.ts › ships only the system types the server writes`, `› declares app as the only system.connection kind`, `› ships none of the system.connection fields no door accepts`, `› serves no system.connection carrying a field the type no longer declares`.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field it does not declare, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
 
-## The platform registry's maintenance door
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`.
 
-25. `DELETE /platform-types/{id}` (operator key) tells two refusals apart by whether a row carries the identifier at all: one that none does is absent and answers `404 type_not_found`; one that a row does carry and that this door will not remove answers `409 conflict`, which is what a type the build still ships gets. The door's success path and its other two refusals — items still carrying the identifier, another registered type inheriting from it — need a drifted row, which cannot be made over the wire, so `coverage.md` records the operation as refusals only and the server's own `routes/platform-types.test.ts` holds them, together with the rest of what a removal does: it asks both questions and removes the row in one transaction, so an item of the type written meanwhile is either counted, and the removal refused, or refused itself once the type is gone, and its `platform_type.removed` audit row names the key that made it. `compliance/platform-types.test.ts › answers 404 for an identifier no platform row carries`, `› refuses to remove a type the build still ships`, `› refuses removal to a working key`.
+### `types/format-collapses`
+
+When a `string` field names a `format` of `url`, `email`, `datetime`, `date` or `thumbnail`, the server MUST store the field as that type, and an `array` of strings naming one of the first four as an array of that type.
+
+**Tests:** `compliance/types.test.ts › keeps a list of strings with a type-naming format a list`, `compliance/types.test.ts › stores email, datetime and date formats on a string as their own types`, `compliance/thumbnails.test.ts › registers by its type or by the format that stands for it`.
+
+### `types/format-own-type`
+
+When a field names a `format` that is its own type, the server MUST store the field as that type, without the `format`.
+
+**Tests:** `compliance/types.test.ts › leaves a format that names the field's own type unchanged, and refuses thumbnail on a list`.
+
+### `types/format-refused`
+
+If a field names a type-naming `format` on a type other than `string`, the type the format names or a list of strings, or `thumbnail` on a list, then the server MUST answer `400 invalid_schema` naming the field's `format`.
+
+**Tests:** `compliance/types.test.ts › refuses a type-naming format on a field that is neither a string nor a list of strings`, `compliance/types.test.ts › leaves a format that names the field's own type unchanged, and refuses thumbnail on a list`.
+
+### `types/format-string-only`
+
+When a `string` field names a `format` of `bcp47` or `iso3166`, the server MUST store the field as a `string` with that `format`.
+
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`.
+
+### `types/format-string-only-refused`
+
+If a field of a type other than `string` names a `format` of `bcp47` or `iso3166`, then the server MUST answer `400 invalid_schema`.
+
+**Tests:** `compliance/types.test.ts › keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type`.
+
+### `types/datetime-value`
+
+When an item names a value for a `datetime` field, the server MUST take a `YYYY-MM-DD` calendar date, or such a date followed by `T`, `HH:MM`, `HH:MM:SS` or `HH:MM:SS` with a decimal fraction, and `Z` or a `±HH:MM` offset, with hours to 23 and minutes and seconds to 59.
+
+**Reason:** a value keeps the precision its source gave it, and a device validates the same values offline as the server does online (`device.md` 57).
+
+**Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+
+### `types/datetime-refused`
+
+If an item names a `datetime` value with a time and no zone, or outside the bounds `types/datetime-value` states, or a `datetime` or `date` value naming a day the calendar does not have, or a `date` value with a time, then the server MUST answer `400 invalid_properties` naming the field.
+
+**Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`.
+
+### `types/searchable-false`
+
+When a field declares `searchable: false`, the server MUST leave its value out of full-text matches and answer it on the item.
+
+**Tests:** `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`, `› content remains retrievable on the item even when not searchable`.
 
 ## Thumbnails
 
-26. **A field of type `thumbnail` holds a small image the writer supplies.** It is declared by `type: "thumbnail"`, or by `format: "thumbnail"` on a string, and stored as the type either way. A type carries at most one, counting the one it inherits and the ones the types inheriting from it declare, where a type inheriting it that declares it again under the same name is not a second; it is never under `title`, `body`, `description` or `name`, which search indexes whatever their type, and never an array's `items_type`; a title or a body hint never names it, and an edge type's properties never include one, as a property or as an array's elements. Each of those is refused `400`, and so is a parent gaining one under a name a type inheriting from it declares as something else (8). `compliance/thumbnails.test.ts › registers by its type or by the format that stands for it`, `› refuses a thumbnail named for a field search indexes, and a second thumbnail`, `› refuses a parent gaining a thumbnail beside one its child already declares`, `› refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `› refuses a title or a body naming the thumbnail, and an edge property that is one`.
+A `thumbnail` field holds a small image the writer supplies; what a value may be is `items/thumbnail-format`.
 
-## Links
+### `types/thumbnail-one`
 
-27. **A type may name its link**: `link_field` names a string field the type declares or inherits, the one holding each row's own id at the vendor that writes the type, and `GET /types/{id}` answers it. It is the type's own: a subtype inherits the field and not the link, so a row of the subtype holding a value is no row of the type, and a subtype names a link of its own. A `link_field` that is not a string, names no field the type declares or inherits, names one whose type is not `string`, or names one whose name holds a `"` or a `\`, which break the path the index reads the field by, is refused `400 invalid_schema` naming `link_field`, and nothing is registered. A change to a type that would leave a type inheriting from it linking by a field it no longer declares or inherits, or by one whose type is no longer `string`, is refused `400 invalid_schema` naming the field, as that type's own registration would be, and nothing changes. `compliance/links.test.ts › declares a link and answers it on the type, not on a subtype`, `› refuses a link that is not a string field the type declares or inherits`, `› refuses a link whose field's name holds a quote or a backslash`, `› refuses a parent change that leaves a subtype's link naming no string field`.
-28. **A type gaining a link holds the rows it already has to it.** Naming, changing or withdrawing a `link_field` through `PUT /types/{id}` (13) holds the type's rows in every state to the new link at once: where two hold one value there the replacement is refused `409 link_taken`, naming neither row, and the type stays as it was; once one of them changes, the replacement lands and the value is the other's, whether or not that row is in the bin (`items/link-taken` and `items/link-freed`). The tombstones purges left of the old link go with it, because they hold another field's values, and the natural keys' stay (`items/tombstone-link-change`); a change that leaves the `link_field` as it was keeps both. `POST /types` asks the same of the rows a forced delete (`DELETE /types/{id}?force=true`) left under the identifier, which are the type's rows again once it is registered: where two of them hold one value in the `link_field` it names, the registration is refused `409 link_taken`, naming neither row, and nothing is registered. `compliance/links.test.ts › holds the rows a type already has to a link it gains`, `› forgets the old link's tombstones when a type changes its link`, `› keeps the link's tombstones through a type change that keeps the link`, `› refuses to register a link the rows a forced delete left share`.
+If a type would carry two thumbnail fields, counting one it inherits and one a type inheriting from it declares under another name, then the server MUST answer `400 invalid_schema`.
 
-## Fields gained
+**Tests:** `compliance/thumbnails.test.ts › refuses a thumbnail named for a field search indexes, and a second thumbnail`, `› refuses a parent gaining a thumbnail beside one its child already declares`, `› refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`.
 
-29. **A type gaining a field leaves the rows it already has as they are.** A `PUT /types/{id}` (13) that adds a field, required or not, judges none of the type's stored rows against it: a row already holding a property under the new field's name keeps its value even where the field refuses it, a row with no value for a field the type now requires keeps none, and both read back, by id and in a listing, as they were written and at the version they held. They meet the field at their next write, which is judged on the properties the row would hold after it, so a write after which the row would still break the field is refused `400 invalid_properties` naming it, and one mending the row lands. A link is the exception: a type gaining one holds its rows to it at once (28). `compliance/type-registry.test.ts › keeps the rows a type already has as they are when it gains a field`.
+### `types/thumbnail-name`
 
-## Registration reach
+If a type declares a thumbnail named `title`, `body`, `description` or `name`, or as an array's `items_type`, then the server MUST answer `400 invalid_schema`.
 
-30. **A key registers only the types its own type map grants write on.** `metadata.types:write` (4) admits a key to `POST /types`; its type map, resolved by name as it is for an item write, decides which identifiers. An identifier the map leaves at `read` or `none` is refused `403 type_not_permitted`, its message naming the identifier, and nothing is registered, whether or not anything holds the identifier yet, so one key cannot take an identifier first and leave the key it was meant for unable to register it. A map reaching every type registers any identifier the grammar and the reserved roots (1, 2) admit. `compliance/type-registry.test.ts › registers only the ids the key's own type map grants write on`.
+**Reason:** search indexes those four names whatever their type.
 
-## Formats
+**Tests:** `compliance/thumbnails.test.ts › refuses a thumbnail named for a field search indexes, and a second thumbnail`.
 
-31. A field's declared `type` stands beside a `format` that names a field type (`url`, `email`, `datetime`, `date`, `thumbnail`): on a `string` it is stored as that type, and on an `array` of strings as that `items_type`, so `{type: "array", items_type: "string", format: "url"}` reads back as an array of `url` and takes a list of strings. On a field already of that type it changes nothing, and on any other type it is refused `400 invalid_schema` naming the field's `format`, as is `thumbnail` on an array. `compliance/types.test.ts › keeps a list of strings with a type-naming format a list`, `› refuses a type-naming format on a field that is neither a string nor a list of strings`.
+### `types/thumbnail-hint`
 
-## Transactional registration views
+If a type's `display_hints.title_field` or `display_hints.body_field` names a thumbnail, then the server MUST answer `400 invalid_schema`.
 
-32. **The server's item and edge registrations commit with their SQLite transaction.** A transaction sees its staged registrations, inherited fields and roles, edge constraints and reverse names. Other callers retain the committed vocabulary and compiled validation schemas until the root commits. A released savepoint joins its parent; a refused savepoint discards its registrations and validation caches, and a root rollback discards them all. Platform removal also updates the platform vocabulary and system membership, including handles captured earlier. The root publishes the committed vocabulary before another writer is admitted. A lost commit acknowledgment keeps registry-dependent operations unavailable until an independent durable read reconstructs the vocabulary; failed reconstruction leaves those operations refused through the existing generic storage-error envelope. Reconstructing the vocabulary alone does not confirm unrelated rows or event delivery. These native transaction boundaries are held by the server's own `storage/sqlite/registry-transactions.test.ts`, `storage/sqlite/registry-settlement.test.ts` and ordinary TCP routes in `storage/sqlite/registry-routes.test.ts`; they do not promise a shared read snapshot across SQL and runtime lookups.
+**Tests:** `compliance/thumbnails.test.ts › refuses a title or a body naming the thumbnail, and an edge property that is one`.
 
-33. When a type declares `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` or `max_versions` in its `version_policy`, each declared value MUST be an integer of at least 1. When the policy declares more than one window, each later window MUST end no sooner than every earlier declared window, in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`. When either rule is violated, `POST /types` and `PUT /types/{id}` MUST refuse the policy with `400 invalid_schema` naming the field, without changing the registration. An omitted window MUST NOT participate in this comparison.
+### `types/link-field`
 
-    Thinning fills omitted windows from the type's ancestors and then from the instance defaults (34), which this comparison does not validate.
+When a type names a `link_field` that is a `string` field it declares or inherits, the server MUST store it and answer it on `GET /types/{id}` of that type and of no subtype.
 
-    Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field: %s`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
+**Reason:** the link is the type's own: a subtype inherits the field and not the link, and may name a link of its own.
 
-34. When the version-thinning job thins an item's history, it MUST apply the effective `version_policy` of the item's type, read in the transaction that removes the snapshots. The effective policy is the one `GET /types/{id}` returns, in which a type inherits `version_policy` from its parent chain field by field and a field the type declares overrides the same field of every ancestor. Thinning MUST take each field that no type in the chain declares from the instance defaults.
+**Tests:** `compliance/links.test.ts › declares a link and answers it on the type, not on a subtype`.
 
-    A policy that thinning read from the type alone would delete history that the policy advertised for the type retains, and one read before the transaction would ignore a replacement landing meanwhile. A type with no policy anywhere, and an item whose type is no longer registered, are thinned by the instance defaults alone.
+### `types/link-field-refused`
 
-    Tests: `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`, `› thins an item's history by the policy its type inherits`. The referee cannot age a snapshot, so the windows and a replacement landing mid-run are held by the server's own suite (`packages/server/src/storage/version-thinner.test.ts`).
+If a type's `link_field` is not a string, names no field the type declares or inherits, names one whose type is not `string`, or names one whose name holds `"` or `\`, then the server MUST answer `400 invalid_schema` naming `link_field`.
 
-## Evolving a type
+**Tests:** `compliance/links.test.ts › refuses a link that is not a string field the type declares or inherits`, `› refuses a link whose field's name holds a quote or a backslash`, `› refuses a link that is not a string field on a replacement too`.
 
-35. A credential that holds `metadata.types:write` and not `schema.write`, and write on the identifier in its type map (30), MUST be admitted to `PUT /types/{id}` for a replacement that does only these: adds an optional field no stored row holds a value under (36); changes the `label`, the `description` or the `display_hints`; changes the `version`; changes the `description` of a field it keeps.
+### `types/link-subtype-guard`
 
-    A connector's key is confined to its own namespace and holds no `schema.write`, so that a leaked key cannot delete its types. Without this, each release that adds a field needs an operator to replace the type by hand. A field added under a name no row holds acts on no stored row (29), and what is listed here changes only how the type is presented.
+If a replacement would leave a type inheriting from the replaced type linking by a field it no longer declares or inherits, or one no longer a `string`, then the server MUST answer `400 invalid_schema` naming the field.
 
-    Tests: `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› holds a key with metadata.types:write alone to the type map, and a key with neither permission out`.
+**Tests:** `compliance/links.test.ts › refuses a parent change that leaves a subtype's link naming no string field`.
 
-36. The server MUST refuse a credential admitted on `metadata.types:write` alone a replacement that adds a field when a stored row holds a value under that name, `403 forbidden`, in any lifecycle state and in any row of the type or of a type inheriting from it.
+### `types/link-gained`
 
-    A removal leaves the values rows hold (42), so adding a field under the name of a held value gives those values a shape, or makes a value a field kept out of search searchable. The refusal is the same whether the field was removed earlier, was never declared, or is held by a row of a subtype, which inherits the field.
+If a write naming or changing a type's `link_field` finds two of the type's items, in any state, holding one value in it, then the server MUST answer `409 link_taken` with `details` naming the type and the field and no item.
 
-    Tests: `compliance/type-evolution.test.ts › refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses a field whose name only a row of a subtype holds`, `› refuses bringing a removed field back, which would reshape the values rows still hold`.
+**Tests:** `compliance/links.test.ts › holds the rows a type already has to a link it gains`, `› holds the rows to a changed link at once`, `› refuses to register a link the rows a forced delete left share`.
 
-37. The server MUST refuse a credential admitted on `metadata.types:write` alone any change that 40 does not leave free, `403 forbidden`.
+### `types/link-withdrawn`
 
-    Each acts beyond the type. A removal followed by an addition reshapes held values (36). A required field is a new condition on every row. A kept field's shape decides whether rows already written pass their next write, and how they are searched. A changed `link_field` forgets the tombstones that record purges (28). A `version_policy` thins history. A `merge_policy` decides which concurrent edit is dropped. `roles` change what may link to the type. A `parent` changes the fields the type inherits and the queries that find its rows. A `compatible_with` is a claim readers rely on.
+When a replacement withdraws a type's `link_field`, the server MUST stop holding the type's items to it.
 
-    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+**Tests:** `compliance/links.test.ts › frees the rows and forgets the tombstones when a type withdraws its link`.
 
-38. The refusal in 37 MUST carry `details.required_scope` set to `schema.write` and `details.changes` listing each member that needs it, a member by its name and a field as `fields.<name>`.
+## Replacing a type
 
-    A client reads what to ask for, and which part of its replacement to split off.
+### `types/replace`
 
-    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+When a key holding `schema.write` or `metadata.types:write` sends `PUT /types/{id}` for a type registered at run time, with a schema no other rule of this chapter refuses, the server MUST replace the type and answer `200` with it.
 
-39. The server MUST leave the type as it was when it refuses a replacement under 37.
+**Tests:** `compliance/type-registry.test.ts › updates type schema: adding a field succeeds`.
 
-    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+### `types/version`
 
-40. A replacement MUST need `schema.write` when it removes a field; adds a required field; changes the type, constraints, `required` or `searchable` of a field the type keeps; or changes the `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `compatible_with`. A member the definition gains later MUST need it until 35 names the member.
+The server MUST keep the `version` that `POST /types` or `PUT /types/{id}` names, and 0 where it names none, whatever else the write changes.
 
-    Holding back by default keeps a new member from being opened to every connector's key by being added.
+**Tests:** `compliance/type-versioning.test.ts › registers a type that names no version at 0`, `› replaces a type at the version it already holds, whatever the change`, `› keeps the version a replacement names, and 0 where it names none`.
 
-    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+### `types/replace-refused`
 
-41. The server MUST admit a credential that holds `schema.write`, with write on the identifier in its type map, to every replacement that is otherwise valid and within 45.
+If `PUT /types/{id}` names a malformed identifier, then the server MUST answer `400 validation_error`.
 
-    A credential holding both permissions is judged as one holding `schema.write`. The witness in each refusal above is the same replacement landing for such a credential.
+**Tests:** `compliance/type-versioning.test.ts › refuses a malformed identifier and a schema the validator refuses with 400`.
 
-    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
+### `types/replace-schema-refused`
 
-## Removing a field
+If a key whose type map grants write on a type registered at run time sends `PUT /types/{id}` for it naming a schema registration would refuse, then the server MUST answer the code registration answers for it.
 
-42. When a replacement removes a field, the server MUST leave the value each row holds under its name stored and readable.
+**Tests:** `compliance/types.test.ts › refuses a replacement whose property name shadows a first-class Item field, as registration does`, `› refuses a replacement that breaks its compatible_with claim, as registration does`, `compliance/type-versioning.test.ts › refuses a malformed identifier and a schema the validator refuses with 400`.
 
-    This is why removal and re-addition need `schema.write` (36, 40). A removal judges no stored row, as an addition does not (29).
+### `types/replace-permission`
 
-    Tests: `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+If a key holding neither `schema.write` nor `metadata.types:write` sends `PUT /types/{id}`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write`.
 
-43. When a replacement removes a field, the server MUST leave each row of the type writable.
+**Tests:** `compliance/type-registry.test.ts › refuses both schema.write doors to a key without it, and declares the refusal`, `compliance/type-evolution.test.ts › holds a key with metadata.types:write alone to the type map, and a key with neither permission out`.
 
-    A row that still holds the value is written like any other: its declared properties change and the undeclared value stays.
+### `types/shipped-immutable`
 
-    Tests: `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+If `PUT /types/{id}` or `DELETE /types/{id}` names a platform type, shipped or drifted, then the server MUST answer `403 core_type_immutable`, before it asks about items, subtypes or the key's type map.
 
-44. The server MUST refuse a replacement that leaves a type inheriting from the replaced type with a `display_hints` or `merge_policy` entry naming a field neither it nor an ancestor declares, `400 invalid_schema`, naming the subtype and the member, and the type MUST stay as it was.
+**Tests:** `compliance/type-registry.test.ts › refuses both schema.write doors a platform-shipped type, and declares that refusal too`, `› refuses a platform type before it asks about subtypes, items or the key's type map`, `compliance/platform-type-drift.test.ts › refuses a replacement and a delete of a drifted platform type through the type registry`.
 
-    A subtype is registered with entries that name fields it inherits, and refuses every later replacement of its own once one of them names nothing. The link a subtype names is guarded the same way (27). A field the subtype or a type between declares itself is not asked of the replaced type.
+### `types/replace-reach`
 
-    Tests: `compliance/type-evolution.test.ts › refuses removing a field a subtype's display hints or merge policy name, naming both`.
+If a key whose type map does not grant write on a type registered at run time sends `PUT /types/{id}` or `DELETE /types/{id}` for it, then the server MUST answer `403 type_not_permitted` naming the type.
+
+**Tests:** `compliance/type-registry.test.ts › replaces and deletes only the types the key's own type map grants write on`.
+
+### `types/field-gained`
+
+When a replacement adds a field, required or not, the server MUST leave every stored item of the type as it is, at its version.
+
+**Reason:** the items meet the field at their next write of properties, under `items/property-invalid`.
+
+**Tests:** `compliance/type-registry.test.ts › keeps the rows a type already has as they are when it gains a field`.
+
+### `types/field-removed`
+
+When a replacement removes a field, the server MUST keep the value each item holds under its name and answer it on every read of the item.
+
+**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+
+### `types/field-removed-writable`
+
+When a replacement removes a field, the server MUST NOT refuse a later write of an item of the type for the value it holds under that name.
+
+**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+
+### `types/subtype-members`
+
+If a replacement would leave a type inheriting from it with a `display_hints` or `merge_policy` entry naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the subtype and the member.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses removing a field a subtype's display hints or merge policy name, naming both`.
+
+## Evolving a type without schema.write
+
+A connector's key holds `metadata.types:write` and not `schema.write`, so that a leaked key cannot remove its types.
+
+### `types/evolve-free`
+
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`.
+
+**Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
+
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`.
+
+### `types/evolve-held-name`
+
+If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, adding a field under a name an item of the type or of a type under it holds a value under, in any state, then the server MUST answer `403 forbidden`.
+
+**Reason:** a removal leaves the values items hold, so adding a field under a held name would give those values a shape.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses a field whose name only a row of a subtype holds`, `› refuses bringing a removed field back, which would reshape the values rows still hold`.
+
+### `types/evolve-schema-change`
+
+If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, changing anything `types/evolve-free` does not name, then the server MUST answer `403 forbidden`.
+
+**Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `compatible_with` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a change to compatible_with, a kept field's constraint, required or searchable to a key without schema.write, and lands it with it`, `› refuses a key on metadata.types:write alone a change of parent as a schema change`.
+
+### `types/evolve-refusal-details`
+
+When the server refuses a replacement under `types/evolve-held-name` or `types/evolve-schema-change`, the server MUST answer `details.required_scope` `schema.write` and `details.changes` listing, in sorted order, each member that needs it, a field as `fields.<name>`.
+
+**Reason:** the client reads what to ask for, and which part of its replacement to split off.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› lists every change that needs schema.write, sorted`.
+
+### `types/evolve-schema-write`
+
+When a key holding `schema.write` sends `PUT /types/{id}` for a type its map grants write on, the server MUST NOT refuse it under `types/evolve-held-name` or `types/evolve-schema-change`.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
 
 ## Naming a parent
 
-45. The server MUST refuse `POST /types`, and `PUT /types/{id}` when the replacement's `parent` differs from the stored one, with `403 type_not_permitted` when the credential's type map does not grant write on the parent. The message and `details.grant` name the parent, whether or not the parent is registered, and read on the parent is not enough.
+### `types/parent-reach`
 
-    A type that names a parent stops that parent being deleted (14), which changes what the parent's owner can do, so naming it is a write to it. The subtype is outside the owner's map, so the owner could neither change it nor remove it.
+If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that changes the stored `parent`, names a parent, other than a platform type, the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming the parent, whether or not the parent is registered.
 
-    Tests: `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
+**Reason:** a subtype stops its parent being deleted, so naming a parent is a write to it.
 
-46. The server MUST NOT ask a replacement that keeps its stored `parent` for write on it.
+**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`.
 
-    A type registered before the rule stays editable by its own key.
+### `types/parent-kept`
 
-    Tests: `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
+The server MUST NOT ask write on the parent of a replacement that keeps the stored `parent`.
 
-47. The server MUST NOT ask write on a platform-shipped parent, `core.*` and `system.*`.
+**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
 
-    No credential can delete a platform-shipped type, and connectors subtype them.
+### `types/parent-shipped`
 
-    Tests: `compliance/type-evolution.test.ts › exempts platform-shipped parents`.
+The server MUST NOT ask write on a parent that is a platform type, shipped or drifted.
 
-48. The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
+**Reason:** no credential can delete a platform type through `/types`, and connectors subtype them.
 
-    Reason: type existence is not secret, because an unregistered type and a registered one are already told apart (`search-and-filters.md` 1, 50); a schema holds no item data; and a device resolves an inherited field by walking `parent` through `GET /types` (`device.md` 47), so hiding an ancestor would silently drop the fields it declares. `keys-and-oauth.md` 16 already admits both registries to every credential. Narrowing them would not simplify the doors that name a type either, since each already refuses by the type's name.
+**Tests:** `compliance/type-evolution.test.ts › exempts platform-shipped parents`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.
+## Deleting a type
 
-49. When validating a `datetime` property, the server MUST accept a valid `YYYY-MM-DD` calendar date or that date followed by `T`, a time (`HH:MM`, `HH:MM:SS` or `HH:MM:SS` followed by a decimal fraction) and `Z` or a `±HH:MM` offset, with hours from `00` to `23` and minutes and seconds from `00` to `59`.
+### `types/delete`
 
-    Reason: field values retain the precision their source supplied, and a device must validate the same values offline as the server accepts online (`device.md` 57). This rule applies to declared properties, not the system timestamps that `items/occurred-at-utc` normalizes.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no type names as parent, the server MUST remove it.
 
-    Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/shared/src/type-registry.test.ts › accepts datetime instants in any offset, and the all-day bare date`; `packages/server/src/routes/items.test.ts › matches working-copy field validation at Unicode and format boundaries`.
+**Tests:** `compliance/type-registry.test.ts › deletes a type with no items`.
+
+### `types/delete-in-use`
+
+If a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` without `force=true` for a type registered at run time that an item holds, in any state, then the server MUST answer `409 type_in_use`.
+
+**Tests:** `compliance/type-registry.test.ts › rejects deleting a type that has items`, `› refuses to delete a type that has only an item in the bin`.
+
+### `types/delete-subtypes`
+
+If a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that another type names as parent, then the server MUST answer `409 type_has_subtypes` with `details.subtype_ids`, with `force=true` or without, before any answer about its items.
+
+**Tests:** `compliance/type-registry.test.ts › refuses deleting a parent while a subtype still declares it`, `› refuses force against a parent, ahead of the items it holds`.
+
+### `types/delete-force`
+
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold, the server MUST remove the type and keep the items.
+
+**Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to a row a forced delete left, until its type is registered again`.
+
+### `types/delete-force-value`
+
+If `DELETE /types/{id}` names a `force` that is neither `true` nor `false`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/type-registry.test.ts › refuses a force that is not true or false`.
+
+### `types/delete-permission`
+
+If a key without `schema.write` sends `DELETE /types/{id}`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write`.
+
+**Tests:** `compliance/type-evolution.test.ts › refuses the delete to a key without schema.write, force included`, `compliance/type-registry.test.ts › refuses both schema.write doors to a key without it, and declares the refusal`.
+
+### `types/orphan-write`
+
+While a type is unregistered, if a write would set the properties, tier, time or natural key of an item of it, on `POST /items`, `PATCH /items/{id}`, a `POST /items/bulk` entry or a bulk action, then the server MUST refuse it `unknown_type`.
+
+**Tests:** `compliance/type-registry.test.ts › refuses a create of a type that was force-deleted under it`, `› refuses a write to a row a forced delete left, until its type is registered again`, `› refuses a bulk upsert and a bulk action onto a row a forced delete left`, `› refuses a change of tier or time to a row a forced delete left, singly and in bulk`.
+
+### `types/orphan-kept-writable`
+
+While a type is unregistered, the server MUST let an item of it have its tags, extensions and lifecycle state written.
+
+**Reason:** a row nothing can describe can still be put away.
+
+**Tests:** `compliance/type-registry.test.ts › keeps the tags, extensions and lifecycle of a row a forced delete left writable`.
+
+### `types/orphan-reregistered`
+
+When a type is registered again, the server MUST hold each later write to its items to the schema it is registered with.
+
+**Tests:** `compliance/type-registry.test.ts › refuses a write to a row a forced delete left, until its type is registered again`.
+
+### `types/delete-race`
+
+When an item write races `DELETE /types/{id}`, the server MUST either count the item, refusing a delete without `force=true` `409 type_in_use`, or refuse the item `unknown_type`.
+
+**Tests:** waiting on #1444.
+
+## Version policy
+
+### `types/version-policy-values`
+
+If a type's `version_policy` names a `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` or `max_versions` that is not a whole number of at least 1, then the server MUST answer `400 invalid_schema` naming it.
+
+**Tests:** `compliance/version-policy.test.ts › refuses a number that is not a whole positive one, naming the field: %s`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+
+### `types/version-policy-order`
+
+If a type's `version_policy` names a window that ends sooner than an earlier one it names, in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`, then the server MUST answer `400 invalid_schema` naming the window that ends too soon.
+
+**Tests:** `compliance/version-policy.test.ts › refuses windows out of order, naming the one that ends too soon`, `› registers a policy of whole positive numbers in order`, `› refuses the same on a replacement and keeps the type as it was`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+
+## Enforcement levers
+
+`GET /config` and `PUT /config` hold the instance's levers beside its retention settings.
+
+### `types/config`
+
+When a key holding `config.manage` sends `PUT /config`, the server MUST replace the configuration whole and answer it beside the instance's identity, as `GET /config` then reads it (`instance.md` 2).
+
+**Tests:** `compliance/schema-enforcement.test.ts › PUT replaces the configuration wholesale and GET reads it back`.
+
+### `types/config-refused`
+
+If `PUT /config` names a lever of the wrong shape or a key it does not know, then the server MUST answer `400 validation_error` and keep the configuration.
+
+**Tests:** `compliance/schema-enforcement.test.ts › refuses a lever of the wrong shape`, `› refuses a configuration key it does not know, and keeps the configuration`.
+
+### `types/config-permission`
+
+If a key without `config.manage` sends `GET /config` or `PUT /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
+
+**Tests:** `compliance/schema-enforcement.test.ts › refuses both doors to a key without config.manage`.
+
+### `types/strict-mode`
+
+Where the `enforcement.strict_mode` that holds for the writing key, its own override's if the override names one and else the instance's, names a type in `types`, the server MUST refuse a write of an item of exactly that type that names a property neither the type nor an ancestor declares, with `400 invalid_properties`.
+
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects unknown property with invalid_properties`, `› default-off accepts unknown property on core.note write`, `› holds strict mode and the source allow-list to the type named, not its subtypes`.
+
+### `types/source-allowlist`
+
+Where the `enforcement.source_allowlist` that holds for the writing key, its own override's if the override names one and else the instance's, names a type in `types`, if `POST /items` or a `POST /items/bulk` entry writes an item of exactly that type under a source the list does not name, then the server MUST refuse it `403 forbidden` with `details.type`, `details.source` and `details.allowed`.
+
+**Tests:** `compliance/schema-enforcement.test.ts › rejects writes from non-listed source`, `› accepts writes from listed source`, `› asks it of every bulk entry, under the source the entry resolves to`, `› holds strict mode and the source allow-list to the type named, not its subtypes`.
+
+### `types/source-filter`
+
+Where the `enforcement.source_filter` that holds for the reading key, its own override's if the override names one and else the instance's, names types and sources, the server MUST leave out of every read that returns a set, a listing, search, export, stats and the tag counts among them, each item of a named type or a type under it whose source the filter does not name.
+
+**Tests:** `compliance/schema-enforcement.test.ts › narrows reads to listed sources`, `› narrows every read that returns a set, not just the list route`, `› narrows only the types the source filter names, and their subtypes`.
+
+### `types/source-filter-by-id`
+
+The server MUST NOT apply `enforcement.source_filter` to a read by id.
+
+**Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`.
+
+## Shipped types
+
+### `types/shipped`
+
+The server MUST ship `core.bookmark`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file.image`, `core.highlight`, `core.media.article`, `core.media.book`, `core.message`, `core.note` and `core.task`, each with fields and a label.
+
+**Tests:** `compliance/types.test.ts › lists every shipped type the suite writes against`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
+
+### `types/shipped-system`
+
+The server MUST ship `system.connection` and `system.folder` and no other `system.*` type.
+
+**Tests:** `compliance/system-types.test.ts › ships only the system types the server writes`, `› lists exactly the two system types the server writes`.
+
+### `types/message`
+
+The server MUST ship `core.message` requiring `body` and `from`, taking `to` as a list of identifiers in any format, and naming `body` its display body.
+
+**Tests:** `compliance/core-message.test.ts › creates a message with body, from, and to`, `› creates with only the required body and from`, `› accepts participant identifiers in any format`, `› rejects a message missing from with invalid_properties naming it`, `› rejects a message missing body with invalid_properties naming it`, `› declares body as its display body field`, `› declares body and from as required in the registry`.
+
+### `types/highlight`
+
+The server MUST ship `core.highlight` requiring `text`, taking `note`, `color`, `start_location`, `end_location` and `locator_type`, and declaring no `highlighted_at`.
+
+**Reason:** the moment a highlight was made is the item's own `occurred_at`.
+
+**Tests:** `compliance/highlight.test.ts › creates with only the required text property`, `› rejects a highlight missing the required text property`, `› roundtrips all optional properties`, `› accepts an optional note alongside text`, `› accepts each locator_type variant`, `› the moment the highlight was made is the system occurred_at`, `› has no highlighted_at property on item or properties`.
+
+### `types/entity`
+
+The server MUST ship `core.entity` requiring `name`, with `core.entity.person` and `core.entity.place` under it adding fields of their own.
+
+**Tests:** `compliance/entity-subtypes.test.ts › creates a generic entity with required name field`, `› rejects entity without required name with invalid_properties naming it`, `› creates a person entity with person-specific fields`, `› creates a place entity with place-specific fields`, `› person inherits all entity fields`, `› requires an entity's name on a person and a place too`.
+
+### `types/connection`
+
+The server MUST ship `system.connection` with `kind` taking `app` alone, a description that names no connector, and none of `attached_device`, `feed_activity`, `last_error_at`, `last_sync_at`, `mapping_reapply_until`, `next_run_at`, `runtime_status`, `triggers`, `connector_id`, `credential_id`, `configuration`, `direction` and `mapping`, in its fields, its description or a row it serves.
+
+**Tests:** `compliance/system-types.test.ts › declares app as the only system.connection kind`, `› ships none of the system.connection fields no door accepts`, `› serves no system.connection carrying a field the type no longer declares`.
+
+## The platform registry
+
+The registry rows of shipped types are the platform's. An instance upgraded past a build that shipped a type keeps its row, drifted, until the operator removes it.
+
+### `types/platform-drift`
+
+When the operator key sends `GET /platform-types/drift`, the server MUST list each platform row the build no longer ships, with its `item_count`, `child_types` and whether it is `removable`.
+
+**Tests:** `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+
+### `types/platform-remove`
+
+When the operator key sends `DELETE /platform-types/{id}` for a drifted type no item holds and no type names as parent, the server MUST remove it and answer `200` with `removed: true`.
+
+**Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+
+### `types/platform-remove-audit`
+
+When `DELETE /platform-types/{id}` removes a type, the server MUST record a `platform_type.removed` entry at `GET /audit` naming the type and the operator key.
+
+**Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
+
+### `types/platform-remove-refused`
+
+If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent, then the server MUST answer `409 conflict`.
+
+**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`.
+
+### `types/platform-remove-missing`
+
+If `DELETE /platform-types/{id}` names an identifier no registry row carries, then the server MUST answer `404 type_not_found`.
+
+**Tests:** `compliance/platform-types.test.ts › answers 404 for an identifier no platform row carries`.
+
+### `types/platform-operator-only`
+
+If a credential other than the operator key sends `GET /platform-types/drift` or `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/platform-types.test.ts › refuses removal to a working key`, `› refuses the listing to a working key and to no credential`.

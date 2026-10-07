@@ -388,6 +388,48 @@ describe("type inheritance rule", () => {
     expect(item.data.item.properties.supplemental).toBe("own field");
   });
 
+  it("answers the display hints of the nearest type that declares any, whole", async () => {
+    const parentId = `user.hints-parent-${ctx.runId}`;
+    const fields = {
+      heading: { type: "string" },
+      text: { type: "string" },
+    } as const;
+    expect(
+      (
+        await client.registerType({
+          id: parentId,
+          fields,
+          display_hints: { title_field: "heading", body_field: "text" },
+        })
+      ).ok,
+    ).toBe(true);
+    const silent = `${parentId}.silent`;
+    expect(
+      (await client.registerType({ id: silent, parent: parentId, fields: {} }))
+        .ok,
+    ).toBe(true);
+    const partial = `${parentId}.partial`;
+    expect(
+      (
+        await client.registerType({
+          id: partial,
+          parent: parentId,
+          fields: {},
+          display_hints: { body_field: "heading" },
+        })
+      ).ok,
+    ).toBe(true);
+
+    expect((await client.getType(silent)).data.display_hints).toEqual({
+      title_field: "heading",
+      body_field: "text",
+    });
+    // Whole, not merged: the parent's title does not fill the gap.
+    expect((await client.getType(partial)).data.display_hints).toEqual({
+      body_field: "heading",
+    });
+  });
+
   it("core entity/file/media subtypes resolve", async () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
@@ -421,6 +463,61 @@ describe("type inheritance rule", () => {
       compatible_with: "core.note",
     });
     expect(r.ok).toBe(true);
+  });
+
+  it("takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not", async () => {
+    const target = `user.compat-readable-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: target,
+          fields: {
+            text: { type: "string", required: true },
+            amount: { type: "number", required: true },
+            choice: { type: "enum", enum_values: ["a", "b", "c"] },
+            names: { type: "array", items_type: "string" },
+            language: { type: "string", format: "bcp47" },
+          },
+        })
+      ).ok,
+    ).toBe(true);
+    const readable = {
+      text: { type: "url", required: true },
+      amount: { type: "integer", required: true },
+      choice: { type: "enum", enum_values: ["a", "b"] },
+      names: { type: "array", items_type: "string" },
+      language: { type: "string" },
+    };
+    const taken = await client.registerType({
+      id: `${target}-readable`,
+      fields: readable,
+      compatible_with: target,
+    } as never);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+
+    for (const [field, definition, attribute] of [
+      ["text", { type: "integer", required: true }, "type"],
+      ["amount", { type: "string", required: true }, "type"],
+      ["choice", { type: "enum", enum_values: ["a", "d"] }, "enum_values"],
+      ["names", { type: "array", items_type: "number" }, "items_type"],
+      ["language", { type: "string", format: "iso3166" }, "format"],
+    ] as const) {
+      const refused = await client.registerType({
+        id: `${target}-${field}`,
+        fields: { ...readable, [field]: definition },
+        compatible_with: target,
+      } as never);
+      expect(refused.status, field).toBe(422);
+      expect(refused.error?.error.code, field).toBe(
+        "compatible_with_violation",
+      );
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(
+        errors?.map((e) => e.field),
+        field,
+      ).toContain(`compatible_with.${target}.${field}.${attribute}`);
+    }
   });
 
   it("rejects compatible_with target that does not exist", async () => {

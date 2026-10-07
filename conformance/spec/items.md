@@ -118,7 +118,7 @@ If `POST /items` or a `POST /items/bulk` entry names a source that is neither th
 
 ### `items/source-allow-list`
 
-When the server asks a type's source allow-list (`types.md` 18) of a write to an item, the server MUST ask it of the source the write resolves to, on `POST /items` and on each `POST /items/bulk` entry.
+When the server asks a type's source allow-list (`types/source-allowlist`) of a write to an item, the server MUST ask it of the source the write resolves to, on `POST /items` and on each `POST /items/bulk` entry.
 
 **Reason:** a source a key claims carries no write past the allow-list.
 
@@ -1732,7 +1732,7 @@ When a `first_placement` directory climbs and comes back inside the folder, the 
 
 ## Links and tombstones
 
-A type that names a `link_field` (`types.md` 27) makes that field each item's link: a value one item of the type holds.
+A type that names a `link_field` (`types/link-field`) makes that field each item's link: a value one item of the type holds.
 
 ### `items/link-taken`
 
@@ -1806,7 +1806,7 @@ When an item comes to hold a link a tombstone records in its type, or a natural 
 
 ### `items/tombstone-link-change`
 
-When a type changes or withdraws its `link_field` (`types.md` 28), the server MUST drop its link tombstones.
+When a type changes or withdraws its `link_field` (`types/link-gained` and `types/link-withdrawn`), the server MUST drop its link tombstones.
 
 **Tests:** `compliance/links.test.ts › forgets the old link's tombstones when a type changes its link`.
 
