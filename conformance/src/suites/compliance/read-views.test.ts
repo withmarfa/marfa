@@ -11,12 +11,15 @@ import {
   cleanup,
   newRunId,
   trackEdge,
+  trackEdgeType,
   trackFolder,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 import {
   openEventStream,
+  type EventStream,
   type OpenEventStreamOptions,
   type SseEvent,
 } from "../../utils/sse.js";
@@ -50,6 +53,7 @@ interface CopyItem {
 }
 
 let server: FreshServer;
+let appToken: Promise<string> | undefined;
 let client: MarfaClient;
 let operator: MarfaClient;
 let ctx: TestContext;
@@ -94,6 +98,12 @@ afterAll(async () => {
   }
 }, FRESH_SERVER_TIMEOUT_MS);
 
+/** An instance has one owner, so the approved app is made once per server. */
+function approvedApp(): Promise<string> {
+  appToken ??= approvedAppToken(server);
+  return appToken;
+}
+
 function request(path: string, proof?: string, key = server.workingKey) {
   return fetch(`${server.apiUrl}${path}`, {
     headers: {
@@ -137,6 +147,71 @@ async function seed(body: string, by = client) {
   expect(result.ok, JSON.stringify(result.error)).toBe(true);
   trackItem(ctx, result.data.item.id);
   return result.data.item;
+}
+
+async function expectClosed(stream: EventStream) {
+  const reader = stream.response.body!.getReader();
+  const deadline = AbortSignal.timeout(FRAME_BUDGET_MS);
+  const onAbort = () => void reader.cancel();
+  deadline.addEventListener("abort", onAbort, { once: true });
+  try {
+    const remaining = await reader.read();
+    expect(deadline.aborted, "the terminal must close the stream").toBe(false);
+    expect(remaining.done).toBe(true);
+    expect(remaining.value).toBeUndefined();
+  } finally {
+    deadline.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+}
+
+async function errorCode(response: Response) {
+  return ((await response.json()) as { error: { code: string } }).error.code;
+}
+
+/** Whether the credential's own view still stands, and the view it moved to. */
+async function holds(proof: Proof, key = server.workingKey) {
+  certified(
+    await request("/items?include=metadata", proof.read_view, key),
+    proof.read_view,
+  );
+  expect((await bootstrap(key, proof)).read_view).toBe(proof.read_view);
+}
+
+async function moves(proof: Proof, key = server.workingKey) {
+  await changed(await request("/items?include=metadata", proof.read_view, key));
+  const next = await bootstrap(key);
+  expect(next.read_view).not.toBe(proof.read_view);
+  return next;
+}
+
+async function seedEdge(
+  from: string,
+  to: string,
+  edgeType = "about",
+  by = client,
+) {
+  const result = await by.createEdge({
+    source_id: from,
+    target_id: to,
+    edge_type: edgeType,
+  });
+  expect(result.ok, JSON.stringify(result.error)).toBe(true);
+  trackEdge(ctx, result.data.edge.id);
+  return result.data.edge;
+}
+
+function doors(item: string, edge: string) {
+  return [
+    "/items?include=metadata",
+    `/items/${item}`,
+    `/items/${item}/edges`,
+    "/edges",
+    `/edges/${edge}`,
+    "/types",
+    "/edge-types",
+    "/keys/current",
+  ];
 }
 
 function marker(event: SseEvent, name: string): Proof {
@@ -721,7 +796,7 @@ describe("conditional working-copy read views", () => {
   });
 
   it("certifies an approved app's current-key refusal under its matching read view", async () => {
-    const token = await approvedAppToken(server);
+    const token = await approvedApp();
     const proof = await bootstrap(token);
     certified(
       await request("/items?include=metadata", proof.read_view, token),
@@ -790,21 +865,7 @@ describe("conditional working-copy read views", () => {
           data: { event_type: "read_view_changed" },
         },
       ]);
-      const reader = stream.response.body!.getReader();
-      const deadline = AbortSignal.timeout(FRAME_BUDGET_MS);
-      const onAbort = () => void reader.cancel();
-      deadline.addEventListener("abort", onAbort, { once: true });
-      try {
-        const remaining = await reader.read();
-        expect(deadline.aborted, "the terminal must close the stream").toBe(
-          false,
-        );
-        expect(remaining.done).toBe(true);
-        expect(remaining.value).toBeUndefined();
-      } finally {
-        deadline.removeEventListener("abort", onAbort);
-        reader.releaseLock();
-      }
+      await expectClosed(stream);
     } finally {
       await stream.close();
     }
@@ -851,5 +912,740 @@ describe("conditional working-copy read views", () => {
       await request(`/items/${body.item.id}`, proof.read_view),
       proof.read_view,
     );
+  });
+});
+
+describe("what a read view is bound to", () => {
+  it("answers 409 to a read view minted for another credential, on every door and on resume", async () => {
+    const row = await seed("credential witness");
+    const target = await seed("credential witness target");
+    const edge = await seedEdge(row.id, target.id);
+    const reach = {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+      permissions: [],
+    };
+    const first = await mint("credential-first", reach);
+    const second = await mint("credential-second", reach);
+    const own = await bootstrap(first.key);
+    const other = await bootstrap(second.key);
+    expect(other.instance_id).toBe(own.instance_id);
+    expect(other.read_view).not.toBe(own.read_view);
+    for (const path of doors(row.id, edge.id)) {
+      certified(await request(path, own.read_view, first.key), own.read_view);
+      certified(
+        await request(path, other.read_view, second.key),
+        other.read_view,
+      );
+      await changed(await request(path, own.read_view, second.key));
+      await changed(await request(path, other.read_view, first.key));
+    }
+    await withStream(
+      server.apiUrl,
+      second.key,
+      {
+        query: COPY_QUERY,
+        lastEventId: own.cursor,
+        readView: own.read_view,
+      },
+      async (stream) => {
+        await changed(stream.response);
+      },
+    );
+    await bootstrap(second.key, other);
+  });
+
+  it("changes the read view when a key's edge reads narrow or widen, and keeps it when only edge writes change", async () => {
+    const key = await mint("edge-reach", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { about: "read" },
+      permissions: [],
+    });
+    const middle = await bootstrap(key.key);
+    const update = async (edge_permissions: Record<string, string>) => {
+      const result = await operator.updateKey(key.id, { edge_permissions });
+      expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    };
+    await update({});
+    const narrowed = await moves(middle, key.key);
+    await update({ about: "read", "parent-of": "read" });
+    const widened = await moves(narrowed, key.key);
+    expect(widened.read_view).not.toBe(middle.read_view);
+    await update({ about: "write", "parent-of": "read" });
+    await holds(widened, key.key);
+    await update({ about: "read" });
+    await holds(middle, key.key);
+  });
+
+  it("changes the read view when a key's metadata reads narrow or widen, and keeps it when only metadata writes change", async () => {
+    const key = await mint("metadata-reach", {
+      type_permissions: { "*": "read" },
+      metadata_permissions: { tags: "read" },
+      permissions: [],
+    });
+    const middle = await bootstrap(key.key);
+    const update = async (metadata_permissions: Record<string, string>) => {
+      const result = await operator.updateKey(key.id, { metadata_permissions });
+      expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    };
+    await update({});
+    const narrowed = await moves(middle, key.key);
+    await update({ "*": "read" });
+    const widened = await moves(narrowed, key.key);
+    expect(widened.read_view).not.toBe(middle.read_view);
+    await update({ "*": "write" });
+    await holds(widened, key.key);
+    await update({ tags: "read" });
+    await holds(middle, key.key);
+  });
+
+  it("changes the read view when a key's extension reads narrow or widen, and keeps it when only extension writes change", async () => {
+    const key = await mint("extension-reach", {
+      type_permissions: { "*": "read" },
+      extension_permissions: { acme: "read" },
+      permissions: [],
+    });
+    const middle = await bootstrap(key.key);
+    const update = async (extension_permissions: Record<string, string>) => {
+      const result = await operator.updateKey(key.id, {
+        extension_permissions,
+      });
+      expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    };
+    await update({});
+    const narrowed = await moves(middle, key.key);
+    await update({ "*": "read" });
+    const widened = await moves(narrowed, key.key);
+    expect(widened.read_view).not.toBe(middle.read_view);
+    await update({ "*": "write" });
+    await holds(widened, key.key);
+    await update({ acme: "read" });
+    await holds(middle, key.key);
+  });
+
+  it("changes the read view when a key's own source filter narrows, widens or clears", async () => {
+    const writer = await mint("override-writer");
+    const outside = await seed(
+      "outside the override",
+      new MarfaClient({ baseUrl: server.apiUrl, apiKey: writer.key }),
+    );
+    const key = await mint("override-reader", {
+      type_permissions: { "*": "read" },
+      permissions: [],
+    });
+    const open = await bootstrap(key.key);
+    const listedUnder = async (proof: Proof) => {
+      const response = await request(
+        `/items/${outside.id}`,
+        proof.read_view,
+        key.key,
+      );
+      certified(response, proof.read_view);
+      return ((await response.json()) as CopyItem).listed;
+    };
+    expect(await listedUnder(open)).toBe(true);
+    const update = async (sources: string[]) => {
+      const result = await operator.updateKey(key.id, {
+        enforcement_override: {
+          source_filter: { types: ["core.note"], sources },
+        },
+      });
+      expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    };
+    await update([ctx.source]);
+    const narrowed = await moves(open, key.key);
+    expect(await listedUnder(narrowed)).toBe(false);
+    await update([ctx.source, writer.source!]);
+    const widened = await moves(narrowed, key.key);
+    expect(await listedUnder(widened)).toBe(true);
+    expect(widened.read_view).not.toBe(open.read_view);
+    const cleared = await operator.updateKey(key.id, {
+      enforcement_override: null,
+    });
+    expect(cleared.ok, JSON.stringify(cleared.error)).toBe(true);
+    await holds(open, key.key);
+    await changed(
+      await request("/items?include=metadata", widened.read_view, key.key),
+    );
+  });
+});
+
+describe("what moves a read view", () => {
+  it("changes the read view when an edge moves to another source, and keeps it when only the target moves", async () => {
+    const from = await seed("move source");
+    const to = await seed("move target");
+    const farther = await seed("move farther target");
+    const elsewhere = await seed("move other source");
+    const proof = await bootstrap();
+    const edge = await seedEdge(from.id, to.id, "supersedes");
+    const extra = await seedEdge(to.id, farther.id);
+    expect((await client.deleteEdge(extra.id)).ok).toBe(true);
+    await holds(proof);
+    const retargeted = await client.updateEdge(edge.id, {
+      target_id: farther.id,
+      version: edge.version,
+    });
+    expect(retargeted.ok, JSON.stringify(retargeted.error)).toBe(true);
+    expect(retargeted.data.edge.target_id).toBe(farther.id);
+    await holds(proof);
+    const resourced = await client.updateEdge(edge.id, {
+      source_id: elsewhere.id,
+      version: retargeted.data.edge.version,
+    });
+    expect(resourced.ok, JSON.stringify(resourced.error)).toBe(true);
+    expect(resourced.data.edge.source_id).toBe(elsewhere.id);
+    await moves(proof);
+  });
+
+  it("changes the read view when a custom type is created, re-parented or deleted, and keeps it when an update keeps the parent", async () => {
+    const parent = `user.view-parent-${ctx.runId}`;
+    const sibling = `user.view-sibling-${ctx.runId}`;
+    const child = `${parent}.child`;
+    const register = async (id: string, parentId?: string) => {
+      const result = await client.registerType({
+        id,
+        ...(parentId === undefined ? {} : { parent: parentId }),
+        fields: { name: { type: "string" } },
+      });
+      expect(result.ok, JSON.stringify(result.error)).toBe(true);
+      trackType(ctx, id, client, parentId);
+    };
+    let proof = await bootstrap();
+    await register(parent);
+    proof = await moves(proof);
+    await register(sibling);
+    proof = await moves(proof);
+    await register(child, parent);
+    proof = await moves(proof);
+    const described = await client.replaceType(child, {
+      id: child,
+      parent,
+      version: 1,
+      description: "same parent",
+      fields: { name: { type: "string" } },
+    });
+    expect(described.ok, JSON.stringify(described.error)).toBe(true);
+    await holds(proof);
+    const reparented = await client.replaceType(child, {
+      id: child,
+      parent: sibling,
+      version: 2,
+      fields: { name: { type: "string" } },
+    });
+    expect(reparented.ok, JSON.stringify(reparented.error)).toBe(true);
+    proof = await moves(proof);
+    const deleted = await client.deleteType(child);
+    expect(deleted.ok, JSON.stringify(deleted.error)).toBe(true);
+    await moves(proof);
+  });
+
+  it("changes the read view when a custom edge type is created or deleted", async () => {
+    const id = `mock.view.${ctx.runId}`;
+    const proof = await bootstrap();
+    const registered = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, id);
+    const created = await moves(proof);
+    const removed = await client.deleteEdgeType(id);
+    expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
+    await moves(created);
+  });
+
+  it("keeps the read view across a tier change, a state change, a trash and a restore", async () => {
+    const row = await seed("ordinary lifecycle");
+    const proof = await bootstrap();
+    const tiered = await client.updateItem(row.id, {
+      version: row.version,
+      tier: "feed",
+    });
+    expect(tiered.ok, JSON.stringify(tiered.error)).toBe(true);
+    expect(tiered.data.item.tier).toBe("feed");
+    await holds(proof);
+    const archived = await client.transitionItem(row.id, "archived");
+    expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
+    await holds(proof);
+    expect((await client.deleteItem(row.id)).ok).toBe(true);
+    await holds(proof);
+    expect((await client.restoreItem(row.id)).ok).toBe(true);
+    await holds(proof);
+  });
+
+  it("changes the read view when a bulk write retypes an item, and keeps it when the type is unchanged", async () => {
+    const row = await seed("bulk retype witness");
+    const proof = await bootstrap();
+    const same = await client.bulkItems({
+      retype: true,
+      items: [
+        { id: row.id, type: "core.note", properties: { body: "same type" } },
+      ],
+    });
+    expect(same.ok, JSON.stringify(same.error)).toBe(true);
+    expect(same.data.counts.updated).toBe(1);
+    await holds(proof);
+    const retyped = await client.bulkItems({
+      retype: true,
+      items: [
+        {
+          id: row.id,
+          type: "core.bookmark",
+          properties: { url: "https://example.com/bulk-retype" },
+        },
+      ],
+    });
+    expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
+    expect(retyped.data.counts.updated).toBe(1);
+    await moves(proof);
+  });
+});
+
+describe("what a read view certifies and what it outranks", () => {
+  it("certifies type not permitted, edge permission denied and a hidden-type absence under the matching read view", async () => {
+    const note = await seed("refusal note");
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      properties: { url: "https://example.com/refusal" },
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    const seeAbout = await mint("refusal-about", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { about: "read" },
+      permissions: [],
+    });
+    const noEdges = await mint("refusal-no-edges", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: {},
+      permissions: [],
+    });
+    const full = await bootstrap();
+    const sees = await bootstrap(seeAbout.key);
+    const blind = await bootstrap(noEdges.key);
+    const refusal = async (
+      path: string,
+      proof: Proof,
+      key: string,
+      status: number,
+      code: string,
+    ) => {
+      const response = await request(path, proof.read_view, key);
+      certified(response, proof.read_view, status);
+      expect(response.headers.get("X-Error-Code")).toBe(code);
+      expect(await errorCode(response)).toBe(code);
+    };
+
+    const bookmarks = "/items?include=metadata&type=core.bookmark";
+    certified(await request(bookmarks, full.read_view), full.read_view);
+    certified(
+      await request(
+        "/items?include=metadata&type=core.note",
+        sees.read_view,
+        seeAbout.key,
+      ),
+      sees.read_view,
+    );
+    await refusal(bookmarks, sees, seeAbout.key, 403, "type_not_permitted");
+
+    const filtered = `/items?include=metadata&edge[about]=${note.id}`;
+    certified(
+      await request(filtered, sees.read_view, seeAbout.key),
+      sees.read_view,
+    );
+    await refusal(filtered, blind, noEdges.key, 403, "edge_permission_denied");
+
+    certified(
+      await request(`/items/${bookmark.data.item.id}`, full.read_view),
+      full.read_view,
+    );
+    certified(
+      await request(`/items/${note.id}`, sees.read_view, seeAbout.key),
+      sees.read_view,
+    );
+    await refusal(
+      `/items/${bookmark.data.item.id}`,
+      sees,
+      seeAbout.key,
+      404,
+      "item_not_found",
+    );
+  });
+
+  it("answers 409 before a validation 400 and before a resource 403 under a stale read view", async () => {
+    const target = await seed("precedence target");
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      properties: { url: "https://example.com/precedence" },
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    const noEdges = await mint("precedence-no-edges", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: {},
+      permissions: [],
+    });
+    const token = await approvedApp();
+    const reader = await bootstrap(noEdges.key);
+    const app = await bootstrap(token);
+    const cases = [
+      {
+        path: "/items?include=metadata&limit=0",
+        key: noEdges.key,
+        proof: reader,
+        fresh: { status: 400, code: "validation_error", certified: false },
+      },
+      {
+        path: "/edges?limit=0",
+        key: noEdges.key,
+        proof: reader,
+        fresh: { status: 400, code: "validation_error", certified: false },
+      },
+      {
+        path: "/items?include=metadata&type=core.bookmark",
+        key: noEdges.key,
+        proof: reader,
+        fresh: { status: 403, code: "type_not_permitted", certified: true },
+      },
+      {
+        path: `/items?include=metadata&edge[about]=${target.id}`,
+        key: noEdges.key,
+        proof: reader,
+        fresh: { status: 403, code: "edge_permission_denied", certified: true },
+      },
+      {
+        path: `/items/${bookmark.data.item.id}`,
+        key: noEdges.key,
+        proof: reader,
+        fresh: { status: 404, code: "item_not_found", certified: true },
+      },
+      {
+        path: "/keys/current",
+        key: token,
+        proof: app,
+        fresh: { status: 403, code: "forbidden", certified: true },
+      },
+    ];
+    for (const { path, key, proof, fresh } of cases) {
+      const response = await request(path, proof.read_view, key);
+      expect(response.status, path).toBe(fresh.status);
+      expect(response.headers.get("X-Marfa-Read-View") !== null, path).toBe(
+        fresh.certified,
+      );
+      expect(await errorCode(response), path).toBe(fresh.code);
+    }
+    const type = `user.view-stale-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: { name: { type: "string" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackType(ctx, type, client);
+    for (const { path, key, proof } of cases) {
+      await changed(await request(path, proof.read_view, key));
+    }
+  });
+});
+
+describe("a copy stream resumed from a cursor and the frames it carries", () => {
+  it("ends a copy stream resumed past the head with cursor_ahead and no live marker", async () => {
+    await seed("cursor ahead witness");
+    const live = await bootstrap();
+    await bootstrap(server.workingKey, live);
+    const flipped = `${live.read_view[0] === "0" ? "1" : "0"}${live.read_view.slice(1)}`;
+    for (const requested of [
+      String(BigInt(live.cursor) + 1n),
+      "9223372036854775807",
+    ]) {
+      await withStream(
+        server.apiUrl,
+        server.workingKey,
+        {
+          query: COPY_QUERY,
+          lastEventId: requested,
+          readView: live.read_view,
+        },
+        async (stream) => {
+          expect(stream.response.status).toBe(200);
+          const { events } = await collectUntil(
+            stream,
+            (frames) => frames.some((frame) => frame.event === "cursor_ahead"),
+            "the copy stream's cursor_ahead terminal",
+            AbortSignal.timeout(FRAME_BUDGET_MS),
+          );
+          expect(events.map((frame) => frame.event)).toEqual([
+            "stream_cursor",
+            "cursor_ahead",
+          ]);
+          const announced = marker(events[0]!, "stream_cursor");
+          expect(announced.cursor).toBe(live.cursor);
+          expect(announced.read_view).toBe(live.read_view);
+          expect(events[1]!.id).toBeUndefined();
+          expect(events[1]!.data).toEqual({
+            event_type: "cursor_ahead",
+            requested,
+            head: live.cursor,
+          });
+          await expectClosed(stream);
+        },
+      );
+      await withStream(
+        server.apiUrl,
+        server.workingKey,
+        { query: COPY_QUERY, lastEventId: requested, readView: flipped },
+        async (stream) => {
+          await changed(stream.response);
+        },
+      );
+    }
+  });
+
+  it("sends listed on created, state changed and purged frames, live and replayed", async () => {
+    const writerKey = await mint("listed-writer");
+    const writer = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: writerKey.key,
+    });
+    const configured = await client.updateConfig({
+      enforcement: {
+        source_filter: { types: ["core.note"], sources: [ctx.source] },
+      },
+    });
+    expect(configured.ok, JSON.stringify(configured.error)).toBe(true);
+    try {
+      const before = await bootstrap();
+      const live = await openEventStream(server.apiUrl, server.workingKey, {
+        query: COPY_QUERY,
+        connectTimeoutMs: FRAME_BUDGET_MS,
+      });
+      let liveFrames: SseEvent[];
+      const written: Array<{ id: string; listed: boolean }> = [];
+      try {
+        await collectUntil(
+          live,
+          (frames) => frames.some((frame) => frame.event === "stream_live"),
+          "the copy stream's live marker",
+          AbortSignal.timeout(FRAME_BUDGET_MS),
+        );
+        for (const [by, listed] of [
+          [client, true],
+          [writer, false],
+        ] as const) {
+          const row = await seed(`listed ${String(listed)}`, by);
+          written.push({ id: row.id, listed });
+          expect((await by.transitionItem(row.id, "archived")).ok).toBe(true);
+          expect((await by.deleteItem(row.id)).ok).toBe(true);
+          expect((await by.purgeItem(row.id)).ok).toBe(true);
+        }
+        const purged = (frames: SseEvent[], id: string) =>
+          frames.some(
+            (frame) =>
+              frame.event === "item.purged" &&
+              (frame.data as CopyItem).item.id === id,
+          );
+        ({ events: liveFrames } = await collectUntil(
+          live,
+          (frames) => written.every(({ id }) => purged(frames, id)),
+          "both purge frames on the live stream",
+          AbortSignal.timeout(FRAME_BUDGET_MS),
+        ));
+      } finally {
+        await live.close();
+      }
+      const replayed = await withStream(
+        server.apiUrl,
+        server.workingKey,
+        {
+          query: COPY_QUERY,
+          lastEventId: before.cursor,
+          readView: before.read_view,
+        },
+        async (stream) => {
+          const { events } = await collectUntil(
+            stream,
+            (frames) =>
+              written.every(({ id }) =>
+                frames.some(
+                  (frame) =>
+                    frame.event === "item.purged" &&
+                    (frame.data as CopyItem).item.id === id,
+                ),
+              ),
+            "both purge frames on the replayed stream",
+            AbortSignal.timeout(FRAME_BUDGET_MS),
+          );
+          return events;
+        },
+      );
+      for (const [name, frames] of [
+        ["live", liveFrames],
+        ["replayed", replayed],
+      ] as const) {
+        for (const { id, listed } of written) {
+          const carried = frames.filter(
+            (frame) => (frame.data as Partial<CopyItem>).item?.id === id,
+          );
+          expect(
+            carried.map((frame) => frame.event),
+            `${name} frames for ${id}`,
+          ).toEqual([
+            "item.created",
+            "item.state_changed",
+            "item.deleted",
+            "item.purged",
+          ]);
+          for (const frame of carried) {
+            expect(frame.id, `${name} ${frame.event}`).toMatch(/^[1-9][0-9]*$/);
+            expect(
+              (frame.data as CopyItem).listed,
+              `${name} ${frame.event}`,
+            ).toBe(listed);
+          }
+        }
+      }
+    } finally {
+      expect((await client.updateConfig({})).ok).toBe(true);
+    }
+  });
+
+  it("sends edge frames on a copy stream in their ordinary shape, live and replayed", async () => {
+    const from = await seed("edge frame source");
+    const to = await seed("edge frame target");
+    const farther = await seed("edge frame other target");
+    const before = await bootstrap();
+    const live = await openEventStream(server.apiUrl, server.workingKey, {
+      query: COPY_QUERY,
+      connectTimeoutMs: FRAME_BUDGET_MS,
+    });
+    let liveFrames: SseEvent[];
+    let edgeId: string;
+    try {
+      await collectUntil(
+        live,
+        (frames) => frames.some((frame) => frame.event === "stream_live"),
+        "the copy stream's live marker",
+        AbortSignal.timeout(FRAME_BUDGET_MS),
+      );
+      const edge = await seedEdge(from.id, to.id, "supersedes");
+      edgeId = edge.id;
+      const moved = await client.updateEdge(edge.id, {
+        target_id: farther.id,
+        version: edge.version,
+      });
+      expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+      expect((await client.deleteEdge(edge.id)).ok).toBe(true);
+      const sentinel = await seed("edge frame sentinel");
+      ({ events: liveFrames } = await collectUntil(
+        live,
+        (frames) =>
+          frames.some(
+            (frame) =>
+              frame.event === "item.created" &&
+              (frame.data as CopyItem).item.id === sentinel.id,
+          ),
+        "the sentinel after the edge frames",
+        AbortSignal.timeout(FRAME_BUDGET_MS),
+      ));
+    } finally {
+      await live.close();
+    }
+    const replayed = await withStream(
+      server.apiUrl,
+      server.workingKey,
+      {
+        query: COPY_QUERY,
+        lastEventId: before.cursor,
+        readView: before.read_view,
+      },
+      async (stream) => {
+        const { events } = await collectUntil(
+          stream,
+          (frames) => frames.some((frame) => frame.event === "edge.deleted"),
+          "the edge's delete on the replayed stream",
+          AbortSignal.timeout(FRAME_BUDGET_MS),
+        );
+        return events;
+      },
+    );
+    const edgeFrames = (frames: SseEvent[]) =>
+      frames.filter(
+        (frame) =>
+          (frame.data as { edge?: { id?: string } }).edge?.id === edgeId,
+      );
+    const liveEdge = edgeFrames(liveFrames);
+    expect(liveEdge.map((frame) => frame.event)).toEqual([
+      "edge.created",
+      "edge.updated",
+      "edge.deleted",
+    ]);
+    expect(edgeFrames(replayed)).toEqual(liveEdge);
+    for (const frame of liveEdge) {
+      expect(frame.id).toMatch(/^[1-9][0-9]*$/);
+      expect(Object.keys(frame.data as object).sort()).toEqual([
+        "edge",
+        "event_type",
+        "source_type",
+      ]);
+      expect((frame.data as { source_type: string }).source_type).toBe(
+        "core.note",
+      );
+      expect(frame.data).not.toHaveProperty("listed");
+      expect((frame.data as { edge: object }).edge).not.toHaveProperty(
+        "listed",
+      );
+    }
+  });
+});
+
+describe("conditional reads on doors that are not conditional", () => {
+  it("answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them", async () => {
+    const row = await seed("unsupported door witness");
+    const proof = await bootstrap();
+    const withProof = (path: string, key?: string) =>
+      fetch(`${server.apiUrl}${path}`, {
+        headers: {
+          ...(key === undefined ? {} : { Authorization: `Bearer ${key}` }),
+          "X-Marfa-Read-View": proof.read_view,
+        },
+      });
+    const without = (path: string, key?: string) =>
+      fetch(`${server.apiUrl}${path}`, {
+        ...(key === undefined
+          ? {}
+          : { headers: { Authorization: `Bearer ${key}` } }),
+      });
+    const outside = [
+      "/",
+      "/config",
+      "/types/core.note",
+      `/items/${row.id}/backrefs`,
+      `/items/${row.id}/versions`,
+      "/no-such-door",
+    ];
+    for (const path of outside) {
+      const bare = await without(path);
+      expect(bare.status, `${path} without the header`).not.toBe(400);
+      for (const key of [undefined, "invalid", server.workingKey]) {
+        const response = await withProof(path, key);
+        expect(
+          response.status,
+          `${path} as ${key ? "a key" : "anonymous"}`,
+        ).toBe(400);
+        expect(await errorCode(response)).toBe("validation_error");
+        expect(response.headers.get("X-Marfa-Read-View")).toBeNull();
+      }
+    }
+    for (const path of ["/types/core.note", `/items/${row.id}/backrefs`]) {
+      expect((await without(path, server.workingKey)).status, path).toBe(200);
+    }
+    for (const key of [undefined, "invalid"]) {
+      const refused = await withProof("/items/stats", key);
+      expect(refused.status).toBe(401);
+      expect(refused.headers.get("X-Marfa-Read-View")).toBeNull();
+    }
+    expect((await without("/items/stats", server.workingKey)).status).toBe(200);
+    const unsupported = await withProof("/items/stats", server.workingKey);
+    expect(unsupported.status).toBe(400);
+    expect(await errorCode(unsupported)).toBe("validation_error");
   });
 });
