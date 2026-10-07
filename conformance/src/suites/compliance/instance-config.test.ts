@@ -260,6 +260,56 @@ describe("the order PUT /config refuses in", () => {
     const told = await configKey().updateConfig(faulty);
     expect(told.status).toBe(400);
   }, 120_000);
+
+  it("asks for a credential, then config.manage, before it reads the query, so a query key is refused 401, then 403, then 400", async () => {
+    const asked = async (method: string, authorization?: string) => {
+      const response = await fetch(`${server!.apiUrl}/config?not_a_key=1`, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          ...(authorization === undefined
+            ? {}
+            : { Authorization: `Bearer ${authorization}` }),
+        },
+        ...(method === "PUT" && { body: "{}" }),
+      });
+      const body = (await response.json()) as {
+        error: { code: string; details?: { required_scope?: string } };
+      };
+      return { status: response.status, error: body.error };
+    };
+
+    // The witness: without the query key the same requests are served to the
+    // key that holds config.manage, so the refusals below are the query's
+    // or the credential's and not the request's.
+    const holder = configKey();
+    expect((await holder.getConfig()).status).toBe(200);
+    expect((await holder.updateConfig({})).status).toBe(200);
+
+    for (const method of ["GET", "PUT"]) {
+      for (const [who, credential] of [
+        ["no credential", undefined],
+        ["a key the instance does not hold", "marfa_a-key-no-instance-holds"],
+      ] as const) {
+        const refused = await asked(method, credential);
+        expect(refused.status, `${method} with ${who}`).toBe(401);
+        expect(refused.error.code, `${method} with ${who}`).toBe(
+          "unauthorized",
+        );
+      }
+
+      const forbidden = await asked(method, server!.operatorKey);
+      expect(forbidden.status, method).toBe(403);
+      expect(forbidden.error.code, method).toBe("forbidden");
+      expect(forbidden.error.details?.required_scope, method).toBe(
+        "config.manage",
+      );
+
+      const invalid = await asked(method, server!.workingKey);
+      expect(invalid.status, method).toBe(400);
+      expect(invalid.error.code, method).toBe("validation_error");
+    }
+  }, 120_000);
 });
 
 /**
