@@ -10,7 +10,6 @@ interface CredentialRequest {
   active: boolean;
   failure?: { error: unknown };
   operations: Set<Promise<unknown>>;
-  notifications: Set<Promise<void>>;
   clientIp: string | null;
   revoke?: { clientId: string; userId: string };
   phase?: CredentialPersistencePhase;
@@ -35,7 +34,6 @@ export async function withCredentialRequest<T>(
     ...input,
     active: true,
     operations: new Set(),
-    notifications: new Set(),
   };
   return credentialRequest.run(scope, async () => {
     try {
@@ -47,7 +45,6 @@ export async function withCredentialRequest<T>(
         await scope.phase.finish(
           result instanceof Response ? result : new Response(null),
         );
-      await Promise.all(scope.notifications);
       return result;
     } catch (error) {
       while (scope.operations.size)
@@ -230,6 +227,22 @@ export function withCredentialAudit<
         if (
           operation === "create" &&
           args.model === "oauthClient" &&
+          args.data
+        ) {
+          // No app is told a browser session ended (statement 81), so no
+          // address to tell it at is kept.
+          args = {
+            ...args,
+            data: {
+              ...args.data,
+              backchannelLogoutUri: null,
+              backchannelLogoutSessionRequired: null,
+            },
+          };
+        }
+        if (
+          operation === "create" &&
+          args.model === "oauthClient" &&
           request?.registrationScopes &&
           args.data
         ) {
@@ -237,6 +250,17 @@ export function withCredentialAudit<
             ...args,
             data: { ...args.data, scopes: request.registrationScopes },
           };
+        }
+        if (
+          operation === "create" &&
+          ["oauthAccessToken", "oauthRefreshToken"].includes(args.model) &&
+          args.data
+        ) {
+          // The provider binds every token to the browser session that
+          // approved it, and each door that ends a session sweeps the tokens
+          // bound to it. An app is not the browser that approved it, so the
+          // row is stored unbound and no such door reaches it.
+          args = { ...args, data: { ...args.data, sessionId: null } };
         }
         const revoke = request?.revoke;
         const commit = () =>

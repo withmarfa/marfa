@@ -129,11 +129,11 @@
 
     Tests: `packages/server/src/auth/credential-outcome.test.ts`, `packages/server/src/auth/oauth-client-revoke.test.ts`, `packages/server/src/routes/bootstrap-audit-outcome.test.ts`.
 
-50. WHEN a session ends, the server MUST commit its local session and session-bound token revocations before sending a remote logout notification.
+50. IF the audit record of a browser session's end cannot be committed, THEN the server MUST leave the session in place and answer an error.
 
-    Reason: an audit refusal or unknown commit must not announce a logout that the server has not established. Offline refresh tokens retain their existing lifetime. Remote delivery runs outside the database writer and cannot undo a committed logout.
+    Reason: a session that ended with nothing to account for it must not take effect, and one the person was told had ended must have. The request is answered `500`, a retry after the fault clears ends the session, and the session answers as signed in meanwhile.
 
-    Tests: `packages/server/src/auth/oauth-client-revoke.test.ts › rolls session logout and linked token revocation back before any remote notification`, `› publishes session logout only after a confirmed %s commit`, `› releases the writer while a committed logout notification waits for its receiver`.
+    Tests: `packages/server/src/auth/credential-audit.test.ts › keeps a cached session usable if provider sign-out audit fails, then invalidates it on commit`.
 
 51. WHEN the server records a failed sign-in, reused grant, narrowed scope request, or refresh replay, it MUST make that observation durable before returning the corresponding protocol outcome.
 
@@ -294,3 +294,47 @@
     Reason: the registration is what a request naming no scope asks for (24) and what a request nobody can send to sign in is judged against (43), so what a person approves on a device reaches the client's later requests as an approval in the browser does. A scope the person unticks, or a code they deny, adds nothing.
 
     Tests: `compliance/signed-in-apps.test.ts › is registered only for what the person approved, which a narrower approval leaves out`, `› is registered for the published scope once the person approves it, and the token carries it`.
+
+## Browser sessions and apps
+
+76. WHEN a person's browser session ends, the server SHALL keep valid every access token an app holds for that person.
+
+    Reason: an app is not the browser that approved it, so signing out of a browser must not cut off the notes app or web page the person connected, and an app with no refresh grant has no way back in. A session ends by browser sign-out, by ending one, the other or every session, by a password change that ends the other sessions, by the provider's end-session once the person confirms it, or by a lookup of an expired session. Only an explicit disconnect or a withdrawal of the grant ends an app's access.
+
+    Tests: `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`.
+
+77. WHEN a person's browser session ends, the server SHALL answer a refresh token grant of a refresh token an app holds for that person with `200` and tokens that are valid.
+
+    Reason: a refresh token that outlives its browser is the app's way to keep access past an access token's expiry, and the one a refresh issues has to outlive the browser as well.
+
+    Tests: `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`.
+
+78. WHEN a person's browser session ends, the server SHALL keep the person's consent to every app, so an authorization request the consent covers is answered with a code and no consent screen.
+
+    Reason: consent is the person's decision about the app and not about the browser they made it in, so a person who signed out is not asked again.
+
+    Tests: `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`.
+
+79. WHEN the server restarts, the server SHALL keep valid every access token and refresh token an app holds for a person.
+
+    Reason: tokens an app holds live in the instance's storage, so a restart of the process, with the same secret and address, must not make an app approve itself again.
+
+    Tests: `compliance/browser-sessions.test.ts › leaves every app connected across a restart of the server`.
+
+80. WHEN a browser session has ended, the server SHALL refuse the exchange of an authorization code that session approved with `400 invalid_request`.
+
+    Reason: a code is the browser's own step in an approval, and a browser that has ended cannot finish one. A code whose browser lives is exchanged, which the fixture shows first so the refusal cannot be a malformed request.
+
+    Tests: `compliance/browser-sessions.test.ts › refuses an authorization code once the browser that approved it has ended, and accepts one whose browser lives`.
+
+81. The server MUST advertise `backchannel_logout_supported` and `backchannel_logout_session_supported` as `false` in its authorization-server and OpenID configuration documents.
+
+    Reason: an app's tokens end with neither a browser session nor a notification of one, so no app is told a person's browser ended, and a document that said otherwise would promise a sign-out that never arrives.
+
+    Tests: `compliance/browser-sessions.test.ts › advertises no back-channel logout, since no app is notified of a browser ending`.
+
+82. WHEN an app registers naming a `backchannel_logout_uri` or `backchannel_logout_session_required`, the server MUST register it without either and MUST NOT include either in the registration answer.
+
+    Reason: a client reads the answer as what the server registered, so echoing an address the server will never use would promise a notification that 81 says is not sent. The registration itself is accepted, so a client library that sends its defaults still registers.
+
+    Tests: `compliance/browser-sessions.test.ts › registers an app without a back-channel logout address and does not echo one`.
