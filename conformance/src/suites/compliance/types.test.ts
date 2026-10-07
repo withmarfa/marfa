@@ -139,6 +139,23 @@ describe("type registration and listing", () => {
     expect(r.error?.error.code).toBe("missing_required_field");
   });
 
+  it("refuses a registration with no id as an invalid schema", async () => {
+    const fields = { name: { type: "string" as const } };
+    const r = await client.registerType({ fields } as unknown as TypeSchema);
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_schema");
+    const errors = r.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.map((e) => e.field)).toContain("id");
+
+    // The witness: the same fields with an id register.
+    const registered = await client.registerType({
+      id: `user.with-id-${ctx.runId}`,
+      fields,
+    });
+    expect(registered.status).toBe(201);
+  });
+
   // Custom-type schemas may not declare property names that collide with
   // first-class Item wire fields (`source_id`, `occurred_at`, `version`,
   // `schema_version`, `tier`, `state`, `capture_latitude`,
@@ -157,6 +174,79 @@ describe("type registration and listing", () => {
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("property_shadows_field");
+  });
+
+  it("refuses each field named like one every item has", async () => {
+    // The sixteen names an item carries itself.
+    const names = [
+      "id",
+      "type",
+      "state",
+      "tier",
+      "properties",
+      "created_at",
+      "updated_at",
+      "occurred_at",
+      "source",
+      "source_id",
+      "version",
+      "schema_version",
+      "capture_latitude",
+      "capture_longitude",
+      "trashed_by_cascade",
+      "trashed_with",
+    ];
+    for (const name of names) {
+      const id = `user.shadow-${name.replace(/_/g, "-")}-${ctx.runId}`;
+      const r = await client.registerType({
+        id,
+        fields: { [name]: { type: "string" } },
+      });
+      expect(r.status, name).toBe(400);
+      expect(r.error?.error.code, name).toBe("property_shadows_field");
+      const errors = r.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(
+        errors?.map((e) => e.field),
+        name,
+      ).toEqual([`fields.${name}`]);
+      expect((await client.getType(id)).status, name).toBe(404);
+
+      // The witness: the same type with the field under another name
+      // registers.
+      const accepted = await client.registerType({
+        id,
+        fields: { [`${name}_value`]: { type: "string" } },
+      });
+      expect(accepted.status, name).toBe(201);
+    }
+  });
+
+  it("refuses a duplicate registration with a bad schema as the bad schema", async () => {
+    const id = `user.duplicate-bad-${ctx.runId}`;
+    const fields = { name: { type: "string" as const } };
+    expect((await client.registerType({ id, fields })).status).toBe(201);
+
+    // The witness: the duplicate with a good schema is the conflict.
+    const duplicate = await client.registerType({ id, fields });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.error?.error.code).toBe("type_already_exists");
+
+    // Refused by the validator.
+    const shadowing = await client.registerType({
+      id,
+      fields: { capture_latitude: { type: "number" } },
+    });
+    expect(shadowing.status).toBe(400);
+    expect(shadowing.error?.error.code).toBe("property_shadows_field");
+
+    // Refused before the validator, by the shape of the body.
+    const unreadable = await client.registerType({
+      id,
+      fields: { name: { type: "not_a_field_type" } },
+    } as unknown as TypeSchema);
+    expect(unreadable.status).toBe(400);
+    expect(unreadable.error?.error.code).toBe("invalid_schema");
   });
 
   it("keeps a list of strings with a type-naming format a list", async () => {
@@ -468,6 +558,40 @@ describe("type merge_policy", () => {
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("invalid_schema");
+  });
+
+  it("refuses a merge_policy naming an unknown field or strategy on a replacement too", async () => {
+    const id = `user.evaluator-mp-replace-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { body: { type: "string" } },
+    });
+    expect(registered.status).toBe(201);
+
+    // The witness: a policy naming a declared field and a known strategy.
+    const accepted = await client.replaceType(id, {
+      fields: { body: { type: "string" } },
+      merge_policy: { fields: { body: "keep_both_copies" } },
+    });
+    expect(accepted.status).toBe(200);
+
+    const unknownField = await client.replaceType(id, {
+      fields: { body: { type: "string" } },
+      merge_policy: { fields: { does_not_exist: "keep_both_copies" } },
+    });
+    expect(unknownField.status).toBe(400);
+    expect(unknownField.error?.error.code).toBe("invalid_schema");
+
+    const unknownStrategy = await client.replaceType(id, {
+      fields: { body: { type: "string" } },
+      merge_policy: { fields: { body: "made_up_strategy" } },
+    });
+    expect(unknownStrategy.status).toBe(400);
+    expect(unknownStrategy.error?.error.code).toBe("invalid_schema");
+
+    // Neither refusal replaced the type.
+    const read = await client.getType(id);
+    expect(read.data.merge_policy?.fields?.body).toBe("keep_both_copies");
   });
 
   it("a core child type exposes the parent's resolved merge_policy on GET", async () => {

@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
-import type { TypeSchema } from "../../client/types.js";
+import type {
+  BulkActionInput,
+  BulkActionJob,
+  BulkActionResponse,
+  TestContext,
+  TypeSchema,
+} from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
   trackKey,
+  trackType,
   cleanup,
 } from "../../utils/setup.js";
 import { generateId } from "../../generators/items.js";
@@ -28,6 +34,20 @@ afterAll(async () => {
 
 function testTypeId(label: string): string {
   return `user.evaluator-${label}-${generateId().slice(-8).toLowerCase()}`;
+}
+
+/** Queue a bulk action, poll its job until terminal, and return the result. */
+async function runBulkAction(
+  input: BulkActionInput,
+): Promise<BulkActionResponse> {
+  const res = await client.bulkAction(input);
+  expect(res.status, JSON.stringify(res.error)).toBe(202);
+  const final = await client.pollBulkActionToTerminal(
+    (res.data as BulkActionJob).id,
+  );
+  expect(final.status).toBe("completed");
+  expect(final.result).toBeDefined();
+  return final.result!;
 }
 
 describe("type registry", () => {
@@ -136,6 +156,7 @@ describe("type registry", () => {
 
     const mine = await scopedClient.registerType({ id: own, fields });
     expect(mine.status).toBe(201);
+    trackType(ctx, own, client);
 
     for (const id of [other, readOnly]) {
       const refused = await scopedClient.registerType({ id, fields });
@@ -247,6 +268,38 @@ describe("type registry", () => {
     expect((await scopedClient.deleteType(own, true)).status).toBe(200);
   });
 
+  it("answers 404 to a replacement of a type nothing registered, whatever the key's map", async () => {
+    const reachable = testTypeId("map-reach");
+    const unreached = testTypeId("map-unreached");
+    const absent = testTypeId("map-absent");
+    const fields = { name: { type: "string" as const } };
+    for (const id of [reachable, unreached]) {
+      expect((await client.registerType({ id, fields })).status).toBe(201);
+    }
+    const keyResp = await client.createKey({
+      label: "type-replace-absent",
+      source: `${ctx.source}-type-replace-absent`,
+      permissions: ["schema.write"],
+      type_permissions: { [reachable]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    // The witness: the key's map does bite, on a type that is registered.
+    const held = await scopedClient.replaceType(unreached, { fields });
+    expect(held.status).toBe(403);
+    expect(held.error?.error.code).toBe("type_not_permitted");
+
+    const r = await scopedClient.replaceType(absent, { fields });
+    expect(r.status).toBe(404);
+    expect(r.error?.error.code).toBe("type_not_found");
+    expect((await client.getType(absent)).status).toBe(404);
+  });
+
   it("refuses both schema.write doors to a key without it, and declares the refusal", async () => {
     // `PUT` and `DELETE /types/{id}` gate on `schema.write` and published no
     // 403 at all, so the refusal a caller is most likely to meet was the one
@@ -306,6 +359,59 @@ describe("type registry", () => {
     expect(removed.status).toBe(403);
     expect(removed.error?.error.code).toBe("core_type_immutable");
     await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
+  });
+
+  it("refuses a platform type before it asks about subtypes, items or the key's type map", async () => {
+    // `core.entity` has subtypes, so a delete reaching that check would be
+    // refused 409 type_has_subtypes instead.
+    const forced = await client.deleteType("core.entity", true);
+    expect(forced.status).toBe(403);
+    expect(forced.error?.error.code).toBe("core_type_immutable");
+
+    const elsewhere = testTypeId("lock-elsewhere");
+    expect(
+      (
+        await client.registerType({
+          id: elsewhere,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const keyResp = await client.createKey({
+      label: "type-lock-narrow-map",
+      source: `${ctx.source}-type-lock-narrow-map`,
+      permissions: ["schema.write"],
+      type_permissions: { [elsewhere]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrowed = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+    const replaced = await narrowed.replaceType("core.note", {
+      id: "core.note",
+      fields: { body: { type: "string" } },
+    });
+    expect(replaced.status).toBe(403);
+    expect(replaced.error?.error.code).toBe("core_type_immutable");
+    const removed = await narrowed.deleteType("core.note");
+    expect(removed.status).toBe(403);
+    expect(removed.error?.error.code).toBe("core_type_immutable");
+    // The witness: the map does narrow this key, on a runtime type it does
+    // not reach.
+    const unreached = testTypeId("lock-unreached");
+    expect(
+      (
+        await client.registerType({
+          id: unreached,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const refused = await narrowed.deleteType(unreached);
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
   });
 
   it("updates type schema: adding a field succeeds", async () => {
@@ -581,6 +687,296 @@ describe("type registry", () => {
     expect(r.ok).toBe(false);
     expect(r.status).toBe(404);
     expect(r.error?.error.code).toBe("type_not_found");
+  });
+
+  it("refuses to delete a type that has only an item in the bin", async () => {
+    for (const state of ["trashed", "archived"]) {
+      const typeId = testTypeId(`delete-${state}`);
+      expect(
+        (
+          await client.registerType({
+            id: typeId,
+            fields: { name: { type: "string" } },
+          })
+        ).status,
+      ).toBe(201);
+      const item = await client.createItem({
+        type: typeId,
+        properties: { name: "Test" },
+        source: ctx.source,
+      });
+      expect(item.status, state).toBe(201);
+      trackItem(ctx, item.data.item.id);
+      const moved = await client.transitionItem(item.data.item.id, state);
+      expect(moved.status, state).toBe(200);
+
+      // The witness: no item of the type is listed by default, so the refusal
+      // below is for a row the ordinary listing does not show.
+      const listed = await client.listItems({ type: typeId });
+      expect(listed.data.data, state).toEqual([]);
+
+      const refused = await client.deleteType(typeId);
+      expect(refused.status, state).toBe(409);
+      expect(refused.error?.error.code, state).toBe("type_in_use");
+      expect((await client.getType(typeId)).status, state).toBe(200);
+    }
+  });
+
+  it("refuses a bulk upsert and a bulk action onto a row a forced delete left", async () => {
+    const typeId = testTypeId("force-delete-then-bulk");
+    const tag = `orphan-bulk-${ctx.runId}`;
+    const sourceId = `orphan-bulk-${ctx.runId}`;
+    const fields = { name: { type: "string" as const } };
+    expect((await client.registerType({ id: typeId, fields })).status).toBe(
+      201,
+    );
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "kept" },
+      source: ctx.source,
+      source_id: sourceId,
+      tags: [tag],
+    });
+    expect(item.status).toBe(201);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteType(typeId, true)).status).toBe(200);
+
+    const entry = {
+      type: typeId,
+      properties: { name: "changed" },
+      source: ctx.source,
+      source_id: sourceId,
+    };
+    const upsert = await client.bulkItems({ items: [entry], atomic: false });
+    expect(upsert.status, JSON.stringify(upsert.error)).toBe(200);
+    expect(upsert.data.results[0]?.outcome).toBe("errored");
+    expect(upsert.data.results[0]?.error?.code).toBe("unknown_type");
+
+    const patched = await runBulkAction({
+      action: "update_properties",
+      patch: { name: "changed" },
+      filter: { tags: [tag] },
+    });
+    expect(patched.succeeded).toBe(0);
+    expect(patched.errors).toHaveLength(1);
+    expect(patched.errors?.[0]?.id).toBe(id);
+    expect(patched.errors?.[0]?.code).toBe("unknown_type");
+    expect((await client.getItem(id)).data.item.properties.name).toBe("kept");
+
+    // The witness: once the type is registered again the same upsert resolves
+    // to the row by its natural key and the same patch applies, so what was
+    // refused is the missing type.
+    expect((await client.registerType({ id: typeId, fields })).status).toBe(
+      201,
+    );
+    const resumed = await client.bulkItems({ items: [entry], atomic: false });
+    expect(resumed.status, JSON.stringify(resumed.error)).toBe(200);
+    expect(resumed.data.results[0]?.outcome).toBe("updated");
+    expect(resumed.data.results[0]?.id).toBe(id);
+    const applied = await runBulkAction({
+      action: "update_properties",
+      patch: { name: "patched" },
+      filter: { tags: [tag] },
+    });
+    expect(applied.errors ?? []).toEqual([]);
+    expect(applied.succeeded).toBe(1);
+    expect((await client.getItem(id)).data.item.properties.name).toBe(
+      "patched",
+    );
+  });
+
+  it("refuses a change of tier or time to a row a forced delete left, singly and in bulk", async () => {
+    const typeId = testTypeId("force-delete-then-tier");
+    const tag = `orphan-tier-${ctx.runId}`;
+    const fields = { name: { type: "string" as const } };
+    expect((await client.registerType({ id: typeId, fields })).status).toBe(
+      201,
+    );
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "kept" },
+      source: ctx.source,
+      tags: [tag],
+    });
+    expect(item.status).toBe(201);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    const before = item.data.item;
+    // The witness: while the type is registered, both changes land.
+    const tiered = await client.updateItem(id, {
+      tier: "feed",
+      version: before.version,
+    });
+    expect(tiered.status, JSON.stringify(tiered.error)).toBe(200);
+    const timed = await client.updateItem(id, {
+      occurred_at: "2026-01-01T00:00:00Z",
+      version: tiered.data.item.version,
+    });
+    expect(timed.status, JSON.stringify(timed.error)).toBe(200);
+    const version = timed.data.item.version;
+    expect((await client.deleteType(typeId, true)).status).toBe(200);
+
+    for (const change of [
+      { tier: "library" as const },
+      { occurred_at: "2026-02-01T00:00:00Z" },
+    ]) {
+      const refused = await client.updateItem(id, { ...change, version });
+      expect(refused.status, JSON.stringify(change)).toBe(400);
+      expect(refused.error?.error.code).toBe("unknown_type");
+    }
+    for (const action of [
+      { action: "update_tier" as const, tier: "library" as const },
+      {
+        action: "update_occurred_at" as const,
+        occurred_at: "2026-02-01T00:00:00Z",
+      },
+    ]) {
+      const result = await runBulkAction({
+        ...action,
+        filter: { tags: [tag] },
+      } as BulkActionInput);
+      expect(result.succeeded, action.action).toBe(0);
+      expect(result.errors?.[0]?.code, action.action).toBe("unknown_type");
+    }
+    const read = (await client.getItem(id)).data.item;
+    expect(read.tier).toBe("feed");
+    expect(read.occurred_at).toBe(timed.data.item.occurred_at);
+  });
+
+  it("keeps the tags, extensions and lifecycle of a row a forced delete left writable", async () => {
+    const typeId = testTypeId("force-delete-then-metadata");
+    expect(
+      (
+        await client.registerType({
+          id: typeId,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "kept" },
+      source: ctx.source,
+    });
+    expect(item.status).toBe(201);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteType(typeId, true)).status).toBe(200);
+
+    // The witness: the row's properties are refused, so its type is gone.
+    const patched = await client.updateItem(id, {
+      properties: { name: "changed" },
+      version: item.data.item.version,
+    });
+    expect(patched.status).toBe(400);
+    expect(patched.error?.error.code).toBe("unknown_type");
+
+    const tag = `orphan-${ctx.runId}`;
+    const tagged = await client.addTags(id, [tag]);
+    expect(tagged.status, JSON.stringify(tagged.error)).toBe(200);
+    expect(tagged.data.metadata.tags).toContain(tag);
+
+    const extended = await client.setItemExtension(id, "orphan.notes", {
+      seen: true,
+    });
+    expect(extended.status, JSON.stringify(extended.error)).toBe(200);
+    expect(extended.data.extensions["orphan.notes"]).toEqual({ seen: true });
+
+    const archived = await client.transitionItem(id, "archived");
+    expect(archived.status, JSON.stringify(archived.error)).toBe(200);
+    expect(archived.data.item.state).toBe("archived");
+    const restored = await client.transitionItem(id, "active");
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.item.state).toBe("active");
+
+    const read = await client.getItem(id);
+    expect(read.data.item.properties.name).toBe("kept");
+    expect((await client.getMetadata(id)).data.metadata.tags).toContain(tag);
+  });
+
+  it("refuses force against a parent, ahead of the items it holds", async () => {
+    const parentId = testTypeId("force-parent");
+    const childId = testTypeId("force-child");
+    const fields = { name: { type: "string" as const } };
+    expect((await client.registerType({ id: parentId, fields })).status).toBe(
+      201,
+    );
+    expect(
+      (
+        await client.registerType({
+          id: childId,
+          parent: parentId,
+          fields: { extra: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const item = await client.createItem({
+      type: parentId,
+      properties: { name: "held" },
+      source: ctx.source,
+    });
+    expect(item.status).toBe(201);
+    trackItem(ctx, item.data.item.id);
+
+    const forced = await client.deleteType(parentId, true);
+    expect(forced.status).toBe(409);
+    expect(forced.error?.error.code).toBe("type_has_subtypes");
+    expect(forced.error?.error.details?.subtype_ids).toEqual([childId]);
+    const plain = await client.deleteType(parentId);
+    expect(plain.status).toBe(409);
+    expect(plain.error?.error.code).toBe("type_has_subtypes");
+
+    // The witness: with the subtype gone the items are what stops the plain
+    // delete, which is the refusal the subtype's came ahead of.
+    expect((await client.deleteType(childId)).status).toBe(200);
+    const held = await client.deleteType(parentId);
+    expect(held.status).toBe(409);
+    expect(held.error?.error.code).toBe("type_in_use");
+    expect((await client.getType(parentId)).status).toBe(200);
+  });
+
+  it("refuses a force that is not true or false", async () => {
+    const typeId = testTypeId("force-value");
+    expect(
+      (
+        await client.registerType({
+          id: typeId,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "held" },
+      source: ctx.source,
+    });
+    expect(item.status).toBe(201);
+    trackItem(ctx, item.data.item.id);
+
+    for (const force of ["yes", "1", "TRUE"]) {
+      const r = await client.rawRequest<unknown>(
+        `/types/${typeId}?force=${force}`,
+        { method: "DELETE" },
+      );
+      expect(r.status, force).toBe(400);
+      expect(r.error?.error.code, force).toBe("validation_error");
+      expect((await client.getType(typeId)).status, force).toBe(200);
+    }
+
+    // The witness: the two values the door reads. `false` is the plain
+    // refusal and `true` deletes.
+    const plain = await client.rawRequest<unknown>(
+      `/types/${typeId}?force=false`,
+      { method: "DELETE" },
+    );
+    expect(plain.status).toBe(409);
+    expect(plain.error?.error.code).toBe("type_in_use");
+    const forced = await client.rawRequest<unknown>(
+      `/types/${typeId}?force=true`,
+      { method: "DELETE" },
+    );
+    expect(forced.status).toBe(200);
   });
 
   it("creates item with valid properties for a registered type", async () => {

@@ -2,13 +2,13 @@
  * Conformance for publisher-namespaced types.
  *
  * Publisher handles cannot collide with reserved roots; the namespace
- * grammar enforces exactly two segments for `<publisher>.<type>`.
+ * grammar takes two or more segments for `<publisher>.<type>`.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { TestContext } from "../../client/types.js";
 import { MarfaClient } from "../../client/api.js";
-import { createTestContext, cleanup } from "../../utils/setup.js";
+import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -49,6 +49,34 @@ describe("publisher types", () => {
       });
       expect(r.status).toBe(400);
       expect(r.error?.error.code).toBe("unknown_type");
+    }
+  });
+
+  it("registers a publisher type whose root only looks reserved", async () => {
+    for (const reserved of ["core", "system", "app", "user", "marfa"]) {
+      const id = `${reserved}-pub.thing-${ctx.runId}`;
+      const registered = await client.registerType({
+        id,
+        fields: { name: { type: "string", required: true } },
+      });
+      expect(registered.status, id).toBe(201);
+      expect(registered.data.type.id).toBe(id);
+
+      // Registered is not enough: the type validates items like any other.
+      const item = await client.createItem({
+        type: id,
+        properties: { name: "kept" },
+        source: ctx.source,
+      });
+      expect(item.status, id).toBe(201);
+      trackItem(ctx, item.data.item.id);
+      const refused = await client.createItem({
+        type: id,
+        properties: {},
+        source: ctx.source,
+      });
+      expect(refused.status, id).toBe(400);
+      expect(refused.error?.error.code, id).toBe("invalid_properties");
     }
   });
 });

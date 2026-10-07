@@ -147,4 +147,29 @@ describe("type identifier validation on item creation", () => {
       { path: string }[] | undefined;
     expect(errors?.[0]?.path).toBe("type");
   });
+
+  it("refuses a segment that does not start with a letter, an empty segment and a trailing dot", async () => {
+    // The witness: a digit is fine inside a segment, so what the refusals
+    // below reach is where the segment starts and ends, and not the digit.
+    const witness = await client.createItem({
+      type: "a.b1",
+      properties: {},
+      source: ctx.source,
+    });
+    expect(witness.status).toBe(400);
+    expect(witness.error?.error.code).toBe("unknown_type");
+
+    for (const type of ["a.1b", "a.-b", "a._b", "a..b", "a.b."]) {
+      const r = await client.createItem({
+        type,
+        properties: {},
+        source: ctx.source,
+      });
+      expect(r.status, type).toBe(400);
+      expect(r.error?.error.code, type).toBe("validation_error");
+      const errors = r.error?.error.details?.errors as
+        { path: string }[] | undefined;
+      expect(errors?.[0]?.path, type).toBe("type");
+    }
+  });
 });

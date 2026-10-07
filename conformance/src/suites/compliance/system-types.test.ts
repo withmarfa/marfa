@@ -126,6 +126,18 @@ describe("system.* set", () => {
     }
   });
 
+  it("lists exactly the two system types the server writes", async () => {
+    const r = await client.listTypes();
+    expect(r.status).toBe(200);
+    const ids = r.data.data.map((t) => t.id);
+    // The witness: the listing carries the shipped types beside them.
+    expect(ids).toContain("core.note");
+    expect(ids.filter((id) => id.startsWith("system.")).sort()).toEqual([
+      "system.connection",
+      "system.folder",
+    ]);
+  });
+
   it("declares app as the only system.connection kind", async () => {
     const r = await client.getType("system.connection");
     expect(r.ok).toBe(true);
