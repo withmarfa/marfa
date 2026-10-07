@@ -107,6 +107,49 @@ describe("a drifted platform type", () => {
     const again = await operator.deletePlatformType(REMOVABLE);
     expect(again.status).toBe(404);
     expect(again.error?.error.code).toBe("type_not_found");
+
+    const operatorKey = await operator.getCurrentKey();
+    expect(operatorKey.status, JSON.stringify(operatorKey.error)).toBe(200);
+    const audited = await working.listAudit({
+      action: "platform_type.removed",
+      resource_id: REMOVABLE,
+    });
+    expect(audited.status).toBe(200);
+    expect(
+      audited.data.data.map((row) => [row.resource_type, row.key_id]),
+    ).toEqual([["type", operatorKey.data.id]]);
+  });
+
+  it("refuses a replacement and a delete of a drifted platform type through the type registry", async () => {
+    const replaced = await working.replaceType(WITH_ITEMS, {
+      id: WITH_ITEMS,
+      fields: { name: { type: "string" }, extra: { type: "string" } },
+    });
+    expect(replaced.status).toBe(403);
+    expect(replaced.error?.error.code).toBe("core_type_immutable");
+    const forced = await working.deleteType(WITH_ITEMS, true);
+    expect(forced.status).toBe(403);
+    expect(forced.error?.error.code).toBe("core_type_immutable");
+    expect((await working.getType(WITH_ITEMS)).data.fields).toEqual({
+      name: { type: "string" },
+    });
+
+    // The witness: the same forced delete takes a type registered at run
+    // time that an item holds.
+    const runtime = "drift.runtime";
+    expect(
+      (
+        await working.registerType({
+          id: runtime,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (await working.createItem({ type: runtime, properties: { name: "x" } }))
+        .status,
+    ).toBe(201);
+    expect((await working.deleteType(runtime, true)).status).toBe(200);
   });
 
   it("refuses to remove a drifted type that items still carry", async () => {

@@ -361,6 +361,59 @@ describe("type registry", () => {
     await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
   });
 
+  it("refuses a platform type before it asks about subtypes, items or the key's type map", async () => {
+    // `core.entity` has subtypes, so a delete reaching that check would be
+    // refused 409 type_has_subtypes instead.
+    const forced = await client.deleteType("core.entity", true);
+    expect(forced.status).toBe(403);
+    expect(forced.error?.error.code).toBe("core_type_immutable");
+
+    const elsewhere = testTypeId("lock-elsewhere");
+    expect(
+      (
+        await client.registerType({
+          id: elsewhere,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const keyResp = await client.createKey({
+      label: "type-lock-narrow-map",
+      source: `${ctx.source}-type-lock-narrow-map`,
+      permissions: ["schema.write"],
+      type_permissions: { [elsewhere]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrowed = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+    const replaced = await narrowed.replaceType("core.note", {
+      id: "core.note",
+      fields: { body: { type: "string" } },
+    });
+    expect(replaced.status).toBe(403);
+    expect(replaced.error?.error.code).toBe("core_type_immutable");
+    const removed = await narrowed.deleteType("core.note");
+    expect(removed.status).toBe(403);
+    expect(removed.error?.error.code).toBe("core_type_immutable");
+    // The witness: the map does narrow this key, on a runtime type it does
+    // not reach.
+    const unreached = testTypeId("lock-unreached");
+    expect(
+      (
+        await client.registerType({
+          id: unreached,
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const refused = await narrowed.deleteType(unreached);
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+  });
+
   it("updates type schema: adding a field succeeds", async () => {
     const typeId = testTypeId("update-add");
     const schema: TypeSchema = {
@@ -731,6 +784,64 @@ describe("type registry", () => {
     expect((await client.getItem(id)).data.item.properties.name).toBe(
       "patched",
     );
+  });
+
+  it("refuses a change of tier or time to a row a forced delete left, singly and in bulk", async () => {
+    const typeId = testTypeId("force-delete-then-tier");
+    const tag = `orphan-tier-${ctx.runId}`;
+    const fields = { name: { type: "string" as const } };
+    expect((await client.registerType({ id: typeId, fields })).status).toBe(
+      201,
+    );
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "kept" },
+      source: ctx.source,
+      tags: [tag],
+    });
+    expect(item.status).toBe(201);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    const before = item.data.item;
+    // The witness: while the type is registered, both changes land.
+    const tiered = await client.updateItem(id, {
+      tier: "feed",
+      version: before.version,
+    });
+    expect(tiered.status, JSON.stringify(tiered.error)).toBe(200);
+    const timed = await client.updateItem(id, {
+      occurred_at: "2026-01-01T00:00:00Z",
+      version: tiered.data.item.version,
+    });
+    expect(timed.status, JSON.stringify(timed.error)).toBe(200);
+    const version = timed.data.item.version;
+    expect((await client.deleteType(typeId, true)).status).toBe(200);
+
+    for (const change of [
+      { tier: "library" as const },
+      { occurred_at: "2026-02-01T00:00:00Z" },
+    ]) {
+      const refused = await client.updateItem(id, { ...change, version });
+      expect(refused.status, JSON.stringify(change)).toBe(400);
+      expect(refused.error?.error.code).toBe("unknown_type");
+    }
+    for (const action of [
+      { action: "update_tier" as const, tier: "library" as const },
+      {
+        action: "update_occurred_at" as const,
+        occurred_at: "2026-02-01T00:00:00Z",
+      },
+    ]) {
+      const result = await runBulkAction({
+        ...action,
+        filter: { tags: [tag] },
+      } as BulkActionInput);
+      expect(result.succeeded, action.action).toBe(0);
+      expect(result.errors?.[0]?.code, action.action).toBe("unknown_type");
+    }
+    const read = (await client.getItem(id)).data.item;
+    expect(read.tier).toBe("feed");
+    expect(read.occurred_at).toBe(timed.data.item.occurred_at);
   });
 
   it("keeps the tags, extensions and lifecycle of a row a forced delete left writable", async () => {
