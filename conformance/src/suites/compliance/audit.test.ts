@@ -9,6 +9,7 @@ import {
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import type { AuditEntry } from "../../client/types.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -21,6 +22,49 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanup(ctx);
 });
+
+/**
+ * Every audit entry this file's own key wrote under `action` since `since`,
+ * newest first. The log is the instance's and sibling files write to it, so
+ * a read is narrowed to this file's key and to the window it opened.
+ */
+async function ownEntries(
+  action: string,
+  since: string,
+): Promise<AuditEntry[]> {
+  const entries: AuditEntry[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.listAudit({
+      action,
+      created_after: since,
+      limit: 200,
+      cursor,
+    });
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    entries.push(...page.data.data);
+    cursor = page.data.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+  return entries.filter((entry) => entry.key_id === ctx.trackedKeys[0]);
+}
+
+/**
+ * An item that holds a source id, written outside the bulk door so its own
+ * entry is an `item.create`, with the instant of that entry. A later read
+ * takes the instant as its exclusive lower bound, so everything it sees was
+ * written after the seed with no clock of this process involved.
+ */
+async function seedHolding(
+  sourceId: string,
+): Promise<{ id: string; since: string }> {
+  const created = await client.createItem(
+    createNote({ source: ctx.source, source_id: sourceId }),
+  );
+  expect(created.ok).toBe(true);
+  trackItem(ctx, created.data.item.id);
+  const row = await createdRow(created.data.item.id);
+  return { id: created.data.item.id, since: row.created_at };
+}
 
 async function createdRow(itemId: string) {
   const rows = await client.listAudit({
@@ -330,5 +374,126 @@ describe("audit log", () => {
     const rows = await anonymous.listAudit();
     expect(rows.status).toBe(401);
     expect(rows.error?.error.code).toBe("unauthorized");
+  });
+  it("records one summary entry for an atomic bulk page, and none for a page that rolled back", async () => {
+    const sourceId = `audit-atomic-${ctx.runId}`;
+    const { since } = await seedHolding(sourceId);
+    const page = await client.bulkItems({
+      atomic: true,
+      mode: "create_only",
+      items: [
+        {
+          type: "core.note",
+          properties: { title: "audit-atomic", body: "created" },
+          source_id: `${sourceId}-new`,
+        },
+        {
+          type: "core.note",
+          properties: { title: "audit-atomic", body: "skipped" },
+          source_id: sourceId,
+        },
+      ],
+    });
+    expect(page.status).toBe(200);
+    expect(page.data.counts).toEqual({
+      created: 1,
+      updated: 0,
+      skipped: 1,
+      errored: 0,
+    });
+    trackItem(ctx, page.data.results[0]!.id!);
+
+    const summaries = await ownEntries("items.bulk", since);
+    expect(
+      summaries,
+      "an atomic page leaves one entry for the page, not one for each entry",
+    ).toHaveLength(1);
+    const summary = summaries[0]!;
+    expect(summary.resource_type).toBe("items.bulk");
+    expect(summary.details).toMatchObject({
+      atomic: true,
+      mode: "create_only",
+      total: 2,
+      created: 1,
+      updated: 0,
+      skipped: 1,
+      errored: 0,
+    });
+    expect(typeof summary.details.operation_id).toBe("string");
+
+    // A page that changed nothing is still one entry, and its skipped count
+    // is all of it.
+    const unchanged = await client.bulkItems({
+      atomic: true,
+      mode: "create_only",
+      items: [
+        {
+          type: "core.note",
+          properties: { title: "audit-atomic", body: "again" },
+          source_id: sourceId,
+        },
+      ],
+    });
+    expect(unchanged.data.counts.skipped).toBe(1);
+    const afterUnchanged = await ownEntries("items.bulk", since);
+    expect(afterUnchanged).toHaveLength(2);
+    expect(afterUnchanged[0]!.details).toMatchObject({
+      atomic: true,
+      total: 1,
+      created: 0,
+      skipped: 1,
+    });
+
+    // The witness above is that a committed page leaves its entry; a page
+    // that fails rolls its entry back with its writes.
+    const rolledBack = await client.bulkItems({
+      atomic: true,
+      items: [
+        createNote({ source: ctx.source }),
+        { type: "audit_missing_type", properties: {} },
+      ],
+    });
+    expect(rolledBack.status).toBe(400);
+    expect(rolledBack.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(await ownEntries("items.bulk", since)).toHaveLength(2);
+  });
+
+  it("records no entry for a best-effort entry that was skipped or refused", async () => {
+    const sourceId = `audit-skip-${ctx.runId}`;
+    const { since } = await seedHolding(sourceId);
+    const page = await client.bulkItems({
+      atomic: false,
+      mode: "create_only",
+      items: [
+        {
+          type: "core.note",
+          properties: { title: "audit-skip", body: "first" },
+          source_id: `${sourceId}-first`,
+        },
+        { type: "audit_missing_type", properties: {} },
+        {
+          type: "core.note",
+          properties: { title: "audit-skip", body: "duplicate" },
+          source_id: sourceId,
+        },
+        {
+          type: "core.note",
+          properties: { title: "audit-skip", body: "last" },
+          source_id: `${sourceId}-last`,
+        },
+      ],
+    });
+    expect(page.status).toBe(200);
+    expect(page.data.results.map((row) => row.outcome)).toEqual([
+      "created",
+      "errored",
+      "skipped",
+      "created",
+    ]);
+    for (const index of [0, 3]) trackItem(ctx, page.data.results[index]!.id!);
+
+    const entries = await ownEntries("items.bulk", since);
+    expect(entries.map((entry) => entry.details.index).sort()).toEqual([0, 3]);
+    expect(new Set(entries.map((e) => e.details.operation_id)).size).toBe(1);
   });
 });
