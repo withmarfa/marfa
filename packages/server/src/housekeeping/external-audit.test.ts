@@ -504,6 +504,8 @@ describe("external and background audit units with real SQLite and disk", () => 
       maxBlobBytes: 10000,
       maxTextChars: 1000,
       maxAttempts: 3,
+      maxInflatedBytes: 64 * 1024 * 1024,
+      maxMemoryBytes: 256 * 1024 * 1024,
     });
     await refuse("item.enrich");
     expect((await sweeper.runOnce()).failed).toBe(1);

@@ -18,11 +18,11 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "opts into downloading the real OCR model, a test's own switch",
   "enrichment/extract.test.ts":
     "opts into downloading the real OCR model, a test's own switch",
+  "enrichment/office-bounds.test.ts":
+    "sets NODE_OPTIONS for one case to show the heap limit holds under it, a test's own switch",
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
-  "storage/sqlite/backup-copy.test.ts":
-    "starts a writer process with the node that runs the test",
   "storage/sqlite/backup-writer.ts":
     "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
   "test-browser.ts":
@@ -72,6 +72,7 @@ const PROCESS_MEMBERS = new Set([
   "once",
   "cwd",
   "chdir",
+  "execPath",
   "pid",
   "platform",
   "hrtime",

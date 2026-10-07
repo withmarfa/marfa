@@ -12,6 +12,7 @@ import {
   registeredTypesFingerprint,
 } from "./sweeper.js";
 import type { OcrEngine } from "./ocr.js";
+import { docx, longParagraph } from "./test-documents.js";
 
 /**
  * Each test gets its own context, deliberately. The sweeper sweeps the
@@ -47,6 +48,8 @@ function sweeper(
     maxBlobBytes: number;
     maxTextChars: number;
     maxAttempts: number;
+    maxInflatedBytes: number;
+    maxMemoryBytes: number;
   }> = {},
 ): TextEnrichmentSweeper {
   return new TextEnrichmentSweeper({
@@ -58,6 +61,8 @@ function sweeper(
     maxBlobBytes: overrides.maxBlobBytes ?? 20 * 1024 * 1024,
     maxTextChars: overrides.maxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
     maxAttempts: overrides.maxAttempts ?? 3,
+    maxInflatedBytes: overrides.maxInflatedBytes ?? 64 * 1024 * 1024,
+    maxMemoryBytes: overrides.maxMemoryBytes ?? 256 * 1024 * 1024,
   });
 }
 
@@ -123,6 +128,8 @@ function defaultSignature(): string {
   return JSON.stringify({
     max_blob_bytes: 20 * 1024 * 1024,
     max_text_chars: DEFAULT_MAX_STRING_LENGTH,
+    max_inflated_bytes: 64 * 1024 * 1024,
+    max_memory_bytes: 256 * 1024 * 1024,
     ocr: false,
     types: registeredTypesFingerprint(),
   });
@@ -277,12 +284,11 @@ describe("extraction", () => {
 
   it("does not write text for a blob the item no longer references", async () => {
     // The blob is replaced mid-extraction. The sweeper re-reads before it
-    // writes, so the stale text is discarded, nothing is recorded, and the
-    // next pass extracts the replacement.
-    const id = await createFileItem(
-      await seedBlob(await fixture("sample.png"), "image/png"),
-      "image/png",
-    );
+    // writes, so the stale text is discarded, the only record is the attempt
+    // made before extraction began, which names the old blob, and the next
+    // pass extracts the replacement.
+    const oldBlob = await seedBlob(await fixture("sample.png"), "image/png");
+    const id = await createFileItem(oldBlob, "image/png");
     const replacement = await seedBlob(
       Buffer.from("replacement quokkanew"),
       "text/plain",
@@ -310,9 +316,11 @@ describe("extraction", () => {
 
     expect(await run).toEqual({ extracted: 0, skipped: 1, failed: 0 });
     expect((await readItem(id)).extracted_text).toBeUndefined();
-    // Nothing recorded for the aborted write, so the next pass extracts
-    // the replacement blob.
-    expect(await ctx.storage.enrichment.get(id)).toBeNull();
+    expect(await ctx.storage.enrichment.get(id)).toMatchObject({
+      blob_ref: oldBlob,
+      status: "failed",
+      attempts: 1,
+    });
     expect(await sweeper().runOnce()).toEqual({
       extracted: 1,
       skipped: 0,
@@ -946,5 +954,114 @@ describe("batching", () => {
     const s = sweeper({ batchSize: 2 });
     const result = await s.runOnce();
     expect(result).toEqual({ extracted: 2, skipped: 0, failed: 0 });
+  });
+});
+
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+describe("a document that asks for more than extraction may use", () => {
+  it("is skipped with the reason, writes no text, and is read once the limit is raised", async () => {
+    const bomb = docx(longParagraph(8 * 1024 * 1024));
+    // The witness for the amplification: small on the wire, large once read.
+    expect(bomb.length).toBeLessThan(64 * 1024);
+    const id = await createFileItem(await seedBlob(bomb, DOCX_MIME), DOCX_MIME);
+
+    const bounded = sweeper({ maxInflatedBytes: 1024 * 1024 });
+    expect(await bounded.runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
+    expect((await readItem(id)).extracted_text).toBeUndefined();
+    const row = await ctx.storage.enrichment.get(id);
+    expect(row?.status).toBe("skipped");
+    expect(row?.error).toMatch(/limit/);
+    // Parked, not retried: a second pass offers it nothing.
+    expect(await bounded.runOnce()).toEqual({
+      extracted: 0,
+      skipped: 0,
+      failed: 0,
+    });
+
+    // Raising the limit changes what the skip was decided under.
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(String((await readItem(id)).extracted_text)).toMatch(/^aaaa/);
+  });
+
+  it("leaves the rest of the batch to be read", async () => {
+    const bomb = await createFileItem(
+      await seedBlob(docx(longParagraph(8 * 1024 * 1024)), DOCX_MIME),
+      DOCX_MIME,
+    );
+    const plain = await createFileItem(
+      await seedBlob(docx(longParagraph(10)), DOCX_MIME),
+      DOCX_MIME,
+    );
+    expect(await sweeper({ maxInflatedBytes: 1024 * 1024 }).runOnce()).toEqual({
+      extracted: 1,
+      skipped: 1,
+      failed: 0,
+    });
+    expect((await readItem(bomb)).extracted_text).toBeUndefined();
+    expect(String((await readItem(plain)).extracted_text)).toBe("aaaaaaaaaa");
+  });
+});
+
+describe("an attempt is recorded before extraction starts", () => {
+  it("leaves the attempt on the row while the extraction is still running", async () => {
+    let release!: (text: string) => void;
+    const gate = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const ocr = new FakeOcr(() => gate);
+    const blob = await seedBlob(await fixture("sample.png"), "image/png");
+    const id = await createFileItem(blob, "image/png");
+
+    const run = sweeper({ ocr }).runOnce();
+    await expect.poll(() => ocr.calls).toBe(1);
+    expect(await ctx.storage.enrichment.get(id)).toMatchObject({
+      blob_ref: blob,
+      status: "failed",
+      attempts: 1,
+    });
+
+    release("quokkaready");
+    expect(await run).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+    // The finished extraction replaces the attempt.
+    expect(await ctx.storage.enrichment.get(id)).toMatchObject({
+      status: "done",
+      attempts: 1,
+    });
+  });
+
+  it("stops offering an item that ends the process every time, once its attempts are used", async () => {
+    // A process that dies mid-extraction never reaches the bookkeeping that
+    // follows, which is what a sweeper abandoned here stands for: each
+    // "boot" starts a sweeper that gets as far as extraction and is never
+    // heard from again.
+    const forever = () => new Promise<string>(() => undefined);
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+    );
+    const offered = async () =>
+      (
+        await ctx.storage.enrichment.listCandidates(3, 100, defaultSignature())
+      ).map((c) => c.item_id);
+
+    for (let boot = 1; boot <= 3; boot++) {
+      // Offered at the start of every boot until the attempts are gone.
+      expect(await offered()).toContain(id);
+      const ocr = new FakeOcr(forever);
+      void sweeper({ ocr, itemTimeoutMs: 10 * 60_000 }).runOnce();
+      await expect.poll(() => ocr.calls).toBe(1);
+      expect((await ctx.storage.enrichment.get(id))?.attempts).toBe(boot);
+    }
+    expect(await offered()).not.toContain(id);
   });
 });

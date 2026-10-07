@@ -12,6 +12,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
 import { extractText, isEnrichableMime } from "./extract.js";
+import { ExtractionLimitError } from "./office.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import {
   DIMENSION_FIELDS,
@@ -31,6 +32,10 @@ export interface TextEnrichmentSweeperOptions {
   maxBlobBytes: number;
   maxTextChars: number;
   maxAttempts: number;
+  /** The most a document may inflate to, all its parts together. */
+  maxInflatedBytes: number;
+  /** The most memory a document's extraction may take. */
+  maxMemoryBytes: number;
 }
 
 /**
@@ -102,6 +107,8 @@ export class TextEnrichmentSweeper {
     return JSON.stringify({
       max_blob_bytes: this.opts.maxBlobBytes,
       max_text_chars: this.opts.maxTextChars,
+      max_inflated_bytes: this.opts.maxInflatedBytes,
+      max_memory_bytes: this.opts.maxMemoryBytes,
       ocr: this.opts.ocr !== null,
       types: registeredTypesFingerprint(),
     });
@@ -159,12 +166,13 @@ export class TextEnrichmentSweeper {
     const record = async (
       status: "skipped" | "failed" | "done",
       error: string | null,
+      counted = attempts,
     ) => {
       await storage.enrichment.upsert({
         item_id: candidate.item_id,
         blob_ref: candidate.blob_ref,
         status,
-        attempts,
+        attempts: counted,
         error,
         config_signature: this.configSignature,
       });
@@ -214,6 +222,13 @@ export class TextEnrichmentSweeper {
         await recordSkip("blob exceeds size limit");
         return "skipped";
       }
+
+      // Before the bytes are read and parsed, because a document can take
+      // the process down in either, and a process that dies there never
+      // reaches the bookkeeping below. Without this the item is offered at
+      // every boot, as if no attempt had been made, and kills it each time.
+      // Every outcome below overwrites it.
+      await record("failed", "extraction started and did not finish");
 
       // Collected rather than streamed, because every extractor below takes
       // a buffer; the size gate above is what keeps the buffer bounded.
@@ -269,14 +284,19 @@ export class TextEnrichmentSweeper {
             );
           }
         } catch (err) {
-          textError = errorMessage(err);
+          // A document past the limits is past them on every try, so it is
+          // a reason and not a failure to retry. Raising a limit changes
+          // the signature, which offers it again.
+          if (err instanceof ExtractionLimitError) reasons.push(err.message);
+          else textError = errorMessage(err);
         }
       }
 
       // Re-read before writing: extraction can take most of a minute, and
       // both the write and the bookkeeping must describe the item as it is
-      // now, not as the candidate row had it. A gone or re-pointed item
-      // gets nothing recorded — the next run sees the current shape.
+      // now, not as the candidate row had it. A gone item takes its row with
+      // it, and a re-pointed one starts a new generation of attempts, so
+      // the attempt recorded above matters to neither.
       const fresh = await storage.items.get(candidate.item_id);
       if (!fresh) return "skipped";
       if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
@@ -378,9 +398,17 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
       // A conflict response means the item moved between the re-read and
-      // the write. Nothing recorded: the row is re-offered next run and
-      // judged against whatever the item has become.
-      if (written.outcome !== "updated") return "skipped";
+      // the write. The attempt recorded before extraction is given back,
+      // so an item that is rewritten as fast as it is read is offered
+      // again and judged against whatever it has become, not parked.
+      if (written.outcome !== "updated") {
+        await record(
+          "failed",
+          "the item changed while its text was read",
+          attempts - 1,
+        );
+        return "skipped";
+      }
 
       if (textError !== null) {
         // Half of it landed. Recorded as a failure anyway, so the retry
@@ -412,26 +440,39 @@ export class TextEnrichmentSweeper {
   }
 
   /**
-   * Races extraction against a per-item budget. A tesseract recognition
-   * cannot be canceled from the outside, so an overrun terminates the
-   * worker: the engine recreates it on the next call, and the alternative
-   * is a wedged sweep that never reaches the rest of the batch.
+   * Gives extraction a per-item budget. A document is read in a process that
+   * the abort kills whatever it is doing, and a tesseract recognition cannot
+   * be canceled from the outside, so an overrun terminates the worker: the
+   * engine recreates it on the next call, and the alternative is a wedged
+   * sweep that never reaches the rest of the batch.
    */
   private async extractWithTimeout(
     bytes: Buffer,
     mimeType: string,
   ): ReturnType<typeof extractText> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new AbortController();
+    const timer = setTimeout(() => {
+      budget.abort(new Error("extraction timed out"));
+    }, this.opts.itemTimeoutMs);
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error("extraction timed out"));
-      }, this.opts.itemTimeoutMs);
+      budget.signal.addEventListener(
+        "abort",
+        () => {
+          reject(budget.signal.reason as Error);
+        },
+        { once: true },
+      );
     });
     try {
       return await Promise.race([
         extractText(bytes, mimeType, {
           maxTextChars: this.opts.maxTextChars,
           ocr: this.opts.ocr,
+          office: {
+            maxInflatedBytes: this.opts.maxInflatedBytes,
+            maxMemoryBytes: this.opts.maxMemoryBytes,
+          },
+          signal: budget.signal,
         }),
         timeout,
       ]);
@@ -441,7 +482,7 @@ export class TextEnrichmentSweeper {
       });
       throw err;
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 

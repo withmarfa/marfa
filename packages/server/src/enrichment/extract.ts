@@ -1,4 +1,8 @@
-import { OFFICE_MIME_TO_FILE_TYPE, extractOfficeText } from "./office.js";
+import {
+  OFFICE_MIME_TO_FILE_TYPE,
+  extractOfficeText,
+  type OfficeLimits,
+} from "./office.js";
 import { OCR_MIMES } from "./ocr.js";
 import type { OcrEngine } from "./ocr.js";
 
@@ -39,7 +43,12 @@ export function isEnrichableMime(
 export async function extractText(
   bytes: Buffer,
   mimeType: string,
-  opts: { maxTextChars: number; ocr: OcrEngine | null },
+  opts: {
+    maxTextChars: number;
+    ocr: OcrEngine | null;
+    office: Omit<OfficeLimits, "maxTextChars">;
+    signal?: AbortSignal;
+  },
 ): Promise<ExtractOutcome> {
   const mime = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
 
@@ -49,7 +58,12 @@ export async function extractText(
   } else if (mime in OFFICE_MIME_TO_FILE_TYPE) {
     const fileType = OFFICE_MIME_TO_FILE_TYPE[mime];
     if (fileType === undefined) return { kind: "unsupported" };
-    text = await extractOfficeText(bytes, fileType);
+    text = await extractOfficeText(
+      bytes,
+      fileType,
+      { ...opts.office, maxTextChars: opts.maxTextChars },
+      opts.signal,
+    );
   } else if (OCR_MIMES.has(mime)) {
     if (!opts.ocr) return { kind: "unsupported" };
     text = await opts.ocr.recognize(bytes);

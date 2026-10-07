@@ -259,6 +259,14 @@ export interface AppConfig {
    *  offering it. Default 3; env override
    *  `MARFA_ENRICHMENT_MAX_ATTEMPTS`. */
   enrichmentMaxAttempts?: number;
+  /** The most a document may inflate to, all its parts together, when its
+   *  text is extracted; a document past it is skipped. Default 64 MiB; env
+   *  override `MARFA_ENRICHMENT_MAX_INFLATED_BYTES`. */
+  enrichmentMaxInflatedBytes?: number;
+  /** The most the JavaScript heap of the process that reads one document
+   *  may take; a document that needs more is skipped. Default 256 MiB; env override
+   *  `MARFA_ENRICHMENT_MAX_MEMORY_BYTES`. */
+  enrichmentMaxMemoryBytes?: number;
   /** OCR of image files. On unless `MARFA_ENRICHMENT_OCR_ENABLED=false`.
    *  Off means image items are recorded as unsupported and never retried,
    *  which is the right posture for a memory-constrained deployment: the
@@ -1008,6 +1016,16 @@ const settingsShape = {
     DEFAULT_MAX_STRING_LENGTH,
     "The most characters of extracted text the server keeps. Longer text is truncated.",
   ),
+  MARFA_ENRICHMENT_MAX_INFLATED_BYTES: count(
+    64 * 1024 * 1024,
+    "The most a document may inflate to when the server extracts its text, all of its parts together. A document that inflates past it is skipped.",
+    { unit: "bytes" },
+  ),
+  MARFA_ENRICHMENT_MAX_MEMORY_BYTES: count(
+    256 * 1024 * 1024,
+    "The most the JavaScript heap of the process that reads one document's text may take. That process also holds the document and what it inflates to, outside the heap, so allow this and the two limits above together. A document that needs more is skipped.",
+    { unit: "bytes" },
+  ),
   MARFA_ENRICHMENT_MAX_ATTEMPTS: count(
     3,
     "How many times the server tries to extract text from a failing item before it stops.",
@@ -1627,6 +1645,8 @@ export function loadConfig(
     enrichmentMaxBlobBytes: s.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
     enrichmentMaxTextChars: s.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
     enrichmentMaxAttempts: s.MARFA_ENRICHMENT_MAX_ATTEMPTS,
+    enrichmentMaxInflatedBytes: s.MARFA_ENRICHMENT_MAX_INFLATED_BYTES,
+    enrichmentMaxMemoryBytes: s.MARFA_ENRICHMENT_MAX_MEMORY_BYTES,
     enrichmentOcrEnabled: s.MARFA_ENRICHMENT_OCR_ENABLED,
     enrichmentTessdataDir:
       s.MARFA_ENRICHMENT_TESSDATA_DIR ?? defaultTessdataDir(s.SQLITE_PATH),
