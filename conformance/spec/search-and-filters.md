@@ -78,7 +78,7 @@ If a request to `POST /auth/oauth2/register` carries an undeclared query key, th
 
 ### `search-and-filters/empty-narrowing`
 
-When a request to `GET /items`, `GET /items/stats`, `GET /search`, `GET /occurrences`, `GET /export` or `GET /events` carries a `type`, `source`, `tags` or `filter` key that the operation declares, with no value, with only blanks, or, for `type` and `tags`, with a list of blank entries, the server MUST answer `400 validation_error` naming the key in `details.empty_parameters`.
+If a credential that the operation admits sends `GET /items`, `GET /items/stats`, `GET /search`, `GET /occurrences`, `GET /export` or `GET /events` with a `type`, `source`, `tags` or `filter` key that the operation declares, holding no value, only blanks, or, for `type` and `tags`, a list of blank entries, then the server MUST answer `400 validation_error` naming each such key in `details.empty_parameters`.
 
 **Reason:** a filter with no value narrows nothing and would answer everything the operation can read, so a client that built its query from a variable it never filled in would read everything while believing it had narrowed.
 
@@ -868,7 +868,7 @@ When `GET /items/stats` names `include=system`, the server MUST count the `syste
 
 ### `search-and-filters/stats-system-default`
 
-When `GET /items/stats` does not name `include=system`, the server MUST leave the `system.*` items out of its counts.
+When `GET /items/stats` names neither `include=system` nor a `type` in the `system.` namespace, the server MUST leave the `system.*` items out of its counts.
 
 **Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
 

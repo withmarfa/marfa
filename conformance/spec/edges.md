@@ -310,13 +310,13 @@ When an edge type holds more inbound edges than the 50 a block of `backrefs` car
 
 ### `edges/neighbors`
 
-When `GET /items/{id}` names `include=neighbors`, the server MUST carry in `neighbors`, as a list and not a page, each item at the far end of the edge blocks of the answer that the credential may read, with its metadata.
+When `GET /items/{id}` names `include=neighbors`, the server MUST carry in `neighbors`, as a list and not a page, each item at the far end of the edge blocks of the answer that the credential may read and that is not a `system.*` item, with its metadata.
 
 **Tests:** `compliance/envelope.test.ts › hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`.
 
 ### `edges/neighbors-cap`
 
-When the far ends of the edge blocks of `GET /items/{id}` pass 100 together across every edge type, the server MUST hydrate exactly 100 of them in `neighbors`.
+When the far ends of the edge blocks of `GET /items/{id}` pass 100 together across every edge type, and each of them is an item the credential may read and not a `system.*` item, the server MUST hydrate exactly 100 of them in `neighbors`.
 
 **Reason:** no block's `next_cursor` can say that the combined count passed the cap, since each block can be whole.
 
@@ -336,7 +336,7 @@ When the far ends of the edge blocks of `GET /items/{id}` number 100 or fewer, t
 
 ### `edges/neighbors-whole`
 
-When the far ends of the edge blocks of `GET /items/{id}` number 100 or fewer, the server MUST hydrate every far end that the credential may read in `neighbors`.
+When the far ends of the edge blocks of `GET /items/{id}` number 100 or fewer, the server MUST hydrate in `neighbors` every far end that the credential may read and that is not a `system.*` item.
 
 **Tests:** `compliance/envelope.test.ts › hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`.
 

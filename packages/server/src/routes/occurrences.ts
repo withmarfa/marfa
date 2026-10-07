@@ -98,7 +98,7 @@ import {
   MarfaError,
   ErrorCode,
   resolveEnforcement,
-  typeMatchesPattern,
+  typeAnswersSubtreeFilter,
 } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -429,8 +429,9 @@ interface ScanBudget {
 /** The storage-side narrowing one pass applies on top of type and state. */
 type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
 
-/** What every pass reads: the event type, narrowed by the credential and the
- *  instance's source filter as `GET /items` narrows a listing. */
+/** What every pass reads: the `type` the request names, else the event
+ *  type, narrowed by the credential and the instance's source filter as
+ *  `GET /items` narrows a listing. */
 type EventScanScope = Pick<
   ItemFilters,
   "type" | "allowed_types" | "excluded_types" | "source_filter"
@@ -481,6 +482,8 @@ async function scanEvents<T>(
     });
     budget.scanned += page.data.length;
     for (const item of page.data) {
+      // A `type` filter may reach past the event types; only they unfold.
+      if (!typeAnswersSubtreeFilter(item.type, EVENT_TYPE)) continue;
       const projected = project(item);
       if (projected !== undefined) kept.push(projected);
     }
@@ -1056,34 +1059,6 @@ export function occurrenceRoutes(
     // `assertTypeFilter`.
     assertTypeFilter(c, query.type);
 
-    if (
-      query.type !== undefined &&
-      !typeMatchesPattern(EVENT_TYPE, query.type)
-    ) {
-      // Every count here is scoped to what this request read, and it
-      // read nothing, so the zeros are true rather than a claim about
-      // the rest. `scan.series_errors` says the same on every other
-      // path: a request is told about the rules it read and no others.
-      return c.json(
-        {
-          data: [],
-          next_cursor: null,
-          window: { from: from.toISOString(), to: to.toISOString() },
-          scan: {
-            events_read: 0,
-            occurrences: 0,
-            max_occurrences: MAX_OCCURRENCES,
-            series_errors: 0,
-            max_series_errors: MAX_SERIES_ERRORS,
-            unproductive_iterations: 0,
-            max_unproductive_iterations: maxUnproductiveIterations,
-            series_unexpanded: 0,
-          },
-        },
-        200,
-      );
-    }
-
     // Three passes, because the calendar is three different questions
     // and only one of them is about the window. Each keeps its own
     // projection of a row and never the row: see the note at the top of
@@ -1095,7 +1070,7 @@ export function occurrenceRoutes(
       c.get("apiKey"),
     );
     const scope: EventScanScope = {
-      type: EVENT_TYPE,
+      type: query.type ?? EVENT_TYPE,
       allowed_types: typeFilter.allowed,
       excluded_types: typeFilter.excluded,
       source_filter: enforcement.source_filter,

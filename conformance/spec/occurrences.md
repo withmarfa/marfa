@@ -184,13 +184,13 @@ When a series has `all_day: true`, the server MUST start each occurrence at loca
 
 ### `occurrences/moved-replaces`
 
-When an event with an `original_starts_at` is joined to a series by a `parent-of` edge from the series, the server MUST show it in place of the series' occurrence at that instant.
+When an `active` event with an `original_starts_at` that the credential may read is joined to a series by a `parent-of` edge from the series, the server MUST show it in place of the series' occurrence at that instant.
 
 **Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`, `› carries series_id and replaces on a moved occurrence in a window that holds both times`.
 
 ### `occurrences/moved-ids`
 
-When a moved occurrence is in a window, the server MUST carry on it the `series_id` of its series and, in `replaces`, the start of the occurrence it replaces, whether or not the window holds that occurrence.
+When a moved occurrence is in a window, and its series is `active` and one the credential may read, the server MUST carry on it the `series_id` of its series and, in `replaces`, the start of the occurrence it replaces, whether or not the window holds that occurrence.
 
 **Reason:** the exception names its series and the slot it replaced, wherever it is shown.
 
@@ -204,7 +204,7 @@ The server MUST show a moved occurrence at its own `starts_at` and `ends_at`.
 
 ### `occurrences/moved-slot-empty`
 
-When a window holds the occurrence that a stored exception moved away and not the exception's own times, the server MUST show nothing at that occurrence.
+When a window holds the occurrence that an `active` stored exception the credential may read moved away, and not the exception's own times, the server MUST show nothing at that occurrence.
 
 **Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`.
 
@@ -374,7 +374,7 @@ The server MUST unfold whole a series that has exactly 2,000 occurrences in the 
 
 While `series_errors` holds fewer than 500 entries, when the server leaves a series out of `data` by `occurrences/unfold-stopped`, `occurrences/unfold-too-long` or `occurrences/unfold-per-series`, the server MUST name the series in `series_errors`.
 
-**Tests:** `compliance/recurrence.test.ts › is stopped inside its walk and named, and the rest of the window answers`, `compliance/unfold-budget.test.ts › answers expansion_incomplete and counts the series it never reached, naming none of them`.
+**Tests:** `compliance/recurrence.test.ts › is stopped inside its walk and named, and the rest of the window answers`, `› says expansion_incomplete when a series has more occurrences in the window than it may unfold`, `compliance/unfold-budget.test.ts › answers expansion_incomplete and counts the series it never reached, naming none of them`.
 
 ### `occurrences/unfold-counted`
 
