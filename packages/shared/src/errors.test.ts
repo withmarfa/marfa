@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ErrorCode, MarfaError, httpStatus } from "./errors.js";
+import {
+  ERROR_CODES,
+  ErrorCode,
+  INTERNAL_ERROR,
+  MarfaError,
+  httpStatus,
+} from "./errors.js";
 
 describe("ErrorCode", () => {
   it("has all expected error codes", () => {
@@ -99,5 +105,35 @@ describe("MarfaError", () => {
     const err = new MarfaError(ErrorCode.UNAUTHORIZED, "No API key");
     const response = err.toResponse();
     expect(response.error).not.toHaveProperty("details");
+  });
+});
+
+describe("ERROR_CODES", () => {
+  it("describes every code the enum has, and internal_error", () => {
+    expect(Object.keys(ERROR_CODES).sort()).toEqual(
+      [...Object.values(ErrorCode), INTERNAL_ERROR].sort(),
+    );
+    expect(Object.values(ErrorCode)).not.toContain(INTERNAL_ERROR);
+  });
+
+  it("gives each code an error status and a one-sentence summary", () => {
+    for (const [code, info] of Object.entries(ERROR_CODES)) {
+      expect(info.status, code).toBeGreaterThanOrEqual(400);
+      expect(info.status, code).toBeLessThan(600);
+      expect(info.summary, code).toMatch(/^[A-Z].*[.]$/);
+      expect(info.summary, code).not.toMatch(/\u2014|\|/);
+    }
+  });
+
+  it("is what httpStatus and MarfaError read", () => {
+    for (const code of Object.values(ErrorCode)) {
+      expect(httpStatus(code), code).toBe(ERROR_CODES[code].status);
+      expect(new MarfaError(code, "x").status, code).toBe(
+        ERROR_CODES[code].status,
+      );
+    }
+    expect(
+      new MarfaError(ErrorCode.BULK_ATOMIC_ROLLBACK, "x", {}, 403).status,
+    ).toBe(403);
   });
 });

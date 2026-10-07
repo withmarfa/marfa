@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { ErrorCode } from "@withmarfa/shared";
+import { ERROR_CODES, ErrorCode } from "@withmarfa/shared";
 
 const SRC = resolve(import.meta.dirname);
 const REPO = resolve(SRC, "../../..");
@@ -138,6 +138,13 @@ describe("the codes the server sends and the error chapter", () => {
     expect(sent.get("internal_error")).toBe("middleware/error-handler.ts");
     expect(sent.get("housekeeping_job_running")).toBe("the ErrorCode enum");
     expect(rowsOf(ERRORS_CHAPTER).length).toBeGreaterThan(50);
+  });
+
+  it("describes in ERROR_CODES exactly the codes the server sends", () => {
+    // The chapter's table is written from ERROR_CODES, so a code sent that it
+    // does not hold would be missing from the contract, and one it holds that
+    // nothing sends would be a promise the server does not keep.
+    expect(Object.keys(ERROR_CODES).sort()).toEqual([...sent.keys()].sort());
   });
 
   it("has a row in errors.md for every code the server answers with", () => {
