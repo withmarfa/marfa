@@ -288,6 +288,21 @@ describe("a write to an item in the bin says so", () => {
     // The witness: the same write lands while the item is live.
     const live = await client.updateMetadata(id, { tags: ["live"] });
     expect(live.status).toBe(200);
+    const stored = await client.setItemExtension(id, "notes-app", {
+      pinned: true,
+    });
+    expect(stored.status, JSON.stringify(stored.error)).toBe(200);
+    const reads = {
+      "GET /items/{id}": () => client.getItem(id),
+      "GET /items/{id}/metadata": () => client.getMetadata(id),
+      "GET /items/{id}/versions": () => client.getVersions(id),
+      "GET /items/{id}/extensions": () => client.listItemExtensions(id),
+      "GET /items/{id}/extensions/{namespace}": () =>
+        client.getItemExtension(id, "notes-app"),
+    };
+    for (const [door, read] of Object.entries(reads)) {
+      expect((await read()).status, door).toBe(200);
+    }
     expect((await client.deleteItem(id)).status).toBe(200);
 
     const patched = await client.updateItem(id, {
@@ -314,9 +329,12 @@ describe("a write to an item in the bin says so", () => {
       expect(refused.error?.error.details).toEqual({ trashed: true });
     }
 
-    const read = await client.getItem(id);
-    expect(read.status).toBe(404);
-    expect(read.error?.error.details).toBeUndefined();
+    for (const [door, read] of Object.entries(reads)) {
+      const refused = await read();
+      expect(refused.status, door).toBe(404);
+      expect(refused.error?.error.code, door).toBe("item_not_found");
+      expect(refused.error?.error.details, door).toBeUndefined();
+    }
 
     const blind = await keyWith("blind-bin", {
       type_permissions: { "core.task": "write" },
