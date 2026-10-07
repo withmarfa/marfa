@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
 
 export interface Received {
+  method: string;
   path: string;
   headers: Record<string, string | string[] | undefined>;
   body: string;
@@ -30,8 +31,15 @@ export interface Receiver {
  */
 const WAIT_MS = 60_000;
 
+/**
+ * The status the receiver answers each delivery with, fixed or chosen by the
+ * delivery's own turn, so a fixture can make a receiver fail and then take
+ * the same delivery on a later attempt.
+ */
+export type ReceiverStatus = number | ((received: Received) => number);
+
 export async function startReceiver(
-  options: { status?: number } = {},
+  options: { status?: ReceiverStatus } = {},
 ): Promise<Receiver> {
   const received: Received[] = [];
   const server: Server = createServer((req, res) => {
@@ -40,8 +48,15 @@ export async function startReceiver(
       body += chunk.toString("utf8");
     });
     req.on("end", () => {
-      received.push({ path: req.url ?? "", headers: req.headers, body });
-      res.writeHead(options.status ?? 200);
+      const arrived: Received = {
+        method: req.method ?? "",
+        path: req.url ?? "",
+        headers: req.headers,
+        body,
+      };
+      received.push(arrived);
+      const status = options.status ?? 200;
+      res.writeHead(typeof status === "function" ? status(arrived) : status);
       res.end("ok");
     });
   });

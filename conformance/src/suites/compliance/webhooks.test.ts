@@ -216,6 +216,7 @@ describe("outbound webhooks", () => {
       const delivery = await receiver.waitFor(
         (r) => r.path === "/hook/signed" && r.body.includes(item.data.item.id),
       );
+      expect(delivery.method).toBe("POST");
       expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
       expect(delivery.headers["content-type"]).toContain("application/json");
       const payload = JSON.parse(delivery.body) as {
@@ -1196,6 +1197,7 @@ describe("outbound webhooks", () => {
 
   it("refuses a URL that is not http or https, or carries credentials", async () => {
     for (const url of [
+      "not a url",
       "ftp://receiver.example/hook",
       "file:///etc/passwd",
       "https://user:pass@receiver.example/hook",

@@ -103,6 +103,7 @@ async function link(
 
 interface Attempt {
   at: number;
+  method: string;
   headers: Record<string, string | string[] | undefined>;
   body: string;
 }
@@ -135,7 +136,12 @@ async function startScriptedReceiver(
     req.on("end", () => {
       const label = (req.url ?? "").replace(/^\/hook\//, "");
       const seen = byLabel.get(label) ?? [];
-      seen.push({ at: Date.now(), headers: req.headers, body });
+      seen.push({
+        at: Date.now(),
+        method: req.method ?? "",
+        headers: req.headers,
+        body,
+      });
       byLabel.set(label, seen);
       const { status, headers } = answer(label, seen.length);
       res.writeHead(status, headers);
@@ -1124,5 +1130,51 @@ describe("outbound webhook delivery", () => {
       (r) => r.path === "/hook/filtered-edge" && r.body.includes(edgeId),
     );
     expect(delivered.headers["x-marfa-event-type"]).toBe("edge.created");
+  });
+
+  it("delivers an edge event only where the key may read the edge's kind", async () => {
+    const seenKind = await registerEdgeType("kind-seen");
+    const unseenKind = await registerEdgeType("kind-unseen");
+    const owner = await keyWith("kind-owner", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { [seenKind]: "read" },
+    });
+    const narrow = await owner.client.createWebhook({
+      url: receiver.hookUrl("kind-narrow"),
+      events: ["edge.created"],
+    });
+    expect(narrow.status).toBe(201);
+    trackWebhook(ctx, narrow.data.id, owner.client);
+    // The witness that both edges were announced and could be sent: a
+    // subscription of the run's own key, which reads every kind.
+    const wide = await client.createWebhook({
+      url: receiver.hookUrl("kind-wide"),
+      events: ["edge.created"],
+    });
+    expect(wide.status).toBe(201);
+    trackWebhook(ctx, wide.data.id, client);
+
+    const target = await makeNote("kind-target");
+    const source = await makeNote("kind-source");
+    // The readable kind is written last, so its delivery says the one before
+    // it was already decided.
+    const hidden = await link(source, target, unseenKind);
+    const readable = await link(source, target, seenKind);
+
+    for (const edge of [hidden, readable]) {
+      await receiver.waitFor(
+        (r) => r.path === "/hook/kind-wide" && r.body.includes(edge),
+      );
+    }
+    const delivered = await receiver.waitFor(
+      (r) => r.path === "/hook/kind-narrow" && r.body.includes(readable),
+    );
+    expect(delivered.headers["x-marfa-event-type"]).toBe("edge.created");
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/kind-narrow" && r.body.includes(hidden),
+      ),
+      "an owner that may not read the kind was sent an edge of it",
+    ).toHaveLength(0);
   });
 });

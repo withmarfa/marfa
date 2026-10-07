@@ -601,6 +601,12 @@ describe("audit log", () => {
       });
       expect(chosen.status).toBe(201);
       trackWebhook(ctx, chosen.data.id, client);
+      const changed = await client.updateWebhook(generated.data.id, {
+        url: receiver.hookUrl("audit-updated"),
+        active: false,
+      });
+      expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+      expect((await client.deleteWebhook(chosen.data.id)).ok).toBe(true);
       expect((await client.revokeKey(minted.data.id)).ok).toBe(true);
 
       const entries: AuditEntry[] = [];
@@ -624,7 +630,13 @@ describe("audit log", () => {
       // The witness: the writes are in the log, so a value missing from it
       // is one that was left out and not one that was never recorded.
       const actions = new Set(entries.map((entry) => entry.action));
-      for (const action of ["key.create", "key.revoke", "webhook.create"]) {
+      for (const action of [
+        "key.create",
+        "key.revoke",
+        "webhook.create",
+        "webhook.update",
+        "webhook.delete",
+      ]) {
         expect(actions, action).toContain(action);
       }
       expect(
@@ -645,9 +657,17 @@ describe("audit log", () => {
         process.env.MARFA_API_KEY ?? "",
         generated.data.secret,
         supplied,
+        changed.data.secret,
       ]) {
         expect(value.length).toBeGreaterThan(0);
         expect(logged).not.toContain(value);
+      }
+      for (const entry of entries.filter((e) =>
+        e.action.startsWith("webhook."),
+      )) {
+        expect(Object.keys(entry.details), entry.action).not.toContain(
+          "secret",
+        );
       }
       // Nor a value shaped like one: a key, or the 64 hexadecimal characters
       // of a generated secret or a stored hash.
