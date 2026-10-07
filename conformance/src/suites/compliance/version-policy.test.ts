@@ -290,6 +290,109 @@ describe("the version policy a type inherits", () => {
     expect(await history(binned)).toBe(1);
   });
 
+  it("answers a write naming a version the thinner removed ancestor_unavailable, and never merges it, whatever conflict asks", async () => {
+    const type = `user.policy-thinned-${ctx.runId}-${String(++sequence)}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" }, note: { type: "string" } },
+      version_policy: { max_versions: 1 },
+    } as Parameters<MarfaClient["registerType"]>[0]);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const created = await client.createItem({
+      type,
+      properties: { title: "v1" },
+    });
+    expect(created.status).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    for (let n = 1; n <= 3; n++) {
+      const updated = await client.updateItem(id, {
+        properties: { title: `v${String(n + 1)}` },
+        version: n,
+      });
+      expect(updated.status).toBe(200);
+    }
+    const target = await client.createItem({
+      type,
+      properties: { title: "target" },
+    });
+    expect(target.status).toBe(201);
+    trackItem(ctx, target.data.item.id);
+    expect(await history(id)).toBe(3);
+
+    await runThinning();
+
+    const kept = (await client.getVersions(id)).data.data.map((v) => v.version);
+    expect(kept).toHaveLength(1);
+    const removed = [1, 2, 3].filter((version) => !kept.includes(version));
+    expect(removed).toHaveLength(2);
+
+    const patch = (version: number, body: object, query = "") =>
+      client.rawRequest<unknown>(`/items/${id}${query}`, {
+        method: "PATCH",
+        body: { ...body, version },
+      });
+    for (const version of removed) {
+      // Collides on nothing, so a snapshot would have merged it, and one that
+      // collides, so a snapshot would have been resolved under auto.
+      for (const [label, body, query] of [
+        ["no collision", { properties: { note: "added" } }, ""],
+        [
+          "no collision under auto",
+          { properties: { note: "added" } },
+          "?conflict=auto",
+        ],
+        [
+          "collision under auto",
+          { properties: { title: "mine" } },
+          "?conflict=auto",
+        ],
+      ] as [string, object, string][]) {
+        const refused = await patch(version, body, query);
+        const name = `${label}, version ${String(version)}`;
+        expect(refused.status, name).toBe(409);
+        expect(refused.error?.error.code, name).toBe("ancestor_unavailable");
+        const envelope = refused.error as unknown as {
+          requested_version?: number;
+          current?: { id?: string; version?: number };
+          ancestor?: unknown;
+        };
+        expect(envelope.requested_version, name).toBe(version);
+        expect(envelope.current?.id, name).toBe(id);
+        expect(envelope.current?.version, name).toBe(4);
+        expect(envelope.ancestor, name).toBeUndefined();
+      }
+      // With nothing to merge the version is not looked up in the history,
+      // so the answer is the stale one.
+      for (const body of [
+        { edges: { references: [target.data.item.id] } },
+        { type, retype: true },
+      ]) {
+        const stale = await patch(version, body);
+        const name = `${JSON.stringify(body)}, version ${String(version)}`;
+        expect(stale.status, name).toBe(409);
+        expect(stale.error?.error.code, name).toBe("version_conflict");
+        const envelope = stale.error as unknown as Record<string, unknown>;
+        expect(envelope.ancestor, name).toBeUndefined();
+        expect(envelope.conflicting_fields, name).toBeUndefined();
+        expect(envelope.requested_version, name).toBeUndefined();
+      }
+    }
+
+    const row = await client.getItem(id);
+    expect(row.data.item.version).toBe(4);
+    expect(row.data.item.properties).toEqual({ title: "v4" });
+    expect(
+      (await client.getVersions(id)).data.data.map((v) => v.version),
+    ).toEqual(kept);
+
+    // The witness: the same write naming the version the thinner kept is
+    // merged, so the refusals above are about the removed snapshot.
+    const merged = await patch(kept[0] ?? 0, { properties: { note: "added" } });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect((merged.data as { item: { version: number } }).item.version).toBe(5);
+  });
+
   it("does not thin an item whose type was force-deleted by the policy the type held", async () => {
     const kept = await register(undefined, { max_versions: 1 });
     const deleted = await register(undefined, { max_versions: 1 });

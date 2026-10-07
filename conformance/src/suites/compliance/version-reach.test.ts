@@ -17,12 +17,12 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let client: MarfaClient;
 let noteReader: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 /** A value only the snapshots written while the row was a task hold. */
 let taskMark: string;
 
 beforeAll(async () => {
-  let apiUrl: string;
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
     "version-reach",
@@ -131,6 +131,103 @@ describe("version history answers only the snapshots a key may read", () => {
     const notes = await noteReader.getVersions(id, { limit: 1 });
     expect(notes.data.data.map((v) => v.version)).toEqual([3]);
     expect(notes.data.next_cursor).toBeNull();
+  });
+
+  it("answers 404 for the history of an item in the bin, and the history again once it is restored", async () => {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "binned history" },
+    });
+    expect(created.status).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (await client.updateItem(id, { properties: { title: "t" }, version: 1 }))
+        .status,
+    ).toBe(200);
+    const live = await client.getVersions(id);
+    expect(live.data.data.map((v) => v.version)).toEqual([1]);
+
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    const binned = await client.getVersions(id);
+    expect(binned.status).toBe(404);
+    expect(binned.error?.error.code).toBe("item_not_found");
+
+    expect((await client.restoreItem(id)).ok).toBe(true);
+    const restored = await client.getVersions(id);
+    expect(restored.data.data.map((v) => v.version)).toEqual([1]);
+  });
+
+  it("answers 404 for the history of an item of a type the key may not read", async () => {
+    const task = await client.createItem({
+      type: "core.task",
+      source: ctx.source,
+      properties: { title: taskMark },
+    });
+    expect(task.status).toBe(201);
+    trackItem(ctx, task.data.item.id);
+    // The witness: a key reading the type is answered the history.
+    expect((await client.getVersions(task.data.item.id)).status).toBe(200);
+
+    const refused = await noteReader.getVersions(task.data.item.id);
+    expect(refused.status).toBe(404);
+    expect(refused.error?.error.code).toBe("item_not_found");
+    expect(JSON.stringify(refused.error)).not.toContain(taskMark);
+  });
+
+  it("answers 403 type_not_permitted to a key whose type map reaches no type, before it looks the item up", async () => {
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "reached by no type" },
+    });
+    expect(note.status).toBe(201);
+    trackItem(ctx, note.data.item.id);
+    const minted = await client.createKey({
+      label: `${ctx.source}-nowhere`,
+      source: `${ctx.source}-nowhere`,
+      permissions: [],
+      type_permissions: { "*": "none" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const nowhere = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    // The witness: a key that reaches the type is answered, and an id no
+    // item holds is a 404 to it.
+    expect((await client.getVersions(note.data.item.id)).status).toBe(200);
+    const unknown = "00000000-0000-7000-8000-000000000000";
+    expect((await client.getVersions(unknown)).status).toBe(404);
+
+    for (const id of [note.data.item.id, unknown]) {
+      const refused = await nowhere.getVersions(id);
+      expect(refused.status, id).toBe(403);
+      expect(refused.error?.error.code, id).toBe("type_not_permitted");
+    }
+  });
+
+  it("answers 400 validation_error to the X-Marfa-Read-View header on a history", async () => {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "read view header" },
+    });
+    expect(created.status).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    const path = `/items/${created.data.item.id}/versions`;
+    // The witness: the same request without the header is answered.
+    expect((await client.rawRequest(path)).status).toBe(200);
+
+    const refused = await client.rawRequest(path, {
+      headers: { "X-Marfa-Read-View": "a".repeat(64) },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.headers.get("X-Marfa-Read-View")).toBeNull();
   });
 
   it("answers a stale update naming an unreadable snapshot ancestor_unavailable", async () => {

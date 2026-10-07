@@ -754,6 +754,50 @@ describe("a create that resolves an existing row", () => {
     ).toBe(1);
   });
 
+  it("a create naming a stale version on an existing row merges where nothing collides", async () => {
+    const sourceId = `upsert-merge-${randomUUID()}`;
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title: "original", body: "original body" },
+    });
+    expect(seed.ok, JSON.stringify(seed.error)).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const advanced = await client.updateItem(id, {
+      properties: { title: "moved on" },
+      version: seed.data.item.version,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const merged = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { notes: "from a stale writer" },
+      version: seed.data.item.version,
+    });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.acknowledged).toBeUndefined();
+    expect(merged.data.item.id).toBe(id);
+    expect(merged.data.item.version).toBe(3);
+    expect(merged.data.item.properties).toEqual({
+      title: "moved on",
+      body: "original body",
+      notes: "from a stale writer",
+    });
+    expect(
+      (await client.getVersions(id)).data.data.map((v) => v.version),
+    ).toEqual([1, 2]);
+
+    const listed = await client.listItems({ source: ctx.source, limit: 100 });
+    expect(listed.data.next_cursor).toBeNull();
+    expect(
+      listed.data.data.filter((item) => item.source_id === sourceId),
+    ).toHaveLength(1);
+  });
+
   it("takes a create's version of zero as the claim that there is no row", async () => {
     // Zero is the version a device sends when its copy holds nothing under
     // the natural key, and the server never mints it, so no row can ever

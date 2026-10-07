@@ -397,6 +397,85 @@ describe("event stream contract", () => {
     }
   });
 
+  it("announces each edge a conflicted copy is given after the copy's create and before the original's update", async ({
+    signal,
+  }) => {
+    const parent = await seed("ordered-parent");
+    const original = await seed("ordered-original");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: original,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+    const base = (await client.getItem(original)).data.item.version;
+    expect(
+      (
+        await client.updateItem(original, {
+          properties: { body: "the winner's ordered body" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const stream = await openEventStream(apiUrl, apiKey);
+    try {
+      await new Promise((r) => setTimeout(r, 250));
+      const resolved = await client.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${original}?conflict=auto`, {
+        method: "PATCH",
+        body: {
+          properties: { body: "the loser's ordered body" },
+          version: base,
+        },
+      });
+      expect(resolved.ok).toBe(true);
+      const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+      expect(copy).toBeTruthy();
+      trackItem(ctx, copy!);
+      const { events } = await collectUntil(
+        stream,
+        (evts) =>
+          evts.some(
+            (e) =>
+              e.event === "item.updated" &&
+              (e.data as { item?: { id?: string } }).item?.id === original,
+          ),
+        `item.updated for ${original}`,
+        signal,
+      );
+      const order = events.flatMap((e) => {
+        const data = e.data as {
+          item?: { id: string };
+          edge?: { source_id: string; edge_type: string; target_id: string };
+        };
+        if (
+          e.event === "edge.created" &&
+          data.edge !== undefined &&
+          (data.edge.target_id === copy || data.edge.source_id === copy)
+        )
+          return [`edge ${data.edge.edge_type}`];
+        if (e.event === "item.created" && data.item?.id === copy)
+          return ["copy created"];
+        if (e.event === "item.updated" && data.item?.id === original)
+          return ["original updated"];
+        return [];
+      });
+      // Every edge the copy was given is announced, the inbound parent edge
+      // among them and not only the link to its original, and none after the
+      // update of the row that gave its value up.
+      expect(order[0]).toBe("copy created");
+      expect(order.at(-1)).toBe("original updated");
+      expect(order.slice(1, -1).sort()).toEqual([
+        "edge derived-from",
+        "edge parent-of",
+      ]);
+    } finally {
+      await stream.close();
+    }
+  });
+
   it("announces item.state_changed on a lifecycle transition", async ({
     signal,
   }) => {

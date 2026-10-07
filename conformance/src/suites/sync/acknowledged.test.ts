@@ -207,6 +207,117 @@ describe("a repeated create is acknowledged", () => {
     ).toBe("core.note");
   });
 
+  it("acknowledges an item repeat whatever version it names, and writes nothing", async () => {
+    const id = uuidv7();
+    const first = await client.createItem({
+      id,
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "acknowledged-version-first" },
+    });
+    expect(first.status).toBe(201);
+    trackItem(ctx, id);
+
+    for (const version of [0, 1, 7]) {
+      const repeat = await client.createItem({
+        id,
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `acknowledged-version-${String(version)}` },
+        version,
+      });
+      expect(
+        repeat.status,
+        `a repeat naming version ${String(version)}: ${JSON.stringify(repeat.error)}`,
+      ).toBe(200);
+      expect(repeat.data.acknowledged, String(version)).toBe(true);
+      expect(repeat.data.item.version, String(version)).toBe(1);
+      expect(repeat.data.item.properties.body, String(version)).toBe(
+        "acknowledged-version-first",
+      );
+    }
+    const stored = await client.getItem(id);
+    expect(stored.data.item.version).toBe(1);
+    expect(stored.data.item.properties.body).toBe("acknowledged-version-first");
+    expect((await client.getVersions(id)).data.data).toHaveLength(0);
+
+    // The witness: the same version 0 on a natural key that resolves a live
+    // row is looked at and refused, so the acknowledgments above are not a
+    // door that ignores the field everywhere.
+    const sourceId = `acknowledged-live-${ctx.runId}`;
+    const live = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "acknowledged-live" },
+    });
+    expect(live.status).toBe(201);
+    trackItem(ctx, live.data.item.id);
+    const refused = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "acknowledged-live-again" },
+      version: 0,
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("ancestor_unavailable");
+  });
+
+  it("acknowledges a create naming the natural key of a row in the bin whatever version it names, and writes nothing", async () => {
+    const sourceId = `acknowledged-trashed-${ctx.runId}`;
+    const first = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "acknowledged-trashed-first" },
+    });
+    expect(first.status).toBe(201);
+    const id = first.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteItem(id)).ok).toBe(true);
+
+    for (const version of [0, 1, 999]) {
+      const repeat = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: `acknowledged-trashed-${String(version)}` },
+        version,
+      });
+      expect(
+        repeat.status,
+        `a create naming version ${String(version)}: ${JSON.stringify(repeat.error)}`,
+      ).toBe(200);
+      expect(repeat.data.acknowledged, String(version)).toBe(true);
+      expect(repeat.data.item.id, String(version)).toBe(id);
+      expect(repeat.data.item.state, String(version)).toBe("trashed");
+      expect(repeat.data.item.version, String(version)).toBe(1);
+    }
+
+    // Restored, the row is what the first create wrote: the bin kept it, and
+    // none of the three creates reached it.
+    const restored = await client.restoreItem(id);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.item.version).toBe(1);
+    expect(restored.data.item.properties.body).toBe(
+      "acknowledged-trashed-first",
+    );
+    expect((await client.getVersions(id)).data.data).toHaveLength(0);
+
+    // The witness: the same version 0 on the key once the row is live again
+    // is looked at and refused.
+    const live = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "acknowledged-trashed-live" },
+      version: 0,
+    });
+    expect(live.status).toBe(409);
+    expect(live.error?.error.code).toBe("ancestor_unavailable");
+  });
+
   it("answers an edge repeat with the stored row and announces nothing", async (context) => {
     const [source, target, spare] = await Promise.all([
       client.createItem({

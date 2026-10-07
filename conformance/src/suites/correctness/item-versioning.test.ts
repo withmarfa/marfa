@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
 import type {
   AncestorUnavailableResponse,
@@ -1146,6 +1147,636 @@ describe("item versioning", () => {
       edges: { references: [target.data.item.id] },
     } as unknown as Parameters<typeof client.updateItem>[1]);
     expect(fresh.status).toBe(200);
+  });
+
+  it("leaves the version, the row and the history where they were on an update that carries only edges or names the row's own type", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Nothing to write", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const target = await client.createItem(createNote({ source: ctx.source }));
+    expect(target.ok).toBe(true);
+    trackItem(ctx, target.data.item.id);
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Advanced" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    expect(advanced.data.item.version).toBe(2);
+    const history = async () =>
+      (await client.getVersions(r.data.item.id)).data.data.map(
+        (v) => v.version,
+      );
+    expect(await history()).toEqual([1]);
+
+    const edged = await client.rawRequest<{ item: MarfaItem }>(
+      `/items/${r.data.item.id}`,
+      {
+        method: "PATCH",
+        body: { version: 2, edges: { references: [target.data.item.id] } },
+      },
+    );
+    expect(edged.status, JSON.stringify(edged.error)).toBe(200);
+    expect(edged.data.item.version).toBe(2);
+    expect(edged.data.item.properties).toEqual(advanced.data.item.properties);
+    expect(await history()).toEqual([1]);
+
+    const same = await client.rawRequest<{ item: MarfaItem }>(
+      `/items/${r.data.item.id}`,
+      {
+        method: "PATCH",
+        body: { version: 2, type: "core.note", retype: true },
+      },
+    );
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
+    expect(same.data.item.version).toBe(2);
+    expect(same.data.item.type).toBe("core.note");
+    expect(await history()).toEqual([1]);
+
+    const read = await client.getItem(r.data.item.id);
+    expect(read.data.item.version).toBe(2);
+    expect(read.data.item.properties).toEqual(advanced.data.item.properties);
+    // The edges write is the one thing the first request did.
+    const edges = await client.listItemEdges(r.data.item.id, {
+      edge_type: "references",
+    });
+    expect(edges.data.data.map((edge) => edge.target_id)).toEqual([
+      target.data.item.id,
+    ]);
+
+    // The witness: a write that carries properties at the same version steps
+    // it and snapshots the version it left.
+    const written = await client.updateItem(r.data.item.id, {
+      properties: { title: "Written" },
+      version: 2,
+    });
+    expect(written.data.item.version).toBe(3);
+    expect(await history()).toEqual([1, 2]);
+  });
+
+  it("answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Nothing to merge", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const target = await client.createItem(createNote({ source: ctx.source }));
+    expect(target.ok).toBe(true);
+    trackItem(ctx, target.data.item.id);
+    expect(
+      (
+        await client.updateItem(r.data.item.id, {
+          properties: { title: "Advanced" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const shapes = {
+      "edges only": { edges: { references: [target.data.item.id] } },
+      "retype to the row's own type": { type: "core.note", retype: true },
+    };
+    for (const [shape, body] of Object.entries(shapes)) {
+      // The witness: the same shape naming a version no snapshot covers, and
+      // carrying properties, is the other refusal.
+      const withProperties = await client.rawRequest(
+        `/items/${r.data.item.id}`,
+        {
+          method: "PATCH",
+          body: { ...body, version: 0, properties: { title: "Mine" } },
+        },
+      );
+      expect(withProperties.status, shape).toBe(409);
+      expect(withProperties.error?.error.code, shape).toBe(
+        "ancestor_unavailable",
+      );
+
+      for (const version of [0, 999]) {
+        const label = `${shape} naming version ${String(version)}`;
+        const refused = await client.rawRequest(`/items/${r.data.item.id}`, {
+          method: "PATCH",
+          body: { ...body, version },
+        });
+        expect(refused.status, label).toBe(409);
+        expect(refused.error?.error.code, label).toBe("version_conflict");
+        const envelope = refused.error as unknown as {
+          error: { status: number };
+          current: { id: string; version: number };
+          ancestor?: unknown;
+          conflicting_fields?: unknown;
+          merge_policy?: unknown;
+          requested_version?: unknown;
+        };
+        expect(envelope.error.status, label).toBe(409);
+        expect(envelope.current.id, label).toBe(r.data.item.id);
+        expect(envelope.current.version, label).toBe(2);
+        expect(envelope.ancestor, label).toBeUndefined();
+        expect(envelope.conflicting_fields, label).toBeUndefined();
+        expect(envelope.merge_policy, label).toBeUndefined();
+        expect(envelope.requested_version, label).toBeUndefined();
+      }
+    }
+    const after = await client.getItem(r.data.item.id);
+    expect(after.data.item.version).toBe(2);
+    const edges = await client.listItemEdges(r.data.item.id, {
+      edge_type: "references",
+    });
+    expect(edges.data.data).toHaveLength(0);
+    expect(
+      (await client.getVersions(r.data.item.id)).data.data.map(
+        (v) => v.version,
+      ),
+    ).toEqual([1]);
+  });
+
+  it("merges a stale write that collides on nothing, writes a snapshot of the row it merged over, and leaves the history as it was on one that collides", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Merge history", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const history = async () =>
+      (await client.getVersions(r.data.item.id)).data.data;
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    expect((await history()).map((v) => v.version)).toEqual([1]);
+
+    const merged = await client.updateItem(r.data.item.id, {
+      properties: { notes: "Added by a stale writer" },
+      version: 1,
+    });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.item.version).toBe(3);
+    expect(merged.data.item.properties).toEqual({
+      title: "Server title",
+      body: "Original",
+      notes: "Added by a stale writer",
+    });
+    // The snapshot is of the row the write merged over, version 2, and not of
+    // the version the writer named.
+    const afterMerge = await history();
+    expect(afterMerge.map((v) => v.version)).toEqual([1, 2]);
+    expect(afterMerge[0]?.properties.title).toBe("Merge history");
+    expect(afterMerge[1]?.properties).toEqual({
+      title: "Server title",
+      body: "Original",
+    });
+
+    const refused = await client.updateItem(r.data.item.id, {
+      properties: { title: "Collides" },
+      version: 1,
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+    expect((await history()).map((v) => v.version)).toEqual([1, 2]);
+    const after = await client.getItem(r.data.item.id);
+    expect(after.data.item.version).toBe(3);
+  });
+
+  it("refuses a stale write that sets a property to the value another writer set since", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Agreed", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const first = await client.updateItem(r.data.item.id, {
+      properties: { title: "The same new title" },
+      version: 1,
+    });
+    expect(first.ok).toBe(true);
+
+    const second = await client.updateItem(r.data.item.id, {
+      properties: { title: "The same new title" },
+      version: 1,
+    });
+    expect(second.status).toBe(409);
+    expect(second.error?.error.code).toBe("version_conflict");
+    const body = second.error as unknown as ConflictResponse;
+    expect(body.conflicting_fields).toEqual(["title"]);
+    expect(body.current.properties.title).toBe("The same new title");
+    expect(body.ancestor.properties.title).toBe("Agreed");
+    const after = await client.getItem(r.data.item.id);
+    expect(after.data.item.version).toBe(2);
+  });
+
+  it("names an item field beside a property in conflicting_fields in ascending order, and not a field the stale write does not carry", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        tier: "library",
+        properties: { title: "Beside", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const first = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      tier: "feed",
+      occurred_at: "2026-03-01T00:00:00.000Z",
+      version: 1,
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+
+    // The tier changed since and the write does not carry it.
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale title" },
+      occurred_at: "2026-04-01T00:00:00.000Z",
+      version: 1,
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    const body = stale.error as unknown as ConflictResponse;
+    expect(body.conflicting_fields).toEqual(["occurred_at", "title"]);
+
+    // The witness for the omitted field: carrying nothing but properties
+    // that collide on nothing, the same stale write merges and leaves the
+    // tier where the other writer put it.
+    const merged = await client.updateItem(r.data.item.id, {
+      properties: { notes: "No collision" },
+      version: 1,
+    });
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.item.tier).toBe("feed");
+    expect(merged.data.item.occurred_at).toBe(first.data.item.occurred_at);
+  });
+
+  it("merges a stale write on occurred_at or source_id that nobody else changed", async () => {
+    const cases = [
+      {
+        field: "occurred_at",
+        change: { occurred_at: "2026-05-01T00:00:00.000Z" },
+      },
+      {
+        field: "source_id",
+        change: { source_id: `merged-${randomUUID()}` },
+      },
+    ];
+    for (const { field, change } of cases) {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          source_id: `base-${randomUUID()}`,
+          properties: { title: `Stale ${field}`, body: "Original" },
+        }),
+      );
+      expect(r.ok, field).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      const advanced = await client.updateItem(r.data.item.id, {
+        properties: { title: "Server title" },
+        version: 1,
+      });
+      expect(advanced.ok, field).toBe(true);
+
+      const stale = await client.updateItem(r.data.item.id, {
+        ...change,
+        version: 1,
+      });
+      expect(stale.status, `${field}: ${JSON.stringify(stale.error)}`).toBe(
+        200,
+      );
+      expect(stale.data.item.version, field).toBe(3);
+      expect(stale.data.item.properties.title, field).toBe("Server title");
+      const written = stale.data.item as unknown as Record<string, unknown>;
+      expect(written[field], field).toBe(
+        (change as Record<string, unknown>)[field],
+      );
+    }
+  });
+
+  it("names the type each side of a conflict held", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Sides", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const first = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(first.ok).toBe(true);
+
+    const unmoved = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale title" },
+      version: 1,
+    });
+    expect(unmoved.status).toBe(409);
+    const plain = unmoved.error as unknown as ConflictResponse;
+    expect([plain.current.type, plain.ancestor.type]).toEqual([
+      "core.note",
+      "core.note",
+    ]);
+
+    // Another writer moves the row, so the two sides are of different types
+    // and a stale write that does not move the row names neither in
+    // conflicting_fields.
+    const moved = await client.updateItem(r.data.item.id, {
+      type: "core.bookmark",
+      retype: true,
+      properties: { url: "https://example.com/sides" },
+      version: 2,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale title" },
+      version: 1,
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    const body = stale.error as unknown as ConflictResponse;
+    expect(body.conflicting_fields).toEqual(["title"]);
+    expect(body.current.type).toBe("core.bookmark");
+    expect(body.ancestor.type).toBe("core.note");
+
+    const unavailable = await client.updateItem(r.data.item.id, {
+      properties: { title: "Never read" },
+      version: 0,
+    });
+    expect(unavailable.status).toBe(409);
+    expect(unavailable.error?.error.code).toBe("ancestor_unavailable");
+    expect(
+      (unavailable.error as unknown as AncestorUnavailableResponse).current
+        .type,
+    ).toBe("core.bookmark");
+  });
+
+  it("records the tier, own time, natural key and type the row had at each version", async () => {
+    const created = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: `snap-${randomUUID()}`,
+        tier: "library",
+        occurred_at: "2026-01-01T00:00:00.000Z",
+        properties: { title: "Snapshot fields", body: "Original" },
+      }),
+    );
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    const first = await client.updateItem(id, {
+      tier: "feed",
+      occurred_at: "2026-02-01T00:00:00.000Z",
+      source_id: `snap-moved-${randomUUID()}`,
+      version: 1,
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const second = await client.updateItem(id, {
+      type: "core.bookmark",
+      retype: true,
+      tier: "library",
+      occurred_at: "2026-03-01T00:00:00.000Z",
+      source_id: `snap-again-${randomUUID()}`,
+      version: 2,
+    });
+    expect(second.status, JSON.stringify(second.error)).toBe(200);
+
+    const history = await client.getVersions(id);
+    expect(history.ok).toBe(true);
+    const held = (item: MarfaItem) => ({
+      tier: item.tier,
+      occurred_at: item.occurred_at,
+      source_id: item.source_id,
+      type: item.type,
+    });
+    expect(
+      history.data.data.map((v) => [
+        v.version,
+        {
+          tier: v.tier,
+          occurred_at: v.occurred_at,
+          source_id: v.source_id,
+          type: v.type,
+        },
+      ]),
+    ).toEqual([
+      [1, held(created.data.item)],
+      [2, held(first.data.item)],
+    ]);
+    // The witness that the three differ between versions, so the equality
+    // above cannot be met by a server that stamps the current row's values.
+    expect(held(created.data.item)).not.toEqual(held(first.data.item));
+    expect(held(first.data.item)).not.toEqual(held(second.data.item));
+  });
+
+  it("names the field a merged result lacks when a stale write leaves the row short of its type", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Short", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    // Nobody changed the body since, so the replace's clear of it lands and
+    // the merged row has no body, which a note requires.
+    const refused = await client.updateItem(r.data.item.id, {
+      properties: { title: "Short" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const errors = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("body");
+    const after = await client.getItem(r.data.item.id);
+    expect(after.data.item.version).toBe(2);
+    expect(after.data.item.properties.body).toBe("Original");
+
+    // And on a stale move, the field the type entered requires.
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/short", body: "Carried" },
+    });
+    expect(bookmark.ok).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    expect(
+      (
+        await client.updateItem(bookmark.data.item.id, {
+          properties: { url: "https://example.com/short" },
+          properties_mode: "replace",
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const move = await client.updateItem(bookmark.data.item.id, {
+      type: "core.note",
+      retype: true,
+      properties: { body: "Carried" },
+      version: 1,
+    });
+    expect(move.status).toBe(400);
+    expect(move.error?.error.code).toBe("invalid_properties");
+    const moveErrors = move.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(moveErrors?.map((e) => e.field)).toContain("body");
+  });
+
+  it("writes a version for an update whose properties are empty or equal to the row's", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Unchanged", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const empty = await client.updateItem(r.data.item.id, {
+      properties: {},
+      version: 1,
+    });
+    expect(empty.status, JSON.stringify(empty.error)).toBe(200);
+    expect(empty.data.item.version).toBe(2);
+    const equal = await client.updateItem(r.data.item.id, {
+      properties: { title: "Unchanged" },
+      version: 2,
+    });
+    expect(equal.status, JSON.stringify(equal.error)).toBe(200);
+    expect(equal.data.item.version).toBe(3);
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.data.data.map((v) => v.version)).toEqual([1, 2]);
+  });
+
+  it("refuses an update that names nothing to change, and one naming a version that is not a whole number of at least 0", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Refused", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const patch = (body: Record<string, unknown>) =>
+      client.rawRequest(`/items/${r.data.item.id}`, {
+        method: "PATCH",
+        body,
+      });
+
+    for (const body of [{ version: 1 }, { version: 1, edges: {} }]) {
+      const nothing = await patch(body);
+      expect(nothing.status, JSON.stringify(body)).toBe(400);
+      expect(nothing.error?.error.code, JSON.stringify(body)).toBe(
+        "validation_error",
+      );
+    }
+    for (const version of [-1, 1.5, "1", null, true]) {
+      const refused = await patch({ properties: { title: "x" }, version });
+      expect(refused.status, JSON.stringify(version)).toBe(400);
+      expect(refused.error?.error.code, JSON.stringify(version)).toBe(
+        "validation_error",
+      );
+    }
+
+    // The witnesses: 0 is a whole number of at least 0, so it passes the
+    // check and is refused for naming no snapshot, and the same body at the
+    // row's version writes.
+    const zero = await patch({ properties: { title: "x" }, version: 0 });
+    expect(zero.status).toBe(409);
+    expect(zero.error?.error.code).toBe("ancestor_unavailable");
+    const written = await patch({ properties: { title: "x" }, version: 1 });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+  });
+
+  it("stamps the error code on the X-Error-Code header of a 409", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Header", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    expect(
+      (
+        await client.updateItem(r.data.item.id, {
+          properties: { title: "Server title" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const conflict = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale title" },
+      version: 1,
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.headers.get("X-Error-Code")).toBe("version_conflict");
+    const unavailable = await client.updateItem(r.data.item.id, {
+      properties: { title: "Never read" },
+      version: 0,
+    });
+    expect(unavailable.status).toBe(409);
+    expect(unavailable.headers.get("X-Error-Code")).toBe(
+      "ancestor_unavailable",
+    );
+  });
+
+  it("answers two updates naming one version with one 200 and one 409", async () => {
+    for (let round = 0; round < 5; round++) {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title: "Raced", body: "Original" },
+        }),
+      );
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+
+      const titles = ["Written by the first", "Written by the second"];
+      const answers = await Promise.all(
+        titles.map((title) =>
+          client.updateItem(r.data.item.id, {
+            properties: { title },
+            version: 1,
+          }),
+        ),
+      );
+      expect(
+        answers.map((answer) => answer.status).sort(),
+        `round ${String(round)}: ${JSON.stringify(answers.map((a) => a.error ?? a.data))}`,
+      ).toEqual([200, 409]);
+      const winner = answers.findIndex((answer) => answer.status === 200);
+      const loser = answers[1 - winner];
+      expect(loser?.error?.error.code).toBe("version_conflict");
+      expect(
+        (loser?.error as unknown as ConflictResponse).current.version,
+      ).toBe(2);
+
+      const after = await client.getItem(r.data.item.id);
+      expect(after.data.item.version).toBe(2);
+      expect(after.data.item.properties.title).toBe(titles[winner]);
+      expect(
+        (await client.getVersions(r.data.item.id)).data.data.map(
+          (v) => v.version,
+        ),
+      ).toEqual([1]);
+    }
   });
 
   it("version history for item with no updates is empty", async () => {
