@@ -1221,6 +1221,16 @@ describe("outbound webhooks", () => {
     expect((await client.deleteWebhook(unknown)).status).toBe(404);
   });
 
+  it("refuses an update's body before it looks for the subscription", async () => {
+    const unknown = "00000000-0000-7000-8000-000000000000";
+    expect((await client.updateWebhook(unknown, { active: true })).status).toBe(
+      404,
+    );
+    const refused = await client.updateWebhook(unknown, { type_filter: "*" });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  });
+
   it("refuses every door without a credential", async () => {
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
     expect((await anonymous.listWebhooks()).status).toBe(401);

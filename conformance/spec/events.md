@@ -598,6 +598,12 @@ When the grant of an app whose access token holds a stream open is revoked, the 
 
 **Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended when its app's grant is revoked`.
 
+### `events/credential-token-revoked`
+
+When the access token that holds a stream open is revoked, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
+
+**Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended when its access token is revoked`.
+
 ### `events/credential-heartbeat`
 
 If a stream's credential no longer stands, then the server MUST end the stream with `credential_ended` within 30 seconds, whether or not any frame is published.
@@ -605,6 +611,14 @@ If a stream's credential no longer stands, then the server MUST end the stream w
 **Reason:** the credential is read again at each heartbeat as well as before each batch, so a quiet stream does not outlive its credential.
 
 **Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`.
+
+### `events/heartbeat`
+
+While a stream is open and holds no frame its reader has not taken, the server MUST send a `:ping` comment line every 30 seconds.
+
+**Reason:** a proxy that closes an idle connection sees traffic, and a client that hears nothing for longer knows the connection is gone.
+
+**Tests:** `compliance/stream-credential.test.ts › sends a :ping comment on a quiet stream every 30 seconds`.
 
 ### `events/credential-nothing-after`
 
@@ -764,6 +778,12 @@ If an operation that names a subscription is given an id no subscription of the 
 
 **Tests:** `compliance/webhooks.test.ts › answers 404 for an unknown subscription on every door`, `› deletes a subscription and answers 404 for it afterwards`.
 
+### `events/webhook-update-order`
+
+If `PATCH /webhooks/{id}` carries a body the server refuses, then the server MUST answer that refusal whether or not a subscription of the credential holds the id.
+
+**Tests:** `compliance/webhooks.test.ts › refuses an update's body before it looks for the subscription`.
+
 ### `events/webhook-events-refused`
 
 If `events` names an event outside the vocabulary, then the server MUST answer `400 validation_error`.
@@ -894,7 +914,15 @@ When the key that registered a subscription no longer holds `webhooks.manage`, t
 
 When the key that registered a subscription passes its `expires_at`, the server MUST deliver nothing more to it, its pending deliveries included.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-owner-standing.test.ts › delivers nothing more once the key that registered the subscription expires`.
+
+### `events/webhook-grant-revoked`
+
+When the grant of an app that registered a subscription is revoked, the server MUST delete the subscription and deliver nothing more to it.
+
+**Reason:** an app's subscriptions belong to its grant.
+
+**Tests:** `compliance/webhook-owner-standing.test.ts › deletes an app's subscriptions when its grant is revoked`.
 
 ## What a delivery is
 
@@ -977,6 +1005,12 @@ When a delivery carries a mark that names another row, the server MUST name it o
 The server MUST deliver an item event only where the subscription's credential may read the item's type.
 
 **Tests:** `compliance/webhooks.test.ts › delivers to a credential that reads part of what is stored only that part`.
+
+### `events/delivery-reach-edge-kind`
+
+The server MUST NOT deliver an edge event to a subscription whose credential may not read the edge's kind.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the edge's kind`.
 
 ### `events/delivery-reach-namespaces`
 
@@ -1212,6 +1246,12 @@ When two redeliveries of one delivery arrive together, the server MUST accept on
 
 **Tests:** `compliance/webhook-delivery.test.ts › queues one transition when a redelivery is requested twice at once, and records one audit entry`.
 
+### `events/redeliver-fresh-cycle`
+
+When a delivery is redelivered, the server MUST give it a fresh cycle of eight attempts before it is `dead_letter` again.
+
+**Tests:** `compliance/webhook-history.test.ts › starts a fresh cycle of attempts on redelivery`.
+
 ### `events/redeliver-audit`
 
 When the server accepts a redelivery, the server MUST record a `webhook.delivery.redeliver` entry with `resource_type` `webhook_delivery`, the delivery's id as `resource_id` and the subscription's id as `details.webhook_id`.
@@ -1236,25 +1276,31 @@ While a `dead_letter` delivery is within the effective audit retention, measured
 
 **Reason:** the effective retention is the `audit_retention_days` setting in `/config` where it is set, and a delivery's history follows it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-history.test.ts › keeps a dead_letter delivery within the audit retention redeliverable`.
 
 ### `events/history-pending-kept`
 
 While a delivery is `pending`, the server MUST keep its frame and address whatever its age.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-history.test.ts › keeps a pending delivery whatever its age`.
 
 ### `events/history-clock-kept`
 
 When a delivery is redelivered, the server MUST keep measuring its retention from its original `created_at`.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-history.test.ts › measures a redelivered delivery's retention from its original created_at`.
+
+### `events/history-deleted`
+
+When a delivery that is not `pending` is older than the effective audit retention, measured from its original `created_at`, the server MUST delete its history.
+
+**Tests:** `compliance/webhook-history.test.ts › deletes a delivery's history past the audit retention`.
 
 ### `events/redeliver-expired`
 
 If a redelivery names a `dead_letter` delivery older than the effective audit retention, then the server MUST answer `409 conflict`.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`.
 
 ## Where a webhook may send
 
@@ -1310,21 +1356,13 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 **Tests:** `compliance/webhook-delivery.test.ts › sends a subscription no event written before it was registered`.
 
-### `events/webhook-after-bulk`
-
-When a bulk write that asks for no fan-out has written 50,000 rows, the server MUST deliver a later event that fans out to a matching subscription as promptly as it would without the bulk write.
-
-**Reason:** the bulk write's events are in the log and fan out nothing, so they must cost the scheduler almost nothing to pass.
-
-**Tests:** waiting on #1863.
-
 ### `events/schedule-fails-visibly`
 
 If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, or behind the oldest event the log retains, then the server MUST end each run of `webhook-schedule` with `last_outcome` `error`.
 
 **Reason:** a gap the scheduler cannot account for would otherwise skip events that fan out without saying so.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/webhook-schedule-gap.test.ts › ends a webhook-schedule run with error when its log position cannot be accounted for`.
 
 ## The audit log
 
@@ -1335,6 +1373,12 @@ If the log's position for scheduling webhooks is ahead of the log, missing on a 
 When a credential's write commits, other than a connector's heartbeat, run report, hold, hold release, state write or agreement write, or an inbound delivery's receipt or handled mark, the server MUST record an entry at `GET /audit` naming the credential as `key_id`, the `action`, the `resource_type`, the `resource_id` and the `details`.
 
 **Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `compliance/edge-events.test.ts › audit log records edge mutations with edge_id in resource_id`.
+
+### `events/audit-server-writes`
+
+When the server makes a write of its own, with no credential behind it, the server MUST record its audit entry with `key_id` `null`.
+
+**Tests:** `compliance/audit-server-writes.test.ts › records the server's own writes with no key`.
 
 ### `events/audit-readable`
 
