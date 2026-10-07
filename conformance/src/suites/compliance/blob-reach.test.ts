@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
   getOperatorClient,
+  trackFolder,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -819,5 +820,399 @@ describe("who may read and upload a blob", () => {
     expect(await fetched.text()).toBe(
       `bytes behind a link outliving its key ${ctx.runId}`,
     );
+  });
+
+  it("answers a key whose type map names only an unregistered type as it answers an unknown blob, and refuses it the upload", async () => {
+    const hash = await upload("a file an unregistered-type key must not reach");
+    await fileNaming(hash);
+    const reads = await keyHolding({ "user.nothing-registered": "read" });
+    const writes = await keyHolding({ "user.nothing-registered": "write" });
+    const empty = await keyHolding({});
+
+    // The witnesses: the suite's key is served, and a key with no pattern at
+    // all is refused, so the answers below are the map's and not the blob's.
+    expect(await readingDoors(client, hash)).toEqual(SERVED);
+    expect((await readingDoors(empty.client, hash)).bytes).toEqual([
+      403,
+      "type_not_permitted",
+    ]);
+
+    // A pattern is a pattern whether or not a type matches it: the key
+    // reaches a type, and is told what any key that may not read the blob is.
+    expect(await readingDoors(reads.client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(writes.client, hash)).toEqual(UNKNOWN);
+
+    // An upload is stricter: it takes write on a type that is registered.
+    const bytes = new TextEncoder().encode(
+      `an unregistered write ${ctx.runId}`,
+    );
+    const refused = await writes.client.uploadBlob(bytes, "text/plain");
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("serves the operator key the blob doors although it holds no type map", async () => {
+    const own = await operator.getCurrentKey();
+    expect(own.status, JSON.stringify(own.error)).toBe(200);
+    // The witness: a working key with the same empty map is refused.
+    expect(own.data.type_permissions ?? {}).toEqual({});
+    const empty = await keyHolding({});
+    const unknown = `sha256:${"c".repeat(64)}`;
+    expect((await empty.client.downloadBlob(unknown)).status).toBe(403);
+
+    // Refused nothing for its map, the operator key reaches the lookup, and
+    // a hash nothing holds is an unknown one.
+    expect(await readingDoors(operator, unknown)).toEqual(UNKNOWN);
+    const malformed = await operator.downloadBlob("not-a-hash");
+    expect(malformed.status).toBe(400);
+    expect(malformed.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike", async () => {
+    const held = await upload("bytes the empty key asks about");
+    await fileNaming(held);
+    const empty = await keyHolding({});
+    const refused = ["type_not_permitted", 403] as const;
+    const unknown = `sha256:${"d".repeat(64)}`;
+
+    // The witness: the suite's key is served the held blob and told 400 for
+    // the malformed hash, so each 403 below is the key's and not the hash's.
+    expect(await readingDoors(client, held)).toEqual(SERVED);
+    expect((await client.downloadBlob("not-a-hash")).status).toBe(400);
+
+    for (const hash of [held, unknown, "not-a-hash"]) {
+      const bytes = await empty.client.downloadBlob(hash);
+      expect(bytes.status, `GET ${hash}`).toBe(refused[1]);
+      expect(bytes.error?.error.code, `GET ${hash}`).toBe(refused[0]);
+      expect((await empty.client.headBlob(hash)).status, `HEAD ${hash}`).toBe(
+        refused[1],
+      );
+      const link = await empty.client.getBlobUrl(hash);
+      expect(link.status, `url ${hash}`).toBe(refused[1]);
+      expect(link.error?.error.code, `url ${hash}`).toBe(refused[0]);
+      const locations = await empty.client.listBlobLocations(hash);
+      expect(locations.status, `locations ${hash}`).toBe(refused[1]);
+      expect(locations.error?.error.code, `locations ${hash}`).toBe(refused[0]);
+    }
+  });
+});
+
+/**
+ * A door that writes properties, named by what it does once it is handed a
+ * writer: it prepares whatever row that writer needs, and answers the write
+ * that names a digest through the door.
+ */
+type Door = (writer: MarfaClient) => Promise<(hash: string) => Promise<void>>;
+
+let doors = 0;
+let prepared = 0;
+
+function succeeded(res: { ok: boolean; error?: unknown }): void {
+  expect(res.ok, JSON.stringify(res.error)).toBe(true);
+}
+
+/**
+ * Holds one door to the rule that a reference lends when the writer sent the
+ * bytes: a writer that neither sent them nor can read them names the digest
+ * through the door and lends nothing, and the writer that sent them names it
+ * through the same door and lends, so the credit is the proof's and not the
+ * door's.
+ */
+async function expectDoorCredits(door: Door): Promise<void> {
+  doors += 1;
+  const writes = { "core.note": "write", "core.bookmark": "write" };
+  const sender = await keyHolding(writes);
+  const stranger = await keyHolding(writes);
+  const reader = await keyHolding({ "*": "read" });
+  const sent = await sender.client.uploadBlob(
+    new TextEncoder().encode(
+      `named through a door ${String(doors)} ${ctx.runId}`,
+    ),
+    "text/plain",
+  );
+  expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+  const hash = sent.data.hash;
+
+  const nameAsSender = await door(sender.client);
+  const nameAsStranger = await door(stranger.client);
+  // The witness: held, and nothing names it yet.
+  expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+  expect((await operator.headBlob(hash)).status).toBe(200);
+
+  await nameAsStranger(hash);
+  expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+  await nameAsSender(hash);
+  expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+  // Rows these keys wrote, a keep-both sibling and a bulk create among them,
+  // are cleaned up with the file's.
+  for (const writer of [sender, stranger]) {
+    const own = await writer.client.getCurrentKey();
+    succeeded(own);
+    const rows = await client.listItems({
+      source: own.data.source,
+      limit: 200,
+    });
+    for (const row of rows.data.data) trackItem(ctx, row.id);
+  }
+}
+
+const bodyNaming = (hash: string) => `![x](${hash})`;
+
+async function noteOf(
+  writer: MarfaClient,
+  properties: Record<string, unknown>,
+  extra: { source_id?: string; tags?: string[] } = {},
+): Promise<{ id: string; version: number }> {
+  const res = await writer.createItem({
+    type: "core.note",
+    properties,
+    ...extra,
+  });
+  succeeded(res);
+  return { id: res.data.item.id, version: res.data.item.version };
+}
+
+/** A note moved on from version 1, so a write based on 1 is stale. */
+async function movedOn(
+  writer: MarfaClient,
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+): Promise<{ id: string; stale: number }> {
+  const note = await noteOf(writer, first);
+  succeeded(
+    await writer.updateItem(note.id, {
+      properties: second,
+      version: note.version,
+    }),
+  );
+  return { id: note.id, stale: note.version };
+}
+
+describe("which write that names a digest lends it", () => {
+  it("lends a digest named by a new item only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => async (hash) => {
+      await noteOf(writer, { body: bodyNaming(hash) });
+    });
+  });
+
+  it("lends a digest named by an upsert onto a natural key only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const sourceId = `upsert-${String(doors)}-${ctx.runId}`;
+      await noteOf(writer, { body: "first" }, { source_id: sourceId });
+      return async (hash) => {
+        succeeded(
+          await writer.createItem({
+            type: "core.note",
+            properties: { body: bodyNaming(hash) },
+            source_id: sourceId,
+          }),
+        );
+      };
+    });
+  });
+
+  it("lends a digest named by a patch at the current version only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const note = await noteOf(writer, { body: "plain" });
+      return async (hash) => {
+        succeeded(
+          await writer.updateItem(note.id, {
+            properties: { body: bodyNaming(hash) },
+            version: note.version,
+          }),
+        );
+      };
+    });
+  });
+
+  it("lends a digest new to the base of a stale merge only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const note = await movedOn(
+        writer,
+        { title: "t", body: "b" },
+        { title: "t", body: "moved on" },
+      );
+      return async (hash) => {
+        succeeded(
+          await writer.rawRequest(`/items/${note.id}?conflict=auto`, {
+            method: "PATCH",
+            body: {
+              properties: { title: bodyNaming(hash) },
+              version: note.stale,
+            },
+          }),
+        );
+      };
+    });
+  });
+
+  it("lends a digest named by a keep-both write only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const note = await movedOn(
+        writer,
+        { body: "original" },
+        { body: "the winner" },
+      );
+      return async (hash) => {
+        succeeded(
+          await writer.rawRequest(`/items/${note.id}?conflict=auto`, {
+            method: "PATCH",
+            body: {
+              properties: { body: `the loser ${bodyNaming(hash)}` },
+              version: note.stale,
+            },
+          }),
+        );
+        // The write the winner left stands, and the digest is on the
+        // sibling the loser's copy went to.
+        const row = await writer.getItem(note.id);
+        succeeded(row);
+        expect(JSON.stringify(row.data.item.properties)).not.toContain(
+          hash.slice("sha256:".length),
+        );
+      };
+    });
+  });
+
+  it("lends a digest named by a retype only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const note = await noteOf(writer, { body: "a note" });
+      return async (hash) => {
+        succeeded(
+          await writer.rawRequest(`/items/${note.id}`, {
+            method: "PATCH",
+            body: {
+              type: "core.bookmark",
+              retype: true,
+              properties: {
+                url: "https://example.com/retyped",
+                title: bodyNaming(hash),
+              },
+              properties_mode: "replace",
+              version: note.version,
+            },
+          }),
+        );
+      };
+    });
+  });
+
+  it("lends a digest named by a bulk create only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => async (hash) => {
+      const res = await writer.bulkItems([
+        {
+          type: "core.note",
+          properties: { body: bodyNaming(hash) },
+          source_id: `bulk-new-${String(doors)}-${ctx.runId}`,
+        },
+      ]);
+      succeeded(res);
+      expect(res.data.counts.created).toBe(1);
+    });
+  });
+
+  it("lends a digest named by a bulk update only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      const sourceId = `bulk-old-${String(doors)}-${ctx.runId}`;
+      await noteOf(writer, { body: "before" }, { source_id: sourceId });
+      return async (hash) => {
+        const res = await writer.bulkItems([
+          {
+            type: "core.note",
+            properties: { body: bodyNaming(hash) },
+            source_id: sourceId,
+          },
+        ]);
+        succeeded(res);
+        expect(res.data.counts.updated).toBe(1);
+      };
+    });
+  });
+
+  it("lends a digest named by a bulk action only when its writer sent the bytes", async () => {
+    await expectDoorCredits(async (writer) => {
+      // Each writer's own tag, so a job names only that writer's note.
+      prepared += 1;
+      const tag = `blob-action-${String(prepared)}-${ctx.runId}`;
+      await noteOf(writer, { body: "tagged" }, { tags: [tag] });
+      return async (hash) => {
+        const queued = await writer.bulkAction({
+          action: "update_properties",
+          patch: { title: bodyNaming(hash) },
+          filter: { tags: [tag] },
+        });
+        expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+        const job = await writer.pollBulkActionToTerminal(
+          (queued.data as BulkActionJob).id,
+        );
+        expect(job.status).toBe("completed");
+        expect(job.succeeded).toBe(1);
+      };
+    });
+  });
+
+  it("lends a digest named in a folder's settings only when its writer could read the blob", async () => {
+    const hashes = [];
+    for (const words of [
+      "a folder names this at creation",
+      "a folder names this later",
+    ]) {
+      const hash = await upload(words);
+      await noteSaying(bodyNaming(hash));
+      hashes.push(hash);
+    }
+    // A key whose only write is the folder cannot upload, so what a folder
+    // lends is what its writer could read as it wrote.
+    const seeing = await keyHolding({
+      "system.folder": "write",
+      "core.note": "read",
+    });
+    const blind = await keyHolding({ "system.folder": "write" });
+    const reader = await keyHolding({ "system.folder": "read" });
+    for (const hash of hashes) {
+      expect(await readingDoors(seeing.client, hash)).toEqual(SERVED);
+      expect(await readingDoors(blind.client, hash)).toEqual(UNKNOWN);
+      expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+    }
+    const [atCreation, later] = hashes as [string, string];
+
+    // Written through the folder door by the key that cannot read the blob,
+    // a digest lends nothing, on a create and on a patch.
+    const blindCreated = await blind.client.createFolder({
+      title: bodyNaming(atCreation),
+    });
+    succeeded(blindCreated);
+    trackFolder(ctx, blindCreated.data.item.id);
+    const blindPlain = await blind.client.createFolder({ title: "plain" });
+    succeeded(blindPlain);
+    trackFolder(ctx, blindPlain.data.item.id);
+    succeeded(
+      await blind.client.updateFolder(blindPlain.data.item.id, {
+        title: bodyNaming(later),
+        version: blindPlain.data.item.version,
+      }),
+    );
+    for (const hash of hashes) {
+      expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+    }
+
+    const created = await seeing.client.createFolder({
+      title: bodyNaming(atCreation),
+    });
+    succeeded(created);
+    trackFolder(ctx, created.data.item.id);
+    expect(await readingDoors(reader.client, atCreation)).toEqual(SERVED);
+
+    const plain = await seeing.client.createFolder({ title: "plain" });
+    succeeded(plain);
+    trackFolder(ctx, plain.data.item.id);
+    succeeded(
+      await seeing.client.updateFolder(plain.data.item.id, {
+        title: bodyNaming(later),
+        version: plain.data.item.version,
+      }),
+    );
+    expect(await readingDoors(reader.client, later)).toEqual(SERVED);
   });
 });

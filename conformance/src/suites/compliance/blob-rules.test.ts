@@ -553,4 +553,39 @@ describe("the rules that keep a blob's bytes", () => {
     expect((await operator.downloadBlob(whole)).status).toBe(200);
     expect((await operator.downloadBlob(linked)).status).toBe(200);
   });
+
+  it("keeps a blob only an earlier version of an item names, and purges one nothing names", async () => {
+    const inHistory = await uploadText("only an earlier version names this");
+    const unnamed = await uploadText("no version names this");
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `![it](${inHistory})` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const moved = await client.updateItem(note.data.item.id, {
+      properties: { body: "no longer links anything" },
+      version: note.data.item.version,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const versions = await client.getVersions(note.data.item.id);
+    expect(JSON.stringify(versions.data)).toContain(inHistory);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    // The witness: two runs purge a blob nothing names, so the one kept
+    // was kept by its history.
+    expect((await operator.downloadBlob(unnamed)).status).toBe(404);
+    const kept = await operator.downloadBlob(inHistory);
+    expect(kept.status).toBe(200);
+    expect(new TextDecoder().decode(kept.data)).toBe(
+      text("only an earlier version names this"),
+    );
+    const reported = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(reported).not.toContain(inHistory);
+  });
 });

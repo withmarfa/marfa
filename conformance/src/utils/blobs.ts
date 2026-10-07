@@ -20,16 +20,26 @@ export async function uploadReferenced(
 ): Promise<ApiResponse<BlobUploadResponse>> {
   const upload = await client.uploadBlob(data, mimeType);
   if (!upload.ok) return upload;
+  await referenceBlob(client, ctx, upload.data.hash);
+  return upload;
+}
+
+/** Writes a note whose body links the blob, so the key that holds the bytes
+ *  may read them back. */
+export async function referenceBlob(
+  client: MarfaClient,
+  ctx: TestContext,
+  hash: string,
+): Promise<void> {
   const note = await client.createItem({
     type: "core.note",
     source: ctx.source,
-    properties: { body: `![bytes](${upload.data.hash})` },
+    properties: { body: `![bytes](${hash})` },
   });
   if (!note.ok) {
     throw new Error(
-      `could not reference ${upload.data.hash}: ${JSON.stringify(note.error)}`,
+      `could not reference ${hash}: ${JSON.stringify(note.error)}`,
     );
   }
   trackItem(ctx, note.data.item.id);
-  return upload;
 }
