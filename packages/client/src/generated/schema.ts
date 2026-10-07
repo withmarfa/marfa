@@ -255,7 +255,7 @@ export interface paths {
         put?: never;
         /**
          * Apply a bulk action
-         * @description Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a job.
+         * @description Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a bulk-action job.
          */
         post: operations["applyBulkAction"];
         delete?: never;
@@ -273,7 +273,7 @@ export interface paths {
         };
         /**
          * Get a bulk-action job
-         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or an operator key, can read it.
+         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.
          */
         get: operations["getBulkActionJob"];
         put?: never;
@@ -7511,7 +7511,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours is not an operator key. */
+            /** @description - `forbidden`: another credential queued the job, and yours isn't the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7645,7 +7645,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours is not an operator key. */
+            /** @description - `forbidden`: another credential queued the job, and yours isn't the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10833,8 +10833,8 @@ export interface operations {
              * @description - `missing_required_field`: `fields` is missing.
              *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
              *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.
-             *     - `property_shadows_field`: a field has the name of one every item has, such as `title`.
-             *     - `inheritance_violation`: the type changes an inherited field's shape.
+             *     - `property_shadows_field`: a field is named like one every item has, such as `source_id`.
+             *     - `inheritance_violation`: the type reshapes an inherited field.
              */
             400: {
                 headers: {

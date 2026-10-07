@@ -22,9 +22,9 @@ produce. `spec/device.md` lists the cases it cannot, with a reason for each.
 as the reference client of an instance: every scenario is a person or an agent
 at a terminal, driving the built binary against the server the run booted, end
 to end. Signing in, creating, attaching, searching, linking, a folder round
-trip, an export, a connector's registration and runs, the operator's doors, the
+trip, an export, a connector's registration and runs, the operator's operations, the
 six exit codes, and a coverage scenario that reads `marfa operations` from the
-binary and holds it against the document the server serves, so a door
+binary and holds it against the document the server serves, so an operation
 published without a command is red here. Every published operation is driven
 past its help but one, `types prune`, which needs a drifted platform type a
 fresh server does not have; the coverage scenario says so. It is its own job
@@ -99,13 +99,13 @@ The server runs with enrichment, OCR and rate limiting switched off.
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot
-spend the allowance on the key doors — the tightest cap the server has, set
+spend the allowance on the key operations — the tightest cap the server has, set
 in `packages/server/src/app.ts`. `marfa:up` says so outright rather than
 leaving it to the boot script's default, so an ambient variable cannot flip
 the instance every file shares. What that allowance is, and what a caller
 past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
 server booted for it; nothing in the fixtures asserts enrichment. Two of the copy rules' settings are
-set for the fixtures that drive them through the housekeeping door: the
+set for the fixtures that drive them through the housekeeping operations: the
 orphan sweep's grace is zero, so the run after a report purges, and
 replication's cadence is an hour, so nothing copies on a clock of its own
 between an upload's wake and the fixture's runs. The env file also carries
@@ -165,7 +165,7 @@ adapter, and `suites/` the fixtures themselves, one directory per project.
 
 Tests are isolated by credential: each file mints a key with a unique
 `source`, writes through it, and `cleanup` in `afterAll` deletes every tracked
-resource and revokes the key. No shared state between files. A door whose
+resource and revokes the key. No shared state between files. An operation whose
 answer is the instance's whole history rather than rows a key can isolate,
 such as the owner, boots its own server with `bootFreshServer` in
 `utils/fresh-server.ts` and stops it in `afterAll`.

@@ -12859,7 +12859,7 @@
           "Bulk actions"
         ],
         "summary": "Apply a bulk action",
-        "description": "Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a job.",
+        "description": "Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a bulk-action job.",
         "security": [
           {
             "bearerAuth": []
@@ -13459,7 +13459,7 @@
           "Bulk actions"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or an operator key, can read it.",
+        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.",
         "security": [
           {
             "bearerAuth": []
@@ -13566,7 +13566,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours is not an operator key.",
+            "description": "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13835,7 +13835,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours is not an operator key.",
+            "description": "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20239,7 +20239,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has, such as `title`.\n- `inheritance_violation`: the type changes an inherited field's shape.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field is named like one every item has, such as `source_id`.\n- `inheritance_violation`: the type reshapes an inherited field.",
             "content": {
               "application/json": {
                 "schema": {
