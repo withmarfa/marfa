@@ -805,3 +805,150 @@ describe("what the orphan sweep keeps", () => {
     expect(row!.reported_at <= first.finished_at).toBe(true);
   });
 });
+
+describe("how the copies are placed and removed", () => {
+  it("replicates an upload on its own, each copy with its own recorded time", async () => {
+    const before = Date.now();
+    const hash = await uploadReferencedText("copied with no run asked for");
+    // No run is asked for: the housekeeping cadence is an hour, so a second
+    // copy can only come from the wake the upload sent.
+    const locations = await waitFor("the object store's copy", async () => {
+      const rows = (await client.listBlobLocations(hash)).data.data;
+      return rows.length === 2 ? rows : undefined;
+    });
+    const after = Date.now();
+    expect(kinds(locations)).toEqual(["disk", "s3"]);
+    const disk = locations.find((row) => row.kind === "disk")!;
+    const copy = locations.find((row) => row.kind === "s3")!;
+    for (const row of [disk, copy]) {
+      expect(Date.parse(row.recorded_at)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(row.recorded_at)).toBeLessThanOrEqual(after);
+    }
+    expect(copy.recorded_at >= disk.recorded_at).toBe(true);
+    // Oldest first.
+    expect(locations.map((row) => row.recorded_at)).toEqual(
+      locations.map((row) => row.recorded_at).sort(),
+    );
+  });
+
+  it("removes a dropped copy's bytes from its store", async () => {
+    const hash = await uploadReferencedText("dropped from each store in turn");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const link = (await client.getBlobUrl(hash)).data.url;
+    // The witness: both stores hold the bytes before either is dropped.
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect((await fetch(link)).status).toBe(200);
+
+    expect((await operator.deleteBlobLocation(hash, disk.id)).status).toBe(200);
+    expect(existsSync(diskPathFor(hash))).toBe(false);
+    await replicateToZero();
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    expect((await fetch(link)).status).toBe(404);
+    await replicateToZero();
+  });
+
+  it("removes a purged blob's bytes from every store", async () => {
+    const hash = await uploadText("purged from the disk and the object store");
+    await replicateToZero();
+    const link = (await operator.getBlobUrl(hash)).data.url;
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect((await fetch(link)).status).toBe(200);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect(existsSync(diskPathFor(hash))).toBe(false);
+    expect((await fetch(link)).status).toBe(404);
+  });
+
+  it("never lets two concurrent drops take both copies", async () => {
+    const hash = await uploadReferencedText("two copies, two drops at once");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+
+    const answers = await Promise.all(
+      stores.map((store) => operator.deleteBlobLocation(hash, store.id)),
+    );
+
+    const statuses = answers.map((answer) => answer.status).sort();
+    for (const answer of answers) {
+      expect([200, 409]).toContain(answer.status);
+      if (answer.status === 409) {
+        expect(answer.error?.error.code).toBe("copies_below_minimum");
+      }
+    }
+    expect(statuses).toContain(200);
+    expect(
+      (await client.listBlobLocations(hash)).data.data.length,
+    ).toBeGreaterThanOrEqual(1);
+    expect((await client.downloadBlob(hash)).status).toBe(200);
+    await replicateToZero();
+  });
+
+  it("answers the drop door's refusals in their order", async () => {
+    const hash = await uploadReferencedText("dropped through a bare hex");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const base = bootEnv("MARFA_API_URL");
+    const drop = (path: string, key?: string) =>
+      fetch(`${base}/blobs/${path}`, {
+        method: "DELETE",
+        headers: key === undefined ? {} : { Authorization: `Bearer ${key}` },
+      });
+    const code = async (response: Response) =>
+      ((await response.json()) as { error: { code: string } }).error.code;
+    const malformed = "not-a-hash";
+    const unregistered = `sha256:${"0".repeat(64)}`;
+    const operatorKey = process.env.MARFA_OPERATOR_KEY!;
+    const working = await client.deleteBlobLocation(malformed, "no-such-store");
+
+    // No credential first, then a credential that is not the operator key,
+    // whatever the hash and the store are.
+    const anonymous = await drop(`${malformed}/locations/no-such-store`);
+    expect(anonymous.status).toBe(401);
+    expect(await code(anonymous)).toBe("unauthorized");
+    expect(working.status).toBe(403);
+    expect(working.error?.error.code).toBe("forbidden");
+
+    // The operator key reaches the hash: malformed, then unregistered, then
+    // the store, whatever the store is.
+    const bad = await drop(`${malformed}/locations/${s3.id}`, operatorKey);
+    expect(bad.status).toBe(400);
+    expect(await code(bad)).toBe("validation_error");
+    const unknownBlob = await drop(
+      `${unregistered}/locations/no-such-store`,
+      operatorKey,
+    );
+    expect(unknownBlob.status).toBe(404);
+    expect(await code(unknownBlob)).toBe("blob_not_found");
+    const unknownStore = await drop(
+      `${hash}/locations/no-such-store`,
+      operatorKey,
+    );
+    expect(unknownStore.status).toBe(404);
+    expect(await code(unknownStore)).toBe("blob_location_not_found");
+
+    // The witness for all of them: the copy is still there, and the same
+    // door drops it once the hash is the bare hex of a registered blob.
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+      "s3",
+    ]);
+    const bare = await drop(
+      `${hash.slice("sha256:".length)}/locations/${s3.id}`,
+      operatorKey,
+    );
+    expect(bare.status).toBe(200);
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+    ]);
+    await replicateToZero();
+  });
+});
