@@ -396,15 +396,18 @@ impl From<serde_json::Error> for CliError {
 const EXIT_CODES_TEXT: &str = "\
 Exit codes:
   0  done
-  1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
+  1  the request was refused, by the server, by the binary before
+     sending, or for an answer on another contract; a retry does not
+     change it
   2  the command line was wrong, or named no store or server
-  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage); try again
-  4  the working copy or the queue refused under the device rules, or this system has no keychain
-  5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
+  3  the environment failed (unreachable, timed out, a 5xx, a 429, an
+     answer naming no contract, full local storage); try again
+  4  the working copy or the queue refused under the device rules, or
+     this system has no keychain
+  5  no credential, the credential was refused, or the sign-in ended;
+     `marfa login` starts one
 
-A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes),
-3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass.
-A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
+A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}

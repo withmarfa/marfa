@@ -67,6 +67,11 @@ describe("what a change runs", () => {
     ],
     ["a README Prettier does not read", ["core/README.md"], []],
     [
+      "the command reference, which a Rust test holds to the binary's help",
+      ["core/marfa-cli/COMMANDS.md"],
+      ["core-checks", "core-checks-linux"],
+    ],
+    [
       "a published package's README, which the version check reads",
       ["packages/client/README.md"],
       ["ci-sqlite", "version-fields"],
@@ -347,7 +352,7 @@ describe("what a change runs", () => {
     expect(tracked().filter(unnamed)).toEqual([]);
   });
 
-  it("treats Markdown as documentation but the contract and package READMEs", () => {
+  it("treats Markdown as documentation but the contract, package READMEs and the command reference", () => {
     const beyond = (path: string) =>
       [...affected(path)].filter((job) => job !== "ci-sqlite");
     // The rule fixtures and generated trees fall through on purpose.
@@ -364,6 +369,11 @@ describe("what a change runs", () => {
     for (const path of markdown) {
       if (path.startsWith("conformance/spec/")) {
         expect(beyond(path), path).toEqual(["workspace", "conformance"]);
+      } else if (path === "core/marfa-cli/COMMANDS.md") {
+        expect(beyond(path), path).toEqual([
+          "core-checks",
+          "core-checks-linux",
+        ]);
       } else if (docs?.test(path)) {
         expect(beyond(path), path).toEqual(
           /^(packages|core)\/.+\/README[^/]*$/.test(path)
@@ -386,6 +396,7 @@ describe("what a change runs", () => {
       [],
       ["AGENTS.md", "packages/server/src/runtime.ts"],
       ["packages/client/README.md"],
+      ["core/marfa-cli/COMMANDS.md"],
       ["conformance/spec/items.md"],
       [".env.example"],
       [".github/workflows/release.yml"],

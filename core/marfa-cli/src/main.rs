@@ -7,6 +7,8 @@ mod door;
 mod error;
 mod folders;
 mod output;
+#[cfg(test)]
+mod reference;
 mod remote;
 mod values;
 mod watch;
@@ -30,7 +32,12 @@ use crate::remote::{Named, Remote};
 /// copy of a slice of it under `device`, and folders that hold a slice as
 /// files.
 #[derive(Debug, Parser)]
-#[command(name = "marfa", version, after_long_help = exit_codes_help())]
+#[command(
+    name = "marfa",
+    version,
+    max_term_width = 100,
+    after_long_help = exit_codes_help()
+)]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
     /// server a kept credential made current.

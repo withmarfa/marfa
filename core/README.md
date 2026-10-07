@@ -48,6 +48,8 @@ cargo build -p marfa-cli   # the device fixtures refuse a binary older than its 
 
 Then the same three in `bindings/swift`. Every test binary runs under `scripts/test-limits.sh`, which caps the file size and processor time it can take.
 
+`marfa-cli/COMMANDS.md` is the reference for every command, written from the clap command tree. A test fails when it differs from the binary's help; after changing a command or its help text, regenerate it with `MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin marfa reference` and commit it.
+
 `scripts/server-up.sh` exports `MARFA_TEST_KEY` for ordinary working requests and `MARFA_TEST_OPERATOR_KEY` for operator-only inspection. A boot also creates an owner, with the throwaway email and password in `scripts/test-owner.example.env`, and exports them as `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`. With `MARFA_SERVER_KEEP`, both keys and the owner are kept and returned on restart. A kept directory without its operator key is refused; use a fresh directory. `scripts/server-keys.test.sh` checks both roles and the owner's sign-in against the server on first boot and after restart.
 
 ### Which jobs run
