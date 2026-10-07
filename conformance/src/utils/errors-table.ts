@@ -20,7 +20,7 @@ export const TABLE_END = "<!-- errors-table:end -->";
 const HEADER = ["Code", "Status", "Meaning"];
 
 function cell(text: string): string {
-  return text.replace(/\|/g, "\\|");
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
 
 /** The rows in the order the table lists them: by status, then by code. */
