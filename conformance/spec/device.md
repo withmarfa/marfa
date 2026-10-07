@@ -466,7 +466,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 109. WHEN the docs site answers `marfa docs`, the command MUST read the answer whether or not it names a contract.
 
-**Reason:** the docs site names no contract, so the check the binary holds a server's answers to (39) would refuse every page.
+**Reason:** the docs site names no contract, so the check the command holds a server's answers to (39) would refuse every page.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_page_is_read_without_checking_a_contract`.
 
