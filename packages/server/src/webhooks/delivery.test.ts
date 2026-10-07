@@ -390,6 +390,7 @@ describe("dispatch", () => {
       await publishEdge({
         type: "edge_created",
         edge: edge("edge_quiet", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+        sourceType: "core.note",
         enableFanout: false,
       });
       await publish({
@@ -399,6 +400,7 @@ describe("dispatch", () => {
       await publishEdge({
         type: "edge_created",
         edge: edge("edge_loud", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+        sourceType: "core.note",
       });
     });
     const ids = sentBodies(http).map(
@@ -460,6 +462,7 @@ describe("what a delivery carries", () => {
       await publishEdge({
         type: "edge_deleted",
         edge: edge("edge_purged", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+        sourceType: "core.note",
         purgedWith: "01HAAAAAAAAAAAAAAAAAAAAAAA",
       });
     });
@@ -601,20 +604,30 @@ describe("what a delivery carries", () => {
       type_permissions: { "core.note": "read" },
       edge_permissions: { references: "read" },
     });
-    await subscription(id, ["edge.created"]);
+    await subscription(id, ["edge.created", "edge.deleted"]);
     const http = recorder();
     await dispatch(http, async () => {
       await publishEdge({
         type: "edge_created",
         edge: edge("edge_readable", readable.id),
+        sourceType: readable.type,
       });
       await publishEdge({
         type: "edge_created",
         edge: edge("edge_kind_hidden", readable.id, "cites"),
+        sourceType: readable.type,
       });
       await publishEdge({
         type: "edge_created",
         edge: edge("edge_source_hidden", hidden.id),
+        sourceType: hidden.type,
+      });
+      // A purge announces the edges it took after their source has gone:
+      // the type it was published with decides, as on the stream.
+      await publishEdge({
+        type: "edge_deleted",
+        edge: edge("edge_source_purged", "01HPURGEDPURGEDPURGEDPURG0"),
+        sourceType: hidden.type,
       });
     });
     expect(sentBodies(http).map((b) => (b.edge as { id: string }).id)).toEqual([

@@ -39,6 +39,14 @@ export async function frameInReach(
     const edge = stored.edge as unknown as Edge;
     if (typeof edge.edge_type !== "string") return null;
     if (!edgeKindReadable(key, edge)) return null;
+    // The source's type when the event was published, as the stream asks
+    // it: a purge takes the source row, and a missing row reads as no type.
+    if (
+      typeof stored.source_type !== "string" ||
+      !mayReadType(key, stored.source_type)
+    ) {
+      return null;
+    }
     if (!(await edgeReadable(storage, key, edge))) return null;
     return { ...stored };
   }

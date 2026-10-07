@@ -69,9 +69,9 @@ export interface EdgeEvent extends FanoutControl {
    *
    * Every door that publishes looks it up (`edge-events-every-door.test.ts`
    * holds them to it). Optional because the source row may be absent from
-   * that lookup. The event is still logged and delivered to webhooks, while
-   * the stream withholds it from every subscriber: a source it cannot
-   * classify is not one it may read.
+   * that lookup. The event is still logged, while the stream and webhooks
+   * withhold it from everyone: a source they cannot classify is not one
+   * the credential may read.
    */
   sourceType?: string;
   /** On `edge_deleted` alone: the item whose purge took the edge. */
