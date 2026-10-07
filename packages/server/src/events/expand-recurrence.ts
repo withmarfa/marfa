@@ -78,8 +78,9 @@ export const MAX_EXPANSION_ITERATIONS = RECURRENCE_WORK_LIMIT;
 
 export class RecurrenceExpansionError extends Error {}
 
-/** An expansion stopped by its own bound before it reached the window's
- *  end, so the series may be missing occurrences rather than wrong. */
+/** An expansion stopped by one of its own bounds, the cost of its walk or
+ *  the occurrences it may unfold in one window, so the series is missing
+ *  occurrences rather than wrong. */
 export class RecurrenceExpansionStopped extends RecurrenceExpansionError {}
 
 /**
@@ -146,7 +147,7 @@ export function expandSeries(
     );
   } catch (err) {
     if (err instanceof RecurrenceCapError) {
-      throw new RecurrenceExpansionError(
+      throw new RecurrenceExpansionStopped(
         `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
       );
     }

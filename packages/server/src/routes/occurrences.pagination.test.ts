@@ -25,7 +25,10 @@ import {
   occurrenceRoutes,
   MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
 } from "./occurrences.js";
-import { expandSeries } from "../events/expand-recurrence.js";
+import {
+  expandSeries,
+  MAX_OCCURRENCES_PER_SERIES,
+} from "../events/expand-recurrence.js";
 import type {
   ExpansionWork,
   RecurrenceSeries,
@@ -1057,14 +1060,62 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     const body = (await res.json()) as {
       data: OccurrenceRow[];
       series_errors?: { item_id: string; message: string }[];
-      scan: { series_errors: number; unproductive_iterations: number };
+      expansion_incomplete?: boolean;
+      scan: {
+        series_errors: number;
+        series_unexpanded: number;
+        unproductive_iterations: number;
+      };
     };
     // Two thousand produced, none contributed.
     expect(body.data).toHaveLength(0);
     expect(body.scan.series_errors).toBe(1);
     expect(body.series_errors?.[0]?.message).toContain("occurrences");
+    // Left out whole, and the answer says its calendar is short of it.
+    expect(body.scan.series_unexpanded).toBe(1);
+    expect(body.expansion_incomplete).toBe(true);
     // One iteration past the per-series occurrence ceiling, exactly.
     expect(body.scan.unproductive_iterations).toBe(2_001);
+  });
+
+  it("says expansion is incomplete from one occurrence past the per-series ceiling, and not at it", async () => {
+    const readSeries = async (count: number) => {
+      const res = await readWindow(
+        appOver(
+          syntheticCalendar([
+            {
+              id: "counted",
+              properties: {
+                title: "every minute, counted",
+                starts_at: SYNTHETIC_FROM,
+                recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(count)}`],
+              },
+            },
+          ]).storage,
+        ),
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        data: OccurrenceRow[];
+        series_errors?: { item_id: string }[];
+        expansion_incomplete?: boolean;
+        scan: { series_unexpanded: number };
+      };
+    };
+
+    const atCeiling = await readSeries(MAX_OCCURRENCES_PER_SERIES);
+    expect(atCeiling.data).toHaveLength(MAX_OCCURRENCES_PER_SERIES);
+    expect(atCeiling.series_errors).toBeUndefined();
+    expect(atCeiling.scan.series_unexpanded).toBe(0);
+    expect(atCeiling.expansion_incomplete).toBeUndefined();
+
+    const pastCeiling = await readSeries(MAX_OCCURRENCES_PER_SERIES + 1);
+    expect(pastCeiling.data).toHaveLength(0);
+    expect(pastCeiling.series_errors?.map((e) => e.item_id)).toEqual([
+      "counted",
+    ]);
+    expect(pastCeiling.scan.series_unexpanded).toBe(1);
+    expect(pastCeiling.expansion_incomplete).toBe(true);
   });
 
   it("charges nothing for walking that a caller can count exactly", async () => {

@@ -512,15 +512,27 @@ describe("GET /occurrences", () => {
       title: "September one-off",
       starts_at: "2026-09-10T12:00:00.000Z",
     });
-    const { status, rows, errors } = await occurrences(
-      "2026-09-01T00:00:00Z",
-      "2026-09-30T00:00:00Z",
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/occurrences?from=${encodeURIComponent("2026-09-01T00:00:00Z")}&to=${encodeURIComponent("2026-09-30T00:00:00Z")}`,
+      { key: memberKey },
     );
-    expect(status).toBe(200);
-    expect(rows.some((r) => r.item.id === okId)).toBe(true);
-    const mine = errors.filter((e) => e.item_id === floodId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      series_errors?: SeriesError[];
+      expansion_incomplete?: boolean;
+      scan: { series_unexpanded: number };
+    };
+    expect(body.data.some((r) => r.item.id === okId)).toBe(true);
+    const mine = (body.series_errors ?? []).filter(
+      (e) => e.item_id === floodId,
+    );
     expect(mine).toHaveLength(1);
     expect(mine[0]?.message).toContain("in this window");
+    expect(body.expansion_incomplete).toBe(true);
+    expect(body.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
   });
 
   it("includes an event that started before the window and is still running", async () => {

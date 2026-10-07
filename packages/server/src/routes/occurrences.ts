@@ -875,7 +875,7 @@ const OccurrencesResponseSchema = z
       .boolean()
       .optional()
       .describe(
-        "`true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise.",
+        "`true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A series with more occurrences in the window than one series may unfold is left out whole, and a narrower window helps. For a rule stopped by its cost, narrow by `type` or fix the rules. Absent otherwise.",
       ),
   })
   .describe(
