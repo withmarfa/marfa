@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import type { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -9,9 +10,11 @@ import {
 import {
   bytesOf,
   clientsFor,
+  diskPath,
   leaveBacklog,
   ownObjectStore,
   pastInstant,
+  replicationIdle,
   runJob,
   whenCopied,
 } from "../../utils/own-blob-server.js";
@@ -28,6 +31,10 @@ import { getOperatorClient } from "../../utils/setup.js";
  * uploading blobs, waiting for the server's own scheduler to copy them, and
  * dropping the object store's copies through the operator door, which wakes
  * nothing; the next run is then the first work the job does.
+ *
+ * The same servers show what each run does with a copy that is not the
+ * blob's bytes: a replication that will not record one, and an integrity
+ * check that asks the object store for name and size only.
  *
  * The integrity job's first run on its own clock comes a minute after boot,
  * and these tests finish well inside it.
@@ -275,4 +282,46 @@ describe("an integrity run that is bounded by bytes", () => {
     expect(rest.result).toEqual({ verified: 2, struck: 0, bytes: 2 });
     expect(await unverified(second)).toBe(0);
   });
+});
+
+describe("a replication run over a copy that does not hash to its name", () => {
+  it("records no copy for bytes that do not hash to the blob's name", async () => {
+    const { server, operator, working } = await boot(
+      "blob-store-replicate-verifies",
+      {},
+    );
+    const content = bytesOf("bytes the disk will lose", 120);
+    const upload = await working.uploadBlob(content, "text/plain");
+    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+    const hash = upload.data.hash;
+    await whenCopied(operator, [hash]);
+    await replicationIdle(operator);
+    const stores = (await operator.listBlobStores()).data.data;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+
+    // The disk file, at its own length, now holds other bytes: the object
+    // store would be handed a copy that is not the blob.
+    writeFileSync(diskPath(server, hash), new Uint8Array(120).fill(0x41));
+    const refused = await runJob(operator, "blob-replicate");
+    expect(refused.result.copied).toBe(0);
+    expect(refused.result.bytes).toBe(0);
+    expect(
+      (await operator.listBlobLocations(hash)).data.data.map(
+        (row) => row.store_id,
+      ),
+    ).toEqual([disk.id]);
+
+    // The witness: the same run with the right bytes on the disk records
+    // the object store's copy.
+    writeFileSync(diskPath(server, hash), content);
+    const placed = await runJob(operator, "blob-replicate");
+    expect(placed.result).toEqual({ copied: 1, bytes: 120, remaining: 0 });
+    expect(
+      (await operator.listBlobLocations(hash)).data.data
+        .map((row) => row.store_id)
+        .sort(),
+    ).toEqual([disk.id, s3.id].sort());
+  }, FRESH_SERVER_TIMEOUT_MS);
 });
