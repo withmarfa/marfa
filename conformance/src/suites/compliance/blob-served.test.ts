@@ -297,6 +297,34 @@ describe("how a blob's bytes are served", () => {
     expect(await whole.text()).toBe("0123456789");
   });
 
+  it("answers an unsatisfiable range on an instance link with the size in details", async () => {
+    const content = new TextEncoder().encode(`0123456789 ${ctx.runId}`);
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
+    expect(upload.status).toBe(201);
+    const url = await instanceLink(upload.data.hash);
+    const size = content.byteLength;
+
+    // The witness: the last byte is the largest start the blob satisfies.
+    const last = await fetch(url, {
+      headers: { Range: `bytes=${String(size - 1)}-` },
+    });
+    expect(last.status).toBe(206);
+    await last.arrayBuffer();
+
+    for (const range of [`bytes=${String(size)}-`, "bytes=5-2"]) {
+      const refused = await fetch(url, { headers: { Range: range } });
+      expect(refused.status, range).toBe(416);
+      expect(refused.headers.get("content-range"), range).toBe(
+        `bytes */${String(size)}`,
+      );
+      const body = (await refused.json()) as {
+        error: { code: string; details?: { size_bytes?: number } };
+      };
+      expect(body.error.code, range).toBe("range_not_satisfiable");
+      expect(body.error.details, range).toEqual({ size_bytes: size });
+    }
+  });
+
   it("serves a ranged answer as the same sandboxed download, on every instance door", async () => {
     const content = new TextEncoder().encode(
       `<svg onload="fetch('/keys')"></svg> ${ctx.runId}`,
