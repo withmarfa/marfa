@@ -319,6 +319,25 @@ describe("endpoints", () => {
     expect(listed.error?.error.code).toBe("connector_not_found");
   });
 
+  it("lists none of a removed registration's deliveries under the next one its key makes", async () => {
+    const owner = await connector("deliveries-removed");
+    const made = await endpoint(owner);
+    const before = idOf(await send(apiUrl, made.path, "kept until removal"));
+    // The witness: the delivery is listed while the registration stands.
+    const listed = await owner.client.listInboundDeliveries(owner.id);
+    expect(listed.data.data.map((d) => d.id)).toEqual([before]);
+    expect((await owner.client.deleteConnector(owner.id)).status).toBe(200);
+
+    const again = await owner.client.registerConnector({
+      name: `${ctx.runId} deliveries-removed again`,
+    });
+    expect(again.status).toBe(201);
+    expect(again.data.id).not.toBe(owner.id);
+    const fresh = await owner.client.listInboundDeliveries(again.data.id);
+    expect(fresh.status).toBe(200);
+    expect(fresh.data.data).toEqual([]);
+  });
+
   it("audits a creation and a retirement once each, and neither a receipt nor a handled mark", async () => {
     const owner = await connector("endpoint-audit");
     const made = await endpoint(owner);

@@ -102,7 +102,7 @@ When a key that already has a registration sends `POST /connectors`, the server 
 
 When a key that already has a registration sends `POST /connectors`, the server MUST set the registration's `updated_at` to the time on its own clock at the write.
 
-**Tests:** `compliance/connectors.test.ts › registers once per key, updating on repeat`, `compliance/connectors.test.ts › stamps a repeat registration's updated_at with the server's clock at the write`.
+**Tests:** `compliance/connectors.test.ts › registers once per key, updating on repeat`, `› stamps a repeat registration's updated_at with the server's clock at the write`.
 
 ### `connectors/register-concurrent`
 
@@ -534,7 +534,7 @@ When the connector's own key sends `POST /connectors/{id}/hold` with a `process`
 
 When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `MARFA_CONNECTOR_HOLD_MS` names another.
 
-**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`.
+**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
 
 ### `connectors/hold-ttl`
 
@@ -548,7 +548,7 @@ When the server takes or renews a hold, the server MUST give `ttl_ms` as the hol
 
 When the process that holds a live hold sends `POST /connectors/{id}/hold`, the server MUST set `expires_at` to the time on its own clock at the renewal plus the hold's window, and answer `renewed` `true`.
 
-**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› tells a process whose hold lapsed that it did not renew it`, `compliance/connector-state.test.ts › stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
+**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› tells a process whose hold lapsed that it did not renew it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
 
 ### `connectors/hold-first-not-renewed`
 
@@ -584,7 +584,7 @@ When the server takes or renews a hold, the server MUST NOT move the registratio
 
 ### `connectors/hold-held-by-other`
 
-If a process sends `POST /connectors/{id}/hold` while another process holds a live hold, then the server MUST answer `409 connector_held` with that hold's `expires_at` in `details.expires_at`.
+If the connector's own key sends `POST /connectors/{id}/hold` for a process while another process holds a live hold, then the server MUST answer `409 connector_held` with that hold's `expires_at` in `details.expires_at`.
 
 **Tests:** `compliance/connector-state.test.ts › refuses a second process while the hold is live`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`.
 
@@ -620,7 +620,7 @@ If `POST /connectors/{id}/hold` names no `process`, then the server MUST answer 
 
 ### `connectors/undeclared-body-field`
 
-If an operation under `/connectors` that takes a body carries a top-level body field the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error` with the field in `details.unknown_body_fields`.
+If a request to an operation under `/connectors` that takes a body passes the operation's credential and registration checks, with a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error` with the field in `details.unknown_body_fields`.
 
 **Reason:** a misspelled field would otherwise be dropped, and the request read as something it did not say.
 
@@ -1166,7 +1166,7 @@ When a key's type map is widened to read a type again, the server MUST answer th
 
 ### `connectors/fence-refused`
 
-If a process that holds no live hold on the registration sends `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements`, whether no process holds it, another does, or its own hold lapsed, then the server MUST answer `409 connector_held`.
+If the connector's own key sends `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` for a process that holds no live hold on the registration, whether no process holds it, another does, or its own hold lapsed, then the server MUST answer `409 connector_held`.
 
 **Tests:** `compliance/connector-state.test.ts › fences the state and the agreements to the process that holds the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› refuses a write from a process whose hold lapsed, whether its successor released the hold or let it lapse`.
 
@@ -1234,9 +1234,9 @@ If a request to an operation under `/connectors/{id}` has a body field or a quer
 
 ### `connectors/order-key-before-handler-checks`
 
-If a key the operation refuses `403` sends to an existing registration a run that finishes before it starts or names a time outside the years 0000 to 9999, a state over 512 KiB, a batch that names a row twice or holds a record over 16 KiB, or a top-level body field the operation does not declare, then the server MUST answer `403 forbidden`.
+If a key that `POST /connectors/{id}/runs`, `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` refuses `403 forbidden` on an existing registration sends it a run that finishes before it starts or names a time whose UTC year is outside 0000 to 9999, a state of more than 512 KiB serialized, or a batch that names a row twice or holds a record of more than 16 KiB serialized, then the server MUST answer `403 forbidden`.
 
-**Reason:** these checks need the registration and the key's standing first, unlike the declared shape in `connectors/order-body-before-registration`.
+**Reason:** the server makes these checks after it finds the registration and judges the key, unlike the declared shape that `connectors/order-body-before-registration` checks first. A top-level field the operation does not declare is ordered the same way, as `connectors/order-key-before-stray-field` says.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers another key's 403 before the checks its body meets once the key is the connector's own`.
 
@@ -1260,12 +1260,12 @@ If a key sends a request to an operation under `/connectors/{id}` that names an 
 
 ### `connectors/order-stray-field-before-fence`
 
-If a process that holds no live hold sends `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` with a top-level body field the operation does not declare, then the server MUST answer `400 validation_error` and not `409 connector_held`.
+If the connector's own key sends `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` for a process that holds no live hold, with a top-level body field the operation does not declare, then the server MUST answer `400 validation_error` and not `409 connector_held`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a field the door does not declare 400 before the fence's 409`.
 
 ### `connectors/order-body-before-fence`
 
-If a process that holds no live hold sends `PUT /connectors/{id}/state` with a state of more than 512 KiB, or `POST /connectors/{id}/agreements` with a batch that names a row twice or holds a record of more than 16 KiB, then the server MUST answer `400 validation_error` and not `409 connector_held`.
+If the connector's own key sends, for a process that holds no live hold, `PUT /connectors/{id}/state` with a state of more than 512 KiB, or `POST /connectors/{id}/agreements` with a batch that names a row twice or holds a record of more than 16 KiB, then the server MUST answer `400 validation_error` and not `409 connector_held`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a state or a batch the door refuses 400 before the fence's 409`.

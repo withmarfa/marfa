@@ -92,7 +92,7 @@ If a registration holds ten live endpoints and the server would otherwise take a
 
 ### `inbound-webhooks/order-body-before-endpoint-limit`
 
-If a registration holds ten live endpoints and `POST /connectors/{id}/endpoints` carries a body the operation refuses, then the server MUST answer that `400`.
+If the connector's own key or the operator key sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a body the door refuses 400 before the limit of ten live endpoints' 409`.
 
@@ -128,7 +128,7 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 ### `inbound-webhooks/endpoint-retire-unknown`
 
-If `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
+If the connector's own key or the operator key sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
@@ -172,15 +172,9 @@ When a registration is removed, the server MUST answer a request to the address 
 
 ### `inbound-webhooks/deliveries-go-with-it`
 
-When a registration is removed, the server MUST answer `GET /connectors/{id}/deliveries` for it `404 connector_not_found`.
+When a registration is removed and its key registers again, the server MUST list none of the removed registration's deliveries under the new one.
 
-**Reason:** the deliveries its endpoints stored go with the registration.
-
-**Tests:** `compliance/inbound-webhooks.test.ts › goes with its registration, and its deliveries with it`.
-
-## Receiving a delivery
-
-`POST /inbound/{token}` is the one operation a sender calls, and it takes no credential.
+**Tests:** `compliance/inbound-webhooks.test.ts › lists none of a removed registration's deliveries under the next one its key makes`.
 
 ### `inbound-webhooks/receipt-accepted`
 
@@ -408,7 +402,7 @@ When a registration's unhandled bodies hold exactly `MARFA_INBOUND_BACKLOG_BYTES
 
 When a delivery is marked handled, the server MUST stop counting it toward its registration's backlog of deliveries and bytes.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › refuses while the backlog is full, and takes again once it drains`.
+**Tests:** `compliance/inbound-webhooks.test.ts › refuses while the backlog is full, and takes again once it drains`, `› refuses while the backlog's bytes are full`, `› counts the unhandled deliveries a retired endpoint stored toward the backlog, until they are handled`.
 
 ### `inbound-webhooks/backlog-refused-stores-nothing`
 
@@ -622,7 +616,7 @@ When the connector's own key sends `GET /connectors/{id}/deliveries/{delivery_id
 
 ### `inbound-webhooks/body-unheld`
 
-If `GET /connectors/{id}/deliveries/{delivery_id}/body` names a delivery the registration does not hold, another registration's delivery included, then the server MUST answer `404 delivery_not_found`.
+If the connector's own key sends `GET /connectors/{id}/deliveries/{delivery_id}/body` naming a delivery the registration does not hold, another registration's delivery included, then the server MUST answer `404 delivery_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › stores the body byte for byte, the headers as they arrived and the query as sent`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
@@ -662,7 +656,7 @@ If a `POST /connectors/{id}/deliveries/handled` the server would otherwise take 
 
 ### `inbound-webhooks/order-body-before-unheld`
 
-If `POST /connectors/{id}/deliveries/handled` names a delivery the registration does not hold and carries a body the operation refuses, then the server MUST answer that `400`.
+If the connector's own key sends `POST /connectors/{id}/deliveries/handled` with a body that names a delivery the registration does not hold and that the operation refuses `400`, then the server MUST answer the `400` and not `404 delivery_not_found`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a handled mark the door refuses 400 before a delivery the registration does not hold's 404`.
 
@@ -954,9 +948,9 @@ If a request declares a `Content-Length` over the limit and its registration alr
 
 ### `inbound-webhooks/order-length-before-capacity`
 
-If a request declares a `Content-Length` over the limit while its registration's unhandled deliveries hold `MARFA_INBOUND_BACKLOG_BYTES` or the instance's retained capacity is full, then the server MUST answer `413 request_too_large`.
+If a request declares a `Content-Length` over the limit while its registration's unhandled bodies hold `MARFA_INBOUND_BACKLOG_BYTES` bytes or the registration retains `MARFA_INBOUND_RETAINED_DELIVERIES` deliveries or `MARFA_INBOUND_RETAINED_BYTES` bytes, then the server MUST answer `413 request_too_large`.
 
-**Reason:** before it reads a body the server checks only the count of unhandled deliveries; their bytes and the retained capacity are checked as the body is stored.
+**Reason:** of the bounds on what a registration holds, the server checks only the count of unhandled deliveries before it reads a body; the bytes of unhandled bodies and what the registration retains are checked as the body is stored.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the backlog's bytes and the retained capacity's 503`.
 
