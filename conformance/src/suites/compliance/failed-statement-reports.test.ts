@@ -99,7 +99,9 @@ describe("the health answer to a write that fails", () => {
     const write = down.components.database_write;
     expect(down.status).toBe("down");
     expect(write?.status).toBe("down");
-    // The reason, as the driver gives it: the table the statement names.
+    // The reason, as the driver gives it, and not only a word the statement
+    // holds too.
+    expect(write?.error).toContain("no such table");
     expect(write?.error).toContain("settings");
     // The probe writes one key and the time of the probe.
     expect(write?.error).not.toContain("health_probe");
@@ -234,6 +236,7 @@ describe("a bulk action whose writes fail", () => {
     );
     for (const entry of failed.result.errors) {
       expect(entry.code).toBe("internal_error");
+      expect(entry.message).toContain("no such table");
       expect(entry.message).toContain("event_log");
       for (const value of [refused, tagged, body, marker, entry.id]) {
         expect(entry.message).not.toContain(value);
