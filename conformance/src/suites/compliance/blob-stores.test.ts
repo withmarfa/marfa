@@ -63,6 +63,19 @@ describe("the stores an instance keeps bytes in", () => {
     expect(s3?.locator).toBe(`s3://${objectStoreEnv("S3_BUCKET")}/${prefix}`);
   });
 
+  it("lists each store with the time it was first attached", async () => {
+    const stores = await getOperatorClient().listBlobStores();
+    expect(stores.data.data.length).toBeGreaterThanOrEqual(1);
+    for (const store of stores.data.data) {
+      expect(Date.parse(store.attached_at)).not.toBeNaN();
+      expect(Date.parse(store.attached_at)).toBeLessThanOrEqual(Date.now());
+    }
+    const again = await getOperatorClient().listBlobStores();
+    expect(
+      again.data.data.map((store) => [store.id, store.attached_at]),
+    ).toEqual(stores.data.data.map((store) => [store.id, store.attached_at]));
+  });
+
   it("refuses the listing to a working key", async () => {
     expect((await getOperatorClient().listBlobStores()).status).toBe(200);
     const stores = await client.listBlobStores();
@@ -85,15 +98,22 @@ describe("the stores an instance keeps bytes in", () => {
     );
     const stores = await getOperatorClient().listBlobStores();
     const disk = stores.data.data.find((store) => store.kind === "disk");
-    expect(locations.data.data).toEqual([
+    // The upload woke replication and the run's other files run the
+    // integrity check, so with an object store attached its copy can land,
+    // and the disk copy be stamped, between the upload and this read. The
+    // case that asserts the one unverified location is on an instance of its
+    // own with no object store (`blob-store-folders.test.ts`).
+    expect(locations.data.data).toContainEqual(
       expect.objectContaining({
         store_id: disk?.id,
         kind: "disk",
         policy: "all",
         detached: false,
-        verified_at: null,
       }),
-    ]);
+    );
+    expect(
+      locations.data.data.filter((row) => row.kind === "disk"),
+    ).toHaveLength(1);
   });
 
   it("answers 404 for the locations of an unknown hash and 400 for a malformed one", async () => {
