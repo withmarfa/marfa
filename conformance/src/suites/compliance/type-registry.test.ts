@@ -27,7 +27,7 @@ afterAll(async () => {
 });
 
 function testTypeId(label: string): string {
-  return `user.evaluator-${label}-${generateId().slice(0, 8).toLowerCase()}`;
+  return `user.evaluator-${label}-${generateId().slice(-8).toLowerCase()}`;
 }
 
 describe("type registry", () => {
@@ -149,6 +149,37 @@ describe("type registry", () => {
       // reaches it.
       const registered = await client.registerType({ id, fields });
       expect(registered.status).toBe(201);
+    }
+  });
+
+  it("refuses an identifier another key registered with 403 to a key whose map does not reach it", async () => {
+    const own = testTypeId("held-own");
+    const held = testTypeId("held-by-other");
+    const readOnly = testTypeId("held-read");
+    const fields = { name: { type: "string" as const } };
+    const keyResp = await client.createKey({
+      label: "type-reg-held",
+      source: `${ctx.source}-type-reg-held`,
+      type_permissions: { [own]: "write", [readOnly]: "read" },
+      metadata_permissions: { types: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+    for (const id of [held, readOnly]) {
+      expect((await client.registerType({ id, fields })).status).toBe(201);
+      // The witness: the identifier is held, and a key that reaches every
+      // type is told so.
+      const duplicate = await client.registerType({ id, fields });
+      expect(duplicate.status).toBe(409);
+
+      const refused = await scopedClient.registerType({ id, fields });
+      expect(refused.status, id).toBe(403);
+      expect(refused.error?.error.code).toBe("type_not_permitted");
+      expect(refused.error?.error.message).toContain(id);
     }
   });
 
@@ -349,6 +380,7 @@ describe("type registry", () => {
     expect(listed.status).toBe(200);
     expect(listed.data.data.map((i) => i.id)).toEqual([before.id]);
     expect(listed.data.data[0]!.properties).toEqual(before.properties);
+    expect(listed.data.data[0]!.version).toBe(before.version);
 
     const unrelated = await client.updateItem(before.id, {
       properties: { name: "renamed" },
@@ -604,7 +636,7 @@ describe("type registry", () => {
     // `unknown_type` rather than persisting an ad-hoc / typo'd type. Custom
     // types must be registered via POST /types before items of that type can
     // be created.
-    const unregisteredType = `user.evaluator-unregistered-${generateId().slice(0, 8).toLowerCase()}`;
+    const unregisteredType = `user.evaluator-unregistered-${generateId().slice(-8).toLowerCase()}`;
 
     const item = await client.createItem({
       type: unregisteredType,
