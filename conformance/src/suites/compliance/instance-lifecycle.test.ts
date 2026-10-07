@@ -687,28 +687,34 @@ describe("starting on a database another build wrote", () => {
   it(
     "says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse",
     async () => {
-      await expectRefusal(CAUSES[0]![1], (refused) => {
-        const text = refusalText(refused);
-        expect(text).toContain("export it with the build that wrote it");
-        expect(text).toContain("start this build on a fresh file");
-        expect(text).toContain("restore the archive there");
-        expect(text).toContain("that restore can refuse it");
-      });
+      for (const [cause, change] of CAUSES) {
+        await expectRefusal(change, (refused) => {
+          const text = refusalText(refused);
+          expect(text, cause).toContain(
+            "export it with the build that wrote it",
+          );
+          expect(text, cause).toContain("start this build on a fresh file");
+          expect(text, cause).toContain("restore the archive there");
+          expect(text, cause).toContain("that restore can refuse it");
+        });
+      }
     },
-    FRESH_SERVER_TIMEOUT_MS,
+    CAUSES.length * FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(
     "exits with status 78, not 1, when it refuses a database under the contract's upgrade rule",
     async () => {
-      await expectRefusal(CAUSES[3]![1], (refused) => {
-        expect(refused).toMatchObject({
-          code: REFUSED_DATABASE_STATUS,
-          signal: null,
+      for (const [cause, change] of CAUSES) {
+        await expectRefusal(change, (refused) => {
+          expect(refused, cause).toMatchObject({
+            code: REFUSED_DATABASE_STATUS,
+            signal: null,
+          });
         });
-      });
+      }
     },
-    FRESH_SERVER_TIMEOUT_MS,
+    CAUSES.length * FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(
