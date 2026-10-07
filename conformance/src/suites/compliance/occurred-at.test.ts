@@ -45,7 +45,9 @@ describe("occurred_at compliance", () => {
     );
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.error?.error.message).toContain("occurred_at");
+    expect(refused.error?.error.details).toMatchObject({
+      field: "occurred_at",
+    });
 
     // The witness, and the proof nothing was written: the same natural key
     // with a timestamp lands as a new row.
