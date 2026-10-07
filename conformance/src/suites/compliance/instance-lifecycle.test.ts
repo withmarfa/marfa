@@ -29,15 +29,17 @@ import { parseEnvFile } from "../../utils/target.js";
 import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
 
 /**
- * What an instance does when it starts and when it stops: `instance.md` 6,
- * 7, 10, 15, 16, 18 and 25, and the settings it refuses at boot.
+ * What an instance does when it starts and when it stops: the instance
+ * chapter's `instance/image-*`, `instance/stop-*`, `instance/salt-*`,
+ * `instance/upgrade-*` and `instance/unfinished-*` rules, and the settings it
+ * refuses at boot.
  *
  * Every body here boots a server of its own, because the subject is the
  * process: how it ends, what it leaves in its files, and what it does with a
  * start it will not make. The run's shared server answers none of that.
  */
 
-/** The longest a stop may take, by the contract (`instance.md` 18). */
+/** The longest a stop may take, by the contract (`instance/stop-within-eight`). */
 const STOP_WITHIN_MS = 8_000;
 
 const NOTE = "core.note";
@@ -975,8 +977,8 @@ async function refusedOverSettings(
 ): Promise<string[]> {
   const refused = await bootRefused("lifecycle-settings", { extraEnv: env });
   try {
-    // Exit status 1, as for any failure to start that is not a refused
-    // database (`instance.md` 16), before anything was opened or listened on.
+    // Exit status 1, as for any failure to start that is not a refused database
+    // (`instance/upgrade-exit-1`), before anything was opened or listened on.
     expect(refused).toMatchObject({ code: 1, signal: null });
     expect(refused.after).toEqual({
       db: "absent",

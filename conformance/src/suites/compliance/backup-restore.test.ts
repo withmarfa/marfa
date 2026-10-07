@@ -15,7 +15,8 @@ import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
 
 /**
  * An instance restored from a copy of its data directory taken while it was
- * writing: `instance.md` 6 to 9.
+ * writing: the instance chapter's `instance/image-*` and `instance/salt-*`
+ * rules.
  *
  * The copy is an image of the directory at one instant, which is what a
  * volume snapshot or an APFS snapshot (and so Time Machine) takes. The

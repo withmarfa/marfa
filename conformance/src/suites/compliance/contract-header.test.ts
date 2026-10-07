@@ -8,10 +8,10 @@ import {
 
 /**
  * The contract version on the answers that need a setting to be reached
- * (`instance.md` 5): a request the limiter refuses and a cross-origin
- * preflight the CORS layer answers. The shared server runs with the limiter
- * off and no origin allowed, so both are made on a server of the fixture's
- * own.
+ * (`instance/contract-header`): a request the limiter refuses and a
+ * cross-origin preflight the CORS layer answers. The shared server runs with
+ * the limiter off and no origin allowed, so both are made on a server of the
+ * fixture's own.
  */
 const ORIGIN = "https://app.example.test";
 /** Low enough to reach in a handful of reads: a read is allowed twice it. */

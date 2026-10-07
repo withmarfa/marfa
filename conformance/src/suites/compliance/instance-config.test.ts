@@ -9,7 +9,8 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * The instance's identity and `PUT /config` (`instance.md` 1 and 2).
+ * The instance's identity and `PUT /config` (the instance chapter's
+ * `instance/id-*` and `instance/config-*` rules).
  *
  * **On servers of the fixture's own.** The configuration is the instance's,
  * not a key's, so a `PUT` here would replace what every other file on the

@@ -576,7 +576,7 @@ If a type's `version_policy` names a window that ends sooner than an earlier one
 
 ### `types/config`
 
-When a key holding `config.manage` sends `PUT /config`, the server MUST replace the configuration whole and answer it beside the instance's identity, as `GET /config` then reads it (`instance.md` 2).
+When a key holding `config.manage` sends `PUT /config`, the server MUST replace the configuration whole and answer it beside the instance's identity, as `GET /config` then reads it (`instance/config-takes-back-read`).
 
 **Tests:** `compliance/schema-enforcement.test.ts › PUT replaces the configuration wholesale and GET reads it back`.
 

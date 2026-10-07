@@ -12,7 +12,7 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What `GET /health` says when a component is not well, and to whom
- * (`instance.md` 11 to 14).
+ * (the instance chapter's `instance/health-*` rules).
  *
  * **Every fault is made on a server of the fixture's own.** The run's server
  * is healthy and shared, and no door makes a component `down`. What does is

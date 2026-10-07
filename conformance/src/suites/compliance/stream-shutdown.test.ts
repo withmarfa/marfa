@@ -11,7 +11,7 @@ import {
 /**
  * An instance that is stopped ends the streams it has open with their
  * closing frame, and stops within the grace a container runtime gives it:
- * `instance.md` 17 and 18, and `events.md` 11.
+ * the instance chapter's `instance/stop-*` rules, and `events.md` 11.
  */
 
 let server: FreshServer;

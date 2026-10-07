@@ -386,7 +386,7 @@ The server and a device index the same text and read a query the same way, so a 
 
 78. While `GET /export?format=archive` reads its selection, the server MUST give other requests a turn between pages of at most 200 rows.
 
-    Reason: the pages are read from a driver that runs each statement synchronously, so an export that reads them in one go stops the server for as long as the selection is large (`instance.md` 19).
+    Reason: the pages are read from a driver that runs each statement synchronously, so an export that reads them in one go stops the server for as long as the selection is large (`instance/long-job-health`).
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › between pages of items and between pages of edges`; `packages/server/src/routes/long-jobs-health.test.ts › answers within the bound during an archive export of 20,000 items`.
 

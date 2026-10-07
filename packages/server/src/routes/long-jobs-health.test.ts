@@ -92,9 +92,9 @@ async function sql(
 
 /**
  * The route as the app mounts it, over the same storage. Its write probe
- * answers from the first commit for the whole run: that probe waits on a
- * held write lock, as a restore holds it (`instance.md` 12), and that wait is
- * a held lock reported as `degraded`, not a stalled loop.
+ * answers from the first commit for the whole run: that probe waits on a held
+ * write lock, as a restore holds it (`instance/health-contention-degraded`),
+ * and that wait is a held lock reported as `degraded`, not a stalled loop.
  */
 function mountHealth(target: TestContext): Hono<AppEnv> {
   return new Hono<AppEnv>().route(
