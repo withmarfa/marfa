@@ -8,6 +8,7 @@ import { assertTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { EXTRA_PATHS } from "../openapi-finalize.js";
+import { refuseEmptyNarrowingValues } from "../middleware/empty-narrowing-values.js";
 import {
   documentedQueryKeys,
   refuseUndeclaredQueryKeys,
@@ -469,12 +470,15 @@ function parseEdgeMode(raw: string | undefined): EdgeMode {
  * ahead of the refusal on every other door.
  */
 const refuseUndeclaredEventKeys: MiddlewareHandler<AppEnv> = (() => {
-  const refuse = refuseUndeclaredQueryKeys(
-    documentedQueryKeys((EXTRA_PATHS["/events"] as { get: unknown }).get),
+  const declared = documentedQueryKeys(
+    (EXTRA_PATHS["/events"] as { get: unknown }).get,
   );
+  const refuseUndeclared = refuseUndeclaredQueryKeys(declared);
+  const refuseEmpty = refuseEmptyNarrowingValues(declared);
   return async (c, next) => {
     requireAuth(c);
-    await refuse(c, next);
+    await refuseUndeclared(c, () => Promise.resolve());
+    await refuseEmpty(c, next);
   };
 })();
 

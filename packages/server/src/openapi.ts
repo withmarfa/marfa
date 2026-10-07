@@ -20,6 +20,7 @@ import {
   queryKeyFamilies,
   refuseUndeclaredQueryKeys,
 } from "./middleware/undeclared-query-keys.js";
+import { refuseEmptyNarrowingValues } from "./middleware/empty-narrowing-values.js";
 import { isJsonContentType } from "./middleware/json-content-type.js";
 
 /**
@@ -71,16 +72,15 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
     ...route.responses,
     400: withUndeclaredQueryRefusal(route.responses[400]),
   };
+  const declaredKeys = declaredQueryKeys(route.request?.query);
   return {
     ...route,
     responses,
     middleware: [
       ...gate,
       ...rest,
-      refuseUndeclaredQueryKeys(
-        declaredQueryKeys(route.request?.query),
-        queryKeyFamilies(route),
-      ),
+      refuseUndeclaredQueryKeys(declaredKeys, queryKeyFamilies(route)),
+      refuseEmptyNarrowingValues(declaredKeys),
     ],
   };
 }
