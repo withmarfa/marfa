@@ -2,7 +2,7 @@
 
 `GET /events` is a server-sent event stream of every mutation, resumable by cursor, and outbound webhooks deliver the same events to a URL. The audit log, which records the writes the events announce, closes the chapter.
 
-Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `read-views/copy-bootstrap` and the rules after it in `read-views.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
+Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `read-views/copy-bootstrap` and the rules after it in `read-views.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors.md` 22.
 
 ## Opening a stream
 
@@ -28,7 +28,7 @@ If a credential whose type map reaches no type, the operator key among them, sen
 
 ### `events/stream-undeclared-key`
 
-If `GET /events` names a query key the operation does not declare, then the server MUST answer `400 validation_error` with the key in `details.unknown_parameters`.
+If `GET /events` names a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error` with the key in `details.unknown_parameters`.
 
 **Reason:** a misspelled `type` would otherwise open a stream of every type.
 
@@ -36,7 +36,7 @@ If `GET /events` names a query key the operation does not declare, then the serv
 
 ### `events/stream-refusal-order`
 
-When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; a query key the operation does not declare, `400`; a `type` entry, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
+When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; a query key the operation does not declare and that does not start with an underscore, `400`; `type`, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
 
 **Reason:** a caller is told of a fault it can fix before it is told to wait.
 
@@ -112,7 +112,7 @@ When a client resumes from the `cursor` of `stream_live`, the server MUST send i
 
 ### `events/stream-live-unknown-head`
 
-If the server cannot read the log's head within its budget and has nothing to replay, then the server MUST send `stream_live` with `cursor` `null`.
+If the server cannot read the log's head within its budget, and before `stream_live` the stream has neither read an event in a replay nor sent one, then the server MUST send `stream_live` with `cursor` `null`.
 
 **Tests:** waiting on #1444.
 
@@ -188,7 +188,7 @@ When the server ends a stream with `cursor_ahead`, the server MUST NOT send `str
 
 If the oldest event the log retains has an id greater than the cursor plus one, then the server MUST answer `200` with a terminal `catchup_too_old` frame carrying `min_retained_id` and `requested`.
 
-**Reason:** the event after the cursor is gone, so a replay would leave a gap the client could not see. The client reads its state again from the API. A fixture reaches this by cutting the log in the stored file while the server is stopped, because a request cannot age an event.
+**Reason:** the event after the cursor is gone, so a replay would leave a gap the client could not see. The client reads its state again from the API.
 
 **Tests:** `compliance/catchup-too-old.test.ts › answers 200 and a terminal catchup_too_old frame naming the oldest retained id and the cursor, and delivers a cursor still in the log`.
 
@@ -244,7 +244,7 @@ The server MUST NOT retire the newest event the log holds.
 
 ### `events/ids-ascending`
 
-The server MUST send the event frames of one stream in ascending id order, edge frames among item frames.
+The server MUST send the event frames of one stream in ascending id order, edge frames among item frames, except for the live copy that `events/unreadable-row-live-copy` sends.
 
 **Tests:** `sync/resume.test.ts › a reader that closes at the head and resumes from its last id misses nothing and repeats nothing`, `› a purge's edge.deleted frames carry lower ids than its item.purged frame, live and replayed`.
 
@@ -334,7 +334,7 @@ When `type` is a comma-separated list, the server MUST send the events of every 
 
 ### `events/type-list-ten`
 
-When `type` holds at most ten entries, blank entries not counted, the server MUST open the stream.
+When `type` holds at most ten entries, blank entries not counted, the server MUST NOT refuse it for the number of entries.
 
 **Tests:** `sync/replay.test.ts › takes a list of types as their union, up to ten entries and not eleven`.
 
@@ -346,7 +346,7 @@ If `type` holds more than ten entries, blank entries not counted, then the serve
 
 ### `events/type-wildcard-refused`
 
-If `type` is `*`, then the server MUST answer `400 validation_error`.
+If a `type` entry is `*`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/events-contract.test.ts › refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types`.
 
@@ -358,7 +358,7 @@ If a `type` entry is outside the type identifier grammar, then the server MUST a
 
 ### `events/type-refusal-path`
 
-If `type` is refused with `400 validation_error`, then the server MUST name `type` in `details.errors[].path`.
+If a `type` entry is refused with `400 validation_error`, then the server MUST name `type` in `details.errors[].path`.
 
 **Tests:** `compliance/events-contract.test.ts › reads the type, then the edges, then the cursor, and names the first fault it meets`.
 
@@ -400,7 +400,7 @@ When `GET /events` names no `edges`, the server MUST send edge events the creden
 
 ### `events/edges-invalid`
 
-If `edges` is a value other than `all` and `none`, then the server MUST answer `400 validation_error`.
+If `edges` is neither `all` nor `none`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/events-contract.test.ts › refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types`.
 
@@ -514,7 +514,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 When a retention job purges an item, the server MUST send `item.purged` for it.
 
-**Reason:** the log's retention and the bin's are set independently, and a device resuming from a cursor inside the log's retention would otherwise keep a row the instance has dropped. A request cannot age a row in the bin.
+**Reason:** the log's retention and the bin's are set independently, and a device resuming from a cursor inside the log's retention would otherwise keep a row the instance has dropped.
 
 **Tests:** waiting on #1444.
 
@@ -596,15 +596,11 @@ When a key that holds a stream open is revoked, the server MUST NOT send the str
 
 When a key that holds a stream open passes its `expires_at`, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
 
-**Reason:** a key created through the API never expires, so a fixture cannot arrange it.
-
 **Tests:** waiting on #1444.
 
 ### `events/credential-token-expired`
 
 When the sign-in token that holds a stream open passes its expiry, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
-
-**Reason:** no setting shortens a token's life, so a fixture cannot arrange it.
 
 **Tests:** waiting on #1444.
 
@@ -618,7 +614,7 @@ If a client opens `GET /events` with a key that has been revoked, then the serve
 
 ### `events/reader-behind`
 
-When a reader leaves more than 4 MiB of live frames unread and a further live frame arrives, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `reader_behind`.
+When a reader leaves 4 MiB or more of frames unread and a further live frame arrives, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `reader_behind`.
 
 **Reason:** a stalled reader would otherwise hold the server's memory. The reader reconnects from the frame's `cursor` and the replay serves the rest.
 
@@ -692,7 +688,7 @@ When the server answers `POST /webhooks` with `201`, the server MUST carry the s
 
 ### `events/webhook-secret-redacted`
 
-When the server answers a read or an update of a subscription, the server MUST redact its `secret` to asterisks followed by its last four characters.
+When the server answers a read or an update of a subscription, the server MUST redact its `secret` to `****` followed by its last four characters.
 
 **Reason:** the plaintext is shown once, on creation.
 
@@ -726,7 +722,7 @@ The server MUST answer a subscription with exactly the members `id`, `url`, `eve
 
 ### `events/webhook-list`
 
-When a credential sends `GET /webhooks`, the server MUST answer the subscriptions that credential registered, with `next_cursor` `null`.
+When a credential holding `webhooks.manage` sends `GET /webhooks`, the server MUST answer the subscriptions the requesting key registered, or for a signed-in app those any token of its grant registered, with `next_cursor` `null`.
 
 **Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhook-delivery.test.ts › shows a subscription as its id, url, events, type_filter, secret, active flag and two timestamps, and no more`.
 
@@ -764,7 +760,7 @@ If `events` is an empty list, then the server MUST answer `400 validation_error`
 
 If `events` names `*`, then the server MUST answer `400 validation_error` with `details.errors[].path` naming the entry's position.
 
-**Reason:** `*` is not in the vocabulary, and a stored wildcard would be a subscription that could never fire. A named subscription on the same event is still delivered to.
+**Reason:** `*` is not in the vocabulary, and a stored wildcard would be a subscription that could never fire.
 
 **Tests:** `compliance/webhooks.test.ts › refuses a wildcard subscription while a named one on the same event is delivered`.
 
@@ -818,13 +814,13 @@ When `PATCH /webhooks/{id}` sets `type_filter` to blank text or `null`, the serv
 
 ### `events/webhook-filter-matches`
 
-When a subscription has a `type_filter`, the server MUST deliver only the events whose item type the filter selects, declared subtypes and dotted children included.
+When a subscription has a `type_filter`, the server MUST deliver an item event or a `metadata.changed` only where the filter selects the item's type, declared subtypes and dotted children included.
 
 **Tests:** `compliance/webhooks.test.ts › delivers only the events whose item type a type_filter selects, declared subtypes and dotted children included`.
 
 ### `events/webhook-filter-edges`
 
-When a subscription has a `type_filter`, the server MUST still deliver the edge events it names, whatever the types of the edge's items.
+When a subscription has a `type_filter`, the server MUST NOT hold the edge events it names to that filter.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event under a type_filter that selects neither of its items`.
 
@@ -832,7 +828,7 @@ When a subscription has a `type_filter`, the server MUST still deliver the edge 
 
 ### `events/webhook-needs-permission`
 
-If a credential without `webhooks.manage` sends a request to a webhook operation, then the server MUST answer `403 forbidden` with `details.required_scope` `webhooks.manage`.
+If a credential without `webhooks.manage` sends a request to a webhook operation, then the server MUST answer `403 forbidden` with `details.required_scope` `webhooks.manage`, before it checks anything else the request names.
 
 **Tests:** `compliance/webhooks.test.ts › refuses a key without webhooks.manage`.
 
@@ -850,7 +846,7 @@ When a credential holding `webhooks.manage` registers a subscription, the server
 
 ### `events/webhook-owner-only`
 
-When a credential names a subscription another credential registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
+When a request names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
 
 **Reason:** to another credential the subscription is an id nobody holds.
 
@@ -858,7 +854,7 @@ When a credential names a subscription another credential registered, the server
 
 ### `events/webhook-redeliver-owner-only`
 
-When a credential names a subscription another credential registered in a redelivery, the server MUST answer `404 webhook_not_found`.
+When a redelivery names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › answers a redelivery on a subscription another credential registered 404 webhook_not_found, and accepts the owner's`.
 
@@ -878,15 +874,13 @@ When the key that registered a subscription no longer holds `webhooks.manage`, t
 
 When the key that registered a subscription passes its `expires_at`, the server MUST deliver nothing more to it, its pending deliveries included.
 
-**Reason:** a key created through the API never expires, so a fixture cannot arrange it.
-
 **Tests:** waiting on #1444.
 
 ## What a delivery is
 
 ### `events/delivery-matches`
 
-When an event is one a subscription names, the server MUST deliver it to the subscription's `url`.
+When an event that fans out is one an active subscription names, and the subscription's `type_filter` and credential admit it, the server MUST deliver it to the subscription's `url`.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`.
 
@@ -1002,7 +996,7 @@ The server MUST answer a delivery's `status` as `pending`, `success`, `dead_lett
 
 ### `events/record-status-code`
 
-The server MUST answer a delivery's `status_code` as the HTTP status of the last attempt that was answered, and `null` while none has been.
+The server MUST answer a delivery's `status_code` as the HTTP status the receiver answered on the latest attempt whose outcome it recorded, and `null` where that attempt got no answer or no attempt has been recorded.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› records an unreachable receiver and one that does not answer as pending, naming no address`.
 
@@ -1020,19 +1014,19 @@ The server MUST answer a delivery's `succeeded` as `true` for `success` and `fal
 
 ### `events/record-error-http`
 
-When a receiver answers with a status that is not `2xx`, the server MUST record `HTTP <status>`, with the status the receiver answered, as the delivery's `error`.
+When a receiver answers with a status that is neither `2xx` nor `3xx`, the server MUST record `HTTP <status>`, with the status the receiver answered, as the delivery's `error`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› retries a 408 and a 429, and gives up at once on any other 4xx answer`.
 
 ### `events/record-error-unreachable`
 
-When a receiver cannot be reached, the server MUST record `The receiver could not be reached.` as the delivery's `error` and leave it `pending`.
+When a receiver cannot be reached on an attempt before the last of its cycle, the server MUST record `The receiver could not be reached.` as the delivery's `error` and leave it `pending`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › records an unreachable receiver and one that does not answer as pending, naming no address`.
 
 ### `events/record-error-timeout`
 
-When a receiver does not answer in time, the server MUST record `The receiver did not answer in time.` as the delivery's `error` and leave it `pending`.
+When a receiver does not answer in time on an attempt before the last of its cycle, the server MUST record `The receiver did not answer in time.` as the delivery's `error` and leave it `pending`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › records an unreachable receiver and one that does not answer as pending, naming no address`.
 
@@ -1068,39 +1062,37 @@ A delivery is attempted again when its receiver does not take it. The operator k
 
 ### `events/retry-5xx`
 
-When a receiver answers a delivery with a `5xx` status, the server MUST leave the delivery `pending` and attempt it again with the same `delivery_id` and `event_id`.
+When a receiver answers an attempt before the last of its cycle with a `5xx` status, the server MUST leave the delivery `pending` and attempt it again with the same `delivery_id` and `event_id`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› clears the error a failed attempt recorded when a later attempt succeeds`.
 
 ### `events/retry-408-429`
 
-When a receiver answers a delivery with `408` or `429`, the server MUST leave the delivery `pending` and attempt it again.
+When a receiver answers an attempt before the last of its cycle with `408` or `429`, the server MUST leave the delivery `pending` and attempt it again.
 
 **Tests:** `compliance/webhook-delivery.test.ts › retries a 408 and a 429, and gives up at once on any other 4xx answer`.
 
 ### `events/retry-4xx-gives-up`
 
-When a receiver answers a delivery with a `4xx` status other than `408` and `429`, the server MUST give up at once and record the delivery `dead_letter` after one attempt.
+When a receiver answers a delivery with a `4xx` status other than `408` and `429`, the server MUST give up at once and record the delivery `dead_letter` at that attempt.
 
 **Tests:** `compliance/webhook-delivery.test.ts › retries a 408 and a 429, and gives up at once on any other 4xx answer`.
 
 ### `events/retry-redirect`
 
-When a receiver answers a delivery with a redirect, the server MUST give up at once and record the delivery `dead_letter` with the redirect's status and the `error` `The receiver answered with a redirect, which is not followed.`
+When a receiver answers a delivery with a `3xx` status, the server MUST give up at once and record the delivery `dead_letter` with the redirect's status and the `error` `The receiver answered with a redirect, which is not followed.`
 
 **Tests:** `compliance/webhook-delivery.test.ts › gives up on a redirect without following it`.
 
 ### `events/redirect-not-followed`
 
-When a receiver answers a delivery with a redirect, the server MUST NOT send the delivery to the address the redirect names.
+When a receiver answers a delivery with a `3xx` status, the server MUST NOT send the delivery to the address the redirect names.
 
 **Tests:** `compliance/webhook-delivery.test.ts › gives up on a redirect without following it`.
 
 ### `events/retry-after-floor`
 
-When a receiver answers with a valid `Retry-After`, the server MUST wait at least that long before the next attempt.
-
-**Reason:** `Retry-After` is a floor on the wait, so a receiver that asks for time is given it.
+When a receiver answers a retried attempt with a valid `Retry-After` of at most five minutes, the server MUST wait at least that long before the next attempt.
 
 **Tests:** `compliance/webhook-delivery.test.ts › waits for the Retry-After a receiver names, and never less than the ordinary wait`.
 
@@ -1112,7 +1104,7 @@ When a receiver's `Retry-After` is shorter than the ordinary wait for the attemp
 
 ### `events/retry-after-cap`
 
-When a receiver's `Retry-After` is longer than five minutes, the server MUST wait five minutes.
+When a receiver's `Retry-After` is longer than five minutes, the server MUST wait the longer of five minutes and the ordinary wait.
 
 **Tests:** waiting on #1444.
 
@@ -1130,7 +1122,7 @@ When the operator key runs `webhook-poll`, the server MUST attempt each pending 
 
 ### `events/retry-restart-once`
 
-When the server stops while it schedules deliveries and starts again, the server MUST deliver each event once to each subscription entitled to it, skipping none.
+When the server stops while it schedules deliveries and starts again, the server MUST queue exactly one delivery for each event and each subscription entitled to it.
 
 **Tests:** waiting on #1444.
 
@@ -1250,7 +1242,7 @@ These rules hold where the instance does not allow private addresses, which is t
 
 ### `events/address-private`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is loopback, private, link-local, unique-local, carrier-grade NAT, unspecified or multicast, then the server MUST answer `400 validation_error`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is not public, such as loopback, private, link-local, unique-local, carrier-grade NAT, unspecified or multicast, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address`.
 
@@ -1268,15 +1260,15 @@ Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` n
 
 ### `events/address-name-unsent`
 
-Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves to a loopback address, then the server MUST NOT contact it.
+Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST NOT contact it.
 
-**Reason:** a name is resolved at each attempt, and the connection opens only when every address it resolves to is public.
+**Reason:** a name that resolved to a public address at registration can resolve to a private one later.
 
 **Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
 
 ### `events/address-name-recorded`
 
-Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves to a loopback address, then the server MUST record `The receiver's address is not public.` as the delivery's `error`.
+Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves to any address that is not public, then the server MUST record `The receiver's address is not public.` as the delivery's `error`.
 
 **Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
 
@@ -1320,7 +1312,7 @@ If the log's position for scheduling webhooks is ahead of the log, missing on a 
 
 ### `events/audit-records-write`
 
-When a write commits, the server MUST record an entry at `GET /audit` naming the credential that made it as `key_id`, the `action`, the `resource_type`, the `resource_id` and the `details`.
+When a credential's write commits, other than a connector's heartbeat, run report, hold, hold release, state write or agreement write, or an inbound delivery's receipt or handled mark, the server MUST record an entry at `GET /audit` naming the credential as `key_id`, the `action`, the `resource_type`, the `resource_id` and the `details`.
 
 **Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `compliance/edge-events.test.ts › audit log records edge mutations with edge_id in resource_id`.
 
@@ -1412,7 +1404,7 @@ When a cancellation of a bulk-action job changes nothing, the server MUST NOT re
 
 ### `events/audit-housekeeping-run`
 
-When the operator key runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the run.
+When the operator key runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
 
 **Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the operator named`.
 
@@ -1476,7 +1468,7 @@ The server MUST list audit entries newest first.
 
 ### `events/audit-needs-read`
 
-If a credential without `audit.read` sends `GET /audit`, the operator key included, then the server MUST answer `403 forbidden`.
+If a credential without `audit.read` sends `GET /audit`, the operator key included, then the server MUST answer `403 forbidden`, before it checks the query.
 
 **Tests:** `compliance/audit.test.ts › refuses a key without audit.read`, `› lists newest first, and refuses the operator key, which does not hold audit.read`.
 
