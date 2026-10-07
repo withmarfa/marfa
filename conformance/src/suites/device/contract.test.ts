@@ -61,12 +61,16 @@ afterEach(async () => {
 const builtFor = Number(BUILT_FOR);
 
 /** The binary against the scripted server, with nothing inherited. */
-async function marfa(args: string[], stdin?: string) {
+async function marfa(
+  args: string[],
+  stdin?: string,
+  extra: Record<string, string> = {},
+) {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !name.startsWith("MARFA_")) env[name] = value;
   }
-  Object.assign(env, keychainEnv());
+  Object.assign(env, keychainEnv(), extra);
   try {
     const pending = run(requireBinary(), args, {
       env,
@@ -597,6 +601,10 @@ const NOT_DRIVEN: Record<string, string> = {
   logout: "revokes and forgets the token, printing nothing it was answered",
   "keys forget": "forgets a kept credential, sending nothing",
   operations: "prints the table, sending nothing; held by its own case",
+  "docs search":
+    "reads the docs site, which is not a server; held by its own case",
+  "docs topics":
+    "reads the docs site, which is not a server; held by its own case",
 };
 
 /**
@@ -707,6 +715,138 @@ describe("every command holds the server to the contract", () => {
     // Witness: it printed the table it was asked for.
     expect(JSON.parse(outcome.stdout)).not.toHaveLength(0);
     expect(server.requests).toEqual([]);
+  });
+
+  it("reads the docs site, which names no contract and is sent no credential", async () => {
+    const markdown = "# Files\n\nKeep files.\n\n";
+    server = await ScriptedServer.start();
+    // The site names no contract on any answer, as the real one does not.
+    server.answer("GET", "/api/docs/search", {
+      kind: "json",
+      status: 200,
+      contract: null,
+      body: {
+        hits: [
+          {
+            title: "Files",
+            url: "https://docs.marfa.so/get-started/files",
+            snippets: ["Keep files."],
+          },
+        ],
+      },
+    });
+    server.answer("GET", "/api/docs/topics", {
+      kind: "json",
+      status: 200,
+      contract: null,
+      body: {
+        pages: [
+          {
+            title: "Files",
+            url: "https://docs.marfa.so/get-started/files",
+            description: null,
+            breadcrumbs: [],
+          },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/get-started/files.md",
+      {
+        kind: "bytes",
+        status: 200,
+        body: Buffer.from(markdown),
+        contentType: "text/markdown; charset=utf-8",
+      },
+      {
+        kind: "bytes",
+        status: 200,
+        body: Buffer.from(markdown),
+        contentType: "text/markdown; charset=utf-8",
+      },
+    );
+    server.answer("GET", "/missing/page.md", {
+      kind: "bytes",
+      status: 404,
+      body: Buffer.from("not found"),
+      contentType: "text/plain; charset=utf-8",
+    });
+    const site = { MARFA_DOCS_URL: server.url };
+    // A server's key and address named for the commands that read a Marfa
+    // server must change nothing here: the docs site is addressed only by
+    // its own variable.
+    const elsewhere = {
+      ...site,
+      MARFA_API_URL: "http://127.0.0.1:1",
+      MARFA_API_KEY: KEY,
+    };
+
+    const search = await marfa(
+      ["--json", "docs", "search", "keep files", "--limit", "3"],
+      undefined,
+      elsewhere,
+    );
+    expect(search.code, search.stderr).toBe(0);
+    expect(JSON.parse(search.stdout).hits[0].title).toBe("Files");
+    const topics = await marfa(
+      ["--json", "docs", "topics"],
+      undefined,
+      elsewhere,
+    );
+    expect(topics.code, topics.stderr).toBe(0);
+    expect(JSON.parse(topics.stdout).pages[0].title).toBe("Files");
+    const page = await marfa(
+      ["docs", "/docs/get-started/files.md"],
+      undefined,
+      elsewhere,
+    );
+    expect(page.code, page.stderr).toBe(0);
+    expect(page.stdout).toBe(markdown);
+    const record = await marfa(
+      ["--json", "docs", "get-started/files"],
+      undefined,
+      elsewhere,
+    );
+    expect(record.code, record.stderr).toBe(0);
+    expect(JSON.parse(record.stdout)).toEqual({
+      path: "get-started/files",
+      url: `${server.url}/get-started/files.md`,
+      markdown,
+    });
+
+    expect(sent(server)).toEqual([
+      "GET /api/docs/search",
+      "GET /api/docs/topics",
+      "GET /get-started/files.md",
+      "GET /get-started/files.md",
+    ]);
+    expect(server.requests[0]?.query.get("q")).toBe("keep files");
+    expect(server.requests[0]?.query.get("limit")).toBe("3");
+    expect(server.requests[1]?.query.size).toBe(0);
+    for (const request of server.requests) {
+      expect(request.headers.authorization).toBeUndefined();
+    }
+
+    const missing = await marfa(
+      ["--json", "docs", "missing/page"],
+      undefined,
+      site,
+    );
+    expect(missing.code, missing.stderr).toBe(1);
+    expect(missing.stdout).toBe("");
+    const envelope = refusal(missing.stderr);
+    expect(envelope.error.code).toBe("docs_page_not_found");
+    expect(envelope.exit).toBe(1);
+    expect(server.unmatchedRequests).toEqual([]);
+
+    // Nothing listens on port 1.
+    const down = await marfa(["--json", "docs", "topics"], undefined, {
+      MARFA_DOCS_URL: "http://127.0.0.1:1",
+    });
+    expect(down.code, down.stderr).toBe(3);
+    expect(down.stdout).toBe("");
+    expect(refusal(down.stderr).error.code).toBe("docs_unreachable");
   });
 
   it("posts redelivery with encoded ids and no body", async () => {

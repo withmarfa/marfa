@@ -450,6 +450,26 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`. Core `stop_tests::a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server`, `stop_tests::a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after`.
 
+## The docs site
+
+107. WHEN `marfa docs` reads the documentation, the binary MUST send each request to the docs site, which is `https://docs.marfa.so` or the address in `MARFA_DOCS_URL` where that is set, and MUST send no credential and check no contract: a page is read from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`, whatever `MARFA_API_URL` and `MARFA_API_KEY` hold, and an answer that names no contract is read as it is.
+
+**Reason:** the docs site is not a Marfa instance. It has no keys and names no contract, so a credential sent to it would reach a host that never asked for one, and a check for the contract header would refuse every page (39). The command needs no server, store or key, so an agent can read the docs before it has any of them.
+
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`, `docs::tests::a_page_is_read_without_checking_a_contract`.
+
+108. WHEN the docs site has no page at the path `marfa docs` is given, the binary MUST exit 1 with `docs_page_not_found`, naming the path.
+
+**Reason:** the site answers a missing page `404`, which a retry does not change. The message points to `marfa docs search`, where an agent that guessed a path can find the page it meant.
+
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `docs::tests::a_missing_page_is_named_and_refused`.
+
+109. WHEN the docs site cannot be reached, or answers with a server fault or a status the command does not read, the binary MUST exit 3 with `docs_unreachable`, naming the site's address.
+
+**Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything (`queue-and-verdicts.md` 17).
+
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `docs::tests::a_site_that_is_not_listening_is_unreachable`, `docs::tests::a_site_that_answers_with_a_server_fault_or_nothing_useful_is_unreachable`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.
