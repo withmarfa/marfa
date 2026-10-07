@@ -522,6 +522,8 @@ export interface BulkInput {
   mode?: "upsert" | "create_only";
   atomic?: boolean;
   enable_fanout?: boolean;
+  /** Move a row an entry resolves into the entry's type. */
+  retype?: boolean;
 }
 
 export interface BulkEdgeInputItem {

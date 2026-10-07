@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  getOperatorClient,
+  trackEdge,
   trackItem,
   trackKey,
   trackWebhook,
   cleanup,
 } from "../../utils/setup.js";
+import { v7 as uuidv7 } from "uuid";
+import { itemsArchive } from "../../utils/archive.js";
 import { createNote, createTask } from "../../generators/items.js";
 import { withStream, collectUntil } from "../../utils/stream.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -507,6 +511,153 @@ describe("outbound webhooks", () => {
     // And the silent write is a write: the row is there to be read.
     const read = await client.getItem(quietId);
     expect(read.ok).toBe(true);
+  });
+
+  it("calls out for a bulk edge write only when the call asks for fan-out", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("edge-fanout"),
+      events: ["edge.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+
+    const pair = async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        const item = await client.createItem(
+          createNote({ source: ctx.source }),
+        );
+        expect(item.ok).toBe(true);
+        trackItem(ctx, item.data.item.id);
+        ids.push(item.data.item.id);
+      }
+      return { source_id: ids[0]!, target_id: ids[1]!, edge_type: "about" };
+    };
+    const write = async (enableFanout?: boolean) => {
+      const res = await client.bulkEdges({
+        edges: [await pair()],
+        ...(enableFanout === undefined ? {} : { enable_fanout: enableFanout }),
+      });
+      expect(res.ok, JSON.stringify(res.error)).toBe(true);
+      expect(res.data.counts.created).toBe(1);
+      const id = String(res.data.results[0]?.id);
+      trackEdge(ctx, id);
+      return id;
+    };
+
+    const quietId = await write();
+    const loudId = await write(true);
+
+    const delivery = await receiver.waitFor(
+      (r) => r.path === "/hook/edge-fanout" && r.body.includes(loudId),
+    );
+    expect(delivery.headers["x-marfa-event-type"]).toBe("edge.created");
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/edge-fanout" && r.body.includes(quietId),
+      ),
+    ).toEqual([]);
+    const deliveries = await client.listWebhookDeliveries(created.data.id);
+    expect(
+      deliveries.data.data.filter((d) => d.event_type === "edge.created")
+        .length,
+    ).toBe(1);
+    expect((await client.getEdge(quietId)).ok).toBe(true);
+  });
+
+  it("calls out for a bulk action only when the call asks for fan-out", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("action-fanout"),
+      events: ["item.state_changed"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+
+    const archive = async (enableFanout?: boolean) => {
+      const tag = `fanout-action-${ctx.runId}-${String(enableFanout)}`;
+      const item = await client.createItem(
+        createNote({ source: ctx.source, tags: [tag] }),
+      );
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
+      const queued = await client.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: { tags: [tag] },
+        ...(enableFanout === undefined ? {} : { enable_fanout: enableFanout }),
+      });
+      expect(queued.status).toBe(202);
+      const job = await client.pollBulkActionToTerminal(
+        (queued.data as BulkActionJob).id,
+      );
+      expect(job.status).toBe("completed");
+      expect(job.succeeded).toBe(1);
+      expect((await client.getItem(item.data.item.id)).data.item.state).toBe(
+        "archived",
+      );
+      return item.data.item.id;
+    };
+
+    const quietId = await archive();
+    const loudId = await archive(true);
+
+    const delivery = await receiver.waitFor(
+      (r) => r.path === "/hook/action-fanout" && r.body.includes(loudId),
+    );
+    expect(delivery.headers["x-marfa-event-type"]).toBe("item.state_changed");
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/action-fanout" && r.body.includes(quietId),
+      ),
+    ).toEqual([]);
+    const deliveries = await client.listWebhookDeliveries(created.data.id);
+    expect(
+      deliveries.data.data.filter((d) => d.event_type === "item.state_changed")
+        .length,
+    ).toBe(1);
+  });
+
+  it("never calls out for an archive restore", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("restore-fanout"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+
+    const restoredId = uuidv7();
+    const restored = await getOperatorClient().restoreArchive(
+      itemsArchive([
+        {
+          id: restoredId,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "restored without a call out" },
+        },
+      ]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.imported).toBe(1);
+    trackItem(ctx, restoredId);
+
+    // The witness: a write after the restore on the same subscription is
+    // delivered, so the silence above it is the restore's.
+    const sentinel = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "sentinel" } }),
+    );
+    expect(sentinel.ok).toBe(true);
+    trackItem(ctx, sentinel.data.item.id);
+    await receiver.waitFor(
+      (r) =>
+        r.path === "/hook/restore-fanout" &&
+        r.body.includes(sentinel.data.item.id),
+    );
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/restore-fanout" && r.body.includes(restoredId),
+      ),
+    ).toEqual([]);
+    expect((await client.getItem(restoredId)).ok).toBe(true);
   });
 
   it("does not deliver an event outside the subscription", async () => {
