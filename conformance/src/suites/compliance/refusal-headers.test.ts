@@ -33,6 +33,9 @@ let apiKey: string;
 /** A server booted to answer 429 and 503, which the run's server does not. */
 let limited: FreshServer | undefined;
 
+/** The registration the sign-in library answers. */
+const REGISTRATION = "/auth/oauth2/register";
+
 /** Low enough to reach in a few requests. */
 const KEYS_LIMIT = 3;
 
@@ -289,7 +292,7 @@ describe("X-Error-Code", () => {
 });
 
 describe("X-Request-ID", () => {
-  /** The published doors that answer once and close, with the registration the sign-in library answers set aside. */
+  /** The published doors that answer once and close. */
   async function doors(): Promise<{ method: string; path: string }[]> {
     const found: { method: string; path: string }[] = [];
     const document = await servedDocument();
@@ -299,7 +302,6 @@ describe("X-Request-ID", () => {
           continue;
         }
         if (JSON.stringify(operation).includes("text/event-stream")) continue;
-        if (method === "post" && path === "/auth/oauth2/register") continue;
         found.push({ method: method.toUpperCase(), path });
       }
     }
@@ -313,28 +315,71 @@ describe("X-Request-ID", () => {
     const missing: string[] = [];
     let served = 0;
     let refused = 0;
+    const note = (label: string, res: Response) => {
+      if (res.status < 400) served += 1;
+      else refused += 1;
+      if (!res.headers.get("X-Request-ID")) {
+        missing.push(`${label} (${String(res.status)})`);
+      }
+    };
     for (const { method, path } of all) {
       const url = path.replace(/\{[^}]+\}/g, () => uuidv7());
-      for (const credential of [undefined, apiKey]) {
-        const res = await fetch(`${apiUrl}${url}`, {
-          method,
-          headers: {
-            ...(credential === undefined
-              ? {}
-              : { Authorization: `Bearer ${credential}` }),
-            "Content-Type": "application/json",
-          },
-          // Not a body any door takes, so a write door refuses it and none
-          // writes.
-          body: ["POST", "PUT", "PATCH"].includes(method) ? "[" : undefined,
-          redirect: "manual",
+      const writes = ["POST", "PUT", "PATCH"].includes(method);
+      if (path === REGISTRATION) {
+        // The library serves it, so it is asked what it accepts and what it
+        // refuses: a registration it takes, the same sent with a bearer it
+        // does not accept, and a body that is no registration.
+        const registration = JSON.stringify({
+          redirect_uris: ["https://example.com/callback"],
+          client_name: `${ctx.source}-census`,
         });
-        // The headers are the answer here; an export need not be read to its end.
-        await res.body?.cancel();
-        if (res.status < 400) served += 1;
-        else refused += 1;
-        if (!res.headers.get("X-Request-ID")) {
-          missing.push(`${method} ${path} (${String(res.status)})`);
+        for (const [label, headers, body, status] of [
+          ["no credential", {}, registration, 201],
+          [
+            "a bearer",
+            { Authorization: `Bearer ${apiKey}` },
+            registration,
+            401,
+          ],
+          ["a body that is not JSON", {}, "[", undefined],
+        ] as const) {
+          const res = await fetch(`${apiUrl}${url}`, {
+            method,
+            headers: { ...headers, "Content-Type": "application/json" },
+            body,
+          });
+          await res.body?.cancel();
+          if (status !== undefined) {
+            expect(res.status, `${method} ${path} (${label})`).toBe(status);
+          }
+          note(`${method} ${path} (${label})`, res);
+        }
+        continue;
+      }
+      for (const credential of [undefined, apiKey]) {
+        // A read's proof is asked for on a read, so a read is sent with and
+        // without one.
+        for (const readView of method === "GET" ? [false, true] : [false]) {
+          const res = await fetch(`${apiUrl}${url}`, {
+            method,
+            headers: {
+              ...(credential === undefined
+                ? {}
+                : { Authorization: `Bearer ${credential}` }),
+              ...(readView ? { "X-Marfa-Read-View": "not-a-proof" } : {}),
+              "Content-Type": "application/json",
+            },
+            // Not a body any door takes, so a write door refuses it and none
+            // writes.
+            body: writes ? "[" : undefined,
+            redirect: "manual",
+          });
+          // The headers are the answer here; an export need not be read to its end.
+          await res.body?.cancel();
+          note(
+            `${method} ${path}${readView ? " (with a read view)" : ""}`,
+            res,
+          );
         }
       }
     }
@@ -426,7 +471,7 @@ describe("X-Request-ID", () => {
 });
 
 describe("the registration the sign-in library answers", () => {
-  it("answers a body that is not JSON with a 415 that carries neither X-Error-Code nor X-Request-ID, where Marfa's own doors carry both", async () => {
+  it("answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both", async () => {
     // The witness: a refusal of Marfa's own carries both.
     const own = await fetch(`${apiUrl}/items`, {
       headers: { "X-Request-ID": "witness-1" },
@@ -442,6 +487,6 @@ describe("the registration the sign-in library answers", () => {
     });
     expect(res.status).toBe(415);
     expect(res.headers.get("X-Error-Code")).toBeNull();
-    expect(res.headers.get("X-Request-ID")).toBeNull();
+    expect(res.headers.get("X-Request-ID")).toBe("witness-2");
   });
 });
