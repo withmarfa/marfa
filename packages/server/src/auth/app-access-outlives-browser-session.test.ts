@@ -381,4 +381,41 @@ describe("an app stays connected when a browser session ends", () => {
       expect(document.backchannel_logout_session_supported).toBe(false);
     }
   });
+
+  it("registers a client without a back-channel logout address and does not echo one", async () => {
+    ctx = await createTestContext({});
+    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        client_name: "Logout Address App",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        backchannel_logout_uri: "https://app.example/logout",
+        backchannel_logout_session_required: true,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(201);
+    const answer = (await res.json()) as Record<string, unknown>;
+    expect(answer.client_id).toBeTruthy();
+    expect(answer).not.toHaveProperty("backchannel_logout_uri");
+    expect(answer).not.toHaveProperty("backchannel_logout_session_required");
+    const schema = await import("../storage/sqlite/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = ctx.storage.betterAuthDb as {
+      select: () => {
+        from: (t: unknown) => {
+          where: (w: unknown) => Promise<Record<string, unknown>[]>;
+        };
+      };
+    };
+    const rows = await db
+      .select()
+      .from(schema.auth_oauth_client)
+      .where(eq(schema.auth_oauth_client.clientId, answer.client_id as string));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.backchannelLogoutUri ?? null).toBeNull();
+  });
 });

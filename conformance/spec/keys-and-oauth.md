@@ -332,3 +332,9 @@
     Reason: an app's tokens end with neither a browser session nor a notification of one, so no app is told a person's browser ended, and a document that said otherwise would promise a sign-out that never arrives.
 
     Tests: `compliance/browser-sessions.test.ts › advertises no back-channel logout, since no app is notified of a browser ending`.
+
+82. WHEN an app registers naming a `backchannel_logout_uri` or `backchannel_logout_session_required`, the server MUST register it without either and MUST NOT include either in the registration answer.
+
+    Reason: a client reads the answer as what the server registered, so echoing an address the server will never use would promise a notification that 81 says is not sent. The registration itself is accepted, so a client library that sends its defaults still registers.
+
+    Tests: `compliance/browser-sessions.test.ts › registers an app without a back-channel logout address and does not echo one`.

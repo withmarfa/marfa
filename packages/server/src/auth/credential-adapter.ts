@@ -227,6 +227,22 @@ export function withCredentialAudit<
         if (
           operation === "create" &&
           args.model === "oauthClient" &&
+          args.data
+        ) {
+          // No app is told a browser session ended (statement 81), so no
+          // address to tell it at is kept.
+          args = {
+            ...args,
+            data: {
+              ...args.data,
+              backchannelLogoutUri: null,
+              backchannelLogoutSessionRequired: null,
+            },
+          };
+        }
+        if (
+          operation === "create" &&
+          args.model === "oauthClient" &&
           request?.registrationScopes &&
           args.data
         ) {

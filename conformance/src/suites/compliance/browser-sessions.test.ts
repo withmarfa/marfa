@@ -452,4 +452,26 @@ describe("a browser session ending", () => {
       expect(document.backchannel_logout_session_supported).toBe(false);
     }
   });
+
+  it("registers an app without a back-channel logout address and does not echo one", async () => {
+    const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "browser-sessions-logout-address",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        backchannel_logout_uri: "https://app.example/logout",
+        backchannel_logout_session_required: true,
+      }),
+    });
+    expect(response.status).toBe(201);
+    const answer = (await response.json()) as Record<string, unknown>;
+    expect(answer.client_id).toBeTruthy();
+    expect(answer).not.toHaveProperty("backchannel_logout_uri");
+    expect(answer).not.toHaveProperty("backchannel_logout_session_required");
+  });
 });

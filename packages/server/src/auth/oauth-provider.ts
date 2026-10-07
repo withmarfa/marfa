@@ -780,11 +780,17 @@ function keepRequestedRegistrationScope(
   const registered = answer as Record<string, unknown>;
   const clientId = registered.client_id;
   if (typeof clientId !== "string") return undefined;
+  // No back-channel logout address is kept (see the credential adapter), so
+  // none is echoed: RFC 7591 §3.2.1 has a client read the answer as what the
+  // server registered.
+  const kept = { ...registered };
+  delete kept.backchannel_logout_uri;
+  delete kept.backchannel_logout_session_required;
   const asked = ctx.body?.scope;
-  if (typeof asked !== "string") return undefined;
+  if (typeof asked !== "string") return kept;
   const requested = [...new Set(asked.split(" ").filter((s) => s.length > 0))];
-  if (requested.length === 0) return undefined;
-  return { ...registered, scope: requested.join(" ") };
+  if (requested.length === 0) return kept;
+  return { ...kept, scope: requested.join(" ") };
 }
 
 // ---------------------------------------------------------------------------
