@@ -7,6 +7,7 @@ import {
   trackEdge,
   trackItem,
   trackKey,
+  trackType,
   trackWebhook,
   cleanup,
 } from "../../utils/setup.js";
@@ -215,6 +216,7 @@ describe("outbound webhooks", () => {
       const delivery = await receiver.waitFor(
         (r) => r.path === "/hook/signed" && r.body.includes(item.data.item.id),
       );
+      expect(delivery.method).toBe("POST");
       expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
       expect(delivery.headers["content-type"]).toContain("application/json");
       const payload = JSON.parse(delivery.body) as {
@@ -765,11 +767,164 @@ describe("outbound webhooks", () => {
       body: { events: ["item.created"] },
     });
     expect(noUrl.status).toBe(400);
+    expect(noUrl.error?.error.code).toBe("missing_required_field");
+    expect(noUrl.error?.error.details?.field).toBe("url");
     const noEvents = await client.rawRequest("/webhooks", {
       method: "POST",
       body: { url: receiverUrl },
     });
     expect(noEvents.status).toBe(400);
+    expect(noEvents.error?.error.code).toBe("missing_required_field");
+    expect(noEvents.error?.error.details?.field).toBe("events");
+
+    // The witness that the field is what the refusal names: an empty `events`
+    // is present but not usable, and answers a different code.
+    const emptyEvents = await client.rawRequest("/webhooks", {
+      method: "POST",
+      body: { url: receiverUrl, events: [] },
+    });
+    expect(emptyEvents.status).toBe(400);
+    expect(emptyEvents.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a type_filter that is not one item pattern with validation_error naming type_filter, on create and on update", async () => {
+    const existing = await client.createWebhook({
+      url: receiver.hookUrl("filter-refusals"),
+      events: ["item.created"],
+      type_filter: "core.note",
+    });
+    expect(existing.status).toBe(201);
+    trackWebhook(ctx, existing.data.id, client);
+
+    for (const type_filter of ["*", "bad filter", "core.note,core.task"]) {
+      const created = await client.createWebhook({
+        url: receiver.hookUrl("filter-refused"),
+        events: ["item.created"],
+        type_filter,
+      });
+      expect(created.status, type_filter).toBe(400);
+      expect(created.error?.error.code, type_filter).toBe("validation_error");
+      expect(
+        (
+          created.error?.error.details?.errors as { path: string }[] | undefined
+        )?.map((e) => e.path),
+        type_filter,
+      ).toEqual(["type_filter"]);
+
+      const updated = await client.updateWebhook(existing.data.id, {
+        type_filter,
+      });
+      expect(updated.status, type_filter).toBe(400);
+      expect(updated.error?.error.code, type_filter).toBe("validation_error");
+      expect(
+        (
+          updated.error?.error.details?.errors as { path: string }[] | undefined
+        )?.map((e) => e.path),
+        type_filter,
+      ).toEqual(["type_filter"]);
+    }
+
+    // The witnesses: the patterns the refusals sit beside are accepted on
+    // the same door, an unregistered identifier among them.
+    for (const type_filter of ["core.*", "demo.unregistered"]) {
+      const created = await client.createWebhook({
+        url: receiver.hookUrl("filter-accepted"),
+        events: ["item.created"],
+        type_filter,
+      });
+      expect(created.status, type_filter).toBe(201);
+      trackWebhook(ctx, created.data.id, client);
+      expect(created.data.type_filter).toBe(type_filter);
+    }
+    expect((await client.getWebhook(existing.data.id)).data.type_filter).toBe(
+      "core.note",
+    );
+  });
+
+  it("delivers only the events whose item type a type_filter selects, declared subtypes and dotted children included", async () => {
+    const subtype = `user.${ctx.runId}-hook-sub`;
+    const root = `user.${ctx.runId}-hook-root`;
+    const leaf = `${root}.leaf`;
+    expect(
+      (
+        await client.registerType({
+          id: subtype,
+          parent: "core.note",
+          fields: {},
+        })
+      ).ok,
+    ).toBe(true);
+    trackType(ctx, subtype, client);
+    for (const id of [root, leaf]) {
+      const registered = await client.registerType({ id, fields: {} });
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+      trackType(ctx, id, client);
+    }
+    const byNote = await client.createWebhook({
+      url: receiver.hookUrl("filter-note"),
+      events: ["item.created"],
+      type_filter: "core.note",
+    });
+    const byRoot = await client.createWebhook({
+      url: receiver.hookUrl("filter-dotted"),
+      events: ["item.created"],
+      type_filter: `${root}.*`,
+    });
+    expect(byNote.status).toBe(201);
+    expect(byRoot.status).toBe(201);
+    trackWebhook(ctx, byNote.data.id, client);
+    trackWebhook(ctx, byRoot.data.id, client);
+
+    const make = async (
+      type: string,
+      properties: Record<string, unknown>,
+    ): Promise<string> => {
+      const made = await client.createItem({
+        type,
+        source: ctx.source,
+        properties,
+      });
+      expect(made.ok, `${type}: ${JSON.stringify(made.error)}`).toBe(true);
+      trackItem(ctx, made.data.item.id);
+      return made.data.item.id;
+    };
+    // Written so that the last item each subscription selects comes after
+    // every item it does not, and its arrival says those were decided.
+    const task = await make("core.task", { title: "filter task" });
+    const note = await make("core.note", { body: "filter note" });
+    const child = await make(subtype, { body: "filter subtype" });
+    const leafOne = await make(leaf, {});
+    const noteTwo = await make("core.note", { body: "filter note two" });
+    const leafTwo = await make(leaf, {});
+
+    const arrived = (label: string, id: string) =>
+      receiver.waitFor(
+        (r) => r.path === `/hook/${label}` && r.body.includes(id),
+      );
+    for (const id of [note, child, noteTwo]) await arrived("filter-note", id);
+    for (const id of [leafOne, leafTwo]) await arrived("filter-dotted", id);
+    const bodiesAt = (label: string) =>
+      receiver.received
+        .filter((r) => r.path === `/hook/${label}`)
+        .map((r) => r.body);
+    for (const id of [task, leafOne, leafTwo]) {
+      expect(
+        bodiesAt("filter-note").some((b) => b.includes(id)),
+        id,
+      ).toBe(false);
+    }
+    for (const id of [task, note, child, noteTwo]) {
+      expect(
+        bodiesAt("filter-dotted").some((b) => b.includes(id)),
+        id,
+      ).toBe(false);
+    }
+    expect(
+      (await client.listWebhookDeliveries(byNote.data.id)).data.data,
+    ).toHaveLength(3);
+    expect(
+      (await client.listWebhookDeliveries(byRoot.data.id)).data.data,
+    ).toHaveLength(2);
   });
 
   it("refuses a key without webhooks.manage", async () => {
@@ -1042,6 +1197,7 @@ describe("outbound webhooks", () => {
 
   it("refuses a URL that is not http or https, or carries credentials", async () => {
     for (const url of [
+      "not a url",
       "ftp://receiver.example/hook",
       "file:///etc/passwd",
       "https://user:pass@receiver.example/hook",
@@ -1063,6 +1219,16 @@ describe("outbound webhooks", () => {
     );
     expect((await client.listWebhookDeliveries(unknown)).status).toBe(404);
     expect((await client.deleteWebhook(unknown)).status).toBe(404);
+  });
+
+  it("refuses an update's body before it looks for the subscription", async () => {
+    const unknown = "00000000-0000-7000-8000-000000000000";
+    expect((await client.updateWebhook(unknown, { active: true })).status).toBe(
+      404,
+    );
+    const refused = await client.updateWebhook(unknown, { type_filter: "*" });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
   });
 
   it("refuses every door without a credential", async () => {

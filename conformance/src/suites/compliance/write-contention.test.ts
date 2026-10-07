@@ -9,6 +9,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HeldLock } from "../../utils/held-lock.js";
+import type { SseEvent } from "../../utils/sse.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
  * What a write answers when it meets the write lock and never gets it.
@@ -354,5 +356,118 @@ describe("contention on the write lock", () => {
       // process holding the lock for the rest of the run.
       await lock.release();
     }
+  }, 120_000);
+  it("announces nothing and keeps no row for a write it refused with 503, on the stream open at the time and on a replay", async ({
+    signal,
+  }) => {
+    const client = clientFor(impatient!);
+    const titleOf = (e: SseEvent): unknown =>
+      (e.data as { item?: { properties?: { title?: unknown } } })?.item
+        ?.properties?.title;
+    const titles = (events: SseEvent[]): unknown[] => events.map(titleOf);
+
+    const written = await withStream(
+      impatient!.apiUrl,
+      impatient!.workingKey,
+      {},
+      async (stream) => {
+        await new Promise((r) => setTimeout(r, 250));
+        // The witness that the stream is live for this write: a write that
+        // lands is announced, so a refused one that was not is not for want
+        // of a subscriber.
+        const landed = await client.createItem(aNote("contention-landed"));
+        expect(landed.status).toBe(201);
+        const landedFrame = await collectUntil(
+          stream,
+          (seen) => titles(seen).includes("contention-landed"),
+          "the write that landed before the lock",
+          signal,
+        );
+        const landedEvent = landedFrame.events.find(
+          (e) => titleOf(e) === "contention-landed",
+        );
+
+        const lock = await HeldLock.take(impatient!.sqlitePath);
+        try {
+          const refused = await client.createItem(aNote("contention-refused"));
+          expect(refused.status).toBe(503);
+          expect(refused.error?.error.code).toBe("write_contention");
+        } finally {
+          await lock.release();
+        }
+
+        const sentinel = await client.createItem(aNote("contention-sentinel"));
+        expect(sentinel.status).toBe(201);
+        const { events } = await collectUntil(
+          stream,
+          (seen) => titles(seen).includes("contention-sentinel"),
+          "the sentinel written after the refused write",
+          signal,
+        );
+        return { live: events, cursor: landedEvent!.id! };
+      },
+    );
+    expect(titles(written.live)).not.toContain("contention-refused");
+
+    // The replay carries the log, and the log holds no event for it.
+    const replayed = await withStream(
+      impatient!.apiUrl,
+      impatient!.workingKey,
+      { lastEventId: written.cursor },
+      async (stream) => {
+        const { events } = await collectUntil(
+          stream,
+          (seen) => titles(seen).includes("contention-sentinel"),
+          "the sentinel in a replay from before the refused write",
+          signal,
+        );
+        return events;
+      },
+    );
+    expect(titles(replayed)).toContain("contention-sentinel");
+    expect(titles(replayed)).not.toContain("contention-refused");
+
+    // And no row: the page of notes holds the two that landed and not it.
+    const listed = await client.listItems({ type: "core.note", limit: 100 });
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    const held = listed.data.data.map((item) => item.properties.title);
+    expect(held).toContain("contention-sentinel");
+    expect(held).not.toContain("contention-refused");
+  }, 120_000);
+
+  it("refuses an export with 503 before its stream starts, and records nothing of it", async () => {
+    const client = clientFor(impatient!);
+    const exportRuns = async (): Promise<number> => {
+      const rows = await client.listAudit({ action: "export.run" });
+      expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+      return rows.data.data.length;
+    };
+    const ask = () =>
+      fetch(`${impatient!.apiUrl}/export?format=ndjson`, {
+        headers: { Authorization: `Bearer ${impatient!.workingKey}` },
+      });
+
+    const before = await exportRuns();
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      const refused = await ask();
+      expect(refused.status).toBe(503);
+      expect(refused.headers.get("Content-Type")).toContain("application/json");
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("write_contention");
+      expect(await exportRuns()).toBe(before);
+    } finally {
+      await lock.release();
+    }
+
+    // The witness: released, the same export streams, and its record is the
+    // one entry the refused attempt did not leave.
+    const served = await ask();
+    expect(served.status).toBe(200);
+    expect(served.headers.get("Content-Type")).toContain(
+      "application/x-ndjson",
+    );
+    await served.text();
+    expect(await exportRuns()).toBe(before + 1);
   }, 120_000);
 });

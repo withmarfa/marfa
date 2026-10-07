@@ -616,6 +616,67 @@ describe("event stream contract", () => {
     expect(data.edge.properties.note).toBe("after");
   });
 
+  it("names the event in event_type on an item frame and on an edge frame", async ({
+    signal,
+  }) => {
+    const ofItem = (e: SseEvent): string | undefined =>
+      (e.data as { item?: { id?: string } }).item?.id;
+    const ofEdge = (e: SseEvent): string | undefined =>
+      (e.data as { edge?: { id?: string } }).edge?.id;
+
+    const frames = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await collectUntil(
+        stream,
+        (events) => events.some((e) => e.event === "stream_cursor"),
+        "the frame announcing the stream's position",
+        signal,
+      );
+      const a = await seed("event-type-a");
+      const b = await seed("event-type-b");
+      const edge = await client.createEdge({
+        source_id: a,
+        target_id: b,
+        edge_type: "about",
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      expect((await client.deleteEdge(edge.data.edge.id)).ok).toBe(true);
+      expect((await client.deleteItem(b)).ok).toBe(true);
+      const { events } = await collectUntil(
+        stream,
+        (seen) =>
+          seen.some((e) => e.event === "item.deleted" && ofItem(e) === b) &&
+          seen.some(
+            (e) =>
+              e.event === "edge.deleted" && ofEdge(e) === edge.data.edge.id,
+          ),
+        `item.deleted for ${b} and edge.deleted for ${edge.data.edge.id}`,
+        signal,
+      );
+      const pick = (name: string, id: string, of: typeof ofItem) =>
+        events.find((e) => e.event === name && of(e) === id);
+      return {
+        itemCreated: pick("item.created", a, ofItem),
+        itemDeleted: pick("item.deleted", b, ofItem),
+        edgeCreated: pick("edge.created", edge.data.edge.id, ofEdge),
+        edgeDeleted: pick("edge.deleted", edge.data.edge.id, ofEdge),
+      };
+    });
+
+    for (const [name, frame] of Object.entries({
+      "item.created": frames.itemCreated,
+      "item.deleted": frames.itemDeleted,
+      "edge.created": frames.edgeCreated,
+      "edge.deleted": frames.edgeDeleted,
+    })) {
+      expect(frame, `no ${name} frame arrived`).toBeDefined();
+      expect(
+        (frame!.data as { event_type?: unknown }).event_type,
+        `the ${name} frame does not name itself in event_type`,
+      ).toBe(name);
+    }
+  });
+
   it("refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types", async () => {
     const bearer = { Authorization: `Bearer ${apiKey}` };
     const wildcard = await fetch(`${apiUrl}/events?type=*`, {
@@ -686,6 +747,42 @@ describe("event stream contract", () => {
     }
   });
 
+  it("reads an empty Last-Event-ID as no cursor, and refuses one with an embedded space, twenty digits or an exponent", async ({
+    signal,
+  }) => {
+    // The witness that there is a log to replay: a cursor of zero carries
+    // the event of a row written before the stream opened, and an empty one
+    // does not.
+    const written = await seed("empty-cursor-history");
+    const sees = (events: { data: unknown }[]): boolean =>
+      events.some(
+        (e) => (e.data as { item?: { id?: string } })?.item?.id === written,
+      );
+    const readUntilLive = (cursor: string) =>
+      withStream(apiUrl, apiKey, { lastEventId: cursor }, async (stream) => {
+        expect(stream.response.status).toBe(200);
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_live"),
+          `stream_live after the cursor ${JSON.stringify(cursor)}`,
+          signal,
+        );
+        return events;
+      });
+
+    expect(sees(await readUntilLive("0"))).toBe(true);
+    expect(sees(await readUntilLive(""))).toBe(false);
+
+    for (const cursor of ["1 2", "12345678901234567890", "1e3"]) {
+      const refused = await askEvents(apiKey, { cursor });
+      expect(refused.status, `Last-Event-ID ${JSON.stringify(cursor)}`).toBe(
+        400,
+      );
+      expect(refused.code).toBe("validation_error");
+      expect(refused.details.errors?.[0]?.path).toBe("Last-Event-ID");
+    }
+  });
+
   it("refuses a cursor past the log's head with a terminal cursor_ahead frame", async ({
     signal,
   }) => {
@@ -728,5 +825,239 @@ describe("event stream contract", () => {
   it("refuses a subscription with no credential", async () => {
     const r = await fetch(`${apiUrl}/events`);
     expect(r.status).toBe(401);
+  });
+});
+
+/** What a refused `GET /events` answered. A request that opens a stream is
+ *  an answer that never ends, so it is closed before it is judged. */
+interface Refusal {
+  status: number;
+  code: string | undefined;
+  details: {
+    unknown_parameters?: string[];
+    errors?: { path?: string; message?: string }[];
+  };
+  message: string;
+}
+
+async function askEvents(
+  credential: string | undefined,
+  options: { query?: string; cursor?: string; readView?: string } = {},
+): Promise<Refusal> {
+  const headers: Record<string, string> = {};
+  if (credential !== undefined) headers.Authorization = `Bearer ${credential}`;
+  if (options.readView !== undefined) {
+    headers["X-Marfa-Read-View"] = options.readView;
+  }
+  if (options.cursor !== undefined) headers["Last-Event-ID"] = options.cursor;
+  const response = await fetch(
+    `${apiUrl}/events${options.query === undefined ? "" : `?${options.query}`}`,
+    { headers },
+  );
+  if (response.status === 200) {
+    await response.body?.cancel();
+    return { status: 200, code: undefined, details: {}, message: "" };
+  }
+  const body = (await response.json()) as {
+    error?: {
+      code?: string;
+      message?: string;
+      details?: Refusal["details"];
+    };
+  };
+  return {
+    status: response.status,
+    code: body.error?.code,
+    details: body.error?.details ?? {},
+    message: body.error?.message ?? "",
+  };
+}
+
+/** Each fault a plain stream request can carry, one request apiece. */
+const FAULTS: {
+  name: string;
+  query?: string;
+  cursor?: string;
+  readView?: string;
+}[] = [
+  { name: "an undeclared query key", query: "typ=core.note" },
+  { name: "a read view without copy=1", readView: "f".repeat(64) },
+  { name: "a wildcard type", query: "type=*" },
+  { name: "an unregistered type", query: "type=core.nothing_registers_this" },
+  { name: "an unknown edges value", query: "edges=bogus" },
+  { name: "a cursor that is not an event id", cursor: "abc" },
+];
+
+describe("the answers of the plain stream and the order its checks run in", () => {
+  it("answers 401 to a request with no usable credential, ahead of every fault in the request", async () => {
+    // The witness: the same request with a working credential is refused for
+    // its faults, so the 401 is the credential's and not the request's.
+    const everything = {
+      query: "typ=1&type=*&edges=bogus",
+      cursor: "abc",
+    };
+    const witness = await askEvents(apiKey, everything);
+    expect(witness.status).toBe(400);
+
+    for (const credential of [undefined, "marfa_k1_not_a_key_anyone_minted"]) {
+      for (const fault of FAULTS) {
+        const refused = await askEvents(credential, fault);
+        expect(
+          refused.status,
+          `${fault.name}, credential ${String(credential)}`,
+        ).toBe(401);
+        expect(refused.code).toBe("unauthorized");
+      }
+      const refused = await askEvents(credential, everything);
+      expect(refused.status).toBe(401);
+      expect(refused.code).toBe("unauthorized");
+    }
+  });
+
+  it("answers 403 type_not_permitted to a credential that reads no type, ahead of every fault in the request", async () => {
+    const operator = process.env.MARFA_OPERATOR_KEY!;
+    const plain = await askEvents(operator);
+    expect(plain.status).toBe(403);
+    expect(plain.code).toBe("type_not_permitted");
+
+    for (const fault of FAULTS) {
+      // The witness for each: a credential that reads a type is refused this
+      // request for the fault itself, so the fault is one the stream would
+      // have named.
+      const witness = await askEvents(apiKey, fault);
+      expect(witness.status, `${fault.name} for a reading key`).toBe(400);
+      expect(witness.code).not.toBe("type_not_permitted");
+
+      const refused = await askEvents(operator, fault);
+      expect(refused.status, fault.name).toBe(403);
+      expect(refused.code, fault.name).toBe("type_not_permitted");
+    }
+  });
+
+  it("names an undeclared query key ahead of the type, the edges and the cursor", async () => {
+    const refused = await askEvents(apiKey, {
+      query: "typ=core.note&type=*&edges=bogus",
+      cursor: "abc",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.code).toBe("validation_error");
+    expect(refused.details.unknown_parameters).toEqual(["typ"]);
+    expect(refused.details.errors).toBeUndefined();
+
+    // The witness: without the stray key the same request is refused for
+    // the type, so it was the key that came first.
+    const without = await askEvents(apiKey, {
+      query: "type=*&edges=bogus",
+      cursor: "abc",
+    });
+    expect(without.status).toBe(400);
+    expect(without.details.unknown_parameters).toBeUndefined();
+    expect(without.details.errors?.[0]?.path).toBe("type");
+  });
+
+  it("refuses X-Marfa-Read-View without copy=1 before an undeclared query key", async () => {
+    const readView = "f".repeat(64);
+    const refused = await askEvents(apiKey, {
+      query: "typ=core.note",
+      readView,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.code).toBe("validation_error");
+    expect(refused.details.unknown_parameters).toBeUndefined();
+
+    // The witness: without the header the same request is refused for the
+    // key, so it was the header that came first.
+    const without = await askEvents(apiKey, { query: "typ=core.note" });
+    expect(without.status).toBe(400);
+    expect(without.details.unknown_parameters).toEqual(["typ"]);
+  });
+
+  it("reads the type, then the edges, then the cursor, and names the first fault it meets", async () => {
+    // Each fault alone is refused 400 validation_error, naming itself.
+    const alone = {
+      type: await askEvents(apiKey, { query: "type=*" }),
+      edges: await askEvents(apiKey, { query: "edges=bogus" }),
+      cursor: await askEvents(apiKey, { cursor: "abc" }),
+    };
+    for (const refused of Object.values(alone)) {
+      expect(refused.status).toBe(400);
+      expect(refused.code).toBe("validation_error");
+    }
+    expect(alone.type.details.errors?.[0]?.path).toBe("type");
+    expect(alone.edges.message).toContain("edges");
+    expect(alone.cursor.details.errors?.[0]?.path).toBe("Last-Event-ID");
+
+    // Together, the earlier one answers and the later one is not named.
+    const typeAndEdgesAndCursor = await askEvents(apiKey, {
+      query: "type=*&edges=bogus",
+      cursor: "abc",
+    });
+    expect(typeAndEdgesAndCursor.details.errors?.[0]?.path).toBe("type");
+    expect(typeAndEdgesAndCursor.message).not.toContain("edges");
+
+    const edgesAndCursor = await askEvents(apiKey, {
+      query: "edges=bogus",
+      cursor: "abc",
+    });
+    expect(edgesAndCursor.status).toBe(400);
+    expect(edgesAndCursor.message).toContain("edges");
+    expect(edgesAndCursor.details.errors).toBeUndefined();
+
+    const typeAndCursor = await askEvents(apiKey, {
+      query: "type=core.nothing_registers_this",
+      cursor: "abc",
+    });
+    expect(typeAndCursor.status).toBe(400);
+    expect(typeAndCursor.code).toBe("unknown_type");
+  });
+
+  it("answers 400 unknown_type to a type nothing registers and 403 type_not_permitted to one the key may not read, taking the entries of a list in order", async () => {
+    const narrow = await client.createKey({
+      label: "events-contract-narrow",
+      source: `${ctx.source}-narrow`,
+      type_permissions: { "core.task": "read" },
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    expect(narrow.ok).toBe(true);
+    trackKey(ctx, narrow.data.id);
+    const key = narrow.data.key;
+
+    // The witness: the type the key reads opens a stream.
+    expect((await askEvents(key, { query: "type=core.task" })).status).toBe(
+      200,
+    );
+
+    const unknown = await askEvents(key, {
+      query: "type=core.nothing_registers_this",
+    });
+    expect(unknown.status).toBe(400);
+    expect(unknown.code).toBe("unknown_type");
+
+    const unreadable = await askEvents(key, { query: "type=core.note" });
+    expect(unreadable.status).toBe(403);
+    expect(unreadable.code).toBe("type_not_permitted");
+
+    // One request that meets both: the entry first in the list decides.
+    const unknownFirst = await askEvents(key, {
+      query: "type=core.nothing_registers_this,core.note",
+    });
+    expect(unknownFirst.status).toBe(400);
+    expect(unknownFirst.code).toBe("unknown_type");
+    const unreadableFirst = await askEvents(key, {
+      query: "type=core.note,core.nothing_registers_this",
+    });
+    expect(unreadableFirst.status).toBe(403);
+    expect(unreadableFirst.code).toBe("type_not_permitted");
+
+    // And a malformed entry is read as it is reached, not ahead of the rest.
+    const malformedLast = await askEvents(key, {
+      query: "type=core.nothing_registers_this,Not-A-Type!",
+    });
+    expect(malformedLast.code).toBe("unknown_type");
+    const malformedFirst = await askEvents(key, {
+      query: "type=Not-A-Type!,core.nothing_registers_this",
+    });
+    expect(malformedFirst.code).toBe("validation_error");
   });
 });

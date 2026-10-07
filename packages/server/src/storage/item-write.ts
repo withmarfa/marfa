@@ -220,7 +220,8 @@ export interface ItemMoved {
   /** Edges a purge took with the row. */
   edges: Edge[];
   /** The type of each such edge's source, read before the purge took the
-   *  row, which its announcement carries (`events.md` 19). */
+   * row, which its announcement carries (`events/edge-frame-published-type`).
+   * */
   edgeSourceTypes: Map<string, string>;
   /** The trash a purged row was taken by, read before the purge. */
   trashedWith?: CascadeRoot;

@@ -541,8 +541,9 @@ export function catchupTooOld(
   minRetainedId: string,
   requested: string,
 ): SseFrame {
-  // No `id:`, as on the real stream (`events.md` 3): a client that ignores
-  // the frame reconnects with the cursor it held and is refused again.
+  // No `id:`, as on the real stream (`events/catchup-too-old-no-id`): a client
+  // that ignores the frame reconnects with the cursor it held and is refused
+  // again.
   return {
     event: "catchup_too_old",
     data: {
@@ -558,7 +559,7 @@ export const SCRIPTED_INSTANCE = "00000000-0000-7000-8000-000000000000";
 
 /**
  * The terminal frame a cursor past the log's head gets, which is what a
- * device holds after the server is restored behind it (`events.md` 3).
+ * device holds after the server is restored behind it (`events/cursor-ahead`).
  */
 export function cursorAhead(requested: string, head: string): SseFrame {
   return {

@@ -7,7 +7,11 @@ import {
   trackEdge,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  baselineEventId,
+  collectUntil,
+  withStream,
+} from "../../utils/stream.js";
 
 /**
  * "An event is published after its write commits", and the half of the
@@ -213,5 +217,99 @@ describe("post-commit emission", () => {
     expect(after.ok).toBe(true);
     expect(after.data.item.properties.body).toBe("post-commit-committed");
     expect(after.data.item.version).toBe(outcome.committedVersion);
+  });
+
+  it("a write that rolls back leaves no event in the log, so a replay from before it carries none", async (context) => {
+    const [parent, child] = await Promise.all([
+      client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "post-commit-log-parent" },
+      }),
+      client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "post-commit-log-child" },
+      }),
+    ]);
+    expect(parent.ok && child.ok).toBe(true);
+    trackItem(ctx, parent.data.item.id);
+    trackItem(ctx, child.data.item.id);
+    const hierarchy = await client.createEdge({
+      source_id: parent.data.item.id,
+      target_id: child.data.item.id,
+      edge_type: "parent-of",
+    });
+    expect(hierarchy.ok).toBe(true);
+    trackEdge(ctx, hierarchy.data.edge.id);
+
+    const marker = await baselineEventId(
+      apiUrl,
+      apiKey,
+      async () => {
+        const created = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "post-commit-log-marker" },
+        });
+        expect(created.ok).toBe(true);
+        trackItem(ctx, created.data.item.id);
+        return created.data.item.id;
+      },
+      context.signal,
+    );
+
+    const committed = await client.updateItem(child.data.item.id, {
+      properties: { body: "post-commit-log-committed" },
+      version: child.data.item.version,
+    });
+    expect(committed.ok).toBe(true);
+    const rolledBack = await client.updateItem(child.data.item.id, {
+      properties: { body: PHANTOM_BODY },
+      version: committed.data.item.version,
+      edges: { "parent-of": [parent.data.item.id] },
+    });
+    expect(rolledBack.error?.error.code).toBe("edge_cycle");
+    const sentinel = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `post-commit-log-sentinel-${ctx.runId}` },
+    });
+    expect(sentinel.ok).toBe(true);
+    trackItem(ctx, sentinel.data.item.id);
+
+    const { events } = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: marker.eventId },
+      (stream) =>
+        collectUntil(
+          stream,
+          (evts) =>
+            evts.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id ===
+                sentinel.data.item.id,
+            ),
+          "the replay to reach the sentinel written after the refusal",
+          context.signal,
+        ),
+    );
+    // The witness: the committed write is in the log, so the replay covers
+    // the window the refused one fell in.
+    expect(
+      events.some(
+        (e) =>
+          e.event === "item.updated" &&
+          (e.data as { item?: { id?: string } })?.item?.id ===
+            child.data.item.id,
+      ),
+    ).toBe(true);
+    expect(
+      events
+        .filter((e) => JSON.stringify(e.data).includes(PHANTOM_BODY))
+        .map((e) => e.event),
+      "a rolled-back write is in the log, where a replay carries it",
+    ).toEqual([]);
   });
 });

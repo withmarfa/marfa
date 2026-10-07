@@ -101,10 +101,10 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("late-lower-id");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    // The real server delivers ids in order (`events.md` 3); this one hands
-    // a lower id after a higher one, which a cursor kept as a high-water
-    // mark would step over for good. The rule is that the cursor is what
-    // was applied, whatever arrived.
+    // The real server delivers ids in order (`events/ids-ascending`); this one
+    // hands a lower id after a higher one, which a cursor kept as a high-water
+    // mark would step over for good. The rule is that the cursor is what was
+    // applied, whatever arrived.
     server.copyAnswer(
       "GET",
       "/events",

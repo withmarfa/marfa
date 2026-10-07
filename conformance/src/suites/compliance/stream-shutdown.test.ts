@@ -9,9 +9,9 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * An instance that is stopped ends the streams it has open with their
- * closing frame, and stops within the grace a container runtime gives it:
- * the instance chapter's `instance/stop-*` rules, and `events.md` 11.
+ * An instance that is stopped ends the streams it has open with their closing
+ * frame, and stops within the grace a container runtime gives it: the instance
+ * chapter's `instance/stop-*` rules, and `events/incomplete-cursor`.
  */
 
 let server: FreshServer;
