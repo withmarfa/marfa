@@ -35,8 +35,7 @@
  * A shell script that sets `pipefail` gets the stricter rule: no early-exit
  * pipeline at all, unless it carries `|| true`. Under `set -e` a script's
  * pipeline decides even when no `if` is written, through `|| fail`, `&&`, a
- * function used as a condition, or the script ending at it; the image check
- * failed this way on `docker logs | grep -q` with the text present.
+ * function used as a condition, or the script ending at it.
  */
 import { execFileSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
