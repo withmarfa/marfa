@@ -147,10 +147,10 @@ const transitionItemRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["item_not_found"]),
+          schema: makeErrorResponseSchema(["item_not_found", "edge_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: `${ITEM_NOT_FOUND}\n- \`edge_not_found\`: a repeat under the \`Idempotency-Key\` would show an edge you can no longer read.`,
     },
   },
 });

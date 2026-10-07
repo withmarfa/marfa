@@ -2149,6 +2149,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description A stale write that carried nothing to merge: the error and the item now. */
         ItemStaleVersion: {
             error: components["schemas"]["VersionConflictError"] & unknown;
@@ -2193,6 +2210,23 @@ export interface components {
                  * @enum {string}
                  */
                 code: "edge_constraint_violation" | "invalid_id" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        EdgeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_not_found" | "item_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2534,23 +2568,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "edge_not_found";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -5109,7 +5126,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
+            /**
+             * @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`.
+             *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5122,7 +5142,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                    "application/json": components["schemas"]["EdgeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /**
@@ -5357,6 +5377,7 @@ export interface operations {
             /**
              * @description - `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.
              *     - `edge_type_not_found`: an edge names an edge type that doesn't exist.
+             *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.
              */
             404: {
                 headers: {
@@ -5370,7 +5391,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
+                    "application/json": components["schemas"]["EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /**
@@ -5763,7 +5784,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /**
+             * @description - `item_not_found`: no item has this ID, or its type is one you can't read.
+             *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5776,7 +5800,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                    "application/json": components["schemas"]["EdgeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
