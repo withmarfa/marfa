@@ -654,7 +654,7 @@ When two writes to one item race, the server MUST judge each against the item an
 
 The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
 
-**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`.
+**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`.
 
 ### `items/idempotency-replay`
 
@@ -768,7 +768,7 @@ When the server reauthorizes a kept `edge_constraint_violation`, the server MUST
 
 When the server reauthorizes a kept answer about an edge, the server MUST NOT require read on the edge's target.
 
-**Reason:** an edge's ordinary answer names its target to whoever may read the edge (`edges.md` 22).
+**Reason:** an edge's ordinary answer names its target to whoever may read the edge (`edges/target-named`).
 
 **Tests:** `sync/idempotency-replay.test.ts › replays an edge answer without read on its target`.
 
@@ -888,7 +888,7 @@ If `DELETE /items/{id}` or `POST /items/{id}/purge` names a `version` that is no
 
 ### `items/trash-cascade`
 
-When a delete or a transition into the bin moves an item, on its own operation or in a bulk action, the server MUST move into the bin every item a cascading edge (`edges.md` 16) reaches from it, at every depth.
+When a delete or a transition into the bin moves an item, on its own operation or in a bulk action, the server MUST move into the bin every item a cascading edge (`edges/cascade-parent-of` and `edges/cascade-custom`) reaches from it, at every depth.
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › a transition into the bin takes what a delete takes, and a restore brings it back`, `› takes what a cascade reaches on a bulk transition into the bin, and brings it back on a restore`.
 
@@ -1038,9 +1038,9 @@ When the server purges an item, the server MUST announce `item.purged` with the 
 
 ### `items/purge-edges`
 
-When a purge deletes an item, the server MUST delete its edges and announce each `edge.deleted` with `purged_with` naming the item (`edges.md` 17).
+When a purge deletes an item, the server MUST delete its edges and announce each `edge.deleted` with `purged_with` naming the item.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`.
+**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`, `sync/deletions.test.ts › announces an edge removed by cascade, not only one removed by its own route`.
 
 ### `items/purge-gone`
 

@@ -10,15 +10,17 @@ import {
   trackEdge,
   trackEdgeType,
   trackItem,
+  trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createBookmark, createNote } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext(
+  ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
     "edges-bulk-version",
   ));
@@ -207,5 +209,121 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     });
     const read = await client.getEdge(made.data.edge.id);
     expect(read.data.edge.properties).toEqual({ weight: 2 });
+  });
+});
+
+describe("edges.bulk with a stale version beside other refusals and modes", () => {
+  it("refuses an atomic page for an entry the key may not write before a stale entry ahead of it", async () => {
+    const { source, target, staleVersion } = await editedEdge();
+    const minted = await client.createKey({
+      label: "edges-bulk-gates-first",
+      source: `${ctx.source}-gates-first`,
+      permissions: [],
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+      edge_permissions: { about: "write" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const stale = {
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+      properties: { weight: 99 },
+      version: staleVersion,
+    };
+
+    // The witness: alone, the stale entry rolls the page back for its version.
+    const alone = await writer.bulkEdges({ atomic: true, edges: [stale] });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(alone.error?.error.details).toMatchObject({
+      code: "version_conflict",
+      index: 0,
+    });
+
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const refusals = [
+      {
+        label: "an edge type the key may not write",
+        entry: {
+          source_id: source,
+          target_id: target,
+          edge_type: "references",
+        },
+        code: "edge_permission_denied",
+      },
+      {
+        label: "a source whose type the key may not write",
+        entry: {
+          source_id: bookmark.data.item.id,
+          target_id: target,
+          edge_type: "about",
+        },
+        code: "type_not_permitted",
+      },
+    ];
+    for (const { label, entry, code } of refusals) {
+      const res = await writer.bulkEdges({
+        atomic: true,
+        edges: [stale, entry],
+      });
+      expect(res.status, label).toBe(403);
+      expect(res.error?.error.code, label).toBe("bulk_atomic_rollback");
+      expect(res.error?.error.details, label).toMatchObject({
+        code,
+        index: 1,
+      });
+    }
+  });
+
+  it("skips an entry naming a held triple as duplicate_edge under create_only, whatever version it names", async () => {
+    const { source, target, edge, staleVersion } = await editedEdge();
+    const entry = {
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+      properties: { weight: 99 },
+    };
+
+    // The witness: under upsert, the same stale entry is refused for its version.
+    const upsert = await client.bulkEdges({
+      mode: "upsert",
+      atomic: false,
+      edges: [{ ...entry, version: staleVersion }],
+    });
+    expect(upsert.status).toBe(200);
+    expect(upsert.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "version_conflict" },
+    });
+
+    for (const atomic of [true, false]) {
+      for (const version of [staleVersion, edge.version, edge.version + 7]) {
+        const res = await client.bulkEdges({
+          mode: "create_only",
+          atomic,
+          edges: [{ ...entry, version }],
+        });
+        const label = `atomic ${String(atomic)}, version ${String(version)}`;
+        expect(res.status, label).toBe(200);
+        expect(res.data.results[0], label).toMatchObject({
+          outcome: "skipped",
+          id: edge.id,
+          reason: "duplicate_edge",
+        });
+      }
+    }
+
+    const read = await client.getEdge(edge.id);
+    expect(read.data.edge.properties).toEqual({ weight: 2 });
+    expect(read.data.edge.version).toBe(edge.version);
   });
 });

@@ -345,7 +345,7 @@ class EdgeDoor {
           edge_type: body.edge_type ?? "references",
         });
       }
-      // One parent a child, as the server refuses a second (`edges.md` 14).
+      // One parent a child, as the server refuses a second (`edges/card-target-held`).
       if (
         body.edge_type === "parent-of" &&
         [...this.edges.values()].some(
@@ -11438,7 +11438,7 @@ describe("where a file sits", () => {
       "01a00000-0000-7000-8000-0000000016p1",
       "01a00000-0000-7000-8000-0000000016p2",
     ];
-    // The edge door refuses such a path (`edges.md` 2); one written past it
+    // The edge door refuses such a path (`edges/folder-path`); one written past it
     // is served here.
     const placed = await placedHarness("placement-rooted", [
       { id: rooted, title: "Rooted", path: "/Abs//./Plan.md" },
@@ -16004,7 +16004,7 @@ describe("what a pull does with a file whose item is purged", () => {
     scriptFolderWrites(harness, { edges });
     expect((await harness.folder.push()).ok).toBe(true);
     expect(edges.placements(harness.settings.id).size).toBe(1);
-    // The server removes an item's edges with it (`edges.md` 17).
+    // The server removes an item's edges with it (`items/purge-edges`).
     for (const [id, edge] of [...edges.edges]) {
       if (edge.source_id === purged.id) edges.edges.delete(id);
     }

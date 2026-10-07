@@ -31,7 +31,7 @@ export async function planCascadeDelete(
 ): Promise<string[]> {
   const visited = new Set<string>();
   const ordered: string[] = [];
-  const blockers: Edge[] = [];
+  const blockers = new Map<string, Edge>();
   const MAX_DEPTH = 10000;
 
   async function walk(itemId: string, depth: number): Promise<void> {
@@ -47,14 +47,14 @@ export async function planCascadeDelete(
 
     const { outbound, inbound } = await edgeStore.listAllByItem(itemId);
 
-    // Block edges on EITHER side reject the delete outright.
+    // A block edge on either side refuses the delete. The walk goes on past
+    // one so that the refusal names every blocker, not only the first.
     for (const edge of [...outbound, ...inbound]) {
       const schema = getEdgeTypeSchema(edge.edge_type);
       if (schema?.cascade_on_delete === "block") {
-        blockers.push(edge);
+        blockers.set(edge.id, edge);
       }
     }
-    if (blockers.length > 0) return; // short-circuit; outer caller will throw.
 
     // Cascade: walk outbound cascade edges → recurse into targets.
     for (const edge of outbound) {
@@ -70,13 +70,13 @@ export async function planCascadeDelete(
 
   await walk(rootItemId, 0);
 
-  if (blockers.length > 0) {
+  if (blockers.size > 0) {
     throw new MarfaError(
       ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Cannot delete item ${rootItemId}: blocked by ${String(blockers.length)} edge(s) with cascade_on_delete=block`,
+      `Cannot delete item ${rootItemId}: blocked by ${String(blockers.size)} edge(s) with cascade_on_delete=block`,
       {
         root_item_id: rootItemId,
-        blocking_edges: blockers.map((e) => ({
+        blocking_edges: [...blockers.values()].map((e) => ({
           id: e.id,
           edge_type: e.edge_type,
           source_id: e.source_id,

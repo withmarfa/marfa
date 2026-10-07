@@ -1215,3 +1215,127 @@ describe("custom edge-type registration", () => {
     expect(r.error?.error.code).toBe("edge_type_not_found");
   });
 });
+
+describe("the order POST /edge-types asks its refusals in", () => {
+  let keyCount = 0;
+
+  async function registrar(
+    edgeMap: Record<string, "read" | "write">,
+    withSchemaGrant = true,
+  ): Promise<MarfaClient> {
+    keyCount += 1;
+    const minted = await client.createKey({
+      label: `edge-type-order-${String(keyCount)}`,
+      source: `${ctx.source}-edge-type-order-${String(keyCount)}`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: edgeMap,
+      ...(withSchemaGrant && { metadata_permissions: { edge_types: "write" } }),
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+  }
+
+  const extending = { extends: "about" } as Record<string, unknown>;
+
+  it("answers a shipped id as a conflict before it refuses extends", async () => {
+    const shipped = await client.registerEdgeType({
+      id: "about",
+      cardinality: "many-to-many",
+      ...extending,
+    });
+    expect(shipped.status).toBe(409);
+    expect(shipped.error?.error.code).toBe("conflict");
+
+    // The witness: an id of its own with the same extends is the refusal of extends.
+    const alone = await client.registerEdgeType({
+      id: `mock.order-extends.${ctx.runId}`,
+      cardinality: "many-to-many",
+      ...extending,
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("validation_error");
+  });
+
+  it("answers a shipped id as a conflict before it asks the key's edge map", async () => {
+    const own = `mock.order-shipped.${ctx.runId}`;
+    const scoped = await registrar({ [own]: "write" });
+    const shipped = await scoped.registerEdgeType({
+      id: "about",
+      cardinality: "many-to-many",
+    });
+    expect(shipped.status).toBe(409);
+    expect(shipped.error?.error.code).toBe("conflict");
+
+    // The witness: the same key is refused an id its map does not grant.
+    const alone = await scoped.registerEdgeType({
+      id: `mock.order-ungranted.${ctx.runId}`,
+      cardinality: "many-to-many",
+    });
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error.code).toBe("edge_permission_denied");
+  });
+
+  it("refuses an id the key's edge map does not grant before it refuses extends", async () => {
+    const granted = `mock.order-granted.${ctx.runId}`;
+    const ungranted = `mock.order-denied.${ctx.runId}`;
+    const scoped = await registrar({ [granted]: "write" });
+    const denied = await scoped.registerEdgeType({
+      id: ungranted,
+      cardinality: "many-to-many",
+      ...extending,
+    });
+    expect(denied.status).toBe(403);
+    expect(denied.error?.error.code).toBe("edge_permission_denied");
+    expect(denied.error?.error.details?.edge_type).toBe(ungranted);
+
+    // The witness: an id the map grants meets the refusal of extends.
+    const alone = await scoped.registerEdgeType({
+      id: granted,
+      cardinality: "many-to-many",
+      ...extending,
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a key without metadata.edge_types:write before it answers a shipped id", async () => {
+    const bare = await registrar({ "*": "write" }, false);
+    const refused = await bare.registerEdgeType({
+      id: "about",
+      cardinality: "many-to-many",
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+
+    // The witness: with the grant, the same body is the shipped id's conflict.
+    const granted = await registrar({ "*": "write" });
+    const alone = await granted.registerEdgeType({
+      id: "about",
+      cardinality: "many-to-many",
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("conflict");
+  });
+
+  it("refuses an id that is not an edge type identifier before it asks the key's edge map", async () => {
+    const scoped = await registrar({
+      [`mock.order-identifier.${ctx.runId}`]: "write",
+    });
+    const malformed = await scoped.registerEdgeType({
+      id: "Not An Identifier",
+      cardinality: "many-to-many",
+    });
+    expect(malformed.status).toBe(400);
+    expect(malformed.error?.error.code).toBe("validation_error");
+
+    // The witness: a well formed id the map does not grant is the map's refusal.
+    const alone = await scoped.registerEdgeType({
+      id: `mock.order-identifier-denied.${ctx.runId}`,
+      cardinality: "many-to-many",
+    });
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error.code).toBe("edge_permission_denied");
+  });
+});

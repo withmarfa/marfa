@@ -18,7 +18,7 @@ import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * Moving an edge's end (`edges.md` 10) is judged as the create of the edge it
+ * Moving an edge's end (`edges/move-announced` and `items/idempotency-operations`) is judged as the create of the edge it
  * becomes would be, announced as one change, and replayed from its record
  * under an `Idempotency-Key` like every other write to an edge.
  */
@@ -210,7 +210,11 @@ describe("moving an edge's end", () => {
       source_id: middle,
       version: upper.version,
     });
-    expect(refusal(loop)).toMatchObject({ status: 400, code: "edge_cycle" });
+    expect(refusal(loop)).toMatchObject({
+      status: 400,
+      code: "edge_cycle",
+      details: { edge_type: "parent-of" },
+    });
     expect(await stored(upper.id)).toEqual(upper);
 
     // A move onto its own source closes a loop on every type, not only the
@@ -229,7 +233,11 @@ describe("moving an edge's end", () => {
       expect(
         refusal(self),
         `an edge of type ${edgeType} was moved onto its own source`,
-      ).toMatchObject({ status: 400, code: "edge_cycle" });
+      ).toMatchObject({
+        status: 400,
+        code: "edge_cycle",
+        details: { edge_type: edgeType },
+      });
       expect(await stored(held.id)).toEqual(held);
       // The witness: the same edge moves onto another item.
       const elsewhere = await client.updateEdge(held.id, {

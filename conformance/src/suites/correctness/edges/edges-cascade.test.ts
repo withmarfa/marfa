@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../../client/api.js";
-import type { TestContext } from "../../../client/types.js";
+import type { ApiResponse, TestContext } from "../../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -388,6 +388,110 @@ describe("edge cascade semantics", () => {
     await client.deleteEdge(edgeId);
     const del2 = await client.deleteItem(source);
     expect(del2.ok).toBe(true);
+  });
+
+  it("names every blocking edge in the cascade, not only the first it meets", async () => {
+    const etId = `mock.deepblock.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const root = await makeItem("deep-root");
+    const child = await makeItem("deep-child");
+    const other = await makeItem("deep-other");
+    const held = await client.createEdge({
+      source_id: root,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    trackEdge(ctx, held.data.edge.id);
+    const blockers: string[] = [];
+    for (const source of [root, child]) {
+      const edge = await client.createEdge({
+        source_id: source,
+        target_id: other,
+        edge_type: etId,
+      });
+      expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+      trackEdge(ctx, edge.data.edge.id);
+      blockers.push(edge.data.edge.id);
+    }
+
+    // The witness: the child's own blocker refuses deleting the child.
+    const childDelete = await client.deleteItem(child);
+    expect(childDelete.status).toBe(400);
+
+    const refused = await client.deleteItem(root);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    const named = (
+      refused.error?.error.details?.blocking_edges as Array<{ id: string }>
+    ).map((e) => e.id);
+    expect(named.sort()).toEqual([...blockers].sort());
+  });
+
+  it("names every blocking edge in the cascade on a transition into the bin, as a delete does", async () => {
+    const etId = `mock.deepblock-transition.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const root = await makeItem("deep-transition-root");
+    const child = await makeItem("deep-transition-child");
+    const other = await makeItem("deep-transition-other");
+    const held = await client.createEdge({
+      source_id: root,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    trackEdge(ctx, held.data.edge.id);
+    const blockers: string[] = [];
+    for (const source of [root, child]) {
+      const edge = await client.createEdge({
+        source_id: source,
+        target_id: other,
+        edge_type: etId,
+      });
+      expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+      trackEdge(ctx, edge.data.edge.id);
+      blockers.push(edge.data.edge.id);
+    }
+    const blockedBy = (refused: ApiResponse<unknown>): string[] =>
+      (
+        refused.error?.error.details?.blocking_edges as
+          Array<{ id: string }> | undefined
+      )?.map((e) => e.id) ?? [];
+
+    // The witness: the child's own blocker is all a transition of the child meets.
+    const childMove = await client.transitionItem(child, "trashed");
+    expect(childMove.status).toBe(400);
+    expect(blockedBy(childMove)).toEqual([blockers[1]]);
+
+    const refused = await client.transitionItem(root, "trashed");
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    expect(blockedBy(refused).sort()).toEqual([...blockers].sort());
+
+    // A delete of the same row names the same edges.
+    const deleted = await client.deleteItem(root);
+    expect(deleted.status).toBe(400);
+    expect(blockedBy(deleted).sort()).toEqual(blockedBy(refused).sort());
+    for (const id of [root, child]) {
+      expect(
+        (await client.getItem(id)).data.item.state,
+        "a refused transition moved a row",
+      ).toBe("active");
+    }
   });
 
   it("purges an item held by a block edge, taking its edges on both ends", async () => {
