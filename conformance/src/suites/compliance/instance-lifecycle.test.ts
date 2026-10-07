@@ -1,10 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  closeSync,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  readSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -419,6 +423,246 @@ describe("starting on an image a crash leaves", () => {
       expect(next.status).toBe(201);
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+/** The salt in the log's header. A checkpoint that has moved the whole log
+ *  into the database file makes the next write start the log over under a
+ *  new one, so a change of salt shows that the log's early writes are gone. */
+function logSalt(sqlitePath: string): string {
+  const log = `${sqlitePath}-wal`;
+  if (!existsSync(log)) return "";
+  const header = Buffer.alloc(24);
+  const fd = openSync(log, "r");
+  try {
+    readSync(fd, header, 0, 24, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return header.subarray(16, 24).toString("hex");
+}
+
+interface Written {
+  id: string;
+  hash: string;
+  bytes: Uint8Array;
+}
+
+/** The size of the text each note carries beyond its blob, so that the log
+ *  outgrows its automatic checkpoint within a few dozen writes. */
+const NOTE_PADDING_BYTES = 60_000;
+
+/** Writes a note naming a fresh blob, again and again, until stopped. */
+function writeUntilStopped(client: MarfaClient): {
+  acknowledged: Written[];
+  /** The bytes of padding the acknowledged notes carry. */
+  written: () => number;
+  stop: () => Promise<void>;
+} {
+  const acknowledged: Written[] = [];
+  let padded = 0;
+  let running = true;
+  const loop = (async () => {
+    while (running) {
+      const bytes = randomBytes(2_000 + acknowledged.length);
+      const upload = await client.uploadBlob(bytes, "application/octet-stream");
+      if (!upload.ok) {
+        throw new Error(`upload refused: ${JSON.stringify(upload)}`);
+      }
+      const padding = randomBytes(NOTE_PADDING_BYTES / 2).toString("hex");
+      const note = await client.createItem({
+        type: NOTE,
+        source: "lifecycle-copy",
+        properties: { body: `![bytes](${upload.data.hash}) ${padding}` },
+      });
+      if (!note.ok) throw new Error(`note refused: ${JSON.stringify(note)}`);
+      acknowledged.push({
+        id: note.data.item.id,
+        hash: upload.data.hash,
+        bytes,
+      });
+      padded += NOTE_PADDING_BYTES;
+    }
+  })();
+  return {
+    acknowledged,
+    written: () => padded,
+    stop: async () => {
+      running = false;
+      await loop;
+    },
+  };
+}
+
+describe("copying the data directory one file after another while the instance writes", () => {
+  let server: FreshServer;
+  const states: string[] = [];
+
+  beforeAll(async () => {
+    server = await bootFreshServer("lifecycle-copy");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    for (const state of states.splice(0)) {
+      await stopServer({ state });
+      rmSync(state, { recursive: true, force: true });
+    }
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  async function until(
+    what: string,
+    done: () => boolean,
+    budgetMs = 60_000,
+  ): Promise<void> {
+    const deadline = Date.now() + budgetMs;
+    while (!done()) {
+      if (Date.now() > deadline) throw new Error(`never reached: ${what}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  /** Boots a server on `image` and reads it back as the original's client. */
+  async function bootImage(image: string): Promise<MarfaClient | undefined> {
+    try {
+      await bootServer({ state: image });
+    } catch {
+      return undefined;
+    }
+    const env = parseEnvFile(readFileSync(join(image, "env"), "utf8"));
+    expect(env.MARFA_API_URL).toBeTruthy();
+    return new MarfaClient({
+      baseUrl: env.MARFA_API_URL ?? "",
+      apiKey: server.workingKey,
+    });
+  }
+
+  it(
+    "restores every write acknowledged before the first read from a copy taken file by file under a held read transaction, and loses writes from the same copy without one",
+    async () => {
+      const writer = writeUntilStopped(
+        new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey }),
+      );
+      await until("a log with writes in it", () => {
+        return writer.acknowledged.length >= 10;
+      });
+
+      /** The database file, then the log, then the blobs, each copied after
+       *  `between` has let the writer run on. */
+      async function copyOneAfterAnother(
+        between: (copied: string) => Promise<void>,
+      ): Promise<{ image: string; before: Written[]; after: Written[] }> {
+        const image = mkdtempSync(join(tmpdir(), "marfa-copy-image-"));
+        states.push(image);
+        cpSync(server.stateDir, image, {
+          recursive: true,
+          // What the running process owns, and the three the copy reads in
+          // its own order.
+          filter: (source) =>
+            !/server\.(pid|log|exit)$/.test(source) &&
+            !/marfa\.db(-wal|-shm)?$/.test(source) &&
+            !/\/blobs$/.test(source),
+        });
+        const before = writer.acknowledged.slice();
+        copyFileSync(server.sqlitePath, join(image, "marfa.db"));
+        await between("database");
+        copyFileSync(`${server.sqlitePath}-wal`, join(image, "marfa.db-wal"));
+        await between("log");
+        cpSync(join(server.stateDir, "blobs"), join(image, "blobs"), {
+          recursive: true,
+        });
+        return { image, before, after: writer.acknowledged.slice() };
+      }
+
+      /** What a copy cannot answer of what it must, and a blob a copied row
+       *  names that the copy does not serve. `undefined` for a copy that
+       *  does not start. */
+      async function readBack(copy: {
+        image: string;
+        before: Written[];
+        after: Written[];
+      }): Promise<{ lost: number; blobless: number } | undefined> {
+        const client = await bootImage(copy.image);
+        if (client === undefined) return undefined;
+        let lost = 0;
+        let blobless = 0;
+        for (const written of copy.before) {
+          if ((await client.getItem(written.id)).status !== 200) lost++;
+        }
+        for (const written of copy.after) {
+          if ((await client.getItem(written.id)).status !== 200) continue;
+          const blob = await client.downloadBlob(written.hash);
+          if (
+            !blob.ok ||
+            !Buffer.from(blob.data).equals(Buffer.from(written.bytes))
+          ) {
+            blobless++;
+          }
+        }
+        return { lost, blobless };
+      }
+
+      // The witness: with no reader, a checkpoint that lands between the
+      // database file and the log leaves a copy that has lost writes. The
+      // copy loses none when its database file happens to be taken just after
+      // a checkpoint, so it is taken again until one does.
+      let needed = 0;
+      let witnessed: object | undefined;
+      for (let attempt = 0; attempt < 8 && witnessed === undefined; attempt++) {
+        let saltAtDatabase = "";
+        let writtenAtDatabase = 0;
+        const unheld = await copyOneAfterAnother(async (copied) => {
+          if (copied === "database") {
+            saltAtDatabase = logSalt(server.sqlitePath);
+            writtenAtDatabase = writer.written();
+            await until(
+              "a checkpoint that restarts the log",
+              () => logSalt(server.sqlitePath) !== saltAtDatabase,
+            );
+            needed = Math.max(needed, writer.written() - writtenAtDatabase);
+          } else {
+            const target = writer.acknowledged.length + 3;
+            await until(
+              "more writes",
+              () => writer.acknowledged.length >= target,
+            );
+          }
+        });
+        const report = await readBack(unheld);
+        if (report === undefined || report.lost > 0) {
+          witnessed = report ?? { starts: false };
+        }
+      }
+      expect(witnessed, "no copy without a reader lost a write").toBeDefined();
+
+      // The same copy under a read transaction that began before the first
+      // read, over at least twice the writes a checkpoint took above.
+      const reader = await HeldReader.take(server.sqlitePath);
+      let held: Awaited<ReturnType<typeof copyOneAfterAnother>>;
+      try {
+        held = await copyOneAfterAnother(async (copied) => {
+          if (copied === "database") {
+            const target = writer.written() + 2 * needed;
+            await until(
+              "writes enough to checkpoint twice over",
+              () => writer.written() >= target,
+            );
+          } else {
+            const target = writer.acknowledged.length + 3;
+            await until(
+              "more writes",
+              () => writer.acknowledged.length >= target,
+            );
+          }
+        });
+      } finally {
+        await reader.release();
+      }
+      await writer.stop();
+
+      expect(held.before.length).toBeGreaterThanOrEqual(10);
+      expect(await readBack(held)).toEqual({ lost: 0, blobless: 0 });
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 
