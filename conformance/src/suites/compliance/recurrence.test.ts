@@ -714,6 +714,100 @@ describe("the window", () => {
     ).not.toContain(hour);
   });
 
+  it("matches a moved occurrence to its series whatever their types, and answers only the type named", async () => {
+    const declared = `rec-${ctx.runId}.meeting`;
+    const registered = await client.registerType({
+      id: declared,
+      parent: "core.event",
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const typed = async (type: string, properties: Record<string, unknown>) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: { title: `recurrence ${ctx.runId}`, ...properties },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const link = async (series: string, moved: string) => {
+      const edge = await client.createEdge({
+        source_id: series,
+        target_id: moved,
+        edge_type: "parent-of",
+      });
+      expect(edge.status).toBe(201);
+    };
+    const filtered = async (from: string, to: string, type?: string) => {
+      const r = await client.listOccurrences({ from, to, type });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data.data as Row[];
+    };
+
+    // A core.event series whose moved occurrence is of the declared type.
+    const plainSeries = await typed("core.event", {
+      starts_at: "2053-03-04T10:00:00.000Z",
+      ends_at: "2053-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const typedMove = await typed(declared, {
+      starts_at: "2053-03-12T10:00:00.000Z",
+      ends_at: "2053-03-12T11:00:00.000Z",
+      original_starts_at: "2053-03-11T10:00:00.000Z",
+    });
+    await link(plainSeries, typedMove);
+    // A series of the declared type whose moved occurrence is a core.event.
+    const typedSeries = await typed(declared, {
+      starts_at: "2054-03-04T10:00:00.000Z",
+      ends_at: "2054-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const plainMove = await typed("core.event", {
+      starts_at: "2054-03-12T10:00:00.000Z",
+      ends_at: "2054-03-12T11:00:00.000Z",
+      original_starts_at: "2054-03-11T10:00:00.000Z",
+    });
+    await link(typedSeries, plainMove);
+
+    // The witness: unfiltered, each series shows two slots and its move.
+    for (const [from, to, series, moved] of [
+      ["2053-03-01T00:00:00Z", "2053-03-20T00:00:00Z", plainSeries, typedMove],
+      ["2054-03-01T00:00:00Z", "2054-03-20T00:00:00Z", typedSeries, plainMove],
+    ] as const) {
+      const rows = await filtered(from, to);
+      expect(rows.filter((o) => o.item.id === series)).toHaveLength(2);
+      expect(rows.filter((o) => o.item.id === moved)).toHaveLength(1);
+    }
+
+    // Filtered to the declared type, the move keeps its series and slot.
+    const first = await filtered(
+      "2053-03-01T00:00:00Z",
+      "2053-03-20T00:00:00Z",
+      declared,
+    );
+    expect(first.filter((o) => o.item.id === plainSeries)).toEqual([]);
+    const move = first.filter((o) => o.item.id === typedMove);
+    expect(move).toHaveLength(1);
+    expect(move[0]?.series_id).toBe(plainSeries);
+    expect(move[0]?.replaces).toBe("2053-03-11T10:00:00.000Z");
+
+    // And the series it answers still leaves the slot its move took.
+    const second = await filtered(
+      "2054-03-01T00:00:00Z",
+      "2054-03-20T00:00:00Z",
+      declared,
+    );
+    expect(second.filter((o) => o.item.id === plainMove)).toEqual([]);
+    expect(
+      second
+        .filter((o) => o.item.id === typedSeries)
+        .map((o) => o.starts_at)
+        .sort(),
+    ).toEqual(["2054-03-04T10:00:00.000Z", "2054-03-18T10:00:00.000Z"]);
+  });
+
   it("carries series_id and replaces on a moved occurrence in a window that holds only its new time", async () => {
     const series = await event({
       starts_at: "2047-03-04T10:00:00.000Z",

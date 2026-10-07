@@ -480,10 +480,10 @@ async function scanEvents<T>(
       ...narrowing,
       ...(cursor !== undefined ? { cursor } : {}),
     });
-    budget.scanned += page.data.length;
     for (const item of page.data) {
       // A `type` filter may reach past the event types; only they unfold.
       if (!typeAnswersSubtreeFilter(item.type, EVENT_TYPE)) continue;
+      budget.scanned += 1;
       const projected = project(item);
       if (projected !== undefined) kept.push(projected);
     }
@@ -1070,7 +1070,7 @@ export function occurrenceRoutes(
       c.get("apiKey"),
     );
     const scope: EventScanScope = {
-      type: query.type ?? EVENT_TYPE,
+      type: EVENT_TYPE,
       allowed_types: typeFilter.allowed,
       excluded_types: typeFilter.excluded,
       source_filter: enforcement.source_filter,
@@ -1079,12 +1079,27 @@ export function occurrenceRoutes(
     // Series. Unwindowed by necessity — a rule written years ago
     // produces occurrences in any window, so the window says nothing
     // about which rules matter.
+    // The series and exception passes read every event type, because an
+    // exception and its series may be of different types and must still be
+    // matched; a `type` filter decides only what is answered.
+    const typeOf = new Map<string, string>();
+    const noting =
+      <T>(project: (item: Item) => T | undefined) =>
+      (item: Item): T | undefined => {
+        typeOf.set(item.id, item.type);
+        return project(item);
+      };
+    const answered = (id: string): boolean => {
+      if (query.type === undefined) return true;
+      const type = typeOf.get(id);
+      return type !== undefined && typeAnswersSubtreeFilter(type, query.type);
+    };
     const seriesScan = await scanEvents(
       storage,
       scope,
       budget,
       { hasProperty: "recurrence" },
-      projectSeries,
+      noting(projectSeries),
     );
 
     // Exceptions. Unwindowed for the opposite reason — an exception
@@ -1096,7 +1111,7 @@ export function occurrenceRoutes(
       scope,
       budget,
       { hasProperty: "original_starts_at" },
-      projectException,
+      noting(projectException),
     );
 
     // Standalone events, narrowed to the window in SQL against the
@@ -1104,10 +1119,10 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      scope,
+      { ...scope, type: query.type ?? EVENT_TYPE },
       budget,
       { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
-      projectWindow,
+      noting(projectWindow),
     );
 
     // Batched, because the per-item form issued one query per exception
@@ -1242,6 +1257,9 @@ export function occurrenceRoutes(
     for (const scanned of seriesScan) {
       if (seenSeries.has(scanned.id)) continue;
       seenSeries.add(scanned.id);
+      // Named on an exception the filter answers, but neither unfolded nor
+      // reported: the filter leaves its own occurrences out.
+      if (!answered(scanned.id)) continue;
 
       // Reported whether or not there is a series behind it, and before
       // the ceiling below, because reading a row's rule cost nothing the
@@ -1315,6 +1333,7 @@ export function occurrenceRoutes(
         if (occurrence.replaces !== undefined) {
           consumedExceptions.add(occurrence.item_id);
         }
+        if (!answered(occurrence.item_id)) continue;
         appendPending({
           starts_at: occurrence.starts_at,
           ends_at: occurrence.ends_at,

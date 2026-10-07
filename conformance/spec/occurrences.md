@@ -70,6 +70,20 @@ When `GET /occurrences` names a `type`, the server MUST answer the events of tha
 
 **Tests:** `compliance/occurrences.test.ts › answers the events of the type it names, a type declared under core.event included`.
 
+### `occurrences/type-names-move`
+
+When `GET /occurrences` names a `type` that a moved occurrence is of and its series is not, the server MUST carry on the moved occurrence its `series_id` and `replaces`.
+
+**Reason:** an exception and its series are matched whatever their types; a `type` decides only what is answered.
+
+**Tests:** `compliance/recurrence.test.ts › matches a moved occurrence to its series whatever their types, and answers only the type named`.
+
+### `occurrences/type-names-slot`
+
+When `GET /occurrences` names a `type` that a series is of and its moved occurrence is not, the server MUST leave out the occurrence at the slot the move took.
+
+**Tests:** `compliance/recurrence.test.ts › matches a moved occurrence to its series whatever their types, and answers only the type named`.
+
 ### `occurrences/source-filter`
 
 Where the `enforcement.source_filter` that holds for the credential names a type of event and names sources, the server MUST leave out of `GET /occurrences` every occurrence of an event of that type, or of a type under it, whose source the filter does not name.
@@ -204,7 +218,7 @@ When a moved occurrence is in a window, and its series is `active` and one the c
 
 ### `occurrences/moved-ids-hidden`
 
-When a moved occurrence is in a window and its series is not one the credential may read, the server MUST answer it without `series_id` and without `replaces`.
+When a moved occurrence is in a window and its series is not an `active` series with a `recurrence` that the credential may read, the server MUST answer it without `series_id` and without `replaces`.
 
 **Reason:** the fields would name a row the credential may not read.
 

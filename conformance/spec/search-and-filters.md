@@ -86,7 +86,7 @@ If a credential that the operation admits sends `GET /items`, `GET /items/stats`
 
 ### `search-and-filters/empty-narrowing-first`
 
-If a request to `GET /search` or `GET /occurrences` carries an empty narrowing value and lacks a parameter the operation requires, then the server MUST answer the empty value's `400 validation_error`.
+If a credential that the operation admits sends `GET /search` or `GET /occurrences` with an empty narrowing value and without a parameter the operation requires, then the server MUST answer the empty value's `400 validation_error`.
 
 **Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
 
@@ -100,7 +100,13 @@ If the `filter` of `POST /items/bulk-actions` carries `type`, `source`, `tags` o
 
 ### `search-and-filters/empty-narrowing-bulk-order`
 
-If the body of `POST /items/bulk-actions` carries an empty `filter` field and also a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's refusal.
+If a credential that the operation admits sends `POST /items/bulk-actions`, other than a `purge` without `confirm: "PURGE"`, with an empty `filter` field and a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's `400 validation_error`, naming it in `details.unknown_body_fields` or `details.unknown_filter_fields` and naming nothing in `details.empty_parameters`.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
+
+### `search-and-filters/empty-narrowing-bulk-before-action`
+
+If a credential that the operation admits sends `POST /items/bulk-actions` with an empty `filter` field and an `update_tags` naming neither `add` nor `remove`, or an `occurred_at` that is not a timestamp, then the server MUST answer the empty field's `400 validation_error`.
 
 **Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
 

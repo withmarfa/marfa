@@ -506,7 +506,7 @@ describe("validation edge cases", () => {
     expect(filter.details?.unknown_filter_fields).toEqual(["bogus"]);
     expect(filter.details).not.toHaveProperty("empty_parameters");
 
-    // The empty value is refused ahead of what the action's own fields lack.
+    // The empty value is refused ahead of the handler's own checks of the action.
     const lacking = refusal(
       await client.bulkAction({
         action: "update_tags",
