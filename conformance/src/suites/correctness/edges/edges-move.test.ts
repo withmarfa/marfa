@@ -11,7 +11,7 @@ import { createNote } from "../../../generators/items.js";
 
 /**
  * An end that holds one edge of a type has that edge replaced by moving it:
- * one write, so no reader ever finds the end holding none (`edges.md` 10).
+ * one write, so no reader ever finds the end holding none (`edges/move-no-gap`).
  */
 
 let client: MarfaClient;

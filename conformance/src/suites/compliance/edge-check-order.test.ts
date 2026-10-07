@@ -112,6 +112,23 @@ async function held(
   return r.data.edge.id;
 }
 
+/**
+ * An edge the key returned cannot read, because it holds no grant on the type
+ * of the edge's source, and two notes that key may write.
+ */
+async function hiddenEdge(): Promise<{
+  reader: MarfaClient;
+  id: string;
+  first: string;
+  second: string;
+}> {
+  const reader = await keyWith({ "core.note": "write" }, { "*": "write" });
+  const id = generateId();
+  await held(await bookmark(), await note(), "about", id);
+  expect((await reader.getEdge(id)).status).toBe(404);
+  return { reader, id, first: await note(), second: await note() };
+}
+
 describe("the order POST /edges asks its refusals in", () => {
   it("refuses a malformed id before it looks for the source", async () => {
     const target = await note();
@@ -134,6 +151,25 @@ describe("the order POST /edges asks its refusals in", () => {
     });
     expect(alone.status).toBe(404);
     expect(alone.error?.error.code).toBe("item_not_found");
+  });
+
+  it("answers a missing edge type as missing_required_field before it judges a malformed id", async () => {
+    const target = await note();
+    const refused = await client.rawRequest("/edges", {
+      method: "POST",
+      body: { source_id: "not-an-id", target_id: target },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("missing_required_field");
+
+    // The witness: with an edge type named, the malformed id is refused for itself.
+    const alone = await client.createEdge({
+      source_id: "not-an-id",
+      target_id: target,
+      edge_type: "about",
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("invalid_id");
   });
 
   it("answers a source in the bin as missing before it asks for write on the source's type", async () => {
@@ -517,5 +553,445 @@ describe("the order POST /edges asks its refusals in", () => {
     const gone = await client.createEdge(repeat);
     expect(gone.status).toBe(404);
     expect(gone.error?.error.code).toBe("item_not_found");
+  });
+
+  it("acknowledges a repeated edge id and triple after the target went to the bin", async () => {
+    const source = await note();
+    const target = await note();
+    const id = generateId();
+    await held(source, target, "about", id);
+    const repeat = {
+      id,
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+    };
+
+    // The witness: a fresh edge to the same target in the bin is refused.
+    await binned(target);
+    const fresh = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: "in-thread",
+    });
+    expect(fresh.status).toBe(404);
+    expect(fresh.error?.error.code).toBe("item_not_found");
+
+    const again = await client.createEdge(repeat);
+    expect(again.status).toBe(200);
+    expect(again.data.acknowledged).toBe(true);
+    expect(again.data.edge.id).toBe(id);
+  });
+
+  it("acknowledges a repeated edge id and triple after its edge type was force deleted", async () => {
+    const edgeType = await edgeTypeOf("repeat-deleted", {
+      cardinality: "many-to-many",
+    });
+    const source = await note();
+    const target = await note();
+    const id = generateId();
+    await held(source, target, edgeType, id);
+    expect((await client.deleteEdgeType(edgeType, true)).status).toBe(200);
+
+    // The witness: the type is gone, so a fresh edge of it is refused.
+    const fresh = await client.createEdge({
+      source_id: source,
+      target_id: await note(),
+      edge_type: edgeType,
+    });
+    expect(fresh.status).toBe(404);
+    expect(fresh.error?.error.code).toBe("edge_type_not_found");
+
+    const again = await client.createEdge({
+      id,
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+    });
+    expect(again.status).toBe(200);
+    expect(again.data.acknowledged).toBe(true);
+    expect(again.data.edge.id).toBe(id);
+  });
+
+  it("answers an unknown edge type before it refuses an id an unreadable edge holds", async () => {
+    const { reader, id, first, second } = await hiddenEdge();
+    const unknown = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: second,
+      edge_type: `mock.order-unknown.${ctx.runId}`,
+    });
+    expect(unknown.status).toBe(404);
+    expect(unknown.error?.error.code).toBe("edge_type_not_found");
+
+    // The witness: with nothing else wrong, the id is the refusal, and it names no edge.
+    const alone = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: second,
+      edge_type: "references",
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("id_reused");
+    expect(alone.error?.error.details?.differs).toBeUndefined();
+  });
+
+  it("answers a self-loop before it refuses an id an unreadable edge holds", async () => {
+    const { reader, id, first, second } = await hiddenEdge();
+    const loop = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: first,
+      edge_type: "references",
+    });
+    expect(loop.status).toBe(400);
+    expect(loop.error?.error.code).toBe("edge_cycle");
+
+    // The witness: other ends on the same id are the id's refusal.
+    const alone = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: second,
+      edge_type: "references",
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("id_reused");
+  });
+
+  it("answers a duplicate triple before it refuses an id an unreadable edge holds", async () => {
+    const { reader, id, first, second } = await hiddenEdge();
+    await held(first, second, "about");
+    const duplicate = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: second,
+      edge_type: "about",
+    });
+    expect(duplicate.status).toBe(400);
+    expect(duplicate.error?.error.code).toBe("edge_constraint_violation");
+    expect(duplicate.error?.error.details?.constraint).toBe("duplicate");
+
+    // The witness: another edge type on the same ends is the id's refusal.
+    const alone = await reader.createEdge({
+      id,
+      source_id: first,
+      target_id: second,
+      edge_type: "references",
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("id_reused");
+  });
+});
+
+describe("the order PATCH /edges/{id} asks its refusals in", () => {
+  async function moveable(label: string) {
+    return edgeTypeOf(`patch-${label}`, { cardinality: "one-to-one" });
+  }
+
+  it("answers an edge whose source's type the key cannot read as missing before it asks for write on that type", async () => {
+    const id = await held(await bookmark(), await note(), "about");
+    const edge = (await client.getEdge(id)).data.edge;
+    const blind = await keyWith({ "core.note": "write" }, { "*": "write" });
+    const missing = await blind.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version,
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.error?.error.code).toBe("edge_not_found");
+
+    // The witness: a key that reads the type is refused the write.
+    const reader = await keyWith(
+      { "core.note": "write", "core.bookmark": "read" },
+      { "*": "write" },
+    );
+    const alone = await reader.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version,
+    });
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("refuses write on the source's type before write on the edge type", async () => {
+    const id = await held(await note(), await note(), "about");
+    const edge = (await client.getEdge(id)).data.edge;
+    const neither = await keyWith({ "core.note": "read" }, { about: "read" });
+    const both = await neither.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version,
+    });
+    expect(both.status).toBe(403);
+    expect(both.error?.error.code).toBe("type_not_permitted");
+
+    // The witness: write on the type leaves the edge type's refusal alone.
+    const typeOnly = await keyWith({ "core.note": "write" }, { about: "read" });
+    const alone = await typeOnly.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version,
+    });
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error.code).toBe("edge_permission_denied");
+  });
+
+  it("refuses write on the edge type before it judges a stale version", async () => {
+    const id = await held(await note(), await note(), "about");
+    const edge = (await client.getEdge(id)).data.edge;
+    const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
+    const refused = await readOnly.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version + 1,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("edge_permission_denied");
+
+    // The witness: a key with the grant is told the version is stale.
+    const writer = await keyWith({ "core.note": "write" }, { about: "write" });
+    const alone = await writer.updateEdge(id, {
+      properties: { weight: 1 },
+      version: edge.version + 1,
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("version_conflict");
+  });
+
+  it("refuses a stale version before it judges a malformed id in a move", async () => {
+    const edgeType = await moveable("stale-malformed");
+    const id = await held(await note(), await note(), edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    for (const end of ["source_id", "target_id"] as const) {
+      const stale = await client.updateEdge(id, {
+        [end]: "not-an-id",
+        version: edge.version + 1,
+      });
+      expect(stale.status, end).toBe(409);
+      expect(stale.error?.error.code, end).toBe("version_conflict");
+
+      // The witness: at the current version the same id is refused for itself.
+      const alone = await client.updateEdge(id, {
+        [end]: "not-an-id",
+        version: edge.version,
+      });
+      expect(alone.status, end).toBe(400);
+      expect(alone.error?.error.code, end).toBe("invalid_id");
+    }
+  });
+
+  it("refuses a stale version before it finds the update names nothing", async () => {
+    const id = await held(await note(), await note(), "about");
+    const edge = (await client.getEdge(id)).data.edge;
+    const stale = await client.updateEdge(id, { version: edge.version + 1 });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+
+    // The witness: at the current version the same body names nothing.
+    const alone = await client.updateEdge(id, { version: edge.version });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("missing_required_field");
+  });
+
+  it("refuses a malformed id in a move as invalid_id on either end", async () => {
+    const edgeType = await moveable("malformed");
+    const id = await held(await note(), await note(), edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    for (const end of ["source_id", "target_id"] as const) {
+      const refused = await client.updateEdge(id, {
+        [end]: "not-an-id",
+        version: edge.version,
+      });
+      expect(refused.status, end).toBe(400);
+      expect(refused.error?.error.code, end).toBe("invalid_id");
+    }
+
+    // The witness: a well formed id for the same end moves it.
+    const moved = await client.updateEdge(id, {
+      target_id: await note(),
+      version: edge.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+  });
+
+  it("refuses a malformed id before it finds both ends moved", async () => {
+    const edgeType = await moveable("malformed-both");
+    const id = await held(await note(), await note(), edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    for (const body of [
+      { source_id: await note(), target_id: "not-an-id" },
+      { source_id: "not-an-id", target_id: await note() },
+    ]) {
+      const refused = await client.updateEdge(id, {
+        ...body,
+        version: edge.version,
+      });
+      expect(refused.status, JSON.stringify(body)).toBe(400);
+      expect(refused.error?.error.code, JSON.stringify(body)).toBe(
+        "invalid_id",
+      );
+    }
+
+    // The witness: two well formed ends are the refusal of moving both.
+    const alone = await client.updateEdge(id, {
+      source_id: await note(),
+      target_id: await note(),
+      version: edge.version,
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a move of both ends before it looks up the edge type", async () => {
+    const edgeType = await moveable("both-deleted");
+    const id = await held(await note(), await note(), edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    expect((await client.deleteEdgeType(edgeType, true)).status).toBe(200);
+    const both = await client.updateEdge(id, {
+      source_id: await note(),
+      target_id: await note(),
+      version: edge.version,
+    });
+    expect(both.status).toBe(400);
+    expect(both.error?.error.code).toBe("validation_error");
+
+    // The witness: one end of the same edge meets the missing edge type.
+    const alone = await client.updateEdge(id, {
+      target_id: await note(),
+      version: edge.version,
+    });
+    expect(alone.status).toBe(404);
+    expect(alone.error?.error.code).toBe("edge_type_not_found");
+  });
+
+  it("refuses a move the edge type cannot make before it looks for the new source", async () => {
+    const edgeType = await edgeTypeOf("patch-many-to-one", {
+      cardinality: "many-to-one",
+    });
+    const id = await held(await note(), await note(), edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    const missing = generateId();
+    const refused = await client.updateEdge(id, {
+      source_id: missing,
+      version: edge.version,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // The witness: the end the type lets move meets the same missing item.
+    const alone = await client.updateEdge(id, {
+      target_id: missing,
+      version: edge.version,
+    });
+    expect(alone.status).toBe(404);
+    expect(alone.error?.error.code).toBe("item_not_found");
+  });
+
+  it("answers a new source the key cannot read as missing before it asks for write on it", async () => {
+    const edgeType = await moveable("source-unreadable");
+    const writer = await keyWith(
+      { "core.note": "write", "core.bookmark": "read" },
+      { "*": "write" },
+    );
+    const blind = await keyWith({ "core.note": "write" }, { "*": "write" });
+    const target = await note();
+    const id = await held(await note(), target, edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    const hidden = await bookmark();
+    const missing = await blind.updateEdge(id, {
+      source_id: hidden,
+      version: edge.version,
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.error?.error.code).toBe("item_not_found");
+
+    // The witness: a key that reads the type is refused the write.
+    const alone = await writer.updateEdge(id, {
+      source_id: hidden,
+      version: edge.version,
+    });
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("refuses a new source the key cannot write before it looks for the end that stays", async () => {
+    const edgeType = await moveable("source-before-target");
+    const writer = await keyWith(
+      { "core.note": "write", "core.bookmark": "read" },
+      { "*": "write" },
+    );
+    const target = await note();
+    const id = await held(await note(), target, edgeType);
+    const edge = (await client.getEdge(id)).data.edge;
+    await binned(target);
+    const refused = await writer.updateEdge(id, {
+      source_id: await bookmark(),
+      version: edge.version,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+
+    // The witness: a new source the key may write meets the end in the bin.
+    const alone = await writer.updateEdge(id, {
+      source_id: await note(),
+      version: edge.version,
+    });
+    expect(alone.status).toBe(404);
+    expect(alone.error?.error.code).toBe("item_not_found");
+  });
+
+  it("refuses write on the new source's type before it finds a source moved onto its own target", async () => {
+    const reader = await keyWith(
+      { "core.note": "write", "core.bookmark": "read" },
+      { "*": "write" },
+    );
+    const target = await bookmark();
+    const id = await held(await note(), target, "supersedes");
+    const edge = (await client.getEdge(id)).data.edge;
+    const refused = await reader.updateEdge(id, {
+      source_id: target,
+      version: edge.version,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+
+    // The witness: a key that writes the type meets the loop.
+    const writer = await keyWith(
+      { "core.note": "write", "core.bookmark": "write" },
+      { "*": "write" },
+    );
+    const alone = await writer.updateEdge(id, {
+      source_id: target,
+      version: edge.version,
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("edge_cycle");
+  });
+});
+
+describe("the order POST /edges/bulk asks its gates and its ends in", () => {
+  it("answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can", async () => {
+    const hidden = await bookmark();
+    const visible = await note();
+    const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
+    const writer = await keyWith({ "core.note": "write" }, { about: "write" });
+
+    for (const [label, entry] of [
+      ["source", { source_id: hidden, target_id: visible, edge_type: "about" }],
+      ["target", { source_id: visible, target_id: hidden, edge_type: "about" }],
+    ] as const) {
+      const refused = await readOnly.bulkEdges({
+        atomic: false,
+        edges: [entry],
+      });
+      expect(refused.status, label).toBe(200);
+      expect(refused.data.results[0], label).toMatchObject({
+        outcome: "errored",
+        error: { code: "edge_permission_denied" },
+      });
+
+      const missing = await writer.bulkEdges({ atomic: false, edges: [entry] });
+      expect(missing.status, label).toBe(200);
+      expect(missing.data.results[0], label).toMatchObject({
+        outcome: "errored",
+        error: { code: "item_not_found" },
+      });
+    }
   });
 });

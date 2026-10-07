@@ -388,7 +388,7 @@ export interface WireEdgeType {
 
 /**
  * An edge type as the listing answers one registered through
- * `POST /edge-types` (`edges.md` 18 and 20): every endpoint taken, orphaned
+ * `POST /edge-types` (`edges/types-list` and `edges/types-written-at-listed`): every endpoint taken, orphaned
  * on delete, no properties and written at its source unless named.
  */
 export function edgeType(
@@ -942,7 +942,7 @@ export const answers = {
       { ...edge, constraint: "duplicate" },
     ),
   /** A second edge at an end its type holds one at, a second parent say
-   *  (`edges.md` 14). */
+   *  (`edges/card-target-held`). */
   edgeCardinality: (edge: { target_id: string; edge_type: string }): Answer =>
     refusal(
       400,
@@ -951,7 +951,7 @@ export const answers = {
       { ...edge, constraint: "cardinality" },
     ),
   /** An edge write refused by the edge type's half of the dual gate
-   *  (`edges.md` 21). */
+   *  (`edges/write-edge-type`). */
   edgePermissionDenied: (edgeType: string): Answer =>
     refusal(
       403,
@@ -959,7 +959,7 @@ export const answers = {
       `Missing edge.${edgeType}:write permission`,
       { edge_type: edgeType, required: "write" },
     ),
-  /** An edge update naming no properties and moving no end (`edges.md` 10). */
+  /** An edge update naming no properties and moving no end (`edges/update-empty`). */
   edgeChangesNothing: (): Answer =>
     refusal(
       400,
@@ -971,11 +971,11 @@ export const answers = {
    *  the key may not read (`keys-and-oauth.md` 20). */
   itemNotFound: (id: string): Answer =>
     refusal(404, "item_not_found", `Item ${id} not found`),
-  /** An edge end a move names that the server does not hold (`edges.md` 10). */
+  /** An edge end a move names that the server does not hold (`edges/move-end-missing`). */
   edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
   /** A move of an edge end whose type holds more than one at the end that
-   *  stays (`edges.md` 10). */
+   *  stays (`edges/move-many`). */
   edgeMoveRefused: (
     field: "source_id" | "target_id",
     message: string,
