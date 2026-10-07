@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
 import {
   approvedAppToken,
@@ -12,6 +13,7 @@ import {
   clientsFor,
   DISK_ONLY,
   ownObjectStore,
+  pastInstant,
   runJob,
   whenCopied,
 } from "../../utils/own-blob-server.js";
@@ -28,6 +30,10 @@ async function boot(label: string, settings: Record<string, string>) {
   const server = await bootFreshServer(label, settings);
   servers.push(server);
   return { server, ...clientsFor(server) };
+}
+
+function hashOf(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 afterAll(async () => {
@@ -133,6 +139,55 @@ describe("a positive grace on the orphan sweep", () => {
       expect(third.result).toEqual({ reported: 0, purged: 1 });
       expect((await operator.listBlobOrphans()).data.data).toEqual([]);
       expect((await operator.downloadBlob(hash)).status).toBe(404);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("an orphan report that holds blobs from more than one run", () => {
+  it(
+    "lists the orphan report oldest first",
+    async () => {
+      // A grace no run in this test comes near, so every run reports and
+      // none purges.
+      const { operator, working } = await boot("blob-store-orphan-order", {
+        ...DISK_ONLY,
+        MARFA_BLOB_CLEANUP_GRACE_MS: "600000",
+      });
+      // The three blobs with the highest hashes are reported first, so an
+      // order by hash alone would list the later ones ahead of them.
+      const contents = Array.from({ length: 6 }, (_, i) =>
+        bytesOf(`unreferenced blob ${String(i)}`, 100),
+      ).sort((a, b) => hashOf(a).localeCompare(hashOf(b)));
+      const later = contents.slice(0, 3);
+      const earlier = contents.slice(3);
+
+      const reportBatch = async (batch: readonly Uint8Array[]) => {
+        for (const content of batch) {
+          const upload = await working.uploadBlob(content, "text/plain");
+          expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+        }
+        return runJob(operator, "blob-orphans");
+      };
+      const first = await reportBatch(earlier);
+      await pastInstant(first.finished_at);
+      await reportBatch(later);
+
+      const report = (await operator.listBlobOrphans()).data.data;
+      expect(report.map((row) => row.hash).sort()).toEqual(
+        contents.map(hashOf).sort(),
+      );
+      // The earlier run's reports come first and keep their first time, and
+      // the times never go back.
+      expect(report.slice(0, 3).map((row) => row.hash).sort()).toEqual(
+        earlier.map(hashOf).sort(),
+      );
+      expect(report.slice(3).map((row) => row.hash).sort()).toEqual(
+        later.map(hashOf).sort(),
+      );
+      expect(report[2]!.reported_at < report[3]!.reported_at).toBe(true);
+      const times = report.map((row) => row.reported_at);
+      expect(times).toEqual([...times].sort());
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
