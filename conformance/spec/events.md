@@ -36,7 +36,7 @@ If `GET /events` names a query key the operation does not declare and that does 
 
 ### `events/stream-refusal-order`
 
-When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; a query key the operation does not declare and that does not start with an underscore, `400`; `type`, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
+When one `GET /events` request meets more than one refusal, the server MUST answer the first of these: no usable credential, `401`; a credential whose type map reaches no type, `403`; `X-Marfa-Read-View`, `400`; a query key the operation does not declare and that does not start with an underscore, `400`; `type`, `400` or `403`; `edges`, `400`; `Last-Event-ID`, `400`; and a viewer past the instance's cap, `503`.
 
 **Reason:** a caller is told of a fault it can fix before it is told to wait.
 
@@ -454,7 +454,7 @@ When a stream replays an event, the server MUST give the subscriber the frame th
 
 The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.deleted`, with `event_type` naming it and `edge` holding the edge.
 
-**Tests:** `compliance/edge-events.test.ts › SSE delivers edge.created and edge.deleted`, `compliance/events-contract.test.ts › announces edge.updated when an edge's properties change`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
+**Tests:** `compliance/edge-events.test.ts › SSE delivers edge.created and edge.deleted`, `compliance/events-contract.test.ts › announces edge.updated when an edge's properties change`, `› names the event in event_type on an item frame and on an edge frame`.
 
 ### `events/edge-source-type`
 
@@ -548,7 +548,7 @@ The server MUST withhold an edge event from a subscriber that may not read the e
 
 ### `events/edge-frame-source`
 
-The server MUST withhold an edge event from a subscriber that may not read the type of the edge's source item.
+The server MUST withhold an edge event from a subscriber that may not read the type the edge's source item had when the event was published.
 
 **Tests:** `compliance/edge-events.test.ts › withholds a live edge frame the credential could not read singly`, `› withholds the same frames on a replay from a cursor`.
 
@@ -686,21 +686,21 @@ When the server has sent `stream_incomplete`, the server MUST close the stream.
 
 ### `events/replay-failed`
 
-If the server cannot read the log's head when a stream opens, or cannot read the log while it replays, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
+If the server's read of the log's head fails when a stream opens, a read of the log fails while the stream replays, or the read of the stream's credential before a page of the replay fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
 
 **Tests:** waiting on #1444.
 
 ### `events/live-delivery-failed`
 
-If the server cannot read a stream's credential again, at a heartbeat or before it delivers a batch of live or replayed frames, or cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
+If the read of a stream's credential at a heartbeat or before a batch of live frames fails, or the server cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
 
 **Tests:** waiting on #1444.
 
 ### `events/backlog-overflow`
 
-If 500 live frames are published while a stream is still replaying and one of them is a row the server cannot read, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
+If more than 500 live frames a stream would send are waiting before it sends `stream_live`, and either no replay is reading or one of them is a row the replay cannot read from the log, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
 
-**Reason:** the unreadable row's live copy was the one carrier the event had.
+**Reason:** the frames a stream holds while it opens are bounded. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
 
 **Tests:** waiting on #1444.
 
@@ -918,9 +918,9 @@ When the key that registered a subscription passes its `expires_at`, the server 
 
 ### `events/webhook-grant-revoked`
 
-When the grant of an app that registered a subscription is revoked, the server MUST delete the subscription and deliver nothing more to it.
+When the grant of an app that registered a subscription is revoked, the server MUST delete the subscription.
 
-**Reason:** an app's subscriptions belong to its grant.
+**Reason:** an app's subscriptions belong to its grant, and `events/cancel-deleted` then sends none of the subscription's pending deliveries.
 
 **Tests:** `compliance/webhook-owner-standing.test.ts › deletes an app's subscriptions when its grant is revoked`.
 
@@ -1011,6 +1011,14 @@ The server MUST deliver an item event only where the subscription's credential m
 The server MUST NOT deliver an edge event to a subscription whose credential may not read the edge's kind.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the edge's kind`.
+
+### `events/delivery-reach-edge-source`
+
+The server MUST NOT deliver an edge event to a subscription whose credential may not read the type the edge's source item had when the event was published.
+
+**Reason:** the stream holds the same rule, `events/edge-frame-source`, and a later retype of the source changes nothing about who may be told of the event.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the type its source had when the event was published`.
 
 ### `events/delivery-reach-namespaces`
 
@@ -1248,7 +1256,7 @@ When two redeliveries of one delivery arrive together, the server MUST accept on
 
 ### `events/redeliver-fresh-cycle`
 
-When a delivery is redelivered, the server MUST give it a fresh cycle of eight attempts before it is `dead_letter` again.
+When a receiver answers every attempt of a redelivered delivery with a retryable failure, the server MUST make eight attempts after the redelivery before it records the delivery `dead_letter` again.
 
 **Tests:** `compliance/webhook-history.test.ts › starts a fresh cycle of attempts on redelivery`.
 
@@ -1292,7 +1300,7 @@ When a delivery is redelivered, the server MUST keep measuring its retention fro
 
 ### `events/history-deleted`
 
-When a delivery that is not `pending` is older than the effective audit retention, measured from its original `created_at`, the server MUST delete its history.
+When the `audit-cleanup` job runs, the server MUST remove from `GET /webhooks/{id}/deliveries` each delivery that is not `pending` and is older than the effective audit retention, measured from its original `created_at`.
 
 **Tests:** `compliance/webhook-history.test.ts › deletes a delivery's history past the audit retention`.
 
@@ -1376,7 +1384,7 @@ When a credential's write commits, other than a connector's heartbeat, run repor
 
 ### `events/audit-server-writes`
 
-When the server makes a write of its own, with no credential behind it, the server MUST record its audit entry with `key_id` `null`.
+When the server records an audit entry for a write of its own, with no credential behind it, the server MUST give the entry `key_id` `null`.
 
 **Tests:** `compliance/audit-server-writes.test.ts › records the server's own writes with no key`.
 
