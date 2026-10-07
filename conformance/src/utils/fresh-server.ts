@@ -61,8 +61,9 @@ export interface FreshServer {
    * `operatorKey` is read afresh and `workingKey` is minted again when the
    * operator key changed.
    *
-   * Takes the callback alone, or `{ signal, whileStopped }` to stop the
-   * server with a signal other than `SIGTERM`. Resolves with how the stopped
+   * Takes the callback alone, or `{ signal, whileStopped, env }` to stop the
+   * server with a signal other than `SIGTERM` or to boot it again under
+   * another setting. Resolves with how the stopped
    * server ended. For a state the doors refuse to produce, which a fixture
    * arranges in the stored file and the next boot reads.
    */
@@ -80,6 +81,10 @@ export type StopSignal = "SIGTERM" | "SIGINT" | "SIGKILL";
 export interface RestartOptions {
   signal?: StopSignal;
   whileStopped?: () => void | Promise<void>;
+  /** Environment for this boot alone, over what the server was first booted
+   *  with: a data directory started again under another setting. The boot
+   *  after this one is back to the first. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -334,11 +339,11 @@ export async function bootFreshServer(
 ): Promise<FreshServer> {
   const tsx = tsxBinary();
   const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
-  const run = (command: "up" | "down") =>
+  const run = (command: "up" | "down", more: Record<string, string> = {}) =>
     runScript(
       tsx,
       [SERVER_SCRIPT, command, "--state", state],
-      serverEnv(extraEnv),
+      serverEnv({ ...extraEnv, ...more }),
     );
 
   const booting = run("up");
@@ -430,7 +435,7 @@ export async function bootFreshServer(
       }
       const ended = readExit(state, signaledAt, killed);
       await options.whileStopped?.();
-      const again = await run("up");
+      const again = await run("up", options.env);
       if (again.status !== 0) {
         throw new Error(
           `could not boot the server again into ${state}:\n${again.output}`,
