@@ -100,7 +100,7 @@ function renameTable(from: string, to: string): void {
 }
 
 /** The statuses of every component other than `except`. */
-function othersOf(answer: Answer, except: string): string[] {
+function othersOf(answer: Pick<Answer, "body">, except: string): string[] {
   return COMPONENTS.filter((name) => name !== except).map(
     (name) => answer.body.components[name]?.status ?? "missing",
   );
@@ -354,5 +354,82 @@ describe("the error text of GET /health", () => {
     } finally {
       renameTable("settings_away", "settings");
     }
+  }, 120_000);
+});
+
+describe("GET /health while the write outlasts its two seconds", () => {
+  /** Above the two seconds a probe is given, so the write is still waiting
+   *  on the lock, and not refused, when the probe stops waiting. */
+  const BUSY_BUDGET_MS = 20_000;
+  const PROBE_BUDGET_MS = 2_000;
+  let patient: FreshServer;
+
+  beforeAll(async () => {
+    patient = await bootFreshServer("health-patient", {
+      SQLITE_BUSY_BUDGET_MS: String(BUSY_BUDGET_MS),
+    });
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  async function ask(): Promise<Answer & { elapsedMs: number }> {
+    const started = Date.now();
+    const response = await fetch(`${patient.apiUrl}/health`, {
+      headers: { Authorization: `Bearer ${patient.operatorKey}` },
+    });
+    return {
+      httpStatus: response.status,
+      body: (await response.json()) as Health,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  it("answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released", async () => {
+    // The witness: with no lock the write commits and the answer is quick.
+    const before = await ask();
+    expect(before.httpStatus).toBe(200);
+    expect(before.body.components.database_write?.status).toBe("ok");
+    expect(before.elapsedMs).toBeLessThan(PROBE_BUDGET_MS);
+
+    const lock = await HeldLock.take(patient.sqlitePath);
+    let silent: Awaited<ReturnType<typeof ask>>;
+    try {
+      // The write that answered above is reused for ten seconds, so the
+      // first call that is not `ok` is the one that attempts a write.
+      const deadline = Date.now() + POLL_BUDGET_MS;
+      silent = await ask();
+      while (silent.body.status === "ok") {
+        if (Date.now() > deadline) {
+          throw new Error("the write probe never met the held lock");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        silent = await ask();
+      }
+    } finally {
+      await lock.release();
+    }
+
+    expect(silent.httpStatus).toBe(200);
+    expect(silent.body.status).toBe("degraded");
+    expect(silent.body.components.database_write?.status).toBe("degraded");
+    expect(othersOf(silent, "database_write")).toEqual(["ok", "ok", "ok"]);
+    // A silence and not a refusal: the answer came when the probe's own
+    // budget ran out, long before the write's busy budget would have
+    // refused it with `write_contention`.
+    expect(silent.elapsedMs).toBeGreaterThanOrEqual(PROBE_BUDGET_MS);
+    expect(silent.elapsedMs).toBeLessThan(BUSY_BUDGET_MS);
+    expect(silent.body.components.database_write?.error).toMatch(
+      /no write committed within 2000ms/,
+    );
+
+    // The write that was waiting lands once the lock is gone.
+    const deadline = Date.now() + POLL_BUDGET_MS;
+    let after = await ask();
+    while (after.body.status !== "ok") {
+      if (Date.now() > deadline) {
+        throw new Error(`/health never recovered: ${JSON.stringify(after)}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      after = await ask();
+    }
+    expect(after.httpStatus).toBe(200);
   }, 120_000);
 });
