@@ -318,7 +318,7 @@ function fansOutFor(input: BulkActionInput): boolean {
   return input.enable_fanout ?? false;
 }
 
-function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
+export function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
   if (err instanceof MarfaError) {
     return {
       id,

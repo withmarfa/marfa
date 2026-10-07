@@ -548,18 +548,21 @@ function withExtraBranch(
 
 /**
  * Responses that answer with an error status without passing through the
- * error handler, so `X-Error-Code` is never set on them.
+ * error handler, so `X-Error-Code` is never set on them: registration's
+ * `401` and `415`, which the sign-in library answers in its own shape.
+ * Its `400` stays declared, because a query key on it is the server's own
+ * refusal.
  *
- * Empty, and worth keeping empty rather than deleting: it is the seam where
- * a response that answers 4xx without throwing gets declared honestly
- * instead of silently claiming a header it does not send. Three responses
- * return rather than throw today and each stamps the header itself, on the
- * code the response actually carries, so the declaration is true of them:
- * the item conflict envelope on `patch /items/{id}`, the edge conflict
- * envelope, and the conflict a conditional natural-key upsert answers on
- * `post /items`.
+ * Three responses return rather than throw and each stamps the header
+ * itself, on the code the response actually carries, so the declaration is
+ * true of them: the item conflict envelope on `patch /items/{id}`, the edge
+ * conflict envelope, and the conflict a conditional natural-key upsert
+ * answers on `post /items`.
  */
-const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
+const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([
+  "post /auth/oauth2/register 401",
+  "post /auth/oauth2/register 415",
+]);
 
 /**
  * Statuses an idempotency claim releases rather than records.

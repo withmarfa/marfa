@@ -74,19 +74,19 @@ The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oa
 
 ### `errors/request-id-echo`
 
-When a request to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+When a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
 
-**Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`.
+**Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`, `› answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
 ### `errors/request-id-replaced`
 
-If a request to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
+If a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
 
 **Tests:** `compliance/refusal-headers.test.ts › is one of the server's own, not the caller's, when the caller sent more than 128 characters or one outside letters, digits, underscore and hyphen`.
 
 ### `errors/request-id-fresh`
 
-When a request to a path outside `/auth/` and `/.well-known/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
+When a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
 
 **Tests:** `compliance/refusal-headers.test.ts › is a different one of the server's own for each request that sent none`.
 
@@ -164,7 +164,7 @@ When `POST /auth/oauth2/register` sends, as JSON, a registration the server acce
 
 ### `errors/register-415-headers`
 
-When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer, although the OpenAPI document declares it there.
+When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
 
 **Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries the header.
 
@@ -572,7 +572,7 @@ When the server sends error tracking the exception of an unhandled fault in whic
 
 ### `errors/report-stream-warning`
 
-When an event stream logs a warning because a database statement failed while it read the head of the log, a catch-up or the credential, the server MUST carry in the warning the failed statement and no value of the credential's.
+When an event stream logs a warning because a database statement failed while it read the head of the log, a catch-up or the credential, the server MUST carry in the warning the failed statement, with a placeholder where each value was bound, and no value taken from the credential.
 
 **Tests:** `compliance/fault-reports.test.ts › names the failed statement and no value of the credential's, for the head of the log, a catch-up and the credential`.
 
