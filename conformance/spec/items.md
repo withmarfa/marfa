@@ -1034,13 +1034,13 @@ When `POST /items/{id}/purge` names an item in the bin, the server MUST delete i
 
 When the server purges an item, the server MUST announce `item.purged` with the item as it stood, its cascade marks included.
 
-**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/cascade-marks.test.ts › names the row whose trash took it on the purge of a row a cascade trashed`.
+**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/cascade-marks.test.ts › names the row whose trash took it on the purge of a row a cascade trashed`, `compliance/cascade-marks.test.ts › names the row whose trash took it on each row a bulk purge purges, only to a key that may read its type`.
 
 ### `items/purge-edges`
 
 When a purge deletes an item, the server MUST delete its edges and announce each `edge.deleted` with `purged_with` naming the item.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`, `sync/deletions.test.ts › announces an edge removed by cascade, not only one removed by its own route`, `compliance/cascade-marks.test.ts › names the purged original on the edge.deleted of the link to its conflicted copy`.
+**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`, `sync/deletions.test.ts › announces an edge removed by cascade, not only one removed by its own route`, `compliance/cascade-marks.test.ts › names the purged original on the edge.deleted of the link to its conflicted copy`, `compliance/cascade-marks.test.ts › names the purged item on each edge a bulk purge took`.
 
 ### `items/purge-gone`
 

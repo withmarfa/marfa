@@ -16,7 +16,7 @@ When a credential that reads at least one type sends `GET /events`, the server M
 
 If `GET /events` carries no credential, or a bearer value no credential holds, then the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/events-contract.test.ts › answers 401 to a request with no usable credential, ahead of every fault in the request`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
+**Tests:** `compliance/events-contract.test.ts › answers 401 to a request with no usable credential, ahead of every fault in the request`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/events-contract.test.ts › refuses a subscription with no credential`.
 
 ### `events/stream-reads-no-type`
 
@@ -876,7 +876,7 @@ If a credential without `webhooks.manage` sends a request to a webhook operation
 
 If a request to a webhook operation carries no credential, then the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
+**Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/webhooks.test.ts › refuses every door without a credential`.
 
 ### `events/webhook-any-reach`
 
