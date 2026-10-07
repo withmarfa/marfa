@@ -1350,6 +1350,27 @@ export function occurrenceRoutes(
       }
     }
 
+    // A stored exception names its series and the slot it replaced whether
+    // or not this window holds that slot, so an exception shown at its own
+    // time carries both even where the expansion above never reached it.
+    // Only a series the scan read is named: an edge can point at a row this
+    // credential may not read.
+    const exceptionSlots = new Map<
+      string,
+      { series_id: string; replaces: string }
+    >();
+    for (const [seriesId, exceptions] of exceptionsBySeries) {
+      if (!seenSeries.has(seriesId)) continue;
+      for (const exception of exceptions) {
+        const slot = Date.parse(exception.original_starts_at);
+        if (Number.isNaN(slot)) continue;
+        exceptionSlots.set(exception.id, {
+          series_id: seriesId,
+          replaces: new Date(slot).toISOString(),
+        });
+      }
+    }
+
     const shownStandalone = new Set<string>();
     for (const seed of windowSeeds) {
       if (shownStandalone.has(seed.id)) continue;
@@ -1377,6 +1398,7 @@ export function occurrenceRoutes(
             ? toInstantString(seed.ends_at, seed.ends_at)
             : undefined,
         item_id: seed.id,
+        ...exceptionSlots.get(seed.id),
       });
     }
 

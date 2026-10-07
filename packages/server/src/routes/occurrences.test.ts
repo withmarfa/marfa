@@ -358,6 +358,132 @@ describe("GET /occurrences", () => {
     expect(moved[0]?.starts_at).toBe("2026-12-04T09:00:00.000Z");
   });
 
+  it("names the series and the slot a moved occurrence left, in a window that holds only its new time", async () => {
+    const seriesId = await createEvent({
+      title: "Moved far, named",
+      starts_at: "2028-03-06T10:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    const movedId = await createEvent({
+      title: "Moved far, named (moved)",
+      starts_at: "2028-05-10T10:00:00.000Z",
+      original_starts_at: "2028-03-13T10:00:00.000Z",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    // The window holds the new time and neither the slot it left nor any
+    // other slot of the series, so nothing here was expanded.
+    const { rows } = await occurrences(
+      "2028-05-09T00:00:00Z",
+      "2028-05-11T00:00:00Z",
+    );
+    expect(rows.filter((r) => r.series_id === seriesId)).toHaveLength(1);
+    const moved = rows.filter((r) => r.item.id === movedId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.starts_at).toBe("2028-05-10T10:00:00.000Z");
+    expect(moved[0]?.series_id).toBe(seriesId);
+    expect(moved[0]?.replaces).toBe("2028-03-13T10:00:00.000Z");
+  });
+
+  it("names the series and the slot a moved occurrence left in the normal form, whatever offset the stored slot was written in", async () => {
+    const seriesId = await createEvent({
+      title: "Moved far, zoned",
+      starts_at: "2028-03-06T10:00:00+01:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    const movedId = await createEvent({
+      title: "Moved far, zoned (moved)",
+      starts_at: "2028-06-14T10:00:00+02:00",
+      original_starts_at: "2028-03-13T10:00:00+01:00",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const { rows } = await occurrences(
+      "2028-06-13T00:00:00Z",
+      "2028-06-15T00:00:00Z",
+    );
+    const moved = rows.filter((r) => r.item.id === movedId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.series_id).toBe(seriesId);
+    expect(moved[0]?.replaces).toBe("2028-03-13T09:00:00.000Z");
+  });
+
+  it("names the series and the slot a moved occurrence left in a window that holds both times", async () => {
+    const seriesId = await createEvent({
+      title: "Moved near, named",
+      starts_at: "2028-08-07T10:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    const movedId = await createEvent({
+      title: "Moved near, named (moved)",
+      starts_at: "2028-08-16T10:00:00.000Z",
+      original_starts_at: "2028-08-14T10:00:00.000Z",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const { rows } = await occurrences(
+      "2028-08-01T00:00:00Z",
+      "2028-08-27T00:00:00Z",
+    );
+    const moved = rows.filter((r) => r.item.id === movedId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.starts_at).toBe("2028-08-16T10:00:00.000Z");
+    expect(moved[0]?.series_id).toBe(seriesId);
+    expect(moved[0]?.replaces).toBe("2028-08-14T10:00:00.000Z");
+    // The slot it left is not shown, and the other Mondays are.
+    expect(
+      rows.filter(
+        (r) =>
+          r.series_id === seriesId &&
+          r.starts_at === "2028-08-14T10:00:00.000Z",
+      ),
+    ).toHaveLength(0);
+    expect(
+      rows.filter((r) => r.series_id === seriesId && r.item.id === seriesId),
+    ).toHaveLength(2);
+  });
+
+  it("names no series for an exception whose parent-of edge is missing", async () => {
+    const strayId = await createEvent({
+      title: "Stray exception",
+      starts_at: "2028-09-05T10:00:00.000Z",
+      original_starts_at: "2028-09-04T10:00:00.000Z",
+    });
+    const { rows } = await occurrences(
+      "2028-09-05T00:00:00Z",
+      "2028-09-06T00:00:00Z",
+    );
+    const stray = rows.filter((r) => r.item.id === strayId);
+    expect(stray).toHaveLength(1);
+    expect(stray[0]?.series_id).toBeUndefined();
+    expect(stray[0]?.replaces).toBeUndefined();
+  });
+
   it("counts a series' contribution against the window, not its history", async () => {
     // A daily meeting running since 2021 contributes seven rows to a
     // seven-day window; its age alone must not fail the read.
