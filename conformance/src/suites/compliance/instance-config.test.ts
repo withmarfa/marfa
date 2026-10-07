@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { declareOversizeBody } from "../../utils/oversize.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -502,25 +503,26 @@ describe("GET /config and PUT /config", () => {
     });
 
     try {
-      // The witness: half the default cap is taken.
-      await put(client, lever(512 * 1024));
+      // The largest body the default cap takes: one byte under what is
+      // refused below.
+      const cap = 1_048_576;
+      const padding = cap - JSON.stringify(lever(0)).length;
+      const atCap = lever(padding);
+      expect(JSON.stringify(atCap).length).toBe(cap);
+      await put(client, atCap);
       await put(client, { audit_retention_days: 31 });
 
-      // Over its own connection: the server answers before it has read the
-      // body and drops the connection, which a pooled one would carry into
-      // the next request as a stale socket.
-      const refused = await fetch(`${server!.apiUrl}/config`, {
+      const refused = await declareOversizeBody(`${server!.apiUrl}/config`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${server!.workingKey}`,
           "content-type": "application/json",
-          connection: "close",
         },
-        body: JSON.stringify(lever(1_048_576)),
+        bytes: cap + 1,
       });
       expect(refused.status).toBe(413);
       expect(
-        ((await refused.json()) as { error: { code: string } }).error.code,
+        (JSON.parse(refused.body) as { error: { code: string } }).error.code,
       ).toBe("request_too_large");
       expect(await read(client)).toEqual(held);
     } finally {

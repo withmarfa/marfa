@@ -13,6 +13,7 @@ import {
 import { coverageRows } from "../../utils/coverage-table.js";
 import { readTarGzEntry } from "../../utils/archive.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { declareOversizeBody } from "../../utils/oversize.js";
 
 /** The shape `generateId` mints, which is what the identity is. */
 const UUID_V7 =
@@ -430,17 +431,10 @@ describe("the instance", () => {
 
     const stream = await fetch(`${apiUrl}/events`, { headers: auth });
     await stream.body?.cancel();
-    const tooLarge = await fetch(`${apiUrl}/items`, {
+    const tooLarge = await declareOversizeBody(`${apiUrl}/items`, {
       method: "POST",
-      // Its own connection: the server answers before it has read the body
-      // and drops the connection, which a pooled one would carry into the
-      // next request as a stale socket.
-      headers: {
-        ...auth,
-        "content-type": "application/json",
-        connection: "close",
-      },
-      body: JSON.stringify({ padding: "x".repeat(1_048_576) }),
+      headers: { ...auth, "content-type": "application/json" },
+      bytes: 1_048_577,
     });
     const answers: [string, number, Response][] = [
       ["a page", 200, await fetch(`${apiUrl}/`, { headers: asBrowser })],
@@ -455,7 +449,6 @@ describe("the instance", () => {
         await fetch(`${apiUrl}/auth/get-session`),
       ],
       ["an event stream", 200, stream],
-      ["a body past the cap", 413, tooLarge],
       [
         "a HEAD at the root",
         200,
@@ -480,6 +473,10 @@ describe("the instance", () => {
       expect(response.status, label).toBe(status);
       expect(response.headers.get("X-Marfa-Contract"), label).toBe(contract);
     }
+    expect(tooLarge.status, "a body past the cap").toBe(413);
+    expect(tooLarge.headers["x-marfa-contract"], "a body past the cap").toBe(
+      contract,
+    );
   });
 
   it("names itself the same way at the root, at /config and in an archive", async () => {
