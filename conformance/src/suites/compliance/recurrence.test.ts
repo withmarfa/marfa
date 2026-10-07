@@ -1128,6 +1128,51 @@ describe("what a write may store", () => {
   });
 });
 
+describe("a series with more occurrences in the window than it may unfold", () => {
+  const MAY_UNFOLD = 2000;
+
+  it("says expansion_incomplete when a series has more occurrences in the window than it may unfold", async () => {
+    const read = async (from: string, to: string) => {
+      const r = await client.listOccurrences({ from, to });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data as unknown as {
+        data: Row[];
+        expansion_incomplete?: boolean;
+        series_errors?: { item_id: string }[];
+        scan: { series_unexpanded: number };
+      };
+    };
+
+    // The witness: a series with exactly as many as it may unfold is
+    // unfolded whole and drawn no error.
+    const atLimit = await event({
+      starts_at: "2049-03-01T00:00:00.000Z",
+      recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(MAY_UNFOLD)}`],
+    });
+    const whole = await read("2049-03-01T00:00:00Z", "2049-03-04T00:00:00Z");
+    expect(whole.data.filter((o) => o.series_id === atLimit)).toHaveLength(
+      MAY_UNFOLD,
+    );
+    expect(
+      (whole.series_errors ?? []).filter((e) => e.item_id === atLimit),
+    ).toEqual([]);
+
+    // One more is left out whole, named, counted, and the answer says it
+    // is short of it.
+    const pastLimit = await event({
+      starts_at: "2049-01-01T00:00:00.000Z",
+      recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(MAY_UNFOLD + 1)}`],
+    });
+    const cut = await read("2049-01-01T00:00:00Z", "2049-01-04T00:00:00Z");
+    expect(cut.data.filter((o) => o.series_id === pastLimit)).toEqual([]);
+    expect(
+      (cut.series_errors ?? []).filter((e) => e.item_id === pastLimit),
+    ).toHaveLength(1);
+    expect(cut.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
+    expect(cut.expansion_incomplete).toBe(true);
+  });
+});
+
 describe("a rule too costly to unfold", () => {
   it("is stopped inside its walk and named, and the rest of the window answers", async () => {
     // Writable, because it repeats at once; its age is what makes it too
