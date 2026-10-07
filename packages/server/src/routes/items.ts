@@ -927,11 +927,12 @@ const updateItemRoute = createRoute({
           schema: makeErrorResponseSchema([
             "item_not_found",
             "edge_type_not_found",
+            "edge_not_found",
           ]),
         },
       },
       description:
-        "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.",
+        "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.",
     },
     409: {
       content: {
@@ -1020,10 +1021,10 @@ const deleteItemRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["item_not_found"]),
+          schema: makeErrorResponseSchema(["item_not_found", "edge_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND_ON_WRITE,
+      description: `${ITEM_NOT_FOUND_ON_WRITE}\n- \`edge_not_found\`: a repeat under the \`Idempotency-Key\` would show an edge you can no longer read.`,
     },
     409: {
       content: {

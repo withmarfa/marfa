@@ -1431,6 +1431,43 @@
         ],
         "description": "An error response."
       },
+      "EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_not_found",
+                  "edge_type_not_found",
+                  "item_not_found"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "ItemStaleVersion": {
         "type": "object",
         "properties": {
@@ -1535,6 +1572,42 @@
                   "edge_constraint_violation",
                   "invalid_id",
                   "validation_error"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "EdgeNotFoundOrItemNotFoundRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_not_found",
+                  "item_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -2360,43 +2433,6 @@
                 "type": "string",
                 "enum": [
                   "edge_not_found"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
-      "EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_not_found",
-                  "edge_type_not_found",
-                  "item_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -8806,11 +8842,11 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.",
+            "description": "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgeTypeNotFoundOrItemNotFoundRefusal"
+                  "$ref": "#/components/schemas/EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"
                 }
               }
             },
@@ -9215,11 +9251,11 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`.",
+            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ItemNotFoundRefusal"
+                  "$ref": "#/components/schemas/EdgeNotFoundOrItemNotFoundRefusal"
                 }
               }
             },
@@ -10014,11 +10050,11 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ItemNotFoundRefusal"
+                  "$ref": "#/components/schemas/EdgeNotFoundOrItemNotFoundRefusal"
                 }
               }
             },
