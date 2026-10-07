@@ -262,7 +262,7 @@ describe("the driver's reason beneath a failed query", () => {
     ["a CJK word", "東京", "select * from t where t match ?", FTS],
     ["a Cyrillic word", "Привет", "select * from t where t match ?", FTS],
     ["an accented word", "naïve", "select * from t where t match ?", FTS],
-    ["a two-character word", "ab", "select * from t where t match ?", FTS],
+    ["a two-character word", "qz", "select * from t where t match ?", FTS],
     [
       "a CJK word in a JSON path",
       "名前",
