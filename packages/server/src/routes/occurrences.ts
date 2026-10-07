@@ -97,7 +97,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   MarfaError,
   ErrorCode,
-  matchesTypeFilter,
+  resolveEnforcement,
   typeMatchesPattern,
 } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
@@ -118,6 +118,7 @@ import {
   RecurrenceExpansionStopped,
 } from "../events/expand-recurrence.js";
 import { instantColumnValues } from "../storage/instant-columns.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -415,8 +416,8 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-/** Types whose items this route reads: those declaring the event shape. */
-const EVENT_TYPES = ["core.event"] as const;
+/** The type whose items this route reads: the one declaring the event shape. */
+const EVENT_TYPE = "core.event";
 
 /** Rows read so far by one request, summed across its passes. Reported
  *  on the response rather than compared against anything: what the read
@@ -427,6 +428,13 @@ interface ScanBudget {
 
 /** The storage-side narrowing one pass applies on top of type and state. */
 type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
+
+/** What every pass reads: the event type, narrowed by the credential and the
+ *  instance's source filter as `GET /items` narrows a listing. */
+type EventScanScope = Pick<
+  ItemFilters,
+  "type" | "allowed_types" | "excluded_types" | "source_filter"
+>;
 
 /**
  * What the window pass keeps from a row.
@@ -456,37 +464,35 @@ interface WindowSeed {
  */
 async function scanEvents<T>(
   storage: Storage,
-  types: readonly string[],
+  scope: EventScanScope,
   budget: ScanBudget,
   narrowing: EventScanNarrowing,
   project: (item: Item) => T | undefined,
 ): Promise<T[]> {
   const kept: T[] = [];
-  for (const type of types) {
-    let cursor: string | undefined;
-    do {
-      const page = await storage.items.list({
-        type,
-        state: "active",
-        limit: EVENT_PAGE_SIZE,
-        ...narrowing,
-        ...(cursor !== undefined ? { cursor } : {}),
-      });
-      budget.scanned += page.data.length;
-      for (const item of page.data) {
-        const projected = project(item);
-        if (projected !== undefined) kept.push(projected);
-      }
-      cursor = page.next_cursor ?? undefined;
-      // Between pages for the same reason the expansion yields between
-      // batches. On a driver that answers over a socket the await above
-      // already returns the loop; on an embedded one it does not, and a
-      // walk of tens of thousands of rows is then a single stretch of
-      // synchronous reads and JSON parsing with every other request on
-      // the process behind it.
-      if (cursor !== undefined) await yieldToEventLoop();
-    } while (cursor !== undefined);
-  }
+  let cursor: string | undefined;
+  do {
+    const page = await storage.items.list({
+      ...scope,
+      state: "active",
+      limit: EVENT_PAGE_SIZE,
+      ...narrowing,
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    budget.scanned += page.data.length;
+    for (const item of page.data) {
+      const projected = project(item);
+      if (projected !== undefined) kept.push(projected);
+    }
+    cursor = page.next_cursor ?? undefined;
+    // Between pages for the same reason the expansion yields between
+    // batches. On a driver that answers over a socket the await above
+    // already returns the loop; on an embedded one it does not, and a
+    // walk of tens of thousands of rows is then a single stretch of
+    // synchronous reads and JSON parsing with every other request on
+    // the process behind it.
+    if (cursor !== undefined) await yieldToEventLoop();
+  } while (cursor !== undefined);
   return kept;
 }
 
@@ -645,11 +651,11 @@ function overlapsWindow(
  */
 export async function gatherSeriesSeeds(
   storage: Storage,
-  types: readonly string[],
+  type: string,
 ): Promise<RecurrenceSeries[]> {
   const scanned = await scanEvents(
     storage,
-    types,
+    { type },
     { scanned: 0 },
     { hasProperty: "recurrence" },
     projectSeries,
@@ -1050,21 +1056,10 @@ export function occurrenceRoutes(
     // `assertTypeFilter`.
     assertTypeFilter(c, query.type);
 
-    // The caller's own type permissions still decide what is readable;
-    // this route narrows to event types on top of that rather than
-    // instead of it.
-    // `getTypeFilter` returns the credential's permission patterns and the
-    // exclusions that carve into them, not concrete type ids, so the
-    // narrowing goes through the same predicate the SSE stream uses rather
-    // than a membership test.
-    const typeFilter = getTypeFilter(c);
-    const named = query.type;
-    const wanted = (
-      named !== undefined
-        ? EVENT_TYPES.filter((t) => typeMatchesPattern(t, named))
-        : EVENT_TYPES
-    ).filter((t) => matchesTypeFilter(t, typeFilter));
-    if (wanted.length === 0) {
+    if (
+      query.type !== undefined &&
+      !typeMatchesPattern(EVENT_TYPE, query.type)
+    ) {
       // Every count here is scoped to what this request read, and it
       // read nothing, so the zeros are true rather than a claim about
       // the rest. `scan.series_errors` says the same on every other
@@ -1094,13 +1089,24 @@ export function occurrenceRoutes(
     // projection of a row and never the row: see the note at the top of
     // this file for why that is what makes an unbounded scan safe.
     const budget: ScanBudget = { scanned: 0 };
+    const typeFilter = getTypeFilter(c);
+    const enforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
+    const scope: EventScanScope = {
+      type: EVENT_TYPE,
+      allowed_types: typeFilter.allowed,
+      excluded_types: typeFilter.excluded,
+      source_filter: enforcement.source_filter,
+    };
 
     // Series. Unwindowed by necessity — a rule written years ago
     // produces occurrences in any window, so the window says nothing
     // about which rules matter.
     const seriesScan = await scanEvents(
       storage,
-      wanted,
+      scope,
       budget,
       { hasProperty: "recurrence" },
       projectSeries,
@@ -1112,7 +1118,7 @@ export function occurrenceRoutes(
     // a ghost back on the calendar at a slot nobody is at.
     const exceptionSeeds = await scanEvents(
       storage,
-      wanted,
+      scope,
       budget,
       { hasProperty: "original_starts_at" },
       projectException,
@@ -1123,7 +1129,7 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      wanted,
+      scope,
       budget,
       { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
       projectWindow,
