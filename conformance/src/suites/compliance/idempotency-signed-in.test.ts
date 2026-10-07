@@ -203,7 +203,11 @@ describe("a signed-in app's idempotency key", () => {
       apiKey: tokens.access_token,
     }).rawRequest<{ item: { id: string } }>("/items", {
       method: "POST",
-      body: { type: "core.note", properties: { body: "for a job" }, tags: [tag] },
+      body: {
+        type: "core.note",
+        properties: { body: "for a job" },
+        tags: [tag],
+      },
     });
     expect(note.status, JSON.stringify(note.error)).toBe(201);
     const queued = await new MarfaClient({
