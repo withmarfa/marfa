@@ -1632,6 +1632,47 @@ describe("POST /items/lookup", () => {
     expect(malformed.error?.error.code).toBe("invalid_id");
   });
 
+  it("leaves out a system row that holds a natural key a lookup names", async () => {
+    // No door writes a `system.*` row with a natural key, so an archive
+    // restored by the operator plants one: the one way a lookup by natural
+    // key can meet a row of that namespace.
+    const folderKey = v("nk-system-folder");
+    const noteKey = v("nk-system-note");
+    const folderId = uuidv7();
+    const restored = await getOperatorClient().restoreArchive(
+      itemsArchive([
+        {
+          id: folderId,
+          type: "system.folder",
+          source: ctx.source,
+          source_id: folderKey,
+          properties: { title: v("nk-system-folder") },
+        },
+      ]),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.imported).toBe(1);
+    trackFolder(ctx, folderId);
+    const note = await row(
+      { body: "beside it" },
+      { type: "core.note", source_id: noteKey },
+    );
+
+    // The witness: the item doors read the row under the key the lookup names.
+    const read = await client.getItem(folderId);
+    expect(read.status).toBe(200);
+    expect(read.data.item.type).toBe("system.folder");
+    expect(read.data.item.source_id).toBe(folderKey);
+
+    const found = await client.lookupItems({
+      type: linked,
+      source: ctx.source,
+      source_ids: [folderKey, noteKey],
+    });
+    expect(found.status, JSON.stringify(found.error)).toBe(200);
+    expect(found.data.data.map((i) => i.id)).toEqual([note.id]);
+  });
+
   it("hydrates edges on a lookup as the listing does", async () => {
     const value = v("edges");
     const from = await row({ vendor_id: value });
