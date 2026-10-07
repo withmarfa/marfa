@@ -709,6 +709,77 @@ describe("the window", () => {
     ).not.toContain(hour);
   });
 
+  it("carries series_id and replaces on a moved occurrence in a window that holds only its new time", async () => {
+    const series = await event({
+      starts_at: "2047-03-04T10:00:00.000Z",
+      ends_at: "2047-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const moved = await event({
+      starts_at: "2047-05-14T10:00:00.000Z",
+      ends_at: "2047-05-14T11:00:00.000Z",
+      original_starts_at: "2047-03-11T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+
+    // The witness: the series is live, and a window holding the slot it
+    // left shows nothing there.
+    const first = await window("2047-03-04T00:00:00Z", "2047-03-05T00:00:00Z");
+    expect(first.filter((o) => o.series_id === series)).toHaveLength(1);
+    const slot = await window("2047-03-11T00:00:00Z", "2047-03-12T00:00:00Z");
+    expect(slot.filter((o) => o.series_id === series)).toEqual([]);
+
+    // The window holds the new time and no slot of the series.
+    const rows = await window("2047-05-13T00:00:00Z", "2047-05-15T00:00:00Z");
+    expect(rows.filter((o) => o.series_id === series)).toHaveLength(1);
+    const shown = rows.filter((o) => o.item.id === moved);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2047-05-14T10:00:00.000Z");
+    expect(shown[0]?.series_id).toBe(series);
+    expect(shown[0]?.replaces).toBe("2047-03-11T10:00:00.000Z");
+  });
+
+  it("carries series_id and replaces on a moved occurrence in a window that holds both times", async () => {
+    const series = await event({
+      starts_at: "2048-08-03T10:00:00.000Z",
+      ends_at: "2048-08-03T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"],
+    });
+    const moved = await event({
+      starts_at: "2048-08-12T10:00:00.000Z",
+      ends_at: "2048-08-12T11:00:00.000Z",
+      original_starts_at: "2048-08-10T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+
+    const rows = await window("2048-08-01T00:00:00Z", "2048-08-25T00:00:00Z");
+    const shown = rows.filter((o) => o.item.id === moved);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2048-08-12T10:00:00.000Z");
+    expect(shown[0]?.series_id).toBe(series);
+    expect(shown[0]?.replaces).toBe("2048-08-10T10:00:00.000Z");
+    // The slot it left shows nothing, and the series still shows its others.
+    expect(
+      rows
+        .filter((o) => o.series_id === series && o.item.id === series)
+        .map((o) => o.starts_at),
+    ).toEqual([
+      "2048-08-03T10:00:00.000Z",
+      "2048-08-17T10:00:00.000Z",
+      "2048-08-24T10:00:00.000Z",
+    ]);
+  });
+
   it("refuses a window longer than 400 days, and one holding more than 5000 occurrences", async () => {
     const long = await client.listOccurrences({
       from: "2043-01-01T00:00:00Z",
