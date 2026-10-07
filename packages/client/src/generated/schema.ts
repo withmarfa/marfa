@@ -13283,7 +13283,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `name` is missing.
-             *     - `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.
+             *     - `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -13973,7 +13973,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.
-             *     - `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, or `summary` or `error` is over 2,000 characters.
+             *     - `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, `summary` or `error` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -14263,7 +14263,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
-            /** @description - `validation_error`: `label` isn't 1 to 200 characters, or `duplicate_header` isn't a valid header name. */
+            /** @description - `validation_error`: `label` isn't 1 to 200 characters, `duplicate_header` isn't a valid header name, or the body has a top-level field this endpoint doesn't take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14874,7 +14874,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `ids` or `outcome` is missing.
-             *     - `validation_error`: `ids` is empty or has more than 200 IDs, or `outcome` isn't `processed`, `duplicate` or `rejected`.
+             *     - `validation_error`: `ids` is empty or has more than 200 IDs, `outcome` isn't `processed`, `duplicate` or `rejected`, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {

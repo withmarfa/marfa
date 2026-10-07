@@ -1934,3 +1934,89 @@ describe("inbound retention ordering", () => {
     ).toBe("rejected");
   });
 });
+
+describe("a body field the operation does not declare", () => {
+  let ctx: TestContext;
+  beforeAll(async () => {
+    ctx = await context();
+  });
+
+  const unknownFields = async (res: Response): Promise<unknown> => {
+    const body = (await res.json()) as {
+      error: { code: string; details?: { unknown_body_fields?: unknown } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    return body.error.details?.unknown_body_fields;
+  };
+
+  it("refuses an endpoint that carries one, and makes none", async () => {
+    const connector = await register(ctx);
+    const path = `/connectors/${connector.id}/endpoints`;
+    const refused = await request(ctx.app, "POST", path, {
+      key: connector.key,
+      body: { lable: "misspelled" },
+    });
+    expect(refused.status).toBe(400);
+    expect(await unknownFields(refused)).toEqual(["lable"]);
+    const listed = (await (
+      await request(ctx.app, "GET", path, { key: connector.key })
+    ).json()) as { data: Endpoint[] };
+    expect(listed.data).toEqual([]);
+
+    const made = await request(ctx.app, "POST", path, {
+      key: ctx.operatorKey,
+      body: { label: "kept", _client: "ignored" },
+    });
+    expect(made.status).toBe(201);
+  });
+
+  it("refuses a handled mark that carries one, and marks nothing", async () => {
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const { id } = (await (await post(ctx, made.path, "once")).json()) as {
+      id: string;
+    };
+    const path = `/connectors/${connector.id}/deliveries/handled`;
+    const refused = await request(ctx.app, "POST", path, {
+      key: connector.key,
+      body: { ids: [id], outcome: "processed", outcom: "misspelled" },
+    });
+    expect(refused.status).toBe(400);
+    expect(await unknownFields(refused)).toEqual(["outcom"]);
+    expect((await deliveries(ctx, connector)).data[0]?.handled_at).toBeNull();
+
+    const marked = await request(ctx.app, "POST", path, {
+      key: connector.key,
+      body: { ids: [id], outcome: "processed" },
+    });
+    expect(marked.status).toBe(200);
+  });
+
+  it("answers a key that is not the connector's, and an id nothing carries, before it names the field", async () => {
+    const connector = await register(ctx);
+    const other = await mintWorkingKey(ctx);
+    const missing = "00000000-0000-7000-8000-000000000000";
+    for (const [suffix, body] of [
+      ["endpoints", { lable: "x" }],
+      [
+        "deliveries/handled",
+        { ids: [missing], outcome: "processed", outcom: "x" },
+      ],
+    ] as const) {
+      const asOther = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${connector.id}/${suffix}`,
+        { key: other, body },
+      );
+      expect(asOther.status, suffix).toBe(403);
+      const unknown = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${missing}/${suffix}`,
+        { key: connector.key, body },
+      );
+      expect(unknown.status, suffix).toBe(404);
+    }
+  });
+});
