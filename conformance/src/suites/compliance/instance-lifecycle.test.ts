@@ -184,53 +184,59 @@ describe("stopping the instance on SIGTERM or SIGINT leaves its writes in the da
   it(
     "leaves the writes in the log while another connection holds a snapshot, and the next start answers every one of them",
     async () => {
-      const before = await writeNotes(
-        server,
-        "lifecycle-stop",
-        10,
-        "before the snapshot",
-      );
-      const reader = await HeldReader.take(server.sqlitePath);
-      let after: string[];
-      let stopped: ServerExit;
-      let logAfterStop = -1;
-      let inFileAlone = new Set<string>();
-      try {
-        // Written after the reader's snapshot began, so the log cannot be
-        // moved past them while the reader holds it.
-        after = await writeNotes(
+      for (const signal of ["SIGTERM", "SIGINT"] as const) {
+        const before = await writeNotes(
           server,
           "lifecycle-stop",
           10,
-          "after the snapshot",
+          `before the snapshot, ${signal}`,
         );
-        stopped = await server.restart({
-          whileStopped: () => {
-            logAfterStop = logBytes(server.sqlitePath);
-            inFileAlone = itemIdsInFileAlone(server.sqlitePath);
-          },
+        const reader = await HeldReader.take(server.sqlitePath);
+        let after: string[];
+        let stopped: ServerExit;
+        let logAfterStop = -1;
+        let inFileAlone = new Set<string>();
+        try {
+          // Written after the reader's snapshot began, so the log cannot be
+          // moved past them while the reader holds it.
+          after = await writeNotes(
+            server,
+            "lifecycle-stop",
+            10,
+            `after the snapshot, ${signal}`,
+          );
+          stopped = await server.restart({
+            signal,
+            whileStopped: () => {
+              logAfterStop = logBytes(server.sqlitePath);
+              inFileAlone = itemIdsInFileAlone(server.sqlitePath);
+            },
+          });
+        } finally {
+          await reader.release();
+        }
+
+        // The witness that the log was kept: it holds bytes, and the file
+        // alone lacks writes the log holds.
+        expect(logAfterStop, signal).toBeGreaterThan(0);
+        expect(
+          after.some((id) => !inFileAlone.has(id)),
+          signal,
+        ).toBe(true);
+        expect(stopped.code, signal).toBe(0);
+
+        // Applied by the start that followed, with the reader gone.
+        const client = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
         });
-      } finally {
-        await reader.release();
-      }
-
-      // The witness that the log was kept: it holds bytes, and the file
-      // alone lacks writes the log holds.
-      expect(logAfterStop).toBeGreaterThan(0);
-      expect(after.some((id) => !inFileAlone.has(id))).toBe(true);
-      expect(stopped.code).toBe(0);
-
-      // Applied by the start that followed, with the reader gone.
-      const client = new MarfaClient({
-        baseUrl: server.apiUrl,
-        apiKey: server.workingKey,
-      });
-      for (const id of [...before, ...after]) {
-        const item = await client.getItem(id);
-        expect(item.status, id).toBe(200);
+        for (const id of [...before, ...after]) {
+          const item = await client.getItem(id);
+          expect(item.status, `${signal} ${id}`).toBe(200);
+        }
       }
     },
-    FRESH_SERVER_TIMEOUT_MS,
+    2 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 
