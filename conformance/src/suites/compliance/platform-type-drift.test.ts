@@ -6,6 +6,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * A drifted platform type is one the instance holds as a platform row and the
@@ -90,6 +91,12 @@ describe("a drifted platform type", () => {
     const removed = await operator.deletePlatformType(REMOVABLE);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data).toEqual({ removed: true, id: REMOVABLE });
+    await expectMatchesSchema(
+      "DELETE",
+      "/platform-types/{id}",
+      200,
+      removed.data,
+    );
 
     const gone = await working.getType(REMOVABLE);
     expect(gone.status).toBe(404);
