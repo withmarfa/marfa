@@ -70,7 +70,7 @@ const GENERAL_SECTIONS = [
   "## Event stream",
   "`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.",
   "## Every response",
-  "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.",
+  "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response outside `/auth/` and `/.well-known/`, and every response to `POST /auth/oauth2/register`, also carries `X-Request-ID`, which identifies the request if you report a problem.",
 ].join("\n\n");
 
 /**
