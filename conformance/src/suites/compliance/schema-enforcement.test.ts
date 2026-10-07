@@ -1126,6 +1126,58 @@ describe("source_filter lever", () => {
       await setConfig(originalConfig);
     }
   });
+
+  it("answers a row the instance's source filter leaves out of listings, as a read by key", async () => {
+    const hiddenSource = `${ctx.source}-lookup-hidden`;
+    const hidden = await clientWithSource("lookup-hidden", hiddenSource);
+    const sourceId = `lookup-filtered-${ctx.runId}`;
+    const tag = `lookup-filtered-${ctx.runId}`;
+    const created = await hidden.createItem({
+      type: "core.note",
+      source_id: sourceId,
+      properties: { body: `by key ${ctx.runId}` },
+      tags: [tag],
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    const id = created.data.item.id;
+    const found = async (input: Record<string, unknown>): Promise<string[]> => {
+      const r = await client.lookupItems({
+        type: "core.note",
+        ...input,
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data.data.map((i) => i.id);
+    };
+    const listed = async (): Promise<string[]> => {
+      const r = await client.listItems({ type: "core.note", tags: [tag] });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data.data.map((i) => i.id);
+    };
+
+    try {
+      await setConfig({});
+      // The witness: the row is listed before the filter, so its absence
+      // from the listing below is the filter's doing.
+      expect(await listed()).toEqual([id]);
+
+      await setConfig({
+        enforcement: {
+          source_filter: {
+            types: ["core.note"],
+            sources: [`${ctx.source}-nothing-matches-this`],
+          },
+        },
+      });
+      expect(await listed()).toEqual([]);
+      expect(await found({ ids: [id] })).toEqual([id]);
+      expect(
+        await found({ source: hiddenSource, source_ids: [sourceId] }),
+      ).toEqual([id]);
+    } finally {
+      await setConfig(originalConfig);
+    }
+  });
 });
 
 describe("a key's own levers", () => {
