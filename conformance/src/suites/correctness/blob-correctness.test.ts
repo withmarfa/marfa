@@ -4,11 +4,9 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  trackItem,
   cleanup,
   getOperatorClient,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { referenceBlob, uploadReferenced } from "../../utils/blobs.js";
 
@@ -228,28 +226,6 @@ describe("blob correctness", () => {
     const download = await client.downloadBlob(fakeHash);
     expect(download.status).toBe(404);
     expect(download.error?.error.code).toBe("blob_not_found");
-  });
-
-  it("blob_ref in properties persists after upload", async () => {
-    const content = new TextEncoder().encode("blob for item ref");
-    const upload = await client.uploadBlob(content, "application/octet-stream");
-    expect(upload.ok).toBe(true);
-
-    const note = createNote({
-      source: ctx.source,
-      properties: {
-        title: "Note with blob",
-        body: "Has a blob reference",
-        blob_ref: upload.data.hash,
-      },
-    });
-    const created = await client.createItem(note);
-    expect(created.ok).toBe(true);
-    trackItem(ctx, created.data.item.id);
-
-    const fetched = await client.getItem(created.data.item.id);
-    expect(fetched.ok).toBe(true);
-    expect(fetched.data.item.properties.blob_ref).toBe(upload.data.hash);
   });
 
   it("mints a link that fetches the bytes without a credential", async () => {

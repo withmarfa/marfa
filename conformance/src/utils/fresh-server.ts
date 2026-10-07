@@ -302,6 +302,7 @@ export interface DevicePoll {
   body: {
     error?: string;
     access_token?: string;
+    refresh_token?: string;
     token_type?: string;
     scope?: string;
   };
@@ -482,7 +483,7 @@ export async function startDeviceFlow(
 export async function approvedApp(
   server: FreshServer,
   scopes?: readonly string[],
-): Promise<{ token: string; clientId: string }> {
+): Promise<{ token: string; clientId: string; refreshToken?: string }> {
   const flow = await startDeviceFlow(server, scopes);
   await flow.approve();
   // The code's first poll, so no polling interval applies to it yet.
@@ -490,7 +491,38 @@ export async function approvedApp(
   if (answer.body.access_token === undefined) {
     throw new Error("the approved device flow answered no access token");
   }
-  return { token: answer.body.access_token, clientId: flow.clientId };
+  return {
+    token: answer.body.access_token,
+    clientId: flow.clientId,
+    refreshToken: answer.body.refresh_token,
+  };
+}
+
+/**
+ * The access token an app's refresh token is exchanged for: a new token
+ * under the same grant. The app must have asked for `offline_access`.
+ */
+export async function refreshedAppToken(
+  server: FreshServer,
+  clientId: string,
+  refreshToken: string,
+): Promise<string> {
+  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: clientId,
+    }),
+  });
+  const body = (await response.json()) as DevicePoll["body"];
+  if (response.status !== 200 || body.access_token === undefined) {
+    throw new Error(
+      `the refresh was refused: ${String(response.status)} ${JSON.stringify(body)}`,
+    );
+  }
+  return body.access_token;
 }
 
 /** The access token of `approvedApp`, for a fixture that needs no client id. */

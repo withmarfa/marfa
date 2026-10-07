@@ -14,9 +14,9 @@ import { tarGz } from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 /**
- * `blobs.md` 31 and 32: a file item's `size_bytes` is the stored length of
- * the bytes its `blob_ref` names where that reference lends, whatever the
- * write said, and absent where it does not.
+ * `blobs/file-size-set` and `blobs/file-size-none`: a file item's `size_bytes`
+ * is the stored length of the bytes its `blob_ref` names where that reference
+ * lends, whatever the write said, and absent where it does not.
  */
 
 let client: MarfaClient;

@@ -7,10 +7,10 @@ import type {
 import { trackItem } from "./setup.js";
 
 /**
- * Uploads bytes and writes a note whose body links them, so the uploading
- * key may read them back: a blob is read through an item that references it
- * (`blobs.md` 15, 16). A note rather than a file, so no enrichment is asked
- * to read the bytes.
+ * Uploads bytes and writes a note whose body links them, so the uploading key
+ * may read them back: a blob is read through an item that references it
+ * (`blobs/lend-item`, `blobs/read-unreferenced`). A note rather than a file, so
+ * no enrichment is asked to read the bytes.
  */
 export async function uploadReferenced(
   client: MarfaClient,

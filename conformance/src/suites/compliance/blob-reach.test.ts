@@ -1175,6 +1175,142 @@ describe("which write that names a digest lends it", () => {
     });
   });
 
+  it("keeps each digest on a keep-both copy as it stood on the item", async () => {
+    const lending = await upload("a keep-both copy keeps this lending");
+    const planted = await upload("a keep-both copy keeps this dead");
+    const bare = await keyHolding({ "core.note": "write" });
+    const reader = await keyHolding({ "core.note": "read" });
+    const note = await noteSaying("the note a stale write forks");
+    const titled = await client.updateItem(note.id, {
+      properties: { title: lending },
+      version: note.version,
+    });
+    succeeded(titled);
+    const named = await bare.client.updateItem(note.id, {
+      properties: { body: bodyNaming(planted) },
+      version: titled.data.item.version,
+    });
+    succeeded(named);
+    const base = named.data.item.version;
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(reader.client, planted)).toEqual(UNKNOWN);
+
+    // The winner drops the planted digest; the stale write that collides
+    // with it echoes the planted digest, and both land on the copy.
+    succeeded(
+      await client.updateItem(note.id, {
+        properties: { body: "the winner" },
+        version: base,
+      }),
+    );
+    const forked = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${note.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: `the loser ${bodyNaming(planted)}` },
+        version: base,
+      },
+    });
+    succeeded(forked);
+    const copyId = forked.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    succeeded(copy);
+    const held = JSON.stringify(copy.data.item.properties);
+    expect(held).toContain(lending.slice("sha256:".length));
+    expect(held).toContain(planted.slice("sha256:".length));
+
+    // With the item rewritten without either digest, only the copy names them.
+    const current = await client.getItem(note.id);
+    succeeded(current);
+    succeeded(
+      await client.updateItem(note.id, {
+        properties: { title: "plain" },
+        version: current.data.item.version,
+      }),
+    );
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(client, planted)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(planted)).status).toBe(200);
+  });
+
+  it("keeps each digest on a retyped item as it stood before the retype", async () => {
+    const lending = await upload("a retype keeps this lending");
+    const planted = await upload("a retype keeps this dead");
+    const bare = await keyHolding({ "core.note": "write" });
+    const reader = await keyHolding({
+      "core.note": "read",
+      "core.bookmark": "read",
+    });
+    const note = await noteSaying("a note about to be retyped");
+    const titled = await client.updateItem(note.id, {
+      properties: { title: lending },
+      version: note.version,
+    });
+    succeeded(titled);
+    const named = await bare.client.updateItem(note.id, {
+      properties: { body: bodyNaming(planted) },
+      version: titled.data.item.version,
+    });
+    succeeded(named);
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(reader.client, planted)).toEqual(UNKNOWN);
+
+    // The key that sent both sets of bytes retypes the item, naming both.
+    succeeded(
+      await client.rawRequest(`/items/${note.id}`, {
+        method: "PATCH",
+        body: {
+          type: "core.bookmark",
+          retype: true,
+          properties: {
+            url: "https://example.com/retyped-as-it-stood",
+            title: lending,
+            notes: bodyNaming(planted),
+          },
+          properties_mode: "replace",
+          version: named.data.item.version,
+        },
+      }),
+    );
+    const retyped = await client.getItem(note.id);
+    succeeded(retyped);
+    expect(retyped.data.item.type).toBe("core.bookmark");
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(client, planted)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(planted)).status).toBe(200);
+  });
+
+  it("keeps a lending digest lending through later writes by a key that never sent the bytes", async () => {
+    const hash = await upload("lends whatever later writes keep it");
+    const bare = await keyHolding({ "core.note": "write" });
+    const reader = await keyHolding({ "core.note": "read" });
+    const note = await noteSaying(bodyNaming(hash));
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    const edited = await bare.client.updateItem(note.id, {
+      properties: { title: "edited beside it" },
+      version: note.version,
+    });
+    succeeded(edited);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    // A whole rewrite that moves the digest to another property keeps it.
+    succeeded(
+      await bare.client.rawRequest(`/items/${note.id}`, {
+        method: "PATCH",
+        body: {
+          properties: { title: hash, body: "rewritten" },
+          properties_mode: "replace",
+          version: edited.data.item.version,
+        },
+      }),
+    );
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+  });
+
   it("lends a digest named by a bulk create only when its writer sent the bytes", async () => {
     await expectDoorCredits(async (writer) => async (hash) => {
       const res = await writer.bulkItems([

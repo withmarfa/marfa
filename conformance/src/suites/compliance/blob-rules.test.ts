@@ -213,11 +213,11 @@ describe("the rules that keep a blob's bytes", () => {
   });
 
   it("answers a dead store link with the store's own status, not the instance's", async () => {
-    // `blobs.md` 13 names the status a dead link gets, and there are two
-    // signers to name: the instance, which answers its own refusal, and
-    // the object store once it holds the blob, whose link the instance
-    // never sees fetched. This is the store's half, taken here because
-    // this is the file that provably holds a store-signed link — in
+    // A dead link gets its signer's status, and there are two signers: the
+    // instance (`blobs/link-instance-altered`) and the object store once it
+    // holds the blob (`blobs/link-store-altered`), whose link the instance
+    // never sees fetched. This is the store's half, taken here because this
+    // file provably holds a store-signed link. In
     // `correctness/blob-correctness.test.ts` the replication scheduler
     // decides which signer answered, within a second of the upload, so
     // which status that case measures is a race.

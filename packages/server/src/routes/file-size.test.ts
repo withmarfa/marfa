@@ -513,7 +513,7 @@ describe("a file item names no size its writer could not read", () => {
     });
     expect(res.status).toBe(201);
     // Uploading afterwards changes nothing the reference already settled
-    // (`blobs.md` 15): it still lends nothing.
+    // (`blobs/proof-dead-stays`): it still lends nothing.
     const later = await patch(ctx.workingKey, early, {
       properties: { title: "after the upload" },
     });

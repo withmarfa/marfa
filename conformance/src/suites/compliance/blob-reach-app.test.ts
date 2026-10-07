@@ -8,6 +8,7 @@ import { MarfaClient } from "../../client/api.js";
 import {
   approvedApp,
   bootFreshServer,
+  refreshedAppToken,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
@@ -104,5 +105,70 @@ describe("a signed-in app and an extension namespace", () => {
     );
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("type_not_permitted");
+  });
+});
+
+describe("a signed-in app's uploads", () => {
+  let writing: FreshServer;
+
+  beforeAll(async () => {
+    // An instance approves one owner's apps, and the app above may not
+    // write, so the app that uploads gets a server of its own.
+    writing = await bootFreshServer("blob-reach-app-refresh");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await writing?.stop();
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  it("are credited to its grant, so a digest it names after a refresh lends", async () => {
+    const approved = await approvedApp(writing, [
+      "core.note:read",
+      "core.note:write",
+      "offline_access",
+    ]);
+    expect(approved.refreshToken, "no refresh token was issued").toBeTruthy();
+    const before = new MarfaClient({
+      baseUrl: writing.apiUrl,
+      apiKey: approved.token,
+    });
+    const owner = new MarfaClient({
+      baseUrl: writing.apiUrl,
+      apiKey: writing.workingKey,
+    });
+    const sent = await before.uploadBlob(
+      new TextEncoder().encode("uploaded under the token a refresh replaces"),
+      "text/plain",
+    );
+    expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+    const notSent = await owner.uploadBlob(
+      new TextEncoder().encode("uploaded by the owner, never by the app"),
+      "text/plain",
+    );
+    expect(notSent.status, JSON.stringify(notSent.error)).toBe(201);
+
+    const after = new MarfaClient({
+      baseUrl: writing.apiUrl,
+      apiKey: await refreshedAppToken(
+        writing,
+        approved.clientId,
+        String(approved.refreshToken),
+      ),
+    });
+    const sentNote = await after.createItem({
+      type: "core.note",
+      properties: { body: `![sent](${sent.data.hash})` },
+    });
+    expect(sentNote.ok, JSON.stringify(sentNote.error)).toBe(true);
+    const notSentNote = await after.createItem({
+      type: "core.note",
+      properties: { body: `![not sent](${notSent.data.hash})` },
+    });
+    expect(notSentNote.ok, JSON.stringify(notSentNote.error)).toBe(true);
+
+    expect((await owner.downloadBlob(sent.data.hash)).status).toBe(200);
+    expect((await after.downloadBlob(sent.data.hash)).status).toBe(200);
+    // The witness: a digest the app never sent does not lend from its note.
+    expect((await owner.downloadBlob(notSent.data.hash)).status).toBe(404);
   });
 });

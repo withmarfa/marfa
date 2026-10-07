@@ -457,7 +457,8 @@ describe("an archive's blobs", () => {
     const bytes = Buffer.from("the file's exact contents, and not a stand-in");
     const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
     // Through the doors, so the key exporting both sent the bytes and named
-    // them, which is what lets the archive carry them (`blobs.md` 21).
+    // them, which is what lets the archive carry them
+    // (`blobs/export-carries-served`).
     const uploaded = await source.app.request("/blobs", {
       method: "POST",
       headers: {

@@ -1,58 +1,755 @@
 # Blobs
 
-Content-addressed binary storage beside the items that reference it. Where the bytes live, and the rules that keep them, are `stores.md`'s.
+Content-addressed binary storage beside the items that reference it. A blob is bytes stored under the digest of their content, and an item references one by naming that digest. Where the bytes live, and the rules that keep them, are `stores.md`'s.
 
-1. `POST /blobs` takes the raw bytes as the body with their `Content-Type`, and answers `201` with `hash` (`sha256:` plus 64 hex characters of the content's digest), `mime_type` as sent, or as 24 says when the bytes were already held, and `size_bytes`. `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`.
-2. An upload has no size cap: the body streams to disk as it arrives, and a body many times the JSON write surface's cap is stored whole, hashed over every byte, and read back at its full length. `correctness/blob-correctness.test.ts › stores a body far larger than the JSON cap, whole`.
-3. Uploading the same bytes again answers the same hash without error. `correctness/blob-correctness.test.ts › duplicate upload returns same hash without error`.
-4. The raw body is the only form: a `multipart/form-data` body answers `400 validation_error`, and the same bytes sent raw are stored. `correctness/blob-correctness.test.ts › refuses a multipart body and takes the same bytes raw`.
-5. `GET /blobs/{hash}` returns the bytes unchanged with the content type they were uploaded under (24), as a download (25), `Content-Length`, `Accept-Ranges: bytes` and an `ETag` of the hash. `correctness/blob-correctness.test.ts › download returns byte-for-byte identical content`, `› content-type is preserved on download`.
-6. One `Range` of the form `bytes=<first>-<last>` or `bytes=<first>-` answers `206` with `Content-Range: bytes <first>-<last>/<size>` and those bytes; a range starting past the end answers `416 range_not_satisfiable` with `Content-Range: bytes */<size>`. `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`.
-7. `HEAD /blobs/{hash}` answers the headers a download would carry: the content type, the length, the `ETag` and `Accept-Ranges`. `correctness/blob-correctness.test.ts › answers HEAD with the headers of the bytes`.
-8. An unknown hash answers `404 blob_not_found`. `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`.
-9. A hash outside the `sha256:<64 hex>` form answers `400 validation_error`, and so does an empty upload. `correctness/blob-correctness.test.ts › refuses a malformed hash and an empty upload`.
-10. A blob's hash is stored on an item as a property value (`blob_ref` on file types) and survives a read. `correctness/blob-correctness.test.ts › blob_ref in properties persists after upload`.
-11. `GET /blobs/{hash}/url` answers on every instance with `url` and `expires_in`: a URL that fetches the bytes with no credential, honoring a `Range` the same way, and the seconds until it stops working. `ttl` asks for a lifetime. `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`.
-12. A lifetime is capped at seven days, and `expires_in` reports the cap rather than the request. `correctness/blob-correctness.test.ts › caps a link's lifetime at seven days`.
-13. A link past its lifetime, or with its signature altered, answers a status outside 2xx and none of the bytes; the same link fetched them while it lived. The status is the signer's own, and the two signers answer differently: the instance answers `401` to both faults, and an object store holding the blob answers `403` to a signature that does not verify. A caller reading the status alone therefore learns which signer refused it, not which fault the link had. `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered` (whichever signer the run's replication left holding it), `compliance/blob-rules.test.ts › answers a dead store link with the store's own status, not the instance's`.
-14. The link door answers `404 blob_not_found` for an unknown hash and `400 validation_error` for a malformed one. `correctness/blob-correctness.test.ts › answers 404 for a link to an unknown hash and 400 for a malformed one`.
-15. **Reading a blob takes read on a row that references it.** `GET` and `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations` answer a working key or a signed-in app only for a blob that a row the credential may read references with a reference that lends, where a reference is the blob's digest anywhere in a string as `stores.md` 10 counts one, and the rows are the three 16 names. An item of a type the credential may read, in any lifecycle state, lends through its properties. A reference either lends or does not, and which is fixed when the digest enters the item: it lends when the credential whose write sent it had proved it holds the bytes, by having uploaded them or being able to read the blob at that moment, which is as good as downloading and uploading them again. Otherwise it does not lend, and that includes every write made for no credential, such as the enrichment sweep writing extracted text. No later write changes it while the item keeps naming the digest, whoever makes it and whatever it holds, so a key that may read every blob does not vouch for a hash someone else put there by editing beside it or rewriting the whole item. The one repair, for any reference that does not lend, a restored one included, is to remove the digest from the item and write it again later with the proof. An edge's properties and an extension namespace are held to the same rule (27 to 30). A write made against an earlier version, as a device sends an edit it made offline, is credited only for digests that version did not already hold: one its base held was put there by whoever wrote it, and may since have been removed, so sending it back is not sending it, whether the write lands on the item or in a keep-both copy. A digest new to the base, such as an image added on that device, lends on the proof as any other. A keep-both copy and a retype keep each reference as it stood. Folder settings are a `system.folder`'s properties and count like any other: a credential whose only write is `system.folder` cannot upload (18), so a digest in its folder's settings lends only where it could read the blob as it wrote. Any other blob answers `404 blob_not_found` with the message an unknown hash gets, so the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth.md` 20). `compliance/blob-reach.test.ts › answers a blob only an item of a type the key may not read references as an unknown one`, `› serves a blob to a key that may read an item referencing it, in any lifecycle state`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through a digest written by a key that could read the blob`, `› keeps a planted digest dead when a key holding every blob edits the note`, `› keeps a planted digest dead through an export, a purge and a restore`, `› credits a stale write only for digests its base version lacked`, `compliance/enrichment-reach.test.ts › keeps a digest the sweep wrote dead after a full key rewrites the file`; the doors that write properties each credit the proof (`packages/server/src/routes/blob-reach.test.ts › a door that writes an item's properties credits its caller's proof`).
-16. **Three kinds of row grant the read, and nothing else does.** An item's properties (15), an edge's properties (27) and a metadata extension (28) lend the read of a blob they reference. An earlier version of an item does not: a blob referenced only by one is kept by the `blob-orphans` job (`stores.md` 10) and answers `404 blob_not_found` on the doors in 15. So does a blob nothing references, to every working credential, the one that uploaded it included, until a row that lends names it: an upload's answer carries the hash, the type and the size, and the uploader holds the bytes. `compliance/blob-reach.test.ts › answers a blob nothing references as an unknown one, to the key that uploaded it too`, `› does not serve a blob through an earlier version`.
-17. A credential whose type map reaches no type is refused every door in 15 with `403 type_not_permitted` before the hash is looked up, as the item doors refuse it. `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`.
-18. `POST /blobs` takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a grant on a pattern no registered type falls under writes nothing. A credential without one is refused `403 type_not_permitted` and nothing is stored. `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses an upload to a key that may write no registered type, and takes one from a key that writes one`.
-19. A signed-in app is held to 15 to 18 by the type scopes its grant carries, and its uploads are credited to its grant rather than to the token, which a refresh replaces. The operator key, which holds no type permission, reads every blob and uploads. `compliance/blob-reach.test.ts › serves the operator key every blob and takes its uploads`; a signed-in app needs a sign-in the referee's server is not set up to approve, so `packages/server/src/routes/blob-reach.test.ts › holds a signed-in app to its granted type scopes` covers it.
-20. A link is checked when it is minted, not when it is fetched: the link from 11 serves the bytes for its lifetime, at most seven days (12), after the credential that minted it is revoked. `compliance/blob-reach.test.ts › keeps a minted link working after the key that minted it is revoked`.
-21. `GET /export?format=archive` carries a blob's bytes, and names the blob in its manifest, only where the doors in 15 would serve them to the credential exporting: a digest in a reference that does not lend, in an edge or an extension namespace the credential may not read, or only in an earlier version carries none. `compliance/blob-reach.test.ts › carries in an export archive only the bytes the blob doors would serve`, `› carries the bytes an edge and an extension lend, and restores the same answers`.
-22. An export archive carries each digest's standing. Each item line's `lending_blobs` lists the digests in that row's properties that lend its reach (15), and its `lending_extensions` lists, for each extension namespace the line carries, the digests in that namespace that lend (28). Each edge line's `lending_blobs` lists the digests in that edge's properties that lend (27). Every other digest the line names restores as one that does not lend, and a line without these lists lends nothing, by the same rule. `POST /restore` restores each reference exactly so, and a restored reference that does not lend is repaired as any other is, by removing the digest and writing it again with the proof. Every build before this rule wrote no `lending_blobs`, and a database such a build wrote is refused at open because it lacks the reference index, so its blobs come across only through an archive, whose restore into another build `search-and-filters.md` 27 leaves outside the contract, and once restored lend nothing until each row is repaired. `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› keeps a planted digest dead through an export, a purge and a restore`, `› carries the bytes an edge and an extension lend, and restores the same answers`.
-23. The enrichment sweep reads a file's bytes only where the file's own `blob_ref` reference lends (15), so a file naming a hash its writer never proved it holds gains no `extracted_text`, dimensions or duration from those bytes. `compliance/enrichment-reach.test.ts › extracts only from bytes the file's own reference lends`.
-24. **The upload that first stores a blob fixes its type.** A later upload of the same bytes under another `Content-Type` answers `201` with the type recorded first, not the one it sent, and every door and either link (`stores.md` 6) serves that type. `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`.
-25. **A blob's bytes are a download, whatever their type.** The type is the uploader's word, so an HTML or SVG blob shown inline would run as a page of whichever origin served it. Every answer carrying a blob's bytes carries `Content-Disposition: attachment; filename="<hex>"`, the hash's 64 hex characters and nothing an uploader chose. The instance's own answers, `GET` and `HEAD /blobs/{hash}` and the link the instance serves, also carry `Content-Security-Policy: sandbox; default-src 'none'` and `X-Content-Type-Options: nosniff`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. An object store's own link carries the type and the disposition, signed into the link, but a signed link cannot carry the policy or `nosniff`: it is safe because it is served from the store's origin rather than the instance's, so a bucket must be on a different site from the instance (`deploy/README.md`). No type is shown inline, images included: an image embedded in a page is drawn whatever the disposition says, and one rule for every type leaves none to get wrong. `compliance/blob-served.test.ts › serves an HTML blob as a sandboxed download on every instance door`, `› answers a second upload under another type with the type the first fixed, on every link`.
-26. **Bytes an upload was just told are stored are never the ones the orphan sweep deletes.** An upload of a blob the orphan report names (`stores.md` 9) answers `201` and takes it off `GET /blobs/orphans`, and so does a write that adds or removes a reference to it (`stores.md` 10), including enqueueing a property-update job whose patch names it, so the run that would have purged it reports it afresh and keeps it, and it is purged only once the grace has passed since a report made after the last such upload or write with nothing naming it. The purge decides in one transaction that the report still stands past the grace and that nothing references the blob, so an upload of the same bytes or a write naming them that lands before the purge decides keeps them, and it removes the blob's row before its bytes, so a purge cut short leaves no row naming bytes that are gone and the next run finishes it. `compliance/blob-rules.test.ts › lifts the report on an upload of the same bytes, so the next run keeps them`, `› lifts the report on a reference added and removed between runs`; a write landing inside a run cannot be timed over the wire, so `packages/server/src/housekeeping/blob-orphans.test.ts › a blob sent or named again while the sweep runs` and `› a purge cut short between the row and the bytes` cover the rest, and `packages/server/src/routes/restore-archive.test.ts › keeps bytes it found already stored when a purge is due for them` covers an archive restore.
-27. **An edge lends the read of the blobs its properties reference to a credential that may read the edge.** When a working key or a signed-in app holds read on an edge's type by its edge map and read on the type of the edge's source item, in any lifecycle state (`edges/read-list-withheld` and `edges/read-source-trashed`), the server MUST serve it, on the doors in 15, each blob that the edge's properties reference with a reference that lends (29). When the credential lacks either read, or the edge has been removed, the edge MUST lend it nothing, so a blob no other row lends it answers `404 blob_not_found` as an unknown hash does. Reason: otherwise no working credential can read a blob named only in an edge's properties, and a working key's export archive leaves its bytes out (21). `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`; `packages/server/src/routes/blob-reach-edges-extensions.test.ts › serves a credential through a trashed source, and stops when the source is purged` covers a trashed and a purged source.
-28. **An extension lends the read of the blobs it references to a credential that may read its namespace.** When a working key or a signed-in app may read an extension namespace by its extension map, which includes the namespace its own label names (`keys-and-oauth.md` 21), and holds read on the item's type, in any lifecycle state, the server MUST serve it, on the doors in 15, each blob that the namespace references with a reference that lends (29). When the credential lacks either read, or the namespace no longer names the digest because it was replaced without it, deleted or purged with its item, the namespace MUST lend it nothing, so a blob no other row lends it answers `404 blob_not_found` as an unknown hash does. Reason: otherwise no working credential can read a blob named only in an extension, and a working key's export archive leaves its bytes out (21). `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`; `packages/server/src/routes/blob-reach-edges-extensions.test.ts › lends through a namespace beside a namespace that lends nothing, and stops at the purge` covers the purge.
-29. **An edge or an extension lends only a reference its writer proved, on the terms of 15.** When a write sends a digest that enters an edge's properties or an extension namespace, the server MUST make that reference lend only if the credential the write is made for had uploaded the bytes or could read the blob as it wrote, and a write made for no credential MUST NOT make it lend. While the edge or the namespace keeps naming the digest, a later write MUST NOT change whether the reference lends, whoever makes it and whatever it holds; the one repair is to remove the digest and write it again with the proof. Reason: as for an item's properties (15), a credential that may write an edge or a namespace could otherwise read any blob whose hash it knows by naming it there, and a key that may read every blob would vouch for a hash someone else put there. `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
-30. When a keep-both copy of an item copies the item's edges, the server MUST give each digest in a copied edge's properties the standing it had on the edge copied. Reason: the copy is written for no credential, so without this every digest that lent on the edge would stop lending on its copy. `packages/server/src/routes/blob-reach-edges-extensions.test.ts › carries each edge digest as it stood on the edge it copied`.
+A blob is read through `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, and is uploaded through `POST /blobs`.
 
-31. **A file item carries the size of the bytes it names.** When an item of `core.file`, or of a type that inherits from it, is created or updated on any door and its `blob_ref` is a reference that lends (15), the server MUST store `size_bytes` as the stored length of that blob in bytes, whatever size the write carried, none included. This covers `POST /items`, `PATCH /items/{id}` in either properties mode, `POST /items/bulk`, a bulk action, a stale write and the keep-both copy it makes, a retype into a file type and an archive restore.
+## Uploading a blob
 
-**Reason:** an app lists files from the items it holds, offline included, and cannot ask the server about each blob to show how big it is. The server already measured the bytes when they were uploaded (1), so it sets the size on the write rather than taking a writer's word for it: every writer, a connector over HTTP included, gets the size with no code of its own, and no write can store a size that disagrees with the bytes. A lending reference means the writer uploaded the bytes or could read them, so the instance holds them whenever this applies.
+### `blobs/upload-created`
 
-**Tests:** `compliance/file-size.test.ts › is set on a create that names none, and on one that names another`, `› follows an update that names other bytes, and survives one that clears it`, `› holds for every file type`, `› is set on a bulk upsert's create and on its update`, `› is set on a retype into a file type`, `› is set on a stale write and on the keep-both copy it makes`; `packages/server/src/routes/file-size.test.ts › follows the bytes when an update names others` covers the replace mode and `› is stamped by a bulk action's property patch` a bulk action, and an archive restore into a second instance is beyond the referee, so `› brings a file back with the size of the bytes it carries, and none where they did not lend` covers it.
+When a credential that may upload sends `POST /blobs` with a body of one byte or more under any `Content-Type` but `multipart/form-data`, the server MUST answer `201`.
 
-32. **A file item names no size its writer could not read.** When a file item is created or updated on any door and its `blob_ref` is a reference that does not lend (15), the server MUST store no `size_bytes`, whatever the write carried. This includes an item written before its bytes were uploaded: that reference never lends (15), and the item gains its size when the repair writes the digest again with the proof.
+**Tests:** `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`, `› stores a body of any non-multipart type as the bytes it is`.
 
-**Reason:** a size set from the bytes would tell a writer that never proved it holds them that the instance does, which 15 keeps from it, and a size kept from the write would be a number nobody measured.
+### `blobs/upload-hash`
 
-**Tests:** `compliance/file-size.test.ts › carries none for bytes its writer never sent, where the writer that sent them is told`, `› carries none for bytes not yet uploaded, and has it once the digest is written again with them`.
+When a credential that may upload sends `POST /blobs` with a body, the server MUST answer the `hash` as `sha256:` and the 64 lowercase hexadecimal characters of the SHA-256 digest of the whole body.
 
-33. **A stale write does not collide on a file's size.** When a write made against an earlier version of a file item, or of an item it moves into a file type, carries `size_bytes` as a whole number or null, or replaces the properties without it, the server MUST NOT count `size_bytes` as a change the write made, so it names no conflict on it and merges the rest of the write as it would without it (`versions.md`).
+**Tests:** `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`, `› stores a body far larger than the JSON cap, whole`.
 
-**Reason:** the size is the server's to set (31, 32), so a value the write sent or left out is not the writer's edit. Counted as one, a whole edit built from the writer's own fields, which leaves the size out, would be refused whenever another writer had replaced the bytes since, though the writer changed nothing the other did.
+### `blobs/upload-size`
 
-**Tests:** `packages/server/src/routes/file-size.test.ts › takes a stale whole edit that leaves the size out, with no collision on it`, `› takes a stale move out of the file family with no collision on the size`, `› refuses a size of the wrong shape on a stale write, as on a current one`.
+When a credential that may upload sends `POST /blobs` with a body, the server MUST answer `size_bytes` as the length of the body in bytes.
 
-The server sets `size_bytes` only on a write that creates or updates the item itself: its properties, tier, time, natural key or type. A file item stored without it is read without it until such a write, a change of title included, which sets it as 31 and 32 say; a write of only its tags, edges, extensions or lifecycle state leaves it as it is.
+**Tests:** `correctness/blob-correctness.test.ts › upload returns the sha256 hash, the mime type sent and the byte length`, `› stores a body far larger than the JSON cap, whole`.
 
-A signer counts a lifetime in whole seconds. The instance's own link lives at least `expires_in`, except at the cap, and a store's own link, counted from the second it was signed in, may stop up to a second sooner; no link outlives seven days from its answer. A fixture cannot time a request to the millisecond, so none of this is a statement here; the server's own suite proves it of the instance's link (`packages/server/src/storage/blob-link.test.ts`), and the store's rounding is SigV4's.
+### `blobs/upload-unlimited`
 
-The link's target is not a door a client calls by name. When the instance serves the link itself it is `GET /blobs/{hash}/fetch` with the signature in the query, an operation the document does not publish (`coverage.md`); when an object store holds the blob it is that store's own signed link, and `stores.md` states when each is answered.
+When a credential that may upload sends `POST /blobs` with a body larger than the cap on the body of a JSON write, the server MUST store the whole body.
+
+**Reason:** an upload has no size cap, so the cap on a JSON write does not apply to it. The hash of every byte, and a download at the full length, are what show the body arrived whole.
+
+**Tests:** `correctness/blob-correctness.test.ts › stores a body far larger than the JSON cap, whole`.
+
+### `blobs/upload-type`
+
+When a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record, and answer as `mime_type`, the media type of the `Content-Type` it sent without its parameters.
+
+**Tests:** `correctness/blob-correctness.test.ts › records the media type without its parameters, keeps its case and takes octet-stream where none is sent`, `› upload returns the sha256 hash, the mime type sent and the byte length`.
+
+### `blobs/upload-type-case`
+
+When a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record the media type in the case it was sent in.
+
+**Tests:** `correctness/blob-correctness.test.ts › records the media type without its parameters, keeps its case and takes octet-stream where none is sent`.
+
+### `blobs/upload-type-default`
+
+When a credential that may upload sends `POST /blobs` with bytes the server does not yet hold and no `Content-Type`, the server MUST record the type `application/octet-stream`.
+
+**Tests:** `correctness/blob-correctness.test.ts › records the media type without its parameters, keeps its case and takes octet-stream where none is sent`.
+
+### `blobs/upload-type-fixed`
+
+When a credential that may upload sends `POST /blobs` with bytes the server already holds under another media type, the server MUST answer `201` with the `mime_type` recorded first.
+
+**Reason:** the type is the uploader's word, so the first upload fixes it and no later upload changes what the bytes are served as.
+
+**Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`, `› answers a HEAD, a ranged read and a link with the type the first upload fixed`.
+
+### `blobs/upload-repeat`
+
+When a credential that may upload sends `POST /blobs` with bytes the server already holds, the server MUST answer `201` with the hash it answered before.
+
+**Tests:** `correctness/blob-correctness.test.ts › duplicate upload returns same hash without error`, `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`.
+
+### `blobs/upload-concurrent`
+
+While several uploads of the same bytes are in flight together, the server MUST answer each with `201`, the one hash and the one recorded `mime_type`.
+
+**Tests:** `correctness/blob-correctness.test.ts › answers every upload of the same bytes sent together with the one hash and the one type`.
+
+### `blobs/upload-multipart`
+
+If a credential that may upload sends `POST /blobs` with a `Content-Type` of `multipart/form-data`, then the server MUST answer `400 validation_error`.
+
+**Reason:** the raw body is the only form an upload takes, and the same bytes sent raw are stored.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a multipart body and takes the same bytes raw`.
+
+### `blobs/upload-empty`
+
+If a credential that may upload sends `POST /blobs` with an empty body, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a malformed hash and an empty upload`.
+
+### `blobs/type-served`
+
+The server MUST serve a blob's bytes under the media type recorded first, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, a ranged read and the blob's links.
+
+**Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`, `› answers a HEAD, a ranged read and a link with the type the first upload fixed`, `› serves an image as a download and never inline, on every instance door`, `correctness/blob-correctness.test.ts › stores a body of any non-multipart type as the bytes it is`, `› content-type is preserved on download`.
+
+## Who may upload a blob
+
+### `blobs/upload-needs-write`
+
+If a working key or an app's access token that holds write on no registered type outside `system.*` sends `POST /blobs`, then the server MUST answer `403 type_not_permitted`.
+
+**Reason:** a grant on a pattern that no registered type falls under writes nothing, and neither does a grant on a `system.*` type alone.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses an upload to a key that may write no registered type, and takes one from a key that writes one`, `› refuses an upload under a grant that names no registered type, and takes one once a type is registered under it`, `› answers a key whose type map names only an unregistered type as it answers an unknown blob, and refuses it the upload`, `› refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
+
+### `blobs/upload-grant-registered-later`
+
+When a type is registered under a pattern that a working key holds write on, the server MUST take that key's uploads from then on.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses an upload under a grant that names no registered type, and takes one once a type is registered under it`.
+
+### `blobs/upload-refused-stores-nothing`
+
+If a credential that may not upload sends `POST /blobs`, then the server MUST store none of the bytes it sent.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses an upload under a grant that names no registered type, and takes one once a type is registered under it`.
+
+### `blobs/upload-refused-first`
+
+If a credential that may not upload sends `POST /blobs`, then the server MUST answer `403 type_not_permitted` whatever the body is, a `multipart/form-data` body and an empty body included.
+
+**Reason:** the refusal comes before the body is judged, so a credential that may not upload learns nothing about the body it sent.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses a key that may not upload before it reads the body it sent`.
+
+### `blobs/upload-app-grant`
+
+When an app's access token sends `POST /blobs` and the server takes the upload, the server MUST credit the upload to the app's grant, so that every access token issued under that grant holds the proof of the bytes.
+
+**Reason:** a refresh replaces the token, and a digest the app names after one would otherwise stop lending.
+
+**Tests:** `compliance/blob-reach-app.test.ts › are credited to its grant, so a digest it names after a refresh lends`.
+
+### `blobs/upload-operator-key`
+
+When the operator key sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
+
+**Tests:** `compliance/blob-reach.test.ts › serves the operator key every blob and takes its uploads`.
+
+## Downloading a blob
+
+### `blobs/download-bytes`
+
+When a credential that may read a blob sends `GET /blobs/{hash}`, the server MUST answer `200` with the bytes the blob was uploaded as, unchanged.
+
+**Tests:** `correctness/blob-correctness.test.ts › download returns byte-for-byte identical content`, `› stores a body far larger than the JSON cap, whole`.
+
+### `blobs/download-headers`
+
+When a credential that may read a blob sends `GET /blobs/{hash}`, the server MUST answer with the `Content-Type` the blob is served under, a `Content-Length` of its size, `Accept-Ranges: bytes` and an `ETag` of its hash in quotes.
+
+**Tests:** `compliance/blob-served.test.ts › answers a plain GET with every header of the bytes`.
+
+### `blobs/head`
+
+When a credential that may read a blob sends `HEAD /blobs/{hash}`, the server MUST answer `200` with the headers `GET /blobs/{hash}` carries for it and no body.
+
+**Tests:** `correctness/blob-correctness.test.ts › answers HEAD with the headers of the bytes`, `compliance/blob-served.test.ts › serves an image as a download and never inline, on every instance door`.
+
+### `blobs/download-attachment`
+
+The server MUST send every answer that carries a blob's bytes, on `GET` and `HEAD /blobs/{hash}` and on the link the instance serves, with `Content-Disposition: attachment; filename="<hex>"`, the hex being the hash's 64 characters, whatever the blob's type.
+
+**Reason:** the type is the uploader's word, so an HTML or SVG blob shown inline would run as a page of the origin that served it. No type is shown inline, images included, because an image embedded in a page is drawn whatever the disposition says and one rule for every type leaves none to get wrong. The name holds nothing an uploader chose.
+
+**Tests:** `compliance/blob-served.test.ts › serves an HTML blob as a sandboxed download on every instance door`, `› serves an image as a download and never inline, on every instance door`, `› serves a ranged answer as the same sandboxed download, on every instance door`, `› answers a plain GET with every header of the bytes`.
+
+### `blobs/download-sandbox`
+
+The server MUST send every answer that carries a blob's bytes, on `GET` and `HEAD /blobs/{hash}` and on the link the instance serves, with `Content-Security-Policy: sandbox; default-src 'none'`.
+
+**Reason:** bytes a browser renders anyway run in an opaque origin with nothing loaded.
+
+**Tests:** `compliance/blob-served.test.ts › serves an HTML blob as a sandboxed download on every instance door`, `› serves an image as a download and never inline, on every instance door`, `› serves a ranged answer as the same sandboxed download, on every instance door`.
+
+### `blobs/download-nosniff`
+
+The server MUST send every answer that carries a blob's bytes, on `GET` and `HEAD /blobs/{hash}` and on the link the instance serves, with `X-Content-Type-Options: nosniff`.
+
+**Tests:** `compliance/blob-served.test.ts › serves an HTML blob as a sandboxed download on every instance door`, `› serves an image as a download and never inline, on every instance door`, `› serves a ranged answer as the same sandboxed download, on every instance door`.
+
+### `blobs/store-link-attachment`
+
+Where an object store holds a blob, when a credential that may read it asks for its link, the server MUST give a link that serves the bytes under the recorded type and `Content-Disposition: attachment; filename="<hex>"`.
+
+**Reason:** a signed link cannot carry the policy or `nosniff`, so it is safe only because the store serves it from its own origin. A bucket must be on a different site from the instance, which `deploy/README.md` says.
+
+**Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`.
+
+## Ranges
+
+A `Range` is read the same way on `GET /blobs/{hash}`, on `HEAD /blobs/{hash}` and on the link the instance serves.
+
+### `blobs/range-closed`
+
+When a read of a blob carries `Range: bytes=<first>-<last>` with `<first>` inside the blob, the server MUST answer `206` with exactly the bytes from `<first>` through `<last>`.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`, `› serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-open`
+
+When a read of a blob carries `Range: bytes=<first>-` with `<first>` inside the blob, the server MUST answer `206` with the bytes from `<first>` through the last byte.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-clamped`
+
+When a read of a blob carries a range whose `<last>` lies at or past the end of the blob, the server MUST answer `206` through the last byte.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-content-range`
+
+When the server answers a read of a blob with `206`, the server MUST send `Content-Range: bytes <first>-<last>/<size>` naming the bytes it answered and the blob's size.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`, `› serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-unsatisfiable`
+
+If a read of a blob carries a range that starts at or past the end of the blob or ends before it starts, then the server MUST answer `416 range_not_satisfiable`.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`, `› serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-unsatisfiable-header`
+
+When the server answers a read of a blob with `416`, the server MUST send `Content-Range: bytes */<size>`.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves one byte range with 206, and 416 outside the blob`, `› serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-unsatisfiable-size`
+
+When the server answers `GET /blobs/{hash}` with `416`, the server MUST name the blob's size in `details.size_bytes`.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`.
+
+### `blobs/range-unread`
+
+If a read of a blob carries a `Range` the server does not read, a suffix range, several ranges, another unit, a malformed range or a bound past the safe integer, then the server MUST answer `200` with the whole blob and no `Content-Range`.
+
+**Tests:** `correctness/blob-correctness.test.ts › serves the whole blob for a Range it does not read`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/range-head`
+
+When a credential that may read a blob sends `HEAD /blobs/{hash}` with a `Range`, the server MUST answer with the status and headers `GET /blobs/{hash}` gives that range, and no body.
+
+**Tests:** `correctness/blob-correctness.test.ts › answers HEAD with a Range as GET would, headers only`, `compliance/blob-served.test.ts › serves a ranged answer as the same sandboxed download, on every instance door`.
+
+## Hashes
+
+A hash is `sha256:` and the 64 lowercase hexadecimal characters of a digest. The hash operations are the four reads, and the link the instance serves.
+
+### `blobs/hash-bare`
+
+When a credential names a blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST answer as it does for the same hash with the prefix.
+
+**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`.
+
+### `blobs/hash-bare-link`
+
+When a request to the instance's link names the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST serve the bytes as it does for the hash with the prefix.
+
+**Tests:** `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+
+### `blobs/hash-malformed`
+
+If a credential names a blob on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` by anything but a hash with its `sha256:` or its bare 64 lowercase hexadecimal characters, a hash in capitals, another prefix and a hash of 63 or 65 characters among them, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`, `› refuses a malformed hash and an empty upload`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`.
+
+### `blobs/hash-malformed-link`
+
+If a request to the instance's link names a blob by a malformed hash, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+
+### `blobs/hash-unknown`
+
+If the operator key, or a working key or an access token whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `404 blob_not_found`.
+
+**Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the operator key the blob doors although it holds no type map`.
+
+## Query keys
+
+### `blobs/query-key-refused`
+
+If a request to `POST /blobs`, `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/locations` or the instance's link carries a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`.
+
+### `blobs/query-key-named`
+
+When the server refuses a query key on `POST /blobs`, `GET /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/locations` or the instance's link, the server MUST name each such key in `details.unknown_parameters`.
+
+**Reason:** a `HEAD` answer has no body to carry the names.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+
+### `blobs/query-key-stores-nothing`
+
+If the server refuses an upload for a query key, then the server MUST store none of the bytes it sent.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`.
+
+### `blobs/query-key-underscore`
+
+When a request to a blob operation carries a query key that starts with an underscore, the server MUST answer as it does without the key.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+
+## Links
+
+`GET /blobs/{hash}/url` answers a link. When the instance serves the link, its target is `GET /blobs/{hash}/fetch` with the signature in the query, an operation the document does not publish (`coverage.md`). When an object store holds the blob, the target is that store's own signed link, and `stores/link-instance-until-stored` and `stores/link-store-once-held` say which is answered.
+
+### `blobs/link-minted`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server MUST answer `200` with a `url` and an `expires_in`, whether or not an object store holds the blob.
+
+**Tests:** `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `compliance/blob-served.test.ts › refuses an instance link after its one second lifetime with 401`.
+
+### `blobs/link-no-credential`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server MUST answer a `url` that serves the blob's bytes to a request carrying no credential.
+
+**Tests:** `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `compliance/blob-reach.test.ts › keeps a minted link working after the key that minted it is revoked`.
+
+### `blobs/link-range`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server MUST answer a `url` that serves a `Range: bytes=<first>-<last>` inside the blob as `206` with exactly those bytes.
+
+**Tests:** `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
+
+### `blobs/link-ttl`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` that is a whole number of seconds from 1 through 604800, the server MUST answer `expires_in` as that number.
+
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`, `› mints a link that fetches the bytes without a credential`.
+
+### `blobs/link-ttl-default`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with no `ttl`, the server MUST answer `expires_in` as 3600.
+
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+
+### `blobs/link-ttl-cap`
+
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` above 604800, the server MUST answer `expires_in` as 604800, the seven days that cap a lifetime, rather than the lifetime asked for.
+
+**Tests:** `correctness/blob-correctness.test.ts › caps a link's lifetime at seven days`, `› gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+
+### `blobs/link-ttl-invalid`
+
+If a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` that is not a whole number of at least 1, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+
+### `blobs/link-expired`
+
+If a link is fetched after its lifetime has run out, then the server MUST answer a status outside 2xx and none of the blob's bytes, whichever signer signed the link.
+
+**Reason:** a link as minted fetched the bytes while it lived. The status is the signer's own, so a caller reading the status alone learns which signer refused it, not which fault the link had.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered`.
+
+### `blobs/link-altered`
+
+If a link is fetched with its signature altered, then the server MUST answer a status outside 2xx and none of the blob's bytes, whichever signer signed the link.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered`.
+
+### `blobs/link-instance-altered`
+
+Where the instance serves a link, if the link is fetched with its signature altered, then the server MUST answer `401 unauthorized`, on `GET` and on `HEAD`.
+
+**Tests:** `compliance/blob-served.test.ts › refuses an instance link whose signature was altered with 401`.
+
+### `blobs/link-instance-expired`
+
+Where the instance serves a link, if the link is fetched after its lifetime has run out, then the server MUST answer `401 unauthorized`, on `GET` and on `HEAD`.
+
+**Tests:** `compliance/blob-served.test.ts › refuses an instance link after its one second lifetime with 401`.
+
+### `blobs/link-store-altered`
+
+Where an object store holds a blob, the server MUST give a link that the store answers `403` when its signature is altered.
+
+**Tests:** `compliance/blob-rules.test.ts › answers a dead store link with the store's own status, not the instance's`.
+
+### `blobs/link-instance-lifetime`
+
+Where the instance serves a link, the server MUST keep it working for at least its `expires_in` seconds, except at the cap.
+
+**Reason:** a signer counts a lifetime in whole seconds, so a store's own link, counted from the second it was signed in, may stop up to a second sooner.
+
+**Tests:** waiting on #1444.
+
+### `blobs/link-cap-from-answer`
+
+The server MUST NOT give a link that works for more than seven days from the answer that gave it.
+
+**Tests:** waiting on #1444.
+
+### `blobs/link-outlives-key`
+
+When the key that minted a link is revoked, the server MUST go on serving the bytes at the link for the rest of its lifetime.
+
+**Reason:** a link is checked when it is minted, not when it is fetched.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after the key that minted it is revoked`.
+
+### `blobs/link-outlives-narrowing`
+
+When the key that minted a link is narrowed until it no longer reaches the blob, the server MUST go on serving the bytes at the link for the rest of its lifetime.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone`.
+
+### `blobs/link-outlives-references`
+
+When the rows that referenced a blob are purged, the server MUST go on serving the bytes at a link minted before, for the rest of its lifetime, until the orphan sweep purges the blob.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone`.
+
+### `blobs/link-purged-blob`
+
+When a link the instance serves is fetched after the orphan sweep has purged its blob, the server MUST answer `404 blob_not_found`.
+
+**Tests:** `compliance/blob-rules.test.ts › answers a link to a blob the sweep has purged as an unknown blob`.
+
+## Who may read a blob
+
+A reference is a digest anywhere in a string, as `stores/reference-digest-anywhere` counts one. Whether a reference lends its read is set when a write names the digest, under "How a write gives a reference its standing".
+
+### `blobs/read-no-type`
+
+If a working key whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob, an unknown blob or no hash at all.
+
+**Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth.md` 1), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike`.
+
+### `blobs/read-operator-key`
+
+When the operator key sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST serve every blob it holds, referenced or not, although the key holds no type map.
+
+**Tests:** `compliance/blob-reach.test.ts › serves the operator key every blob and takes its uploads`, `› serves the operator key the blob doors although it holds no type map`.
+
+### `blobs/read-unregistered-map`
+
+If a working key whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
+
+**Reason:** a pattern is a pattern whether or not a type matches it, so the key reaches a type and is not refused under `blobs/read-no-type`.
+
+**Tests:** `compliance/blob-reach.test.ts › answers a key whose type map names only an unregistered type as it answers an unknown blob, and refuses it the upload`.
+
+### `blobs/read-unreferenced`
+
+While no row references a blob, the server MUST answer `404 blob_not_found` to every working key that reads it on the four reads, the key that uploaded it included.
+
+**Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
+
+**Tests:** `compliance/blob-reach.test.ts › answers a blob nothing references as an unknown one, to the key that uploaded it too`.
+
+### `blobs/read-unreadable`
+
+If a working key or an access token reads a blob that only rows it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
+
+**Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth.md` 20).
+
+**Tests:** `compliance/blob-reach.test.ts › answers a blob only an item of a type the key may not read references as an unknown one`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
+
+### `blobs/lend-item`
+
+While an item of a type a working key or an access token may read references a blob through a reference that lends, in any lifecycle state, the server MUST serve the blob to that credential on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob to a key that may read an item referencing it, in any lifecycle state`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
+
+### `blobs/lend-earlier-version`
+
+While only an earlier version of an item references a blob, the server MUST answer a working key `404 blob_not_found` on the four reads.
+
+**Reason:** the `blob-orphans` housekeeping job keeps such a blob (`stores/orphan-keeps-versions`), so only the read is withheld.
+
+**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`.
+
+### `blobs/lend-withdrawn`
+
+When a row stops naming a digest, because the item, the edge or the namespace was rewritten without it, deleted or purged, the server MUST stop serving the blob to a credential that read it only through that row.
+
+**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `› serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `› serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an edge names through a source in the bin, and stops once the source is purged`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
+
+### `blobs/lend-edge`
+
+While a working key may read an edge's type by its edge map and may read the type of the edge's source item, in any lifecycle state, the server MUST serve it on the four reads each blob the edge's properties reference through a reference that lends.
+
+**Reason:** otherwise no working credential can read a blob named only in an edge's properties, and a working key's export archive would leave its bytes out. The target's type is not asked.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`.
+
+### `blobs/lend-edge-unread`
+
+If a working key may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`.
+
+### `blobs/lend-edge-bin`
+
+While the source item of an edge is in the bin, the server MUST go on serving a working key that may read the edge the blobs its properties reference through a reference that lends.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob an edge names through a source in the bin, and stops once the source is purged`.
+
+### `blobs/lend-extension`
+
+While a working key may read an extension namespace by its extension map and may read the type of the item it sits on, in any lifecycle state, the server MUST serve it on the four reads each blob the namespace references through a reference that lends.
+
+**Reason:** otherwise no working credential can read a blob named only in an extension, and a working key's export archive would leave its bytes out.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
+
+### `blobs/lend-extension-unread`
+
+If a working key may not read an extension namespace, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`.
+
+### `blobs/lend-extension-label`
+
+Where a working key's label is the name of an extension namespace, the server MUST count that namespace as one the key may read, and no other key.
+
+**Reason:** a key reads the namespace its own label names beside the namespaces its extension map grants (`keys-and-oauth.md` 21).
+
+**Tests:** `compliance/blob-reach.test.ts › serves a blob an extension names to a key whose label is the namespace, and to no key labeled another`.
+
+### `blobs/lend-extension-app-label`
+
+If an app's access token reads a blob that only an extension namespace named by the app's own label references, then the server MUST answer `404 blob_not_found`.
+
+**Reason:** an app's own label is not its namespace, though a key of the same label reads it.
+
+**Tests:** `compliance/blob-reach-app.test.ts › is not served a blob an extension names under the app's own label`.
+
+### `blobs/lend-copy-edges`
+
+When a stale write that keeps both copies of an item copies the item's edges, the server MUST give each digest in a copied edge's properties the standing it had on the edge copied.
+
+**Reason:** the copy is written for no credential, so without this every digest that lent on the edge would stop lending on its copy, and a digest that did not would start.
+
+**Tests:** `compliance/blob-reach.test.ts › gives each digest on a keep-both copy's edges the standing it had on the edge copied`.
+
+## How a write gives a reference its standing
+
+### `blobs/proof-item`
+
+When a working key or an app's access token writes an item through `POST /items`, `POST /items/bulk`, `PATCH /items/{id}` as a plain update, a stale merge, a keep-both write or a retype, or `POST /items/bulk-actions` with `update_properties`, an upsert onto a natural key included, and the write names a digest the item did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+
+**Reason:** a credential that may write an item could otherwise read any blob whose hash it knows by naming it there, which is as good as downloading and uploading the bytes again.
+
+**Tests:** `compliance/blob-reach.test.ts › lends a digest named by a new item only when its writer sent the bytes`, `› lends a digest named by an upsert onto a natural key only when its writer sent the bytes`, `› lends a digest named by a patch at the current version only when its writer sent the bytes`, `› lends a digest new to the base of a stale merge only when its writer sent the bytes`, `› lends a digest named by a keep-both write only when its writer sent the bytes`, `› lends a digest named by a retype only when its writer sent the bytes`, `› lends a digest named by a bulk create only when its writer sent the bytes`, `› lends a digest named by a bulk update only when its writer sent the bytes`, `› lends a digest named by a bulk action only when its writer sent the bytes`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › are credited to its grant, so a digest it names after a refresh lends`.
+
+### `blobs/proof-folder`
+
+When a working key writes a digest into a folder's settings through `POST /folders` or `PATCH /folders/{id}`, the server MUST make the reference lend only if the key could read the blob as it wrote.
+
+**Reason:** folder settings are a `system.folder`'s properties and count like any other, but a key whose only write is `system.folder` cannot upload (`blobs/upload-needs-write`).
+
+**Tests:** `compliance/blob-reach.test.ts › lends a digest named in a folder's settings only when its writer could read the blob`.
+
+### `blobs/proof-edge`
+
+When a working key writes an edge's properties through `POST /edges` or `PATCH /edges/{id}` and names a digest the edge did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+
+**Reason:** a credential that may write an edge could otherwise read any blob whose hash it knows by naming it there.
+
+**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
+
+### `blobs/proof-extension`
+
+When a working key writes an extension namespace through `PUT /items/{id}/extensions/{namespace}` and names a digest the namespace did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+
+**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
+
+### `blobs/proof-dead-stays`
+
+While an item, an edge or an extension namespace keeps naming a digest that does not lend, the server MUST NOT make that reference lend by a later write, whoever makes it and whatever it holds.
+
+**Reason:** a key that may read every blob would otherwise vouch for a hash someone else put there, by editing beside it or rewriting the whole row.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps a planted digest dead when a key holding every blob edits the note`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through an edge or an extension only a digest its writer proved`, `› keeps a planted digest dead through an export, a purge and a restore`.
+
+### `blobs/proof-lending-stays`
+
+While an item keeps naming a digest through a reference that lends, the server MUST keep that reference lending through every later write, whoever makes it.
+
+**Reason:** a write that keeps a digest decides nothing about it, so a writer that never sent the bytes cannot withdraw what another proved.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`.
+
+### `blobs/proof-repair`
+
+When a row that names a digest that does not lend is written without it, and a later write names it again with the proof, the server MUST make the reference lend.
+
+**Reason:** this is the one repair for a reference that does not lend, a restored one included.
+
+**Tests:** `compliance/blob-reach.test.ts › lends no reach through a digest written by a key that never sent the bytes`, `› lends through an edge or an extension only a digest its writer proved`, `› restores a row's reach only for the digests its archive line says lent`.
+
+### `blobs/proof-stale`
+
+When a write made against an earlier version names a digest that version already held, the server MUST NOT credit the writer's proof to that digest, whether the write lands on the item or in a keep-both copy.
+
+**Reason:** a digest the base held was put there by whoever wrote it and may since have been removed, so sending it back is not sending it.
+
+**Tests:** `compliance/blob-reach.test.ts › credits a stale write only for digests its base version lacked`.
+
+### `blobs/proof-copy-as-stood`
+
+When a stale write that keeps both copies of an item writes the copy, the server MUST give each digest the copy names that the base version named the standing it had on the item.
+
+**Reason:** the copy is written from the base, so a digest the base held was proved, or not, by whoever wrote it there.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps each digest on a keep-both copy as it stood on the item`.
+
+### `blobs/proof-retype-as-stood`
+
+When an item is retyped through `PATCH /items/{id}` and the retype keeps a digest the item named before it, the server MUST keep that reference's standing.
+
+**Tests:** `compliance/blob-reach.test.ts › keeps each digest on a retyped item as it stood before the retype`.
+
+### `blobs/proof-sweep`
+
+When the enrichment sweep writes onto a file item, the server MUST NOT make a digest the sweep writes lend.
+
+**Reason:** a write made for no credential proves nothing.
+
+**Tests:** `compliance/enrichment-reach.test.ts › keeps a digest the sweep wrote dead after a full key rewrites the file`.
+
+## Export and restore
+
+### `blobs/export-operator-refused`
+
+If the operator key sends `GET /export`, then the server MUST answer `403 type_not_permitted`, whether it asks for `ndjson` or for the archive.
+
+**Reason:** the operator key holds no type map, so the exporter is always a working key or an access token.
+
+**Tests:** `compliance/blob-reach.test.ts › refuses the operator key an export and takes a working key's`.
+
+### `blobs/export-carries-served`
+
+When a working key sends `GET /export?format=archive`, the server MUST carry a blob's bytes in the archive, as `blobs/<hash>`, only where the blob reads would serve them to that key.
+
+**Reason:** a digest in a reference that does not lend, in an edge or an extension namespace the key may not read, or only in an earlier version, carries no bytes unless another row the key reads lends it.
+
+**Tests:** `compliance/blob-reach.test.ts › carries in an export archive only the bytes the blob doors would serve`, `› leaves out of an export archive a digest a property names without lending it, and one only an earlier version names`, `› leaves out of an export archive the bytes an edge or an extension lends to a key that may not read them`, `› carries the bytes an edge and an extension lend, and restores the same answers`.
+
+### `blobs/export-manifest-served`
+
+When a working key sends `GET /export?format=archive`, the server MUST name a blob in the archive's manifest only where the blob reads would serve it to that key.
+
+**Tests:** `compliance/blob-reach.test.ts › carries in an export archive only the bytes the blob doors would serve`, `› leaves out of an export archive a digest a property names without lending it, and one only an earlier version names`.
+
+### `blobs/export-download-name`
+
+When a working key sends `GET /export?format=archive`, the server MUST answer as a download named `marfa-export-<date>.tar.gz`, whatever blobs the archive carries.
+
+**Reason:** the name is not a blob's hash, so a download of the archive is not taken for a download of a blob.
+
+**Tests:** `compliance/blob-served.test.ts › sends an export archive as a download under its own name, whatever blobs it carries`.
+
+### `blobs/export-line-lending`
+
+When a working key sends `GET /export?format=archive`, the server MUST list on each item line, in `lending_blobs`, the digests in that row's properties that lend.
+
+**Tests:** `compliance/blob-reach.test.ts › writes on each export line the digests that lend, and no namespace that lends none`.
+
+### `blobs/export-line-extensions`
+
+When a working key sends `GET /export?format=archive`, the server MUST list on each item line, in `lending_extensions`, each extension namespace of the line that holds a digest that lends, with those digests, and no namespace that lends none.
+
+**Tests:** `compliance/blob-reach.test.ts › writes on each export line the digests that lend, and no namespace that lends none`.
+
+### `blobs/export-edge-line-lending`
+
+When a working key sends `GET /export?format=archive`, the server MUST list on each edge line, in `lending_blobs`, the digests in that edge's properties that lend.
+
+**Tests:** `compliance/blob-reach.test.ts › writes on each export line the digests that lend, and no namespace that lends none`.
+
+### `blobs/restore-standing`
+
+When the operator key sends `POST /restore`, the server MUST make each digest in a restored item, edge or extension lend exactly when its archive line lists it as lending.
+
+**Reason:** every other digest the line names restores as one that does not lend, and `blobs/proof-repair` is how it is repaired.
+
+**Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`, `› carries the bytes an edge and an extension lend, and restores the same answers`, `› keeps a planted digest dead through an export, a purge and a restore`.
+
+### `blobs/restore-unlisted`
+
+When the operator key sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
+
+**Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
+
+## The enrichment sweep
+
+### `blobs/enrichment-lent-only`
+
+Where enrichment is on, the server MUST NOT write `extracted_text`, `width`, `height` or `duration` onto a file item from bytes its own `blob_ref` names through a reference that does not lend.
+
+**Reason:** a file naming a hash its writer never proved it holds would otherwise gain what the bytes say, which tells that writer what the blob holds.
+
+**Tests:** `compliance/enrichment-reach.test.ts › extracts only from bytes the file's own reference lends`, `› reads the width, height and duration only of bytes the file's own reference lends`.
+
+## A file item's size
+
+A file item is an item of `core.file` or of a type that inherits from it.
+
+### `blobs/file-size-set`
+
+When an item of `core.file`, or of a type that inherits from it, is created or updated through `POST /items`, `PATCH /items/{id}` in either properties mode, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties`, a retype into a file type, a stale write and the keep-both copy it makes, or `POST /restore`, and its `blob_ref` is a reference that lends, the server MUST store `size_bytes` as the stored length of that blob in bytes, whatever size the write carried and none included.
+
+**Reason:** an app lists files from the items it holds, offline included, and cannot ask the server about each blob to show how big it is. The server measured the bytes when they were uploaded, so every writer, a connector over HTTP included, gets the size with no code of its own, and no write can store a size that disagrees with the bytes. A lending reference means the writer uploaded the bytes or could read them, so the instance holds them whenever a size is set.
+
+**Tests:** `compliance/file-size.test.ts › is set on a create that names none, and on one that names another`, `› follows an update that names other bytes, and survives one that clears it`, `› holds for every file type`, `› is set on a bulk upsert's create and on its update`, `› follows an update that replaces the properties, and is gone once they name no blob`, `› is set by a bulk action's property patch, whatever size the patch carried`, `› is set on a restore from an archive that carries another size, and none where the line lent nothing`, `› is set on a retype into a file type`, `› is set on a stale write and on the keep-both copy it makes`.
+
+### `blobs/file-size-none`
+
+When an item of `core.file`, or of a type that inherits from it, is created or updated and its `blob_ref` is not a reference that lends, the server MUST store no `size_bytes`, whatever size the write carried.
+
+**Reason:** a size set from the bytes would tell a writer that never proved it holds them that the instance does, and a size kept from the write would be a number nobody measured. A `blob_ref` that is not a `sha256:` hash, a hash the instance does not hold and a hash written without its prefix lend nothing.
+
+**Tests:** `compliance/file-size.test.ts › carries none for bytes its writer never sent, where the writer that sent them is told`, `› carries none for bytes not yet uploaded, and has it once the digest is written again with them`, `› carries none for a reference that names no blob the instance could lend, on a create and an update`, `› carries none for bytes its writer never sent, whatever an update of the file says`, `› is set on a restore from an archive that carries another size, and none where the line lent nothing`, `› follows an update that replaces the properties, and is gone once they name no blob`.
+
+### `blobs/file-size-repair`
+
+When a file item whose `blob_ref` did not lend is written again with the digest and the writer's proof, the server MUST store `size_bytes` as the stored length of that blob.
+
+**Tests:** `compliance/file-size.test.ts › carries none for bytes not yet uploaded, and has it once the digest is written again with them`.
+
+### `blobs/file-size-wrong-shape`
+
+If a write to a file item names `size_bytes` as anything but a whole number or null, then the server MUST answer `400 invalid_properties`, on a create, on an update and on a stale write that meets no collision.
+
+**Tests:** `compliance/file-size.test.ts › refuses a size of another shape on a create, an update and a stale write`.
+
+### `blobs/file-size-stale-no-collision`
+
+When a write made against an earlier version of a file item carries `size_bytes` as a whole number or null, the server MUST NOT name a conflict on `size_bytes`.
+
+**Reason:** the size is the server's to set, so a value the write sent is not the writer's edit. Counted as one, a write built from the writer's own fields would be refused whenever another writer had replaced the bytes since, though the writer changed nothing the other did.
+
+**Tests:** `compliance/file-size.test.ts › does not collide on a size it carries as a whole number or null, and merges the rest`.
+
+### `blobs/file-size-stale-replace`
+
+When a write made against an earlier version of a file item replaces the properties and leaves out `size_bytes`, the server MUST NOT count it as a cleared property.
+
+**Tests:** `compliance/file-size.test.ts › does not count a size it leaves out of a whole replacement as a cleared property`.
+
+### `blobs/file-size-stale-merges`
+
+When a write made against an earlier version of a file item carries `size_bytes` as a whole number or null, the server MUST merge the rest of the write as it would without the size.
+
+**Tests:** `compliance/file-size.test.ts › does not collide on a size it carries as a whole number or null, and merges the rest`, `› does not count a size it leaves out of a whole replacement as a cleared property`.

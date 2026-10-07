@@ -1,10 +1,10 @@
 /**
- * An edge lends read on the blobs its properties name, and a metadata
- * extension on the blobs its namespace names, each to a credential that may
- * read it, and each only under the proof rule an item's reference is held to
- * (`blobs.md` 15). Every refusal here has a witness: the bytes are held (the
- * operator key reads them), and the same reader is served once the row that
- * lends them is in place.
+ * An edge lends read on the blobs its properties name, and a metadata extension
+ * on the blobs its namespace names, each to a credential that may read it, and
+ * each only under the proof rule an item's reference is held to
+ * (`blobs/proof-item`). Every refusal here has a witness: the bytes are held
+ * (the operator key reads them), and the same reader is served once the row
+ * that lends them is in place.
  */
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
