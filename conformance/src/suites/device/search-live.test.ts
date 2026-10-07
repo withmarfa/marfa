@@ -21,7 +21,7 @@ import { requireBinary } from "./harness.js";
  * real binary, with the same hits and the same excerpt. The order is held
  * to the server's for a corpus whose ranking does not turn on rows the device
  * does not hold, which is the only order a device holding a slice can promise
- * (48).
+ * (`device.md` 138).
  */
 
 let client: MarfaClient;

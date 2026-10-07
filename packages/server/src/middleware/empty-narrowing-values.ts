@@ -12,8 +12,9 @@
  *
  * A value that holds only blanks narrows nothing either, and so does a list
  * whose every entry is blank, as `type=,` and `tags=, ` are: a door that
- * trims and drops empty entries is left with no filter. `type` and `tags`
- * are lists; `source` and `filter` are single values.
+ * trims and drops empty entries is left with no filter. `tags`, and `type` on
+ * `GET /events`, are comma lists; elsewhere `type` is one pattern, and
+ * `source` and `filter` are single values.
  *
  * An edge shorthand such as `edge[<type>]=` is refused where it is read,
  * because its key carries the edge type and no schema lists it.
