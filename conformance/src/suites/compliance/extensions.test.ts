@@ -282,12 +282,12 @@ describe("metadata extensions", () => {
       };
     });
 
-    it("grants no namespace to a key relabelled with its name", async () => {
-      const relabelled = await minter.client.updateKey(minter.id, {
+    it("grants no namespace to a key relabeled with its name", async () => {
+      const relabeled = await minter.client.updateKey(minter.id, {
         label: namespace,
       });
-      expect(relabelled.status).toBe(200);
-      expect(relabelled.data.label).toBe(namespace);
+      expect(relabeled.status).toBe(200);
+      expect(relabeled.data.label).toBe(namespace);
       await expectRefused(minter.client);
     });
 
@@ -306,6 +306,92 @@ describe("metadata extensions", () => {
       );
     });
   });
+
+  // Names a plain JavaScript object already answers to, so a map lookup that
+  // is not confined to the map's own entries would find them in every map.
+  describe.each(["constructor", "toString", "valueOf", "hasOwnProperty"])(
+    "the namespace %s",
+    (namespace) => {
+      it("is reached only by a key whose extension map names it", async () => {
+        const written = await client.setItemExtension(itemId, namespace, {
+          held: "by the map",
+        });
+        expect(written.ok, JSON.stringify(written.error)).toBe(true);
+
+        const mint = async (
+          label: string,
+          extensions: Record<string, "read" | "write">,
+        ): Promise<MarfaClient> => {
+          const minted = await client.createKey({
+            label,
+            source: `${ctx.source}-${label}`,
+            type_permissions: { "core.note": "read" },
+            extension_permissions: extensions,
+          });
+          expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+          trackKey(ctx, minted.data.id);
+          return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+        };
+
+        // The witness: a key whose map names the namespace is answered it.
+        const named = await mint(`ext-own-named-${namespace}`, {
+          [namespace]: "read",
+        });
+        const seen = await named.getItem(itemId);
+        expect(seen.data.metadata.extensions?.[namespace]).toEqual({
+          held: "by the map",
+        });
+
+        const unnamed = await mint(`ext-own-unnamed-${namespace}`, {});
+        const item = await unnamed.getItem(itemId);
+        expect(item.status).toBe(200);
+        expect(
+          Object.hasOwn(item.data.metadata.extensions ?? {}, namespace),
+        ).toBe(false);
+        const listed = await unnamed.listItemExtensions(itemId);
+        expect(listed.status).toBe(200);
+        expect(Object.hasOwn(listed.data.extensions, namespace)).toBe(false);
+        const read = await unnamed.getItemExtension(itemId, namespace);
+        expect(read.status).toBe(403);
+      });
+
+      it("is not granted by a key whose extension map does not name it", async () => {
+        const minted = await client.createKey({
+          label: `ext-own-minter-${namespace}`,
+          source: `${ctx.source}-ext-own-minter-${namespace}`,
+          permissions: ["keys.mint"],
+          type_permissions: { "core.note": "read" },
+          extension_permissions: {},
+        });
+        expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+        trackKey(ctx, minted.data.id);
+        const minter = new MarfaClient({
+          baseUrl: apiUrl,
+          apiKey: minted.data.key,
+        });
+
+        // The witness: a map naming the namespace is a grant the file's own
+        // key may make.
+        const granted = await client.createKey({
+          label: `ext-own-granted-${namespace}`,
+          source: `${ctx.source}-ext-own-granted-${namespace}`,
+          type_permissions: { "core.note": "read" },
+          extension_permissions: { [namespace]: "read" },
+        });
+        expect(granted.status).toBe(201);
+        trackKey(ctx, granted.data.id);
+
+        const child = await minter.createKey({
+          label: `ext-own-child-${namespace}`,
+          source: `${ctx.source}-ext-own-child-${namespace}`,
+          type_permissions: { "core.note": "read" },
+          extension_permissions: { [namespace]: "read" },
+        });
+        expect(child.status).toBe(403);
+        expect(child.error?.error.code).toBe("forbidden");
+      });
+    },
+  );
 
   it("answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it", async () => {
     const ns = "type-gated";

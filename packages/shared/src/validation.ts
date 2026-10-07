@@ -251,7 +251,9 @@ export function resolveTypePermission(
   permissions: Record<string, TypePermission>,
 ): TypePermission {
   // Exact match takes priority
-  const exact = permissions[type];
+  const exact = Object.hasOwn(permissions, type)
+    ? permissions[type]
+    : undefined;
   if (exact !== undefined) {
     return exact;
   }
@@ -300,9 +302,13 @@ export function resolveExtensionPermission(
     Record<string, import("./types.js").ExtensionPermission> | undefined,
 ): import("./types.js").ExtensionPermission | "none" {
   if (permissions) {
-    const exact = permissions[namespace];
+    const exact = Object.hasOwn(permissions, namespace)
+      ? permissions[namespace]
+      : undefined;
     if (exact) return exact;
-    const wildcard = permissions["*"];
+    const wildcard = Object.hasOwn(permissions, "*")
+      ? permissions["*"]
+      : undefined;
     if (wildcard) return wildcard;
   }
   return "none";

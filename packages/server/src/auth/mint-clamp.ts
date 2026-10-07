@@ -174,7 +174,14 @@ export function firstUncoveredExtension(
   requested: Record<string, ExtensionPermission> | undefined,
 ): string | null {
   for (const [namespace, level] of Object.entries(requested ?? {})) {
-    const mine = held?.[namespace] ?? held?.["*"];
+    const mine =
+      held === undefined
+        ? undefined
+        : Object.hasOwn(held, namespace)
+          ? held[namespace]
+          : Object.hasOwn(held, "*")
+            ? held["*"]
+            : undefined;
     if (mine === undefined) return namespace;
     if (level === "write" && mine !== "write") return namespace;
   }
