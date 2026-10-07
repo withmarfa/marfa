@@ -618,3 +618,20 @@ describe("the settings as data", () => {
     }
   });
 });
+
+// A delay past the 32-bit limit makes a timer fire after 1 ms, and an
+// AbortSignal.timeout past 2^32 - 1 throw, so the value is refused at boot.
+it.each([
+  "SQLITE_BUSY_BUDGET_MS",
+  "MARFA_INBOUND_READ_TIMEOUT_MS",
+  "MARFA_ENRICHMENT_ITEM_TIMEOUT_MS",
+  "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS",
+  "MARFA_BULK_ACTION_POLL_INTERVAL_MS",
+  "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
+  "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
+])("refuses a %s no timer can honor", (name) => {
+  // The worker's interval may not exceed its own ceiling.
+  const ceiling = { MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "2147483647" };
+  expect(refusal({ ...ceiling, [name]: "2147483647" })).toBe("");
+  expect(refusal({ ...ceiling, [name]: "2147483648" })).toContain(name);
+});

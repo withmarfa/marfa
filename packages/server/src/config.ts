@@ -25,8 +25,9 @@ export const DEFAULT_KEYS_RATE_LIMIT = 200;
 export const MAX_RETENTION_DAYS = 36_500;
 export const MAX_RETENTION_HOURS = MAX_RETENTION_DAYS * 24;
 export const MAX_RETENTION_MS = MAX_RETENTION_HOURS * 3_600_000;
-// Native JavaScript timers support at most a signed 32-bit millisecond delay.
-export const MAX_INBOUND_CLEANUP_INTERVAL_MS = 2_147_483_647;
+// Native JavaScript timers support at most a signed 32-bit millisecond delay;
+// a longer one fires after 1 ms. `AbortSignal.timeout` refuses one past 2^32 - 1.
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** What bounds the inbound webhook doors. */
 export interface InboundLimits {
@@ -858,7 +859,7 @@ const settingsShape = {
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
     "How long a write refused with `SQLITE_BUSY` is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
-    { min: 0, unit: "ms" },
+    { min: 0, max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   BLOB_PATH: setting(
     text,
@@ -966,7 +967,7 @@ const settingsShape = {
   MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(
     60_000,
     "How long the extraction of one item may take.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(
     20 * 1024 * 1024,
@@ -1081,7 +1082,7 @@ const settingsShape = {
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
     DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
     "How often the `inbound-delivery-cleanup` job runs. The upper bound is the longest delay a Node.js timer supports.",
-    { max: MAX_INBOUND_CLEANUP_INTERVAL_MS, unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_INBOUND_IN_FLIGHT_BYTES: count(
     DEFAULT_INBOUND_LIMITS.inFlightBytes,
@@ -1091,7 +1092,7 @@ const settingsShape = {
   MARFA_INBOUND_READ_TIMEOUT_MS: count(
     DEFAULT_INBOUND_LIMITS.readTimeoutMs,
     "How long a delivery's body has to arrive whole.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.handledRetentionDays,
@@ -1107,7 +1108,7 @@ const settingsShape = {
   MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(
     1_000,
     "How often the housekeeping scheduler asks its table which jobs are due.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   AUDIT_RETENTION_DAYS: count(
     90,
@@ -1201,12 +1202,12 @@ const settingsShape = {
   MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(
     500,
     "The base interval at which the bulk-action worker looks for work.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: count(
     60_000,
     "The longest the bulk-action worker waits between looks for work when it is idle. It must be at least `MARFA_BULK_ACTION_POLL_INTERVAL_MS`.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: setting(
     decimal(1, 100),
@@ -1229,7 +1230,7 @@ const settingsShape = {
   MARFA_ERROR_WEBHOOK_TIMEOUT_MS: count(
     5_000,
     "How long one post to `ERROR_WEBHOOK_URL` may take.",
-    { unit: "ms" },
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_HEARTBEAT_URL: blankUrl(
     "The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.",
