@@ -242,8 +242,8 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         url: cli.url,
         key: cli.key,
     };
-    // Lazy: login, logout, device, folders and operations must run without
-    // a resolved credential.
+    // Lazy: login, logout, device, folders, operations and docs must run
+    // without a resolved credential.
     let remote = || Remote::resolve(&named);
     match cli.command {
         Command::Operations => operations::run(&out),

@@ -71,7 +71,8 @@ pub enum CliError {
         /// it took effect.
         status: Option<u16>,
     },
-    /// The docs site, which is not a Marfa server: its words say so.
+    /// Not `Refused`: the docs site is not a Marfa server, so the envelope
+    /// names no server status or code.
     #[error(
         "no docs page at {path}: `marfa docs search` finds pages and `marfa docs topics` lists them"
     )]

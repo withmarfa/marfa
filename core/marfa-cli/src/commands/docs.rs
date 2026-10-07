@@ -32,8 +32,8 @@ const BODY_BUDGET: Duration = Duration::from_secs(30);
 ///
 /// A page is its path on the site. `get-started/files`, `/get-started/files`,
 /// `get-started/files.md` and `https://docs.marfa.so/get-started/files` name
-/// the same page. `search` and `topics` are commands, so a page cannot have
-/// either name.
+/// the same page. `search`, `topics` and `help` are commands, so a page with
+/// one of those names takes a leading slash, such as `/search`.
 ///
 /// `--url` and `--key` name a Marfa server, so this command refuses them.
 #[derive(Debug, Args)]
@@ -91,7 +91,8 @@ struct Topics {
     pages: Vec<Topic>,
 }
 
-/// A page read: where it came from, and its Markdown exactly as served.
+/// A page read: where it came from, and its Markdown as served, read as
+/// UTF-8.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Page {
     pub path: String,
