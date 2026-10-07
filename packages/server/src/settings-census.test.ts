@@ -23,8 +23,6 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
-  "storage/sqlite/backup-copy.test.ts":
-    "starts a writer process with the node that runs the test",
   "storage/sqlite/backup-writer.ts":
     "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
   "test-browser.ts":
