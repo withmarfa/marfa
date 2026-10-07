@@ -34,8 +34,9 @@ function target(base: string, path: string) {
 
 /**
  * A sender's request, written by hand: the headers go out in the order and
- * case given, repeats kept, and no credential is added. `Content-Length` is
- * the body's own unless `headers` names one.
+ * case given, repeats kept, and no credential is added. `Host` and
+ * `Content-Length` are the target's and the body's own unless `headers` names
+ * them.
  */
 export function send(
   base: string,
@@ -45,10 +46,11 @@ export function send(
 ): Promise<RawAnswer> {
   const to = target(base, path);
   const bytes = typeof body === "string" ? Buffer.from(body) : body;
-  const named = headers.some(
-    (header, index) =>
-      index % 2 === 0 && header.toLowerCase() === "content-length",
-  );
+  const names = (name: string) =>
+    headers.some(
+      (header, index) => index % 2 === 0 && header.toLowerCase() === name,
+    );
+  const named = names("content-length");
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
@@ -57,8 +59,7 @@ export function send(
         port: to.port,
         path: to.path,
         headers: [
-          "Host",
-          to.host,
+          ...(names("host") ? [] : ["Host", to.host]),
           ...headers,
           ...(named ? [] : ["Content-Length", String(bytes.length)]),
         ],
