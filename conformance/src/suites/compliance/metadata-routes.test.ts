@@ -3,14 +3,15 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import { expectMatchesSchema, servedDocument } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "metadata-routes",
   ));
@@ -141,11 +142,65 @@ describe("metadata doors", () => {
 
   it("answers 404 for an unknown item on every metadata door", async () => {
     const unknown = "00000000-0000-7000-8000-000000000000";
-    expect((await client.getMetadata(unknown)).status).toBe(404);
-    expect((await client.addTags(unknown, ["x"])).status).toBe(404);
-    expect((await client.replaceMetadata(unknown, { tags: [] })).status).toBe(
-      404,
+    const doors: [string, string, unknown?][] = [
+      ["GET", "/items/{id}/metadata"],
+      ["PUT", "/items/{id}/metadata", { tags: ["x"] }],
+      ["PATCH", "/items/{id}/metadata", { tags: ["x"] }],
+      ["POST", "/items/{id}/tags", { tags: ["x"] }],
+      ["DELETE", "/items/{id}/tags/{tag}"],
+      ["GET", "/items/{id}/extensions"],
+      ["GET", "/items/{id}/extensions/{namespace}"],
+      ["PUT", "/items/{id}/extensions/{namespace}", { pinned: true }],
+      ["DELETE", "/items/{id}/extensions/{namespace}"],
+    ];
+
+    // Every operation the document files under metadata or extensions on an
+    // item is in the table, so a door added later is not left out.
+    const document = await servedDocument();
+    const published = Object.entries(document.paths).flatMap(([path, item]) =>
+      Object.entries(item as Record<string, { tags?: string[] }>)
+        .filter(
+          ([, operation]) =>
+            path.startsWith("/items/{id}/") &&
+            (operation.tags?.includes("Metadata") === true ||
+              operation.tags?.includes("Extensions") === true),
+        )
+        .map(([method]) => `${method.toUpperCase()} ${path}`),
     );
+    expect(doors.map(([method, path]) => `${method} ${path}`).sort()).toEqual(
+      published.sort(),
+    );
+
+    // The witness: a known item answers the same door.
+    const known = await seed();
+    expect((await client.getMetadata(known)).status).toBe(200);
+
+    for (const [method, path, body] of doors) {
+      const res = await fetch(
+        `${apiUrl}${path
+          .replace("{id}", unknown)
+          .replace("{tag}", "x")
+          .replace("{namespace}", "notes-app")}`,
+        {
+          method,
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            ...(body === undefined
+              ? {}
+              : { "Content-Type": "application/json" }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
+      const answered = (await res.json()) as {
+        error: { code: string; details?: unknown };
+      };
+      const door = `${method} ${path}`;
+      expect(res.status, door).toBe(404);
+      expect(answered.error.code, door).toBe("item_not_found");
+      expect(res.headers.get("X-Error-Code"), door).toBe("item_not_found");
+      expect(answered.error.details, door).toBeUndefined();
+    }
   });
 
   it("refuses every metadata door without a credential, on an id nothing carries", async () => {

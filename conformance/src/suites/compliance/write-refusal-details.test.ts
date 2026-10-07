@@ -9,6 +9,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  trackEdge,
   trackItem,
   trackKey,
   cleanup,
@@ -134,6 +135,83 @@ describe("a refusal caused by a missing grant names it", () => {
     });
   });
 
+  it("names the level read where the key may not read the type, on a list, its counts and an export", async () => {
+    const holder = await keyWith("note-reader", {
+      type_permissions: { "core.note": "read" },
+    });
+    const blind = await keyWith("task-only", {
+      type_permissions: { "core.task": "write" },
+    });
+    const read = { kind: "type", name: "core.note", level: "read" };
+
+    for (const path of [
+      "/items?type=core.note",
+      "/items/stats?type=core.note",
+      "/export?type=core.note",
+    ]) {
+      // The witness: a key that holds the read is served.
+      const served = await holder.rawRequest(path);
+      expect(served.status, path).toBe(200);
+
+      const refused = await blind.rawRequest(path);
+      expect(refused.status, path).toBe(403);
+      expect(refused.error?.error.code, path).toBe("type_not_permitted");
+      expect(refused.error?.error.details?.grant, path).toEqual(read);
+    }
+  });
+
+  it("names the edge type and the level the key lacks beside the grant, on every door that writes an edge", async () => {
+    const source = await note("edge refusal source");
+    const target = await note("edge refusal target");
+    const made = await client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "references",
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackEdge(ctx, made.data.edge.id);
+    const edgeId = made.data.edge.id;
+
+    const holder = await keyWith("edge-writer", {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { references: "write" },
+    });
+    const reader = await keyWith("edge-reader", {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { references: "read" },
+    });
+
+    // The witness: a key holding the write is served.
+    const created = await holder.createEdge({
+      source_id: target.id,
+      target_id: source.id,
+      edge_type: "references",
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackEdge(ctx, created.data.edge.id);
+
+    const refusals = [
+      await reader.createEdge({
+        source_id: source.id,
+        target_id: target.id,
+        edge_type: "references",
+      }),
+      await reader.updateEdge(edgeId, { properties: {}, version: 1 }),
+      await reader.deleteEdge(edgeId),
+    ];
+    for (const refused of refusals) {
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("edge_permission_denied");
+      expect(refused.error?.error.details).toEqual({
+        edge_type: "references",
+        required: "write",
+        grant: { kind: "edge_type", name: "references", level: "write" },
+      });
+    }
+    // The refusals left the edge where it was.
+    expect((await client.getEdge(edgeId)).status).toBe(200);
+  });
+
   it("names the grant on a bulk page, inside the rollback or on the entry", async () => {
     const reader = await keyWith("bulk-reader", {
       type_permissions: { "core.note": "read" },
@@ -247,6 +325,30 @@ describe("a write to an item in the bin says so", () => {
       properties: { body: "x" },
       version,
     });
+    expect(hidden.status).toBe(404);
+    expect(hidden.error?.error.details).toBeUndefined();
+  });
+  it("answers a delete of an extension namespace on an item in the bin 404 with details.trashed, and nothing to a key that may not read the type", async () => {
+    const { id } = await note("binned extension");
+    // The witness: the same delete lands while the item is live.
+    const stored = await client.setItemExtension(id, "notes-app", { a: 1 });
+    expect(stored.status, JSON.stringify(stored.error)).toBe(200);
+    const live = await client.deleteItemExtension(id, "notes-app");
+    expect(live.status).toBe(200);
+    expect(
+      (await client.setItemExtension(id, "notes-app", { a: 2 })).status,
+    ).toBe(200);
+    expect((await client.deleteItem(id)).status).toBe(200);
+
+    const refused = await client.deleteItemExtension(id, "notes-app");
+    expect(refused.status).toBe(404);
+    expect(refused.error?.error.code).toBe("item_not_found");
+    expect(refused.error?.error.details).toEqual({ trashed: true });
+
+    const blind = await keyWith("blind-bin-extension", {
+      type_permissions: { "core.task": "write" },
+    });
+    const hidden = await blind.deleteItemExtension(id, "notes-app");
     expect(hidden.status).toBe(404);
     expect(hidden.error?.error.details).toBeUndefined();
   });
