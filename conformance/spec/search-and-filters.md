@@ -1622,7 +1622,7 @@ When a restore commits, the server MUST announce the items it wrote on the event
 
 When a restore commits, the server MUST tell subscribers about its events in event-log order, ahead of the events of any write committed after it.
 
-**Reason:** a subscriber that received a later event first would move its cursor past events it never saw (`events.md` 36).
+**Reason:** a subscriber that received a later event first would move its cursor past events it never saw (`events/live-no-repeat`).
 
 **Tests:** `compliance/restore-concurrent.test.ts › tells subscribers about its events in log order, ahead of the events of any write committed after it`.
 
