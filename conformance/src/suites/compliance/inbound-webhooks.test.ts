@@ -884,6 +884,106 @@ describe("reading and handling", () => {
     const after = (await pending(owner)).find((d) => d.id === repeat);
     expect(after?.duplicate_of).toEqual({ id: original, outcome: "processed" });
   });
+
+  it("answers each id of a handled mark once, in the order first named", async () => {
+    const owner = await connector("read-mark-order");
+    const made = await endpoint(owner);
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(idOf(await send(apiUrl, made.path, String(i))));
+    }
+    const [d0, d1, d2, d3, d4] = ids as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    const earlier = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d1],
+      outcome: "rejected",
+    });
+    expect(earlier.status).toBe(200);
+    const earlierAt = earlier.data.data[0]?.handled_at;
+
+    // A repeated id is answered once, where it was first named, and a
+    // delivery marked before keeps the mark it had.
+    const marked = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d3, d1, d3, d0, d1],
+      outcome: "processed",
+    });
+    expect(marked.status).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/connectors/{id}/deliveries/handled",
+      200,
+      marked.data,
+    );
+    expect(marked.data.data.map((row) => row.id)).toEqual([d3, d1, d0]);
+    expect(marked.data.data.map((row) => row.outcome)).toEqual([
+      "processed",
+      "rejected",
+      "processed",
+    ]);
+    expect(marked.data.data[1]?.handled_at).toBe(earlierAt);
+    for (const row of marked.data.data) expect(row.handled_at).not.toBeNull();
+
+    // The order named is the order answered, not the order of arrival.
+    const last = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d4, d2],
+      outcome: "duplicate",
+    });
+    expect(last.data.data.map((row) => [row.id, row.outcome])).toEqual([
+      [d4, "duplicate"],
+      [d2, "duplicate"],
+    ]);
+
+    const handled = await owner.client.listInboundDeliveries(owner.id, {
+      state: "handled",
+    });
+    expect(handled.data.data.map((row) => row.id)).toEqual(ids);
+  });
+
+  it("takes 200 ids in a handled mark, and refuses 201, none and a body that names too little", async () => {
+    const owner = await connector("read-mark-bounds");
+    const made = await endpoint(owner);
+    const id = idOf(await send(apiUrl, made.path, "bounded"));
+
+    const refusals: [string, Record<string, unknown>, string][] = [
+      [
+        "201 ids",
+        { ids: Array.from({ length: 201 }, () => id), outcome: "processed" },
+        "validation_error",
+      ],
+      ["no ids", { ids: [], outcome: "processed" }, "validation_error"],
+      [
+        "an unknown outcome",
+        { ids: [id], outcome: "done" },
+        "validation_error",
+      ],
+      ["no outcome", { ids: [id] }, "validation_error"],
+      ["no ids named", { outcome: "processed" }, "missing_required_field"],
+    ];
+    for (const [what, body, code] of refusals) {
+      const refused = await owner.client.rawRequest<unknown>(
+        `/connectors/${owner.id}/deliveries/handled`,
+        { method: "POST", body },
+      );
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe(code);
+    }
+    expect((await pending(owner)).map((d) => d.id)).toEqual([id]);
+
+    // Two hundred names, of one delivery, are two hundred ids and one answer.
+    const taken = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: Array.from({ length: 200 }, () => id),
+      outcome: "processed",
+    });
+    expect(taken.status).toBe(200);
+    expect(taken.data.data.map((row) => row.id)).toEqual([id]);
+    expect(await pending(owner)).toEqual([]);
+  });
 });
 
 describe("retained inbound capacity", () => {
