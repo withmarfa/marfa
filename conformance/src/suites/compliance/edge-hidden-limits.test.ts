@@ -320,6 +320,100 @@ describe("what a key is told of an item it cannot read through a readable one", 
   });
 });
 
+describe("a delete refused by a blocking edge whose type the key cannot read", () => {
+  it("counts the edge without naming it, where a key that reads the type is told which", async () => {
+    const edgeType = `mock.blockkind.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    });
+    expect(registered.status).toBe(201);
+    trackEdgeType(ctx, edgeType);
+
+    async function keyWith(
+      name: string,
+      edgePermissions: Record<string, "read" | "write">,
+    ): Promise<MarfaClient> {
+      const minted = await client.createKey({
+        label: `edge-hidden-kind-${name}`,
+        source: `${ctx.source}-edge-hidden-kind-${name}`,
+        permissions: [],
+        type_permissions: { "core.note": "write" },
+        edge_permissions: edgePermissions,
+      });
+      expect(minted.ok).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    }
+    const blind = await keyWith("blind", { about: "write" });
+    const sighted = await keyWith("sighted", {
+      about: "write",
+      [edgeType]: "read",
+    });
+
+    async function note(): Promise<string> {
+      const r = await client.createItem(createNote({ source: ctx.source }));
+      expect(r.status).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    }
+    const held = await note();
+    const holder = await note();
+    const inbound = await client.createEdge({
+      source_id: holder,
+      target_id: held,
+      edge_type: edgeType,
+    });
+    expect(inbound.status).toBe(201);
+    trackEdge(ctx, inbound.data.edge.id);
+    const heldOutward = await note();
+    const outbound = await client.createEdge({
+      source_id: held,
+      target_id: heldOutward,
+      edge_type: edgeType,
+    });
+    expect(outbound.status).toBe(201);
+    trackEdge(ctx, outbound.data.edge.id);
+
+    // Both ends of both items are readable to either key: the type is what
+    // the blind key cannot read.
+    expect((await blind.getItem(held)).status).toBe(200);
+    expect((await blind.getEdge(inbound.data.edge.id)).status).toBe(404);
+
+    const refused = await blind.deleteItem(held);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error).toEqual({
+      code: "edge_constraint_violation",
+      message: `Cannot delete item ${held}: blocked by an edge with cascade_on_delete=block`,
+      details: { root_item_id: held, blocking_edges: [] },
+    });
+    const body = JSON.stringify(refused.error);
+    for (const hiddenId of [
+      holder,
+      heldOutward,
+      inbound.data.edge.id,
+      outbound.data.edge.id,
+      edgeType,
+    ]) {
+      expect(body).not.toContain(hiddenId);
+    }
+    expect((await client.getItem(held)).data.item.state).toBe("active");
+
+    // The witness: a key that reads the type is told the blocking edges.
+    const named = await sighted.deleteItem(held);
+    expect(named.status).toBe(400);
+    expect(named.error?.error.code).toBe("edge_constraint_violation");
+    const listed = named.error?.error.details?.blocking_edges as
+      { id: string; edge_type: string }[] | undefined;
+    expect(listed?.map((e) => e.id).sort()).toEqual(
+      [inbound.data.edge.id, outbound.data.edge.id].sort(),
+    );
+    expect(listed?.every((e) => e.edge_type === edgeType)).toBe(true);
+    expect(named.error?.error.message).toContain("blocked by 2 edge(s)");
+  });
+});
+
 describe("a delete refused for a live grant it would take with it", () => {
   it(
     "names nothing of a grant the key cannot read",
