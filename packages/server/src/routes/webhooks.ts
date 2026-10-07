@@ -760,6 +760,9 @@ export function webhookRoutes(
     if (body.url !== undefined) {
       assertUrlAccepted(body.url, options.allowPrivateAddresses);
     }
+    // Read before the subscription is looked up, so every refusal of the
+    // body comes before the `404`, as the schema's own do.
+    const typeFilter = normalizeTypeFilter(body.type_filter);
 
     const updated = await runAuditedTransaction(
       storage,
@@ -768,7 +771,7 @@ export function webhookRoutes(
         const next = await storage.outboundWebhooks.update(id, {
           url: body.url,
           events: body.events,
-          type_filter: normalizeTypeFilter(body.type_filter),
+          type_filter: typeFilter,
           active: body.active,
         });
         if (next.url !== existing.url) {

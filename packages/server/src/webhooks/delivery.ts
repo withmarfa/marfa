@@ -181,11 +181,7 @@ export async function deliveryInReach(
   if (typeof stored !== "object" || stored === null) {
     return { cancel: DELIVERY_CANCELED.unreadable };
   }
-  const frame = await frameInReach(
-    storage,
-    credential.key,
-    stored as Record<string, unknown>,
-  );
+  const frame = frameInReach(credential.key, stored as Record<string, unknown>);
   if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
   // Deleted so the spread below cannot keep the frame's `event_type` first:
   // the body's `event_type` follows the frame's own fields.
@@ -540,8 +536,7 @@ export class WebhookScheduler {
               }
               const standing = await credential;
               eligible =
-                standing !== null &&
-                (await frameInReach(storage, standing.key, frame)) !== null;
+                standing !== null && frameInReach(standing.key, frame) !== null;
             }
             if (eligible) {
               // Allow one valid oversized payload; never reject accepted work.
