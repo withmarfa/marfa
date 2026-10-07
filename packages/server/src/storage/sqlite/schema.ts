@@ -962,8 +962,7 @@ export const auth_oauth_refresh_token = sqliteTable(
      *  with the bearer middleware so lookup paths are symmetric. */
     token: text("token").notNull(),
     clientId: text("client_id").notNull(),
-    /** Same as `auth_oauth_access_token.session_id` below, including the
-     *  `set null` and what it costs. */
+    /** Same as `auth_oauth_access_token.session_id` below: always null. */
     sessionId: text("session_id").references(() => auth_session.id, {
       onDelete: "set null",
     }),
@@ -1010,10 +1009,10 @@ export const auth_oauth_access_token = sqliteTable(
      *  can WHERE on it directly. */
     token: text("token").notNull().unique(),
     clientId: text("client_id").notNull(),
-    /** The session this token was issued under, and what a sign-out matches
-     *  on to revoke it. `set null` rather than `cascade`, so the row outlives
-     *  the session and loses the record of which one: a sign-out revokes
-     *  the token, and the token then outlives the session row. */
+    /** The provider's record of the browser session that approved the token,
+     *  which a session's end sweeps. The credential adapter stores it null, so
+     *  no session's end reaches the token; the column is the provider's own
+     *  and stays. */
     sessionId: text("session_id").references(() => auth_session.id, {
       onDelete: "set null",
     }),

@@ -238,6 +238,17 @@ export function withCredentialAudit<
             data: { ...args.data, scopes: request.registrationScopes },
           };
         }
+        if (
+          operation === "create" &&
+          ["oauthAccessToken", "oauthRefreshToken"].includes(args.model) &&
+          args.data
+        ) {
+          // The provider binds every token to the browser session that
+          // approved it, and each door that ends a session sweeps the tokens
+          // bound to it. An app is not the browser that approved it, so the
+          // row is stored unbound and no such door reaches it.
+          args = { ...args, data: { ...args.data, sessionId: null } };
+        }
         const revoke = request?.revoke;
         const commit = () =>
           runAuditedTransaction(

@@ -294,3 +294,35 @@
     Reason: the registration is what a request naming no scope asks for (24) and what a request nobody can send to sign in is judged against (43), so what a person approves on a device reaches the client's later requests as an approval in the browser does. A scope the person unticks, or a code they deny, adds nothing.
 
     Tests: `compliance/signed-in-apps.test.ts › is registered only for what the person approved, which a narrower approval leaves out`, `› is registered for the published scope once the person approves it, and the token carries it`.
+
+## Browser sessions and apps
+
+76. WHEN a person's browser session ends, the server SHALL keep valid every access token an app holds for that person.
+
+    Reason: an app is not the browser that approved it, so signing out of a browser must not cut off the notes app or web page the person connected, and an app with no refresh grant has no way back in. The session ends by browser sign-out, by ending one, the other or every session, by a password change that ends the other sessions, by the provider's end-session once the person confirms it, or by a lookup of an expired session; no fixture moves a session's clock, so the last is not asserted here. Only an explicit disconnect or a withdrawal of the grant ends an app's access.
+
+    Tests: `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`; `compliance/browser-sessions.test.ts › through ending one session leaves every app connected`; `compliance/browser-sessions.test.ts › through ending the other sessions leaves every app connected`; `compliance/browser-sessions.test.ts › through ending every session leaves every app connected`; `compliance/browser-sessions.test.ts › through the provider's end-session, once confirmed, leaves every app connected`; `compliance/browser-sessions.test.ts › through a password change that ends the other sessions leaves every app connected`.
+
+77. WHEN a person's browser session ends, the server SHALL answer `200` to a refresh token grant of a refresh token an app holds for that person, and the tokens it issues SHALL be valid.
+
+    Reason: a refresh token that outlives its browser is the app's way to keep access past an access token's expiry, and the one a refresh issues has to outlive the browser as well.
+
+    Tests: the tests of 76.
+
+78. WHEN a person's browser session ends, the server SHALL keep the person's consent to every app, so an authorization request the consent covers is answered with a code and no consent screen.
+
+    Reason: consent is the person's decision about the app and not about the browser they made it in, so a person who signed out is not asked again.
+
+    Tests: the tests of 76.
+
+79. WHEN the server restarts, the server SHALL keep valid every access token and refresh token an app holds for a person.
+
+    Reason: tokens an app holds live in the instance's storage, so a restart of the process, with the same secret and address, must not make an app approve itself again.
+
+    Tests: `compliance/browser-sessions.test.ts › leaves every app connected across a restart of the server`.
+
+80. WHEN a browser session has ended, the server SHALL refuse the exchange of an authorization code that session approved with `400 invalid_request`.
+
+    Reason: a code is the browser's own step in an approval, and a browser that has ended cannot finish one. A code whose browser lives is exchanged, which the fixture shows first so the refusal cannot be a malformed request.
+
+    Tests: `compliance/browser-sessions.test.ts › refuses an authorization code once the browser that approved it has ended, and accepts one whose browser lives`.
