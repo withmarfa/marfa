@@ -5,6 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
+  trackKey,
   cleanup,
   getOperatorClient,
 } from "../../utils/setup.js";
@@ -12,9 +13,13 @@ import { itemsArchive } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "recurrence"));
+  ({ ctx, client, apiUrl } = await createTestContext(
+    "compliance",
+    "recurrence",
+  ));
 });
 
 afterAll(async () => {
@@ -1204,6 +1209,93 @@ describe("a rule too costly to unfold", () => {
       expect(partial.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
     } finally {
       await client.deleteItem(costly);
+    }
+  });
+});
+
+describe("a moved occurrence whose series the credential may not read", () => {
+  it("names no series a moved occurrence belongs to when the series is not readable", async () => {
+    const current = await client.getConfig();
+    expect(current.status, JSON.stringify(current.error)).toBe(200);
+    const originalConfig = current.data as Record<string, unknown>;
+
+    const writer = async (label: string): Promise<MarfaClient> => {
+      const minted = await client.createKey({
+        label,
+        source: `${ctx.source}-${label}`,
+        permissions: [],
+        type_permissions: { "*": "write" },
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const write = async (
+      as: MarfaClient,
+      properties: Record<string, unknown>,
+    ): Promise<string> => {
+      const r = await as.createItem({
+        type: "core.event",
+        properties: { title: `hidden series ${ctx.runId}`, ...properties },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+
+    const hiding = await writer("hidden-series");
+    const admitted = await writer("moved-occurrence");
+    const series = await write(hiding, {
+      starts_at: "2051-03-03T10:00:00.000Z",
+      ends_at: "2051-03-03T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"],
+    });
+    const moved = await write(admitted, {
+      starts_at: "2051-03-12T10:00:00.000Z",
+      ends_at: "2051-03-12T11:00:00.000Z",
+      original_starts_at: "2051-03-10T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+
+    const read = async (): Promise<Row[]> =>
+      window("2051-03-01T00:00:00Z", "2051-04-01T00:00:00Z");
+    const own = (rows: Row[]) =>
+      rows.filter((o) => o.item.id === moved || o.item.id === series);
+
+    try {
+      // The witness: with no filter the exception carries its series and the
+      // slot it left, and the series unfolds, so what is missing below is the
+      // filter's doing.
+      const before = own(await read());
+      const shown = before.filter((o) => o.item.id === moved);
+      expect(shown).toHaveLength(1);
+      expect(shown[0]?.series_id).toBe(series);
+      expect(shown[0]?.replaces).toBe("2051-03-10T10:00:00.000Z");
+      expect(before.filter((o) => o.item.id === series)).toHaveLength(3);
+
+      const set = await client.updateConfig({
+        enforcement: {
+          source_filter: {
+            types: ["core.event"],
+            sources: [`${ctx.source}-moved-occurrence`],
+          },
+        },
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+
+      const after = own(await read());
+      expect(after.map((o) => o.item.id)).toEqual([moved]);
+      expect(after[0]?.starts_at).toBe("2051-03-12T10:00:00.000Z");
+      expect(after[0]).not.toHaveProperty("series_id");
+      expect(after[0]).not.toHaveProperty("replaces");
+    } finally {
+      const restored = await client.updateConfig(originalConfig);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     }
   });
 });

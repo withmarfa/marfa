@@ -91,6 +91,64 @@ describe("occurrences", () => {
     );
   });
 
+  it("answers the events of the type it names, a type declared under core.event included", async () => {
+    const handle = `occ-${ctx.runId}`;
+    const declared = `${handle}.meeting`;
+    const registered = await client.registerType({
+      id: declared,
+      parent: "core.event",
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    const write = async (type: string, startsAt: string, endsAt: string) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: {
+          title: `occ-type-${ctx.runId}`,
+          starts_at: startsAt,
+          ends_at: endsAt,
+        },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const child = await write(
+      declared,
+      "2032-04-10T10:00:00.000Z",
+      "2032-04-10T11:00:00.000Z",
+    );
+    const plain = await write(
+      "core.event",
+      "2032-04-10T12:00:00.000Z",
+      "2032-04-10T13:00:00.000Z",
+    );
+
+    // Only the two events written here, whoever else holds the window.
+    const answered = async (type?: string): Promise<string[]> => {
+      const r = await client.listOccurrences({
+        from: "2032-04-10T00:00:00.000Z",
+        to: "2032-04-11T00:00:00.000Z",
+        type,
+      });
+      expect(r.status, `${type}: ${JSON.stringify(r.error)}`).toBe(200);
+      return r.data.data
+        .map((o) => o.item.id)
+        .filter((id) => id === child || id === plain)
+        .sort();
+    };
+
+    // The witness: with no filter the window holds both, so each answer
+    // below leaves one out or none by its filter alone.
+    expect(await answered()).toEqual([child, plain].sort());
+    expect(await answered(declared)).toEqual([child]);
+    expect(await answered(`${handle}.*`)).toEqual([child]);
+    expect(await answered("core.event")).toEqual([child, plain].sort());
+    expect(await answered("core.note")).toEqual([]);
+  });
+
   it("refuses a missing or inverted window", async () => {
     const missing = await client.listOccurrences({});
     expect(missing.status).toBe(400);

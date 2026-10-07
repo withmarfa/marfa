@@ -443,6 +443,90 @@ describe("validation edge cases", () => {
     }
   });
 
+  it("refuses an empty narrowing value before a missing required one, and after an undeclared key", async () => {
+    type Refusal = {
+      status: number;
+      code: string | undefined;
+      details: Record<string, unknown> | undefined;
+    };
+    const refusal = (r: {
+      status: number;
+      error?: { error: { code: string; details?: Record<string, unknown> } };
+    }): Refusal => ({
+      status: r.status,
+      code: r.error?.error.code,
+      details: r.error?.error.details,
+    });
+
+    // A read door answers the empty value before the one it is missing. The
+    // witness beside each: the same request with a value for `type` is
+    // refused for the missing one, so the empty value is what the first
+    // answer is naming.
+    for (const [path, missing] of [
+      ["/search", "q"],
+      ["/occurrences", "from"],
+    ] as const) {
+      const named = refusal(
+        await client.rawRequest<unknown>(`${path}?type=core.note`),
+      );
+      expect(named.status, path).toBe(400);
+      expect(named.code, path).toBe("missing_required_field");
+      expect(named.details, path).toMatchObject({ field: missing });
+
+      const empty = refusal(await client.rawRequest<unknown>(`${path}?type=`));
+      expect(empty.status, path).toBe(400);
+      expect(empty.code, path).toBe("validation_error");
+      expect(empty.details?.empty_parameters, path).toEqual(["type"]);
+    }
+
+    const action = (extra: Record<string, unknown>) =>
+      client.bulkAction({
+        action: "update_tier",
+        tier: "library",
+        dry_run: true,
+        ...extra,
+      } as never);
+
+    // The witness: an empty `filter.type` alone is refused for being empty.
+    const alone = refusal(await action({ filter: { type: "" } }));
+    expect(alone.status).toBe(400);
+    expect(alone.code).toBe("validation_error");
+    expect(alone.details?.empty_parameters).toEqual(["filter.type"]);
+
+    // An undeclared key of the request, or of the filter, is named first.
+    const body = refusal(await action({ filter: { type: "" }, dryrun: true }));
+    expect(body.status).toBe(400);
+    expect(body.code).toBe("validation_error");
+    expect(body.details?.unknown_body_fields).toEqual(["dryrun"]);
+    expect(body.details).not.toHaveProperty("empty_parameters");
+
+    const filter = refusal(await action({ filter: { type: "", bogus: 1 } }));
+    expect(filter.status).toBe(400);
+    expect(filter.code).toBe("validation_error");
+    expect(filter.details?.unknown_filter_fields).toEqual(["bogus"]);
+    expect(filter.details).not.toHaveProperty("empty_parameters");
+
+    // The empty value is refused ahead of what the action's own fields lack.
+    const lacking = refusal(
+      await client.bulkAction({
+        action: "update_tags",
+        dry_run: true,
+        filter: { type: "" },
+      } as never),
+    );
+    expect(lacking.status).toBe(400);
+    expect(lacking.details?.empty_parameters).toEqual(["filter.type"]);
+    const withType = refusal(
+      await client.bulkAction({
+        action: "update_tags",
+        dry_run: true,
+        filter: { type: "core.note" },
+      } as never),
+    );
+    expect(withType.status).toBe(400);
+    expect(withType.details?.empty_parameters).toBeUndefined();
+  });
+
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
