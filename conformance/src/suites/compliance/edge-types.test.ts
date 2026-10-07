@@ -642,6 +642,131 @@ describe("custom edge-type registration", () => {
     expect(bulk.data.results[0]?.error?.code).toBe("validation_error");
   });
 
+  it("names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge", async () => {
+    const made = await client.createFolder({ title: "named" });
+    expect(made.status).toBe(201);
+    const folderId = made.data.item.id;
+    trackFolder(ctx, folderId);
+    const note = async (): Promise<string> => {
+      const r = await client.createItem(createNote({ source: ctx.source }));
+      expect(r.status).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const refusedAt = (
+      error: { code?: string; details?: unknown } | undefined,
+      path: string,
+      label: string,
+    ) => {
+      expect(error?.code, label).toBe("validation_error");
+      const details = error?.details as
+        { errors?: { path: string }[] } | undefined;
+      expect(
+        details?.errors?.map((e) => e.path),
+        label,
+      ).toEqual([path]);
+    };
+    const source = await note();
+    const placed = await client.createEdge({
+      source_id: source,
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "kept.md" },
+    });
+    expect(placed.status).toBe(201);
+    trackEdge(ctx, placed.data.edge.id);
+    const { id, version } = placed.data.edge;
+
+    // A move is judged on the properties as they would stand: the stored
+    // path survives a merge that names another property, and is replaced by
+    // one that names the path.
+    for (const [properties, path] of [
+      [{ weight: 1 }, "properties.weight"],
+      [{ path: "../a.md" }, "properties.path"],
+      [{ path: "" }, "properties.path"],
+    ] as const) {
+      const r = await client.updateEdge(id, { version, properties });
+      expect(r.status, JSON.stringify(properties)).toBe(400);
+      refusedAt(r.error?.error, path, `PATCH ${JSON.stringify(properties)}`);
+    }
+    const unchanged = await client.getEdge(id);
+    expect(unchanged.data.edge.properties).toEqual({ path: "kept.md" });
+    expect(unchanged.data.edge.version).toBe(version);
+
+    // A bulk entry for a triple an edge holds merges, and one for a new
+    // triple creates, so each is judged on its own properties.
+    const entry = (src: string, properties?: Record<string, unknown>) => ({
+      source_id: src,
+      target_id: folderId,
+      edge_type: "in-folder",
+      ...(properties !== undefined && { properties }),
+    });
+    const fresh = await note();
+    const best = await client.bulkEdges({
+      atomic: false,
+      edges: [
+        entry(source, { weight: 1 }),
+        entry(source, { path: "../a.md" }),
+        entry(fresh, { path: "../a.md" }),
+        entry(fresh),
+      ],
+    });
+    expect(best.status).toBe(200);
+    expect(best.data.counts).toMatchObject({ created: 0, errored: 4 });
+    const [merged, replaced, created, missing] = best.data.results;
+    refusedAt(merged?.error, "properties.weight", "bulk merge adds a property");
+    refusedAt(replaced?.error, "properties.path", "bulk merge replaces path");
+    refusedAt(created?.error, "properties.path", "bulk create climbs out");
+    refusedAt(missing?.error, "properties.path", "bulk create names no path");
+
+    const rolled = await client.bulkEdges({
+      atomic: true,
+      edges: [entry(fresh, { path: "ok.md" }), entry(source, { weight: 1 })],
+    });
+    expect(rolled.status).toBe(400);
+    expect(rolled.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(rolled.error?.error.details).toMatchObject({
+      index: 1,
+      code: "validation_error",
+    });
+    refusedAt(
+      rolled.error?.error.details as { code?: string; details?: unknown },
+      "properties.weight",
+      "atomic bulk",
+    );
+    const after = await client.listItemEdges(fresh, { edge_type: "in-folder" });
+    expect(after.data.data).toEqual([]);
+
+    // An inline edge carries no properties, so the path is what it lacks.
+    const inline = [
+      await client.rawRequest("/items", {
+        method: "POST",
+        body: {
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "inline" },
+          edges: { "in-folder": [folderId] },
+        },
+      }),
+      await client.rawRequest(`/items/${await note()}`, {
+        method: "PATCH",
+        body: { version: 1, edges: { "in-folder": [folderId] } },
+      }),
+    ];
+    for (const [i, r] of inline.entries()) {
+      expect(r.status, `inline ${String(i)}`).toBe(400);
+      refusedAt(r.error?.error, "properties.path", `inline ${String(i)}`);
+    }
+
+    // The witness: a path that stays inside the folder moves the edge on.
+    const moved = await client.updateEdge(id, {
+      version,
+      properties: { path: "moved.md" },
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.data.edge.properties).toEqual({ path: "moved.md" });
+  });
+
   it("refuses a new placement in a revoked folder with edge_constraint_violation, and keeps the ones it held", async () => {
     const made = await client.createFolder({ title: "retired" });
     expect(made.status).toBe(201);
@@ -839,6 +964,162 @@ describe("custom edge-type registration", () => {
       ...({ written_at: "middle" } as Record<string, unknown>),
     });
     expect(elsewhere.status).toBe(400);
+  });
+
+  it("refuses an id that is not an edge type identifier with 400 validation_error, and registers one that is", async () => {
+    for (const id of [
+      "",
+      "Bad Id",
+      "MY-EDGE",
+      "-",
+      "../-",
+      "mock..name",
+      "mock.1name",
+      "app.two-segments",
+    ]) {
+      const r = await client.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+      });
+      expect(r.status, JSON.stringify(id)).toBe(400);
+      expect(r.error?.error.code, JSON.stringify(id)).toBe("validation_error");
+    }
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain("Bad Id");
+
+    // The witnesses: the kebab form a shipped type has, and the dotted form.
+    for (const id of [`mock-kebab-${ctx.runId}`, `mock.dotted.${ctx.runId}`]) {
+      const r = await client.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+      });
+      expect(r.status, id).toBe(201);
+      trackEdgeType(ctx, id);
+    }
+  });
+
+  it("refuses an id a registered edge type already holds with 409 conflict, and keeps the first", async () => {
+    const etId = `mock.twice.${ctx.runId}`;
+    const first = await client.registerEdgeType({
+      id: etId,
+      cardinality: "one-to-one",
+    });
+    expect(first.status).toBe(201);
+    trackEdgeType(ctx, etId);
+
+    const second = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(second.status).toBe(409);
+    expect(second.error?.error.code).toBe("conflict");
+    const listed = await client.listEdgeTypes();
+    const held = listed.data.data.filter((t) => t.id === etId);
+    expect(held.map((t) => t.cardinality)).toEqual(["one-to-one"]);
+  });
+
+  it("refuses a type constraint naming an unknown role with 400 validation_error, and takes a known one", async () => {
+    for (const [field, constraints] of [
+      ["source_type_constraints", ["role:no-such-role"]],
+      ["target_type_constraints", ["core.note", "role:no-such-role"]],
+    ] as const) {
+      const r = await client.registerEdgeType({
+        id: `mock.badrole.${ctx.runId}`,
+        cardinality: "many-to-many",
+        [field]: constraints,
+      });
+      expect(r.status, field).toBe(400);
+      expect(r.error?.error.code, field).toBe("validation_error");
+    }
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain(
+      `mock.badrole.${ctx.runId}`,
+    );
+
+    const etId = `mock.goodrole.${ctx.runId}`;
+    const known = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      target_type_constraints: ["role:container"],
+    });
+    expect(known.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    expect(known.data.edge_type.target_type_constraints).toEqual([
+      "role:container",
+    ]);
+  });
+
+  it("refuses an edge property of type thumbnail, as its type, its items type or its format, with 400 validation_error", async () => {
+    for (const [name, property] of [
+      ["type", { type: "thumbnail" }],
+      ["items_type", { type: "array", items_type: "thumbnail" }],
+      ["format", { type: "string", format: "thumbnail" }],
+    ] as const) {
+      const r = await client.registerEdgeType({
+        id: `mock.thumb.${ctx.runId}`,
+        cardinality: "many-to-many",
+        property_schema: { picture: property },
+      });
+      expect(r.status, name).toBe(400);
+      expect(r.error?.error.code, name).toBe("validation_error");
+    }
+
+    // The witness: the same property with the types an edge may carry.
+    const etId = `mock.nothumb.${ctx.runId}`;
+    const ok = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      property_schema: {
+        picture: { type: "string" },
+        pictures: { type: "array", items_type: "string" },
+      },
+    });
+    expect(ok.status).toBe(201);
+    trackEdgeType(ctx, etId);
+  });
+
+  it("refuses to delete a shipped edge type with 400 validation_error, and lists it still", async () => {
+    for (const shipped of ["about", "in-folder"]) {
+      for (const force of [false, true]) {
+        const r = await client.deleteEdgeType(shipped, force);
+        expect(r.status, `${shipped} ${String(force)}`).toBe(400);
+        expect(r.error?.error.code, shipped).toBe("validation_error");
+      }
+    }
+    const listed = await client.listEdgeTypes();
+    const ids = listed.data.data.map((t) => t.id);
+    expect(ids).toContain("about");
+    expect(ids).toContain("in-folder");
+
+    // The witness: a registered type is deleted at the same door.
+    const etId = `mock.deletable.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    expect((await client.deleteEdgeType(etId)).status).toBe(200);
+  });
+
+  it("answers the edge type list as the whole list, with a null next_cursor", async () => {
+    const etId = `mock.wholelist.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.status).toBe(201);
+    trackEdgeType(ctx, etId);
+
+    const r = await client.listEdgeTypes();
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.data).sort()).toEqual(["data", "next_cursor"]);
+    expect(r.data.next_cursor).toBeNull();
+    // Shipped and registered together: a page with a cursor would hold one
+    // of the two first.
+    const ids = r.data.data.map((t) => t.id);
+    expect(ids).toContain("about");
+    expect(ids).toContain(etId);
   });
 
   it("refuses a reverse name that is not an edge type identifier", async () => {

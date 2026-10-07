@@ -290,6 +290,71 @@ describe("edge events", () => {
     expect(match?.resource_id).toBe(edge.data.edge.id);
     expect(match?.details.edge_type).toBe("about");
   });
+
+  it("answers a delete of an edge the key cannot read 404 edge_not_found and writes no audit record, where a delete it can read writes one", async () => {
+    const narrow = await client.createKey({
+      label: "audit-hidden-edge",
+      source: `${ctx.source}-audit-hidden-edge`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { references: "write" },
+    });
+    expect(narrow.ok).toBe(true);
+    trackKey(ctx, narrow.data.id);
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.data.key,
+    });
+
+    const note = await makeItem("audit-hidden-note");
+    const other = await makeItem("audit-hidden-other");
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const place = async (source: string, target: string, edgeType: string) => {
+      const r = await client.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: edgeType,
+      });
+      expect(r.status).toBe(201);
+      trackEdge(ctx, r.data.edge.id);
+      return r.data.edge.id;
+    };
+    const actionsOn = async (id: string): Promise<string[]> => {
+      const r = await client.listAudit({
+        resource_type: "edge",
+        resource_id: id,
+      });
+      expect(r.status).toBe(200);
+      return r.data.data.map((row) => row.action);
+    };
+    // One edge hidden by its type and one by its source's type.
+    const hiddenKind = await place(note, other, "about");
+    const hiddenSource = await place(bookmark.data.item.id, note, "references");
+    const readable = await place(note, other, "references");
+
+    for (const [label, id] of [
+      ["edge type", hiddenKind],
+      ["source type", hiddenSource],
+    ] as const) {
+      const refused = await narrowClient.deleteEdge(id);
+      expect(refused.status, label).toBe(404);
+      expect(refused.error?.error.code, label).toBe("edge_not_found");
+      // The edge is still there, and its audit trail is the create alone.
+      expect((await client.getEdge(id)).status, label).toBe(200);
+      expect(await actionsOn(id), label).toEqual(["edge.create"]);
+    }
+
+    // The witness: a delete the key can read answers 200 and writes one.
+    expect((await narrowClient.deleteEdge(readable)).status).toBe(200);
+    expect((await actionsOn(readable)).sort()).toEqual([
+      "edge.create",
+      "edge.delete",
+    ]);
+  });
 });
 
 /**
