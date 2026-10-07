@@ -95,7 +95,7 @@ pnpm test:generators
 
 It needs no server, and CI runs it as a step of the conformance job before
 booting anything — so a change to a spec chapter, a fixture title or a
-numbered statement can be green locally and red in CI without it.
+statement can be green locally and red in CI without it.
 
 ## Releases
 

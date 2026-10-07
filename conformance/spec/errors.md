@@ -84,7 +84,7 @@
 
     Tests: `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
 
-23. If a run of a housekeeping job is asked for while that job is in the middle of a run, then the server SHALL answer `409 housekeeping_job_running` and SHALL NOT start a second run, unless that run has outlived its deadline and been given up on (`housekeeping.md`, "What is not observable over HTTP").
+23. If a run of a housekeeping job is asked for while that job is in the middle of a run, then the server SHALL answer `409 housekeeping_job_running` and SHALL NOT start a second run, unless that run has outlived its deadline and been given up on (`housekeeping/deadline-frees-job`).
 
     Reason: a job never overlaps itself, and the run the scheduler started on its own is a run like one asked for. A caller who gets the refusal asks again when the run has ended.
 

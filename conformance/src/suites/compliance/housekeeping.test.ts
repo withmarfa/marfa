@@ -22,7 +22,11 @@ afterAll(async () => {
 /** The sweeps every instance runs whatever its configuration. */
 const ALWAYS_LISTED = [
   "audit-cleanup",
+  "auth-session-cleanup",
+  "blob-integrity",
+  "blob-replicate",
   "event-log-cleanup",
+  "inbound-delivery-cleanup",
   "rate-limit-cleanup",
   "revoked-key-reap",
   "trash-purge",
@@ -82,6 +86,7 @@ describe("the housekeeping the server runs on itself", () => {
       last_started_at: run.data.started_at,
       last_finished_at: run.data.finished_at,
       last_outcome: "ok",
+      last_error: run.data.error,
       last_result: { deleted: 0 },
     });
     // Due again no later than an interval after the finish, and never
@@ -97,13 +102,91 @@ describe("the housekeeping the server runs on itself", () => {
   it("answers 404 for a name the instance does not run, where a listed one runs", async () => {
     const operator = getOperatorClient();
     expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);
-    // A name no registration carries. A name switched off by configuration
-    // answers the same, and the referee, which boots with enrichment off,
-    // cannot show that name listed; the server's own suite proves that
-    // side from both ends.
     const unknown = await operator.runHousekeeping("nothing-runs-this");
     expect(unknown.status).toBe(404);
     expect(unknown.error?.error.code).toBe("housekeeping_job_not_found");
+  });
+
+  it("leaves a job a setting switches off out of the listing, and answers 404 for it", async () => {
+    // The referee boots with enrichment off. The enrichment fixtures boot
+    // servers with it on and run this name there.
+    const operator = getOperatorClient();
+    const listed = await operator.listHousekeeping();
+    expect(listed.status).toBe(200);
+    const names = listed.data.data.map((row) => row.name);
+    expect(names).toContain("trash-purge");
+    expect(names).not.toContain("enrichment-sweep");
+    const run = await operator.runHousekeeping("enrichment-sweep");
+    expect(run.status).toBe(404);
+    expect(run.error?.error.code).toBe("housekeeping_job_not_found");
+  });
+
+  it("refuses a retention beyond its range and keeps the stored one", async () => {
+    const before = await client.getConfig();
+    expect(before.status).toBe(200);
+    const config = before.data as Record<string, unknown>;
+    const ranges = [
+      ["audit_retention_days", 36500],
+      ["trash_retention_days", 36500],
+      ["inbound_handled_retention_days", 36500],
+      ["inbound_pending_retention_days", 36500],
+      ["event_log_retention_hours", 876000],
+    ] as const;
+    try {
+      for (const [field, max] of ranges) {
+        // The witness: the same body with the largest value is accepted.
+        const accepted = await client.updateConfig({ ...config, [field]: max });
+        expect(accepted.status, field).toBe(200);
+        const stored = (await client.getConfig()).data as Record<
+          string,
+          unknown
+        >;
+        for (const beyond of [max + 1, -1, 1.5]) {
+          const refused = await client.updateConfig({
+            ...config,
+            [field]: beyond,
+          });
+          expect(refused.status, `${field} ${String(beyond)}`).toBe(400);
+          expect(refused.error?.error.code).toBe("validation_error");
+          const after = await client.getConfig();
+          expect(after.data, `${field} ${String(beyond)}`).toEqual(stored);
+        }
+      }
+    } finally {
+      expect((await client.updateConfig(config)).status).toBe(200);
+    }
+  });
+
+  it("runs each cleanup job at the largest retention it accepts", async () => {
+    const operator = getOperatorClient();
+    const before = await client.getConfig();
+    expect(before.status).toBe(200);
+    const config = before.data as Record<string, unknown>;
+    try {
+      const widest = await client.updateConfig({
+        ...config,
+        audit_retention_days: 36500,
+        trash_retention_days: 36500,
+        inbound_handled_retention_days: 36500,
+        inbound_pending_retention_days: 36500,
+        event_log_retention_hours: 876000,
+      });
+      expect(widest.status, JSON.stringify(widest.error)).toBe(200);
+      for (const name of [
+        "audit-cleanup",
+        "trash-purge",
+        "event-log-cleanup",
+        "inbound-delivery-cleanup",
+      ]) {
+        const run = await operator.runHousekeeping(name);
+        expect(run.status, name).toBe(200);
+        expect(run.data.outcome, `${name}: ${String(run.data.error)}`).toBe(
+          "ok",
+        );
+      }
+    } finally {
+      expect((await client.updateConfig(config)).status).toBe(200);
+    }
   });
 
   it("refuses a malformed name and a working key", async () => {

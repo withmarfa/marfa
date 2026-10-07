@@ -26,7 +26,7 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 - Public prose (README, docs, issues, pull requests) follows the Google developer documentation style guide, in American English, with docs organized by Diátaxis: tutorials, how-to guides, reference and explanation kept apart.
 - Every summary, description and example in `openapi.json` follows `packages/server/API-STYLE.md`.
 - Code comments follow the language's own conventions. A comment stays only if it says what the code cannot: a constraint from outside, a non-obvious reason, a trap. Never what the code does, history, removed code, a ticket or a person. When in doubt, it goes.
-- The contract in `conformance/spec/` uses RFC 2119 keywords and the EARS requirement pattern, one requirement per statement, with its reason and its test references set apart from the rule.
+- The contract in `conformance/spec/` follows the standard in `conformance/spec/README.md`: one requirement per statement, in RFC 2119 keywords and the EARS pattern, each with a permanent ID.
 
 ## Versions
 

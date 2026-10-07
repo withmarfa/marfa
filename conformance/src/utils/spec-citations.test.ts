@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureTitles } from "./fixture-titles.js";
+import {
+  checkReferences,
+  indexOf,
+  numbersIn,
+  readIndex,
+} from "./spec-references.js";
+import { citationsInText, withoutDefinitions } from "./spec-statements.js";
 
 /**
  * Every citation in `spec/` must name a fixture that exists: a file under
@@ -34,88 +41,13 @@ function walk(dir: string, extension: string): string[] {
   return found;
 }
 
-/**
- * The statement numbers a spec file defines: its ordered-list items, and the
- * `## N.` headings `findings.md` uses instead.
- *
- * The files cite each other by chapter name and bare integer, so nothing in
- * a citation ties it to what it names.
- * Renumber a file and every citation still reads as a sentence while pointing
- * somewhere else, or nowhere at all. Neither the fixture checks in this file
- * nor any suite can see it: those resolve to fixture files and test titles,
- * and this is a reference between two documents.
- */
-function statementNumbers(file: string): Set<number> {
-  return numbersIn(readFileSync(resolve(specDir, file), "utf8"));
-}
-
-/** The statement numbers `text` defines, by the rule `statementNumbers` reads a file with. */
-function numbersIn(text: string): Set<number> {
-  const out = new Set<number>();
-  for (const match of text.matchAll(/^(?:## )?(\d+)\. /gm)) {
-    out.add(Number(match[1]));
-  }
-  return out;
-}
-
-/**
- * A citation and every statement number it names.
- *
- * One expression for the chapters and for the sources, because a citation
- * written in a chapter and the same citation written in a comment are the
- * same claim.
- *
- * A citation names as many statements as it lists, so a chapter name
- * followed by "1, 2 and 3" is three references rather than one, and every
- * number in the list is held to a statement that exists. A range is the
- * exception it cannot cover: "17 to 23" yields 17 and 23, and what sits
- * between them is whatever the writer meant. This file is inside the source
- * walk, so no example here puts a chapter name in code font.
- *
- * The gap between the name and the first number is spaces on one line,
- * never a newline: a chapter name that ends a line above an ordered-list
- * item is not citing that item's number.
- */
-const CITED_STATEMENTS =
-  /`([a-z][a-z-]*\.md)`[ \t]+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
-
-/** Every `<file>.md <N>` reference in `spec/`, with where it was written. */
-function statementCitations(): {
-  spec: string;
-  target: string;
-  entry: number;
-}[] {
-  const out: { spec: string; target: string; entry: number }[] = [];
-  for (const name of readdirSync(specDir)) {
-    if (!name.endsWith(".md")) continue;
-    const text = readFileSync(resolve(specDir, name), "utf8");
-    for (const match of text.matchAll(CITED_STATEMENTS)) {
-      for (const raw of match[2].match(/\d+/g) ?? []) {
-        out.push({ spec: name, target: match[1], entry: Number(raw) });
-      }
-    }
-  }
-  return out;
-}
-
 function citations(): Citation[] {
   const out: Citation[] = [];
   for (const name of readdirSync(specDir)) {
     if (!name.endsWith(".md")) continue;
     const text = readFileSync(resolve(specDir, name), "utf8");
-    for (const match of text.matchAll(
-      /`((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts)(?: › ([^`]+))?`/g,
-    )) {
-      out.push({ spec: name, file: match[1], title: match[2] });
-    }
-    // Shorthand: a `› title` following a citation continues the same file.
-    for (const match of text.matchAll(
-      /`((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts) › [^`]+`(?:, `› ([^`]+)`)+/g,
-    )) {
-      const file = match[1];
-      for (const cont of match[0].matchAll(/`› ([^`]+)`/g)) {
-        out.push({ spec: name, file, title: cont[1] });
-      }
+    for (const found of citationsInText(text)) {
+      out.push({ spec: name, file: found.file, title: found.title });
     }
   }
   return out;
@@ -124,6 +56,40 @@ function citations(): Citation[] {
 function titlesIn(file: string): string[] {
   const text = readFileSync(resolve(suitesDir, file), "utf8");
   return fixtureTitles(text, true);
+}
+
+/** The source files whose comments cite the chapters. */
+function sourceFiles(): string[] {
+  return [
+    ...walk(resolve(root, "..", "core", "marfa-core", "src"), ".rs"),
+    ...walk(resolve(root, "..", "core", "marfa-cli", "src"), ".rs"),
+    ...walk(resolve(root, "..", "core", "bindings", "swift", "src"), ".rs"),
+    ...walk(resolve(root, "..", "core", "bindings", "node", "src"), ".rs"),
+    ...readdirSync(resolve(root, "..", "packages")).flatMap((name) => {
+      const dir = resolve(root, "..", "packages", name, "src");
+      return existsSync(dir) ? walk(dir, ".ts") : [];
+    }),
+    ...walk(resolve(root, "src"), ".ts"),
+  ];
+}
+
+/** The citations whose title is not a test or describe title in its file. */
+function unresolvedTitles(
+  cited: Citation[],
+  titlesOf: (file: string) => string[],
+): string[] {
+  const cache = new Map<string, string[]>();
+  const unresolved: string[] = [];
+  for (const c of cited) {
+    if (!c.title) continue;
+    const titles = cache.get(c.file) ?? titlesOf(c.file);
+    cache.set(c.file, titles);
+    const wanted = c.title.replace(/\\`/g, "`");
+    if (!titles.some((t) => t === wanted)) {
+      unresolved.push(`${c.spec}: ${c.file} › ${c.title}`);
+    }
+  }
+  return unresolved;
 }
 
 describe("specification citations", () => {
@@ -159,92 +125,191 @@ describe("specification citations", () => {
       witness,
       "the heading parse read nothing from two headings written for it, so the check on the file below is about nothing",
     ).toEqual([1, 2]);
-    const numbered = [...statementNumbers("findings.md")].sort((a, b) => a - b);
+    const numbered = [
+      ...numbersIn(readFileSync(resolve(specDir, "findings.md"), "utf8")),
+    ].sort((a, b) => a - b);
     expect(numbered).toEqual(numbered.map((_, index) => index + 1));
   });
 
-  it("every numbered cross-reference names a statement that exists", () => {
-    const cited = statementCitations();
+  it("every cross-reference between the chapters names a statement that exists", () => {
+    const index = readIndex();
+    let checked = 0;
+    const dangling: string[] = [];
+    for (const [name, text] of index.files) {
+      const found = checkReferences(name, text, index, { definitions: false });
+      checked += found.checked;
+      dangling.push(...found.problems);
+    }
     // The positive control. A zero count would pass the assertion below for
     // the wrong reason, and these are read out of prose by a regex that has
-    // to keep matching.
-    expect(cited.length).toBeGreaterThan(20);
-    const defined = new Map<string, Set<number>>();
-    const dangling: string[] = [];
-    for (const { spec, target, entry } of cited) {
-      if (!existsSync(resolve(specDir, target))) {
-        dangling.push(`${spec}: ${target} (no such file)`);
-        continue;
-      }
-      const numbers = defined.get(target) ?? statementNumbers(target);
-      defined.set(target, numbers);
-      if (!numbers.has(entry)) {
-        dangling.push(`${spec}: ${target} ${String(entry)}`);
-      }
-    }
+    // to keep matching. Numbered references and ID references count
+    // together, so the floor holds as chapters move from one to the other.
+    expect(checked).toBeGreaterThan(20);
     expect(dangling).toEqual([]);
   });
 
   /**
    * The same check, over the code that cites the chapters.
    *
-   * A comment citing a statement number reads as authority — it is how the next
-   * person finds the rule a piece of code exists for — so one that resolves
-   * to nothing, or to a chapter with fewer statements than it names, sends
-   * them somewhere else entirely.
+   * A comment citing a statement reads as authority, because it is how the
+   * next person finds the rule a piece of code exists for, so one that
+   * resolves to nothing sends them somewhere else entirely.
    *
-   * This catches a number that does not exist. It cannot catch a number
-   * that exists and is the wrong one; that needs a reader.
+   * This catches a statement that does not exist. It cannot catch one that
+   * exists and is the wrong one; that needs a reader.
    */
   it("every citation in the code names a statement that exists", () => {
-    const sources = [
-      ...walk(resolve(root, "..", "core", "marfa-core", "src"), ".rs"),
-      ...walk(resolve(root, "..", "core", "marfa-cli", "src"), ".rs"),
-      ...walk(resolve(root, "src"), ".ts"),
-    ];
-    const defined = new Map<string, Set<number>>();
+    const index = readIndex();
+    let checked = 0;
     const dangling: string[] = [];
-    let counted = 0;
-    for (const file of sources) {
-      const text = readFileSync(file, "utf8");
-      for (const found of text.matchAll(CITED_STATEMENTS)) {
-        const target = found[1];
-        if (!existsSync(resolve(specDir, target))) {
-          dangling.push(`${file}: ${target} (no such chapter)`);
-          continue;
-        }
-        const numbers = defined.get(target) ?? statementNumbers(target);
-        defined.set(target, numbers);
-        for (const raw of found[2].match(/\d+/g) ?? []) {
-          counted += 1;
-          const entry = Number(raw);
-          if (!numbers.has(entry)) {
-            dangling.push(`${file}: ${target} ${raw}`);
-          }
-        }
-      }
+    for (const file of sourceFiles()) {
+      const found = checkReferences(
+        relative(resolve(root, ".."), file),
+        readFileSync(file, "utf8"),
+        index,
+      );
+      checked += found.checked;
+      dangling.push(...found.problems);
     }
     // The positive control. These are read out of comments by a regex, and
     // a zero count passes the assertion below for the wrong reason.
     expect(
-      counted,
+      checked,
       "no citation was found in the code at all, so the assertion below is about nothing",
     ).toBeGreaterThan(50);
     expect(dangling).toEqual([]);
   });
 
   it("every cited title is a test or describe title in its file", () => {
-    const cache = new Map<string, string[]>();
-    const unresolved: string[] = [];
-    for (const c of all) {
-      if (!c.title || !existsSync(resolve(suitesDir, c.file))) continue;
-      const titles = cache.get(c.file) ?? titlesIn(c.file);
-      cache.set(c.file, titles);
-      const wanted = c.title.replace(/\\`/g, "`");
-      if (!titles.some((t) => t === wanted)) {
-        unresolved.push(`${c.spec}: ${c.file} › ${c.title}`);
-      }
-    }
-    expect(unresolved).toEqual([]);
+    expect(
+      unresolvedTitles(
+        all.filter((c) => existsSync(resolve(suitesDir, c.file))),
+        titlesIn,
+      ),
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Witnesses for the checks above, on chapters written here. A check that
+ * asserts there is nothing wrong needs a case that is wrong and is seen.
+ * Backticks are escaped in every text below so that no source file in the
+ * walk cites a chapter that does not exist.
+ */
+describe("the reference checks see what they are for", () => {
+  const sample = [
+    "# Sample",
+    "",
+    "## Rules",
+    "",
+    "### `sample/first-rule`",
+    "",
+    "The server MUST answer.",
+    "",
+    "**Tests:** waiting on #1.",
+    "",
+    "### `sample/second-rule`",
+    "",
+    "The server MUST answer again.",
+    "",
+    "**Tests:** waiting on #1.",
+    "",
+  ].join("\n");
+  const older = "1. A rule.\n2. Another rule.\n3. A third rule.\n";
+  const index = indexOf({
+    "sample.md": sample,
+    "older.md": older,
+    "other.md": "Prose.\n",
+  });
+  const check = (text: string) => checkReferences("a comment", text, index);
+
+  it("reads an ID and a number written for it", () => {
+    expect(index.chapters.get("sample")?.form).toBe("id");
+    expect(index.chapters.get("older")?.form).toBe("numbered");
+    expect([...index.ids]).toEqual(["sample/first-rule", "sample/second-rule"]);
+    expect(check("See \`sample/first-rule\` and \`older.md\` 3.")).toEqual({
+      checked: 2,
+      problems: [],
+    });
+  });
+
+  it("fails an ID that names no statement", () => {
+    const found = check("See \`sample/third-rule\`.");
+    expect(found.problems).toEqual([
+      "a comment line 1: \`sample/third-rule\` (no such statement)",
+    ]);
+  });
+
+  it("does not read a path or a fixture as an ID", () => {
+    // `sample` is a chapter, so the first would be read as an ID if the
+    // grammar let a dot through; the second names a directory of another
+    // name altogether.
+    expect(
+      check(
+        "See \`sample/x.test.ts\`, \`older/first\` and \`routes/auth-pages\`.",
+      ),
+    ).toEqual({ checked: 0, problems: [] });
+  });
+
+  it("fails a number into a chapter that has IDs, because it has no numbers", () => {
+    expect(check("The rule (\`sample.md\` 1).").problems).toEqual([
+      "a comment line 1: sample.md 1 (the chapter states its rules by ID, so it has no such number)",
+    ]);
+    expect(check("Rules \`sample.md\` 1 and 2.").problems).toEqual([
+      "a comment line 1: sample.md 1 (the chapter states its rules by ID, so it has no such number)",
+      "a comment line 1: sample.md 2 (the chapter states its rules by ID, so it has no such number)",
+    ]);
+  });
+
+  it("still fails a number past the end of a numbered chapter", () => {
+    expect(check("See \`older.md\` 4.").problems).toEqual([
+      "a comment line 1: older.md 4",
+    ]);
+  });
+
+  it("counts numbered and ID references together", () => {
+    expect(
+      check("\`older.md\` 1, 2 and 3; \`sample/first-rule\`.").checked,
+    ).toBe(4);
+  });
+
+  it("does not read a chapter's ID headings or a fenced example as references", () => {
+    const text = [
+      "### `sample/third-rule`",
+      "",
+      "```markdown",
+      "See `sample/fourth-rule`.",
+      "```",
+      "",
+      "## After",
+      "",
+      "See `sample/sixth-rule`.",
+    ].join("\n");
+    expect(withoutDefinitions(text).split("\n")).toHaveLength(9);
+    expect(
+      checkReferences("a chapter", text, index, { definitions: false }),
+    ).toEqual({
+      checked: 1,
+      problems: ["a chapter line 9: \`sample/sixth-rule\` (no such statement)"],
+    });
+  });
+
+  it("reads a citation in an ID statement's Tests paragraph and holds its title to the fixture", () => {
+    const chapter = [
+      "### `sample/cited-rule`",
+      "",
+      "The server MUST answer.",
+      "",
+      "**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`, `› no such title in that file`.",
+      "",
+    ].join("\n");
+    const cited = citationsInText(chapter).map((c): Citation => ({
+      spec: "sample.md",
+      ...c,
+    }));
+    expect(cited).toHaveLength(2);
+    expect(unresolvedTitles(cited, titlesIn)).toEqual([
+      "sample.md: compliance/housekeeping.test.ts › no such title in that file",
+    ]);
   });
 });

@@ -6,6 +6,7 @@ import {
 } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
@@ -125,5 +126,80 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
       outcome: "ok",
     });
     expect((await listedHeartbeat()).running_since).toBeNull();
+  });
+  it("runs another job while one is held, and lists when the held run started", async () => {
+    answerAtOnce = false;
+    const before = received;
+    const heldRun = runHeartbeat();
+    const deadline = Date.now() + 10_000;
+    while (received === before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(received, "the run never reached the receiver").toBe(before + 1);
+    const runningSince = (await listedHeartbeat()).running_since;
+    expect(runningSince).not.toBeNull();
+
+    const other = await fetch(
+      `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${server!.operatorKey}` },
+      },
+    );
+    expect(other.status).toBe(200);
+
+    // A job that falls due while the heartbeat is held runs too:
+    // `webhook-schedule` is due every second.
+    let dueRan = false;
+    const dueBy = Date.now() + 5_000;
+    while (!dueRan && Date.now() < dueBy) {
+      const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
+        headers: { Authorization: `Bearer ${server!.operatorKey}` },
+      });
+      const rows = (
+        (await listed.json()) as {
+          data: { name: string; last_started_at: string | null }[];
+        }
+      ).data;
+      const started = rows.find(
+        (job) => job.name === "webhook-schedule",
+      )?.last_started_at;
+      dueRan =
+        started != null && Date.parse(started) > Date.parse(runningSince!);
+      if (!dueRan) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(dueRan, "no due job ran while the heartbeat was held").toBe(true);
+    expect((await listedHeartbeat()).running_since).toBe(runningSince);
+
+    answerAtOnce = true;
+    for (const response of held.splice(0)) response.writeHead(204).end();
+    const finished = await heldRun;
+    expect(finished.status).toBe(200);
+    expect(((await finished.json()) as { started_at: string }).started_at).toBe(
+      runningSince,
+    );
+  });
+  it("refuses the listing and a run to an app's access token", async () => {
+    const operator = { Authorization: `Bearer ${server!.operatorKey}` };
+    expect(
+      (await fetch(`${server!.apiUrl}/housekeeping`, { headers: operator }))
+        .status,
+    ).toBe(200);
+    const app = { Authorization: `Bearer ${await approvedAppToken(server!)}` };
+    const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
+      headers: app,
+    });
+    expect(listed.status).toBe(403);
+    expect(
+      ((await listed.json()) as { error: { code: string } }).error.code,
+    ).toBe("forbidden");
+    const run = await fetch(
+      `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+      { method: "POST", headers: app },
+    );
+    expect(run.status).toBe(403);
+    expect(((await run.json()) as { error: { code: string } }).error.code).toBe(
+      "forbidden",
+    );
   });
 });
