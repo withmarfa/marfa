@@ -673,7 +673,10 @@ export function createApp(
   app.route("/config", configRoutes(storage, instanceId));
   app.route(
     "/restore",
-    restoreArchiveRoutes(storage, blobs, { maxRowBytes: bulkBodyCap(config) }),
+    restoreArchiveRoutes(storage, blobs, {
+      maxRowBytes: bulkBodyCap(config),
+      diskReserveBytes: config.diskReserveBytes,
+    }),
   );
   app.route("/platform-types", platformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is

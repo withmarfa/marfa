@@ -1,4 +1,5 @@
 import { ErrorCode, MarfaError, httpStatus } from "@withmarfa/shared";
+import { diskFull } from "../storage/disk-space.js";
 import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
 
 /**
@@ -102,11 +103,12 @@ export function failedEntry(err: unknown): {
         "The entry may have been written, but its commit could not be confirmed. Read its current state before retrying this entry; do not resend the whole page.",
       details: { write_outcome: "unknown" },
     };
-  if (err instanceof MarfaError)
+  const typed = err instanceof MarfaError ? err : diskFull(err);
+  if (typed)
     return {
-      code: err.code,
-      message: err.message,
-      ...(err.details && { details: err.details }),
+      code: typed.code,
+      message: typed.message,
+      ...(typed.details && { details: typed.details }),
     };
   return {
     code: "internal_error",

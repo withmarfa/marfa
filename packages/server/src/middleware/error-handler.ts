@@ -7,6 +7,7 @@ import { formatErrorSummary, log, serializeError } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
 import { errorStack } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
+import { diskFull } from "../storage/disk-space.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 
 /**
@@ -91,11 +92,11 @@ function isMarfaError(err: unknown): err is ShapedError {
 export function shapedError(err: unknown): ShapedError | undefined {
   if (isMarfaError(err)) return err;
   for (let step: unknown = err, depth = 0; depth < 8; depth++) {
-    if (step === null || typeof step !== "object") return undefined;
+    if (step === null || typeof step !== "object") break;
     step = (step as { cause?: unknown }).cause;
     if (step instanceof MarfaError) return step;
   }
-  return undefined;
+  return diskFull(err);
 }
 
 export function createErrorHandler(config: {

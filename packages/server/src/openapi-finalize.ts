@@ -390,6 +390,9 @@ function chainRefusal(
 const WRITE_CONTENTION_TEXT =
   "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.";
 
+const INSUFFICIENT_STORAGE_TEXT =
+  "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed. Free space on the disk, then try the request again.";
+
 /**
  * Applied as floors: a route that declares the status itself keeps its own.
  *
@@ -414,6 +417,10 @@ export const CHAIN_REFUSALS = {
     "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
   ),
   writeContention: chainRefusal(["write_contention"], WRITE_CONTENTION_TEXT),
+  insufficientStorage: chainRefusal(
+    ["insufficient_storage"],
+    INSUFFICIENT_STORAGE_TEXT,
+  ),
   internalError: chainRefusal(
     ["internal_error"],
     "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
@@ -1424,6 +1431,7 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       }
       if (declaresSecurity(operation)) {
         floorRefusal(responses, "503", CHAIN_REFUSALS.writeContention);
+        floorRefusal(responses, "507", CHAIN_REFUSALS.insufficientStorage);
       }
       // Every door can meet a fault nothing foresaw, and the error handler
       // answers it alike on all of them. Registration is the exception: the

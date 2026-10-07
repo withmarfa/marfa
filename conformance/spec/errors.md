@@ -1,6 +1,6 @@
 # Errors
 
-What every refusal looks like, and the refusals no other chapter owns. A refusal that belongs to one operation is stated with that operation, under its code. This chapter states the envelope, the closed set of codes, the headers a refusal carries, the answers to a request that is not read as JSON, to a path no operation serves, to a write that meets contention, to a fault and to an `Idempotency-Key` that cannot be served, what a refusal names of a missing grant or of an item in the bin, the limits a stream and a housekeeping job meet, a type whose parent chain cannot be resolved, and what the server reports of a failed database statement. The `409` envelopes of a stale write are `versions.md`'s, and the answer to a read view that has changed is `read-views.md`'s.
+What every refusal looks like, and the refusals no other chapter owns. A refusal that belongs to one operation is stated with that operation, under its code. This chapter states the envelope, the closed set of codes, the headers a refusal carries, the answers to a request that is not read as JSON, to a path no operation serves, to a write that meets contention, to a volume with no room, to a fault and to an `Idempotency-Key` that cannot be served, what a refusal names of a missing grant or of an item in the bin, the limits a stream and a housekeeping job meet, a type whose parent chain cannot be resolved, and what the server reports of a failed database statement. The `409` envelopes of a stale write are `versions.md`'s, and the answer to a read view that has changed is `read-views.md`'s.
 
 ## The envelope
 
@@ -335,6 +335,32 @@ If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets t
 **Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
 
 **Tests:** waiting on #1444.
+
+## A volume with no room
+
+An instance keeps a reserve of free space on the volume that holds its disk store, set by `MARFA_DISK_RESERVE_BYTES`. A body that would take the volume below the reserve is refused before it fills the volume the database writes to. `blobs.md` states the uploads and restores that are held to it.
+
+### `errors/storage-full`
+
+If a write meets a volume with no room left for it, then the server MUST answer `507 insufficient_storage`.
+
+**Reason:** a `500` names no cause, so a full disk reads as a fault in the server. A device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17) and keeps the write queued, which is what a write that only freed space can land needs. A `503` would read as a busy instance that a retry a moment later clears, and only someone freeing space does.
+
+**Tests:** waiting on #1444.
+
+### `errors/storage-full-declared`
+
+The server MUST declare `507 insufficient_storage` in its OpenAPI document on every operation that takes a credential.
+
+**Reason:** a client generated from the document then knows the refusal it must not treat as a fault in its request.
+
+**Tests:** `compliance/declared-refusals.test.ts › is declared 507 insufficient_storage on every operation that takes a credential`.
+
+### `errors/storage-reserve-details`
+
+When the server answers `507 insufficient_storage` because a body would take the volume below the reserve, the server MUST carry the reserve in `details.reserve_bytes` and the free space it found in `details.available_bytes`, both in bytes.
+
+**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`.
 
 ## What a refusal names of a missing grant
 
@@ -693,5 +719,6 @@ Every code the server can answer is a row of the table below, which is written f
 | `inbound_unavailable`             | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later. |
 | `stream_capacity_exhausted`       | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                |
 | `write_contention`                | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                          |
+| `insufficient_storage`            | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept.                |
 
 <!-- errors-table:end -->

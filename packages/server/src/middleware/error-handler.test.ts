@@ -187,3 +187,46 @@ describe("error handler — an error the server threw, re-wrapped on the way out
     expect(res.status).toBe(500);
   });
 });
+
+describe("error handler — a volume with no room left", () => {
+  function appThrowing(error: unknown): Hono<AppEnv> {
+    const app = new Hono<AppEnv>();
+    app.get("/boom", () => {
+      throw error;
+    });
+    app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+    return app;
+  }
+
+  /** What the query layer makes of a driver refusal: its own error, the
+   *  driver's under `cause`. */
+  function wrapped(code: string): Error {
+    return new Error("Failed query: insert into t", {
+      cause: Object.assign(new Error(`${code}: database or disk is full`), {
+        code,
+      }),
+    });
+  }
+
+  it.each(["SQLITE_FULL", "ENOSPC", "EDQUOT"])(
+    "answers 507 insufficient_storage for %s, whether wrapped or bare",
+    async (code) => {
+      for (const error of [wrapped(code), wrapped(code).cause]) {
+        const res = await appThrowing(error).request("/boom");
+        expect(res.status).toBe(507);
+        expect(res.headers.get("X-Error-Code")).toBe("insufficient_storage");
+        const body = (await res.json()) as {
+          error: { code: string; message: string };
+        };
+        expect(body.error.code).toBe("insufficient_storage");
+        expect(body.error.message).not.toMatch(/SQLITE|ENOSPC|insert into/);
+      }
+    },
+  );
+
+  it("still answers a fault with another code 500 internal_error", async () => {
+    const res = await appThrowing(wrapped("SQLITE_CORRUPT")).request("/boom");
+    expect(res.status).toBe(500);
+    expect(res.headers.get("X-Error-Code")).toBe("internal_error");
+  });
+});

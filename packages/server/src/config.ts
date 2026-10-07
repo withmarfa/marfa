@@ -199,6 +199,10 @@ export interface AppConfig {
    *  fewer is refused. A positive integer; default 1; env override
    *  `MARFA_BLOB_MIN_COPIES`. */
   blobMinCopies?: number;
+  /** The free bytes an upload or a restore must leave on the disk store's
+   *  volume. A non-negative integer; default 134_217_728 (128 MiB); env
+   *  override `MARFA_DISK_RESERVE_BYTES`. */
+  diskReserveBytes?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
    *  the copies its policy wants; an upload wakes it too. A positive
    *  integer, since the housekeeping job has no off switch: a store the
@@ -884,6 +888,11 @@ const settingsShape = {
     text,
     () => "./data/blobs",
     "The folder of the disk store, where every upload lands.",
+  ),
+  MARFA_DISK_RESERVE_BYTES: count(
+    128 * 1024 * 1024,
+    "The free space on the disk store's volume that an upload or a restore must leave. A body that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
+    { min: 0, unit: "bytes" },
   ),
   MARFA_MAX_REQUEST_BYTES: count(
     1_048_576,
@@ -1604,6 +1613,7 @@ export function loadConfig(
     blobCleanupIntervalMs: s.MARFA_BLOB_CLEANUP_INTERVAL_MS,
     blobCleanupGraceMs: s.MARFA_BLOB_CLEANUP_GRACE_MS,
     blobMinCopies: s.MARFA_BLOB_MIN_COPIES,
+    diskReserveBytes: s.MARFA_DISK_RESERVE_BYTES,
     blobReplicateIntervalMs: s.MARFA_BLOB_REPLICATE_INTERVAL_MS,
     blobReplicateBatch: s.MARFA_BLOB_REPLICATE_BATCH,
     blobReplicateBatchBytes: s.MARFA_BLOB_REPLICATE_BATCH_BYTES,

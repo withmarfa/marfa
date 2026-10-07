@@ -913,3 +913,44 @@ describe("the write contention a door can meet", () => {
     expect(wrongShape).toEqual([]);
   });
 });
+
+describe("the full volume a door can meet", () => {
+  it("is declared 507 insufficient_storage on every operation that takes a credential", async () => {
+    const document = await servedDocument();
+    const full = {
+      error: {
+        code: "insufficient_storage",
+        message: "The disk is full.",
+      },
+    };
+    const notFull = {
+      error: { code: "item_not_found", message: "Not found." },
+    };
+
+    const takingACredential: string[] = [];
+    const missing: string[] = [];
+    const wrongShape: string[] = [];
+    for (const [path, item] of Object.entries(document.paths)) {
+      for (const [method, operation] of Object.entries(item)) {
+        if (!["get", "post", "put", "patch", "delete"].includes(method)) {
+          continue;
+        }
+        const takes = (operation as { security?: unknown[] }).security;
+        if (takes === undefined || takes.length === 0) continue;
+        const door = `${method.toUpperCase()} ${path}`;
+        takingACredential.push(door);
+        const declared = operation.responses?.["507"];
+        const schema = declared?.content?.["application/json"]?.schema;
+        if (schema === undefined) {
+          missing.push(door);
+          continue;
+        }
+        const validate = validatorFor(schema, document);
+        if (!validate(full) || validate(notFull)) wrongShape.push(door);
+      }
+    }
+    expect(takingACredential.length).toBeGreaterThan(90);
+    expect(missing).toEqual([]);
+    expect(wrongShape).toEqual([]);
+  });
+});

@@ -28,6 +28,7 @@ import {
   verifyBlobLink,
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { DiskReserve } from "../storage/disk-space.js";
 import { wholeListOf } from "./_schemas.js";
 import { READ_REFUSED } from "./_item-refusals.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
@@ -618,9 +619,16 @@ export function blobRoutes(
   storage: Storage,
   blobs: BlobLayer,
   housekeeping: Pick<Housekeeping, "wake">,
-  config: Pick<AppConfig, "authBaseUrl" | "authSecret" | "blobMinCopies">,
+  config: Pick<
+    AppConfig,
+    "authBaseUrl" | "authSecret" | "blobMinCopies" | "diskReserveBytes"
+  >,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
+  const reserve = new DiskReserve(
+    blobs.disk.locator,
+    config.diskReserveBytes ?? 0,
+  );
   const router = createOpenAPIRouter<AppEnv>();
   // The origin a link the instance serves is minted under. The base URL
   // rather than the request's own origin, because the request's scheme is
@@ -733,6 +741,12 @@ export function blobRoutes(
       );
     }
 
+    // A body that declares its length is refused before its first byte is
+    // written; one that does not, or that runs past what it declared, is
+    // stopped by the guard as it arrives.
+    const declared = Number(c.req.header("Content-Length"));
+    await reserve.admit(Number.isSafeInteger(declared) ? declared : 0);
+
     // Spooled onto the disk store's own filesystem while the hash is
     // computed, because the name is not known until the last byte has
     // arrived and the move into place must then be a rename.
@@ -745,6 +759,7 @@ export function blobRoutes(
         await pipeline(
           Readable.fromWeb(body),
           hashing,
+          reserve.guard(),
           createWriteStream(spool),
         );
       }
