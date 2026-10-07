@@ -166,12 +166,13 @@ export class TextEnrichmentSweeper {
     const record = async (
       status: "skipped" | "failed" | "done",
       error: string | null,
+      counted = attempts,
     ) => {
       await storage.enrichment.upsert({
         item_id: candidate.item_id,
         blob_ref: candidate.blob_ref,
         status,
-        attempts,
+        attempts: counted,
         error,
         config_signature: this.configSignature,
       });
@@ -401,14 +402,11 @@ export class TextEnrichmentSweeper {
       // so an item that is rewritten as fast as it is read is offered
       // again and judged against whatever it has become, not parked.
       if (written.outcome !== "updated") {
-        await storage.enrichment.upsert({
-          item_id: candidate.item_id,
-          blob_ref: candidate.blob_ref,
-          status: "failed",
-          attempts: attempts - 1,
-          error: "the item changed while its text was read",
-          config_signature: this.configSignature,
-        });
+        await record(
+          "failed",
+          "the item changed while its text was read",
+          attempts - 1,
+        );
         return "skipped";
       }
 

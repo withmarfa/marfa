@@ -18,6 +18,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "opts into downloading the real OCR model, a test's own switch",
   "enrichment/extract.test.ts":
     "opts into downloading the real OCR model, a test's own switch",
+  "enrichment/office-bounds.test.ts":
+    "sets NODE_OPTIONS for one case to show the heap limit holds under it, a test's own switch",
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
@@ -72,6 +74,7 @@ const PROCESS_MEMBERS = new Set([
   "once",
   "cwd",
   "chdir",
+  "execPath",
   "pid",
   "platform",
   "hrtime",
