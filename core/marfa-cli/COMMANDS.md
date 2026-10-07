@@ -5,7 +5,8 @@
 Global options, which every command accepts, and the exit codes:
 
 ```text
-Marfa from the command line: every operation of one instance, a working copy of a slice of it under `device`, and folders that hold a slice as files
+Marfa from the command line: every operation of one instance, a working copy of a slice of it under
+`device`, and folders that hold a slice as files
 
 Usage: marfa [OPTIONS] <COMMAND>
 
@@ -18,10 +19,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -29,19 +32,28 @@ Output:
 
 Exit codes:
   0  done
-  1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
+  1  the request was refused, by the server, by the binary before sending, or for an answer on
+  another contract; a retry does not change it
   2  the command line was wrong, or named no store or server
-  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage); try again
+  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract,
+  full local storage); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
 
-A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes),
+A device drain prints its complete report on stdout: 0 for a completed pass (including refused
+writes),
 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass.
-A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
+A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text
+count.
 
 With --json a refusal is one JSON object on stderr:
   {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
-where error.code is one of: not_found, unauthorized, forbidden, validation, unknown_type, rate_limited, server, io, network, unnamed_answer, decoding, store, storage_full, signed_out, no_keychain, redirect, no_server, no_cursor, hydration_incomplete, no_catalog, reading_handle, wrong_schema, copy_expired, stream_incomplete, wrong_server, bytes_absent, contract_mismatch, canceled, first_sync_waiting, invalid, not_held, watch, usage, no_store, no_credential, conflict, too_large.
+where error.code is one of: not_found, unauthorized, forbidden, validation, unknown_type,
+rate_limited, server, io, network, unnamed_answer, decoding, store, storage_full, signed_out,
+no_keychain, redirect, no_server, no_cursor, hydration_incomplete, no_catalog, reading_handle,
+wrong_schema, copy_expired, stream_incomplete, wrong_server, bytes_absent, contract_mismatch,
+canceled, first_sync_waiting, invalid, not_held, watch, usage, no_store, no_credential, conflict,
+too_large.
 ```
 
 ## status
@@ -59,10 +71,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -84,10 +98,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -105,7 +121,8 @@ Usage: marfa login [OPTIONS]
 
 Options:
       --scope <SCOPE>
-          The scopes to ask for. Defaults to everything an owner can hold that the server supports; the consent screen narrows it
+          The scopes to ask for. Defaults to everything an owner can hold that the server supports;
+          the consent screen narrows it
 
       --no-browser
           Print the page to open rather than opening it
@@ -114,17 +131,20 @@ Options:
           Print the token set instead of keeping it in the keychain
 
       --client-id <ID>
-          The client id an earlier sign-in registered, where no keychain remembers it; without one the binary registers again
+          The client id an earlier sign-in registered, where no keychain remembers it; without one
+          the binary registers again
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -146,10 +166,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -167,7 +189,8 @@ Usage: marfa owner [OPTIONS] <COMMAND>
 
 Commands:
   show    Who owns this instance. Operator key
-  create  Create the owner, once. The password is asked for on the terminal, or read from stdin with --password-stdin; it is never an argument. Operator key
+  create  Create the owner, once. The password is asked for on the terminal, or read from stdin with
+          --password-stdin; it is never an argument. Operator key
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -176,10 +199,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -199,10 +224,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -212,7 +239,8 @@ Output:
 ### marfa owner create
 
 ```text
-Create the owner, once. The password is asked for on the terminal, or read from stdin with --password-stdin; it is never an argument. Operator key
+Create the owner, once. The password is asked for on the terminal, or read from stdin with
+--password-stdin; it is never an argument. Operator key
 
 Usage: marfa owner create [OPTIONS] --email <EMAIL>
 
@@ -231,10 +259,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -259,18 +289,21 @@ Commands:
   restore      Take an item out of the bin
   transition   Move an item to another lifecycle state
   purge        Destroy a trashed item irrecoverably. Needs `items.purge`
-  versions     One page of the snapshots an item's history holds, oldest first. Pass the answer's `next_cursor` as `--cursor` for the next page
+  versions     One page of the snapshots an item's history holds, oldest first. Pass the answer's
+               `next_cursor` as `--cursor` for the next page
   tag          Put tags on an item
   untag        Take one tag off an item
   edges        The edges leaving an item
   backrefs     The edges arriving at an item
   add          Add a file as an item of its own: upload its bytes and create a file item for them
-  attach       Attach a file: upload its bytes, create a file item for them, and link it to the target with an `attached-to` edge
+  attach       Attach a file: upload its bytes, create a file item for them, and link it to the
+               target with an `attached-to` edge
   stats        Item counts, by state or by type
   occurrences  Occurrences of `core.event` items in a window
   bulk         Upsert many items in one request
   bulk-get     Read many items by id in one request
-  lookup       Items by link, natural key or id, in every state, with the tombstones purges left for the keys named
+  lookup       Items by link, natural key or id, in every state, with the tombstones purges left for
+               the keys named
   tombstones   Settle the tombstones purges left at a later time
   bulk-action  Apply one action to every item a filter selects, as a job
   help         Print this message or the help of the given subcommand(s)
@@ -281,10 +314,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -357,10 +392,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -387,10 +424,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -440,23 +479,27 @@ Options:
           The id to mint it under. Omitted, the server mints one
 
       --version <VERSION>
-          The version this create is conditional on, where its natural key resolves a row the server already holds
+          The version this create is conditional on, where its natural key resolves a row the server
+          already holds
 
       --edges <JSON>
           Edges to write with it, as the JSON object the door takes
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -476,7 +519,8 @@ Arguments:
 
 Options:
       --version <VERSION>
-          The version the edit was based on. Required: a write that names no version overwrites whatever it finds
+          The version the edit was based on. Required: a write that names no version overwrites
+          whatever it finds
 
       --properties <JSON>
           The properties, as a JSON object
@@ -508,22 +552,26 @@ Options:
           Edges to write with it, as the JSON object the door takes
 
       --conflict <CONFLICT>
-          How a colliding write is settled: `auto` asks the server to resolve within its own transaction
+          How a colliding write is settled: `auto` asks the server to resolve within its own
+          transaction
 
           [possible values: auto, manual, callback]
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -543,17 +591,20 @@ Arguments:
 
 Options:
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -573,17 +624,20 @@ Arguments:
 
 Options:
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -608,17 +662,20 @@ Options:
           [possible values: active, archived, trashed]
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -638,17 +695,20 @@ Arguments:
 
 Options:
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -658,7 +718,8 @@ Output:
 ### marfa items versions
 
 ```text
-One page of the snapshots an item's history holds, oldest first. Pass the answer's `next_cursor` as `--cursor` for the next page
+One page of the snapshots an item's history holds, oldest first. Pass the answer's `next_cursor` as
+`--cursor` for the next page
 
 Usage: marfa items versions [OPTIONS] <ID>
 
@@ -678,10 +739,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -708,10 +771,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -738,10 +803,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -774,10 +841,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -810,10 +879,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -839,7 +910,8 @@ Options:
           The file item's title. Defaults to the file's name
 
       --type <TYPE>
-          The file item's type. Defaults to `core.file`, or the image, audio or video subtype when the MIME type says
+          The file item's type. Defaults to `core.file`, or the image, audio or video subtype when
+          the MIME type says
 
       --tag <TAG>
           A tag, repeatable
@@ -854,10 +926,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -867,7 +941,8 @@ Output:
 ### marfa items attach
 
 ```text
-Attach a file: upload its bytes, create a file item for them, and link it to the target with an `attached-to` edge
+Attach a file: upload its bytes, create a file item for them, and link it to the target with an
+`attached-to` edge
 
 Usage: marfa items attach [OPTIONS] <ID> <FILE>
 
@@ -886,17 +961,20 @@ Options:
           The file item's title. Defaults to the file's name
 
       --type <TYPE>
-          The file item's type. Defaults to `core.file`, or the image, audio or video subtype when the MIME type says
+          The file item's type. Defaults to `core.file`, or the image, audio or video subtype when
+          the MIME type says
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -921,10 +999,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -953,10 +1033,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -991,10 +1073,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1021,10 +1105,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1062,10 +1148,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1093,17 +1181,20 @@ Options:
           A natural key's `source_id`; repeat for more
 
       --settled-at <TIME>
-          The vendor-side change time, RFC 3339; one earlier than a tombstone holds leaves it as it is
+          The vendor-side change time, RFC 3339; one earlier than a tombstone holds leaves it as it
+          is
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1119,7 +1210,9 @@ Usage: marfa items bulk-action [OPTIONS] <COMMAND>
 
 Commands:
   transition   Move every matching item to a state
-  purge        Destroy every matching item that is in the trash when the job reaches it; any other match is left as it is and reported. Match the bin with `--state trashed`. Needs `items.purge` and `--confirm PURGE`
+  purge        Destroy every matching item that is in the trash when the job reaches it; any other
+               match is left as it is and reported. Match the bin with `--state trashed`. Needs
+               `items.purge` and `--confirm PURGE`
   tags         Add tags to, and remove tags from, every matching item
   tier         Move every matching item to a tier
   properties   Merge a patch into every matching item's properties
@@ -1134,10 +1227,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1199,10 +1294,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1212,7 +1309,8 @@ Output:
 ### marfa items bulk-action purge
 
 ```text
-Destroy every matching item that is in the trash when the job reaches it; any other match is left as it is and reported. Match the bin with `--state trashed`. Needs `items.purge` and `--confirm PURGE`
+Destroy every matching item that is in the trash when the job reaches it; any other match is left as
+it is and reported. Match the bin with `--state trashed`. Needs `items.purge` and `--confirm PURGE`
 
 Usage: marfa items bulk-action purge [OPTIONS]
 
@@ -1262,10 +1360,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1328,10 +1428,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1393,10 +1495,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1456,10 +1560,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1519,10 +1625,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1546,10 +1654,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1573,10 +1683,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1607,10 +1719,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1645,10 +1759,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1672,10 +1788,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1706,17 +1824,20 @@ Options:
           The id to mint it under. Omitted, the server mints one
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1748,17 +1869,20 @@ Options:
           The version the edit was based on
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1778,17 +1902,20 @@ Arguments:
 
 Options:
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1820,10 +1947,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1841,8 +1970,10 @@ Usage: marfa edge-types [OPTIONS] <COMMAND>
 
 Commands:
   list      Every edge type the instance holds
-  register  Register an edge type from its definition. Needs `metadata.edge_types:write` and write on its id and any reverse name in the key's edge map
-  delete    Remove a registered edge type. Needs `schema.write` and write on its id and any reverse name in the key's edge map
+  register  Register an edge type from its definition. Needs `metadata.edge_types:write` and write
+            on its id and any reverse name in the key's edge map
+  delete    Remove a registered edge type. Needs `schema.write` and write on its id and any reverse
+            name in the key's edge map
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1851,10 +1982,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1874,10 +2007,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1887,7 +2022,8 @@ Output:
 ### marfa edge-types register
 
 ```text
-Register an edge type from its definition. Needs `metadata.edge_types:write` and write on its id and any reverse name in the key's edge map
+Register an edge type from its definition. Needs `metadata.edge_types:write` and write on its id and
+any reverse name in the key's edge map
 
 Usage: marfa edge-types register [OPTIONS]
 
@@ -1903,10 +2039,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1916,7 +2054,8 @@ Output:
 ### marfa edge-types delete
 
 ```text
-Remove a registered edge type. Needs `schema.write` and write on its id and any reverse name in the key's edge map
+Remove a registered edge type. Needs `schema.write` and write on its id and any reverse name in the
+key's edge map
 
 Usage: marfa edge-types delete [OPTIONS] <ID>
 
@@ -1930,10 +2069,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1952,9 +2093,12 @@ Usage: marfa types [OPTIONS] <COMMAND>
 Commands:
   list      Every type the instance holds
   get       One type by id, with its schema
-  register  Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map
-  replace   Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`
-  delete    Remove a registered type. Needs `schema.write` and write on the type in the key's type map
+  register  Register a type from its definition. Needs `metadata.types:write` and write on the type
+            in the key's type map
+  replace   Replace a registered type's definition. Needs write on the type in the key's type map
+            and `schema.write` or `metadata.types:write`
+  delete    Remove a registered type. Needs `schema.write` and write on the type in the key's type
+            map
   drift     Shipped types this instance carries that the build no longer does. Operator only
   prune     Remove one shipped type the build no longer carries. Operator only
   help      Print this message or the help of the given subcommand(s)
@@ -1965,10 +2109,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -1988,10 +2134,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2015,10 +2163,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2028,7 +2178,8 @@ Output:
 ### marfa types register
 
 ```text
-Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map
+Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's
+type map
 
 Usage: marfa types register [OPTIONS]
 
@@ -2044,10 +2195,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2057,9 +2210,12 @@ Output:
 ### marfa types replace
 
 ```text
-Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
+Replace a registered type's definition. Needs write on the type in the key's type map and
+`schema.write` or `metadata.types:write`.
 
-`metadata.types:write` alone covers adding optional fields that no stored row holds a value under, and changing the label, description, display hints and version. Any other change, removing a field included, needs `schema.write`.
+`metadata.types:write` alone covers adding optional fields that no stored row holds a value under,
+and changing the label, description, display hints and version. Any other change, removing a field
+included, needs `schema.write`.
 
 Usage: marfa types replace [OPTIONS] <ID>
 
@@ -2079,10 +2235,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2109,10 +2267,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2132,10 +2292,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2159,10 +2321,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2222,10 +2386,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2254,10 +2420,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2281,10 +2449,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2311,10 +2481,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2341,10 +2513,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2364,10 +2538,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2396,10 +2572,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2423,10 +2601,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2453,10 +2633,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2489,10 +2671,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2519,10 +2703,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2542,9 +2728,12 @@ Commands:
   upload           Store a file's bytes by content hash
   download         Fetch a blob's bytes
   url              A time-limited link that fetches a blob without the API in between
-  stores           Every store the instance has attached, and the copies a blob keeps at the least. Operator key only
-  locations        The stores recorded as holding one blob's bytes, and when each copy was last found intact
-  delete-location  Remove one store's copy of a blob, where enough live copies remain. Operator key only
+  stores           Every store the instance has attached, and the copies a blob keeps at the least.
+                   Operator key only
+  locations        The stores recorded as holding one blob's bytes, and when each copy was last
+                   found intact
+  delete-location  Remove one store's copy of a blob, where enough live copies remain. Operator key
+                   only
   orphans          The blobs the last orphan sweep found nothing referencing. Operator key only
   help             Print this message or the help of the given subcommand(s)
 
@@ -2554,10 +2743,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2584,10 +2775,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2614,10 +2807,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2644,10 +2839,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2667,10 +2864,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2694,10 +2893,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2724,10 +2925,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2747,10 +2950,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2767,13 +2972,19 @@ Keys: the credentials that reach the API
 Usage: marfa keys [OPTIONS] <COMMAND>
 
 Commands:
-  bootstrap  Mint a fresh instance's operator key with the one-time secret it printed to its log. The secret is read from `--secret` or from stdin. The operator key is not a working key: the next call is `keys create` with it
+  bootstrap  Mint a fresh instance's operator key with the one-time secret it printed to its log.
+             The secret is read from `--secret` or from stdin. The operator key is not a working
+             key: the next call is `keys create` with it
   create     Mint a key. Needs `keys.mint`, or the operator key
   list       Every key, without plaintext. Needs `keys.mint`, or the operator key
-  current    The key this call bears, without plaintext: what it holds and what it claims. Any key may read itself
+  current    The key this call bears, without plaintext: what it holds and what it claims. Any key
+             may read itself
   update     Change a key's label, tier or permission maps. Needs `keys.mint`
-  revoke     Revoke a key; the next request bearing it is refused. Needs `keys.mint`, or the operator key
-  keep       Keep a key for this server in the operating system's keychain, and make this server the one a bare command talks to. The key is read from `--key`, from MARFA_API_KEY, or from stdin; never from a file
+  revoke     Revoke a key; the next request bearing it is refused. Needs `keys.mint`, or the
+             operator key
+  keep       Keep a key for this server in the operating system's keychain, and make this server the
+             one a bare command talks to. The key is read from `--key`, from MARFA_API_KEY, or from
+             stdin; never from a file
   forget     Forget the key kept for this server
   help       Print this message or the help of the given subcommand(s)
 
@@ -2783,10 +2994,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2796,23 +3009,28 @@ Output:
 ### marfa keys bootstrap
 
 ```text
-Mint a fresh instance's operator key with the one-time secret it printed to its log. The secret is read from `--secret` or from stdin. The operator key is not a working key: the next call is `keys create` with it
+Mint a fresh instance's operator key with the one-time secret it printed to its log. The secret is
+read from `--secret` or from stdin. The operator key is not a working key: the next call is `keys
+create` with it
 
 Usage: marfa keys bootstrap [OPTIONS]
 
 Options:
       --secret <SECRET>
-          The bootstrap secret from the server's log. Left out, it is read from stdin, which keeps it out of the shell's history
+          The bootstrap secret from the server's log. Left out, it is read from stdin, which keeps
+          it out of the shell's history
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2824,7 +3042,9 @@ Output:
 ```text
 Mint a key. Needs `keys.mint`, or the operator key.
 
-The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. With none named, the key takes the caller's whole set.
+The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of
+what it holds, and a part left unnamed is held as nothing. With none named, the key takes the
+caller's whole set.
 
 Usage: marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 
@@ -2833,12 +3053,14 @@ Options:
           What the key is for
 
       --source <SOURCE>
-          The key's own source, which a row written under the key is keyed by and stamped with unless the write names one the key claims
+          The key's own source, which a row written under the key is keyed by and stamped with
+          unless the write names one the key claims
 
       --permission <PERMISSION>
           A permission, repeatable
 
-          [possible values: schema.write, keys.mint, items.purge, webhooks.manage, config.manage, audit.read, grants.manage]
+          [possible values: schema.write, keys.mint, items.purge, webhooks.manage, config.manage,
+          audit.read, grants.manage]
 
       --type-permission <PATTERN=LEVEL>
           A type pattern and its level, `core.note=write`, repeatable
@@ -2862,7 +3084,9 @@ Options:
           A source a write under the key may name, so its rows are keyed by it. Repeatable
 
       --no-claims
-          Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either
+          Claim no source besides the key's own, asked for out loud. On a mint naming no permission
+          or map, naming the claims is naming what the key holds: it holds no map and no permission
+          either
 
       --default-tier <DEFAULT_TIER>
           The tier a write under the key lands at when it names none
@@ -2880,10 +3104,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2903,10 +3129,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2916,7 +3144,8 @@ Output:
 ### marfa keys current
 
 ```text
-The key this call bears, without plaintext: what it holds and what it claims. Any key may read itself
+The key this call bears, without plaintext: what it holds and what it claims. Any key may read
+itself
 
 Usage: marfa keys current [OPTIONS]
 
@@ -2926,10 +3155,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -2954,7 +3185,8 @@ Options:
       --permission <PERMISSION>
           A permission, repeatable
 
-          [possible values: schema.write, keys.mint, items.purge, webhooks.manage, config.manage, audit.read, grants.manage]
+          [possible values: schema.write, keys.mint, items.purge, webhooks.manage, config.manage,
+          audit.read, grants.manage]
 
       --type-permission <PATTERN=LEVEL>
           A type pattern and its level, `core.note=write`, repeatable
@@ -2993,7 +3225,9 @@ Options:
           A source a write under the key may name, so its rows are keyed by it. Repeatable
 
       --no-claims
-          Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either
+          Claim no source besides the key's own, asked for out loud. On a mint naming no permission
+          or map, naming the claims is naming what the key holds: it holds no map and no permission
+          either
 
       --default-tier <DEFAULT_TIER>
           The tier a write under the key lands at when it names none
@@ -3001,17 +3235,20 @@ Options:
           [possible values: library, feed]
 
       --no-permissions
-          Take every permission and every map from the key, so a key minted too wide is narrowed in place
+          Take every permission and every map from the key, so a key minted too wide is narrowed in
+          place
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3035,10 +3272,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3048,7 +3287,8 @@ Output:
 ### marfa keys keep
 
 ```text
-Keep a key for this server in the operating system's keychain, and make this server the one a bare command talks to. The key is read from `--key`, from MARFA_API_KEY, or from stdin; never from a file
+Keep a key for this server in the operating system's keychain, and make this server the one a bare
+command talks to. The key is read from `--key`, from MARFA_API_KEY, or from stdin; never from a file
 
 Usage: marfa keys keep [OPTIONS]
 
@@ -3058,10 +3298,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3081,10 +3323,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3101,7 +3345,8 @@ The instance configuration
 Usage: marfa config [OPTIONS] <COMMAND>
 
 Commands:
-  get      The instance configuration: the enforcement levers and the retention overrides. Needs `config.manage`
+  get      The instance configuration: the enforcement levers and the retention overrides. Needs
+           `config.manage`
   replace  Replace the instance configuration whole. Needs `config.manage`
   help     Print this message or the help of the given subcommand(s)
 
@@ -3111,10 +3356,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3124,7 +3371,8 @@ Output:
 ### marfa config get
 
 ```text
-The instance configuration: the enforcement levers and the retention overrides. Needs `config.manage`
+The instance configuration: the enforcement levers and the retention overrides. Needs
+`config.manage`
 
 Usage: marfa config get [OPTIONS]
 
@@ -3134,10 +3382,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3163,10 +3413,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3213,10 +3465,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3230,11 +3484,17 @@ Output:
 ```text
 Restore an archive. Operator key only.
 
-Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions, and the item's earlier versions carried in the archive. Existing items and their history remain unchanged.
+Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions,
+and the item's earlier versions carried in the archive. Existing items and their history remain
+unchanged.
 
-The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It does not restore keys, webhooks, or configuration. Trashed items are absent unless explicitly exported, for example with `export --format archive --state any`.
+The archive contains only data the exporting credential could read, including history allowed by
+each snapshot's type permissions and blobs that credential could read. It does not restore keys,
+webhooks, or configuration. Trashed items are absent unless explicitly exported, for example with
+`export --format archive --state any`.
 
-Until the first public release, restore only with the server build that wrote the archive. Archive format 0 does not promise compatibility between builds.
+Until the first public release, restore only with the server build that wrote the archive. Archive
+format 0 does not promise compatibility between builds.
 
 Usage: marfa restore [OPTIONS] <FILE>
 
@@ -3248,10 +3508,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3283,10 +3545,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3318,10 +3582,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3341,10 +3607,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3368,10 +3636,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3410,10 +3680,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3437,10 +3709,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3467,10 +3741,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3497,10 +3773,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3543,10 +3821,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3582,10 +3862,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3602,7 +3884,8 @@ The housekeeping jobs the server runs on itself. Operator key only
 Usage: marfa housekeeping [OPTIONS] <COMMAND>
 
 Commands:
-  list  Every housekeeping job the server runs on itself: its cadence, when it is next due, and what its last run did. Operator key only
+  list  Every housekeeping job the server runs on itself: its cadence, when it is next due, and what
+        its last run did. Operator key only
   run   Run one housekeeping job now and report what it did. Operator key only
   help  Print this message or the help of the given subcommand(s)
 
@@ -3612,10 +3895,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3625,7 +3910,8 @@ Output:
 ### marfa housekeeping list
 
 ```text
-Every housekeeping job the server runs on itself: its cadence, when it is next due, and what its last run did. Operator key only
+Every housekeeping job the server runs on itself: its cadence, when it is next due, and what its
+last run did. Operator key only
 
 Usage: marfa housekeeping list [OPTIONS]
 
@@ -3635,10 +3921,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3662,10 +3950,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3677,12 +3967,14 @@ Output:
 ### marfa connectors
 
 ```text
-Processes that write on a key's behalf: registered, heard from, and reporting their runs. A key registers itself; the operator key sees every registration and may remove one
+Processes that write on a key's behalf: registered, heard from, and reporting their runs. A key
+registers itself; the operator key sees every registration and may remove one
 
 Usage: marfa connectors [OPTIONS] <COMMAND>
 
 Commands:
-  register    Register the key this command runs under as a connector, or answer its registration if it has one: the key is the identity
+  register    Register the key this command runs under as a connector, or answer its registration if
+              it has one: the key is the identity
   list        Every registered connector, newest first
   get         One connector's registration
   delete      Remove a registration. The connector's own key, or the operator key
@@ -3691,10 +3983,12 @@ Commands:
   runs        The runs a connector has reported, newest first
   endpoints   The addresses a sender posts inbound webhooks to
   deliveries  What arrived at a connector's endpoints. Its own key only
-  hold        Take or renew the hold for one process, which alone may then write the state and the agreements. Its own key only
+  hold        Take or renew the hold for one process, which alone may then write the state and the
+              agreements. Its own key only
   release     Give up the hold, if this process holds it. Its own key only
   state       The state document a connector keeps on the instance
-  agreements  A connector's records of what it and its vendor last agreed about rows. Its own key only
+  agreements  A connector's records of what it and its vendor last agreed about rows. Its own key
+              only
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -3703,10 +3997,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3716,7 +4012,8 @@ Output:
 ### marfa connectors register
 
 ```text
-Register the key this command runs under as a connector, or answer its registration if it has one: the key is the identity
+Register the key this command runs under as a connector, or answer its registration if it has one:
+the key is the identity
 
 Usage: marfa connectors register [OPTIONS] --name <NAME>
 
@@ -3732,10 +4029,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3755,10 +4054,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3782,10 +4083,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3809,10 +4112,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3836,10 +4141,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3880,10 +4187,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3910,10 +4219,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3928,7 +4239,8 @@ The addresses a sender posts inbound webhooks to
 Usage: marfa connectors endpoints [OPTIONS] <COMMAND>
 
 Commands:
-  create  Make an endpoint. Its address is shown in full this once. The connector's own key, or the operator key
+  create  Make an endpoint. Its address is shown in full this once. The connector's own key, or the
+          operator key
   list    A connector's endpoints, newest first, each address redacted
   retire  Retire an endpoint: its address stops answering
   help    Print this message or the help of the given subcommand(s)
@@ -3939,10 +4251,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3952,7 +4266,8 @@ Output:
 ### marfa connectors endpoints create
 
 ```text
-Make an endpoint. Its address is shown in full this once. The connector's own key, or the operator key
+Make an endpoint. Its address is shown in full this once. The connector's own key, or the operator
+key
 
 Usage: marfa connectors endpoints create [OPTIONS] <ID>
 
@@ -3965,17 +4280,20 @@ Options:
           What the endpoint is for
 
       --duplicate-header <HEADER>
-          A header whose value names a delivery, such as X-GitHub-Delivery, so a repeat is marked as one
+          A header whose value names a delivery, such as X-GitHub-Delivery, so a repeat is marked as
+          one
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -3999,10 +4317,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4029,10 +4349,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4058,10 +4380,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4099,10 +4423,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4132,10 +4458,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4167,10 +4495,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4180,7 +4510,8 @@ Output:
 ### marfa connectors hold
 
 ```text
-Take or renew the hold for one process, which alone may then write the state and the agreements. Its own key only
+Take or renew the hold for one process, which alone may then write the state and the agreements. Its
+own key only
 
 Usage: marfa connectors hold [OPTIONS] --process <PROCESS> <ID>
 
@@ -4197,10 +4528,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4227,10 +4560,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4247,7 +4582,8 @@ Usage: marfa connectors state [OPTIONS] <COMMAND>
 Commands:
   get     The state document, `{}` until one is written. Its own key only
   put     Replace the state document with a JSON object. Its own key only
-  delete  Remove the state document and every agreement. The connector's own key, or the operator key
+  delete  Remove the state document and every agreement. The connector's own key, or the operator
+          key
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -4256,10 +4592,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4283,10 +4621,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4319,10 +4659,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4346,10 +4688,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4375,10 +4719,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4411,10 +4757,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4441,10 +4789,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4479,10 +4829,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4504,10 +4856,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4525,11 +4879,14 @@ Usage: marfa device [OPTIONS] <COMMAND>
 
 Commands:
   hydrate     Replace the local copy with the declared types at one tier, or both
-  pin         Hold one row by id whatever the slice says of it, read now and kept current, even after it leaves the slice
+  pin         Hold one row by id whatever the slice says of it, read now and kept current, even
+              after it leaves the slice
   unpin       Stop holding a row by id; one the slice does not take goes
   catch-up    Apply every event since the last hydrate or catch-up
-  follow      Hold the event stream open and apply each event as it arrives, printing a line for each that changed the copy
-  changes     Print a line each time another process saves to the store. Opens it to read, with or without `--reader`, so watching never takes the writer's place
+  follow      Hold the event stream open and apply each event as it arrives, printing a line for
+              each that changed the copy
+  changes     Print a line each time another process saves to the store. Opens it to read, with or
+              without `--reader`, so watching never takes the writer's place
   items       Read items from the local copy
   folders     Folders' settings: read from the copy, written through the folder door
   search      Full-text search over the local copy, best match first
@@ -4538,9 +4895,11 @@ Commands:
   forget      Clear the writes the server has answered
   discard     Take a refused write out of the queue, with the content it carried
   release     Send a blocked or dead write again, under a fresh key
-  withdraw    Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue, and put the copy back to what the server holds
+  withdraw    Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue,
+              and put the copy back to what the server holds
   status      What the local copy holds and where it came from
-  types       The item types the copy holds, read from it alone, the ones an app declares for it, and the server's
+  types       The item types the copy holds, read from it alone, the ones an app declares for it,
+              and the server's
   edge-types  The edge types the copy holds, read from it alone, and the server's
   edges       Edges between items, each its own write
   tags        Tags on an item, each its own write
@@ -4556,17 +4915,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4590,7 +4952,8 @@ Options:
           Comma-separated type identifiers, such as core.note,core.file
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --tier <TIER>
           The tier to hold the slice at, or `all` for both
@@ -4598,17 +4961,20 @@ Options:
           [possible values: library, feed, all]
 
       --edge-type <TYPE>
-          An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable
+          An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds.
+          Repeatable
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4618,7 +4984,8 @@ Output:
 ### marfa device pin
 
 ```text
-Hold one row by id whatever the slice says of it, read now and kept current, even after it leaves the slice
+Hold one row by id whatever the slice says of it, read now and kept current, even after it leaves
+the slice
 
 Usage: marfa device pin [OPTIONS] <ID>
 
@@ -4633,17 +5000,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4668,17 +5038,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4699,17 +5072,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4719,7 +5095,8 @@ Output:
 ### marfa device follow
 
 ```text
-Hold the event stream open and apply each event as it arrives, printing a line for each that changed the copy
+Hold the event stream open and apply each event as it arrives, printing a line for each that changed
+the copy
 
 Usage: marfa device follow [OPTIONS]
 
@@ -4730,20 +5107,24 @@ Options:
           [env: MARFA_DB]
 
       --for <SECONDS>
-          Stop after this many seconds; without it, follow until interrupted. Either way it ends with its report
+          Stop after this many seconds; without it, follow until interrupted. Either way it ends
+          with its report
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4753,7 +5134,8 @@ Output:
 ### marfa device changes
 
 ```text
-Print a line each time another process saves to the store. Opens it to read, with or without `--reader`, so watching never takes the writer's place
+Print a line each time another process saves to the store. Opens it to read, with or without
+`--reader`, so watching never takes the writer's place
 
 Usage: marfa device changes [OPTIONS]
 
@@ -4767,17 +5149,20 @@ Options:
           Stop after this many seconds; without it, watch until interrupted
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4797,15 +5182,24 @@ Commands:
   create      Write a new item into the local copy and queue it for the server
   update      Change an item in the local copy and queue the change
   delete      Move an item to the bin locally and queue the delete
-  purge       Destroy an item in the bin on the server now, and take it out of the local copy. Never queued: it needs the server, a key holding `items.purge` and write on the item's type, and an item the copy holds in the bin with no write to it waiting
-  bin         Read a page of the server's bin, newest change first. Online only, and held nowhere in the copy; each item's `updated_at` stands for when it went to the bin
-  restore     Take an item out of the bin and queue the restore: locally where the copy holds it, and by id where it does not
+  purge       Destroy an item in the bin on the server now, and take it out of the local copy. Never
+              queued: it needs the server, a key holding `items.purge` and write on the item's type,
+              and an item the copy holds in the bin with no write to it waiting
+  bin         Read a page of the server's bin, newest change first. Online only, and held nowhere in
+              the copy; each item's `updated_at` stands for when it went to the bin
+  restore     Take an item out of the bin and queue the restore: locally where the copy holds it,
+              and by id where it does not
   transition  Move an item to another lifecycle state
-  add         Add a file as an item of its own: its upload and a file item naming the bytes, two queued writes, and one for each tag
-  attach      Attach a file to an item: its upload, a file item naming the bytes, and an `attached-to` edge, three queued writes
-  links       The links and embeds of files in an item's body, read from the local copy: each with the item it names, or why it names none yet
-  embed       The text that embeds a file item in an item's body, which reads back as the file's `attached-to` edge to the item
-  thumbnail   The thumbnail an item carries, read from the local copy with no request: its MIME type and size, and its bytes written to `--out`
+  add         Add a file as an item of its own: its upload and a file item naming the bytes, two
+              queued writes, and one for each tag
+  attach      Attach a file to an item: its upload, a file item naming the bytes, and an
+              `attached-to` edge, three queued writes
+  links       The links and embeds of files in an item's body, read from the local copy: each with
+              the item it names, or why it names none yet
+  embed       The text that embeds a file item in an item's body, which reads back as the file's
+              `attached-to` edge to the item
+  thumbnail   The thumbnail an item carries, read from the local copy with no request: its MIME type
+              and size, and its bytes written to `--out`
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -4815,17 +5209,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4849,7 +5246,8 @@ Options:
           A type identifier; its subtypes are included
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --state <STATE>
           Exactly one state. Unset answers the active state
@@ -4874,7 +5272,8 @@ Options:
           Exclusive upper bound on the item's own time, RFC 3339
 
       --filter <EXPR>
-          An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused
+          An expression in the server's listing grammar, answered as the server answers `filter`; a
+          `backref` condition is refused
 
       --beneath <ID>
           Only this item and what it reaches along `parent-of` edges
@@ -4898,17 +5297,20 @@ Options:
           How many items to skip first
 
       --folder <ID>
-          Only what this `system.folder`'s search holds, as the folder holds it; refused where the copy's slice cannot answer the search whole
+          Only what this `system.folder`'s search holds, as the folder holds it; refused where the
+          copy's slice cannot answer the search whole
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4933,17 +5335,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -4970,13 +5375,15 @@ Options:
           The properties, as a JSON object
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --tag <TAG>
           A tag, repeatable. Each is queued as a write of its own
 
       --tier <TIER>
-          The tier to write it at; the default is the tier of the held row its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration
+          The tier to write it at; the default is the tier of the held row its natural key names,
+          else the slice's tier, or the library from a slice of both or before a first hydration
 
           [possible values: library, feed]
 
@@ -4993,17 +5400,20 @@ Options:
           The id to mint it under. Omitted, the device mints one
 
       --version <VERSION>
-          The version this create is conditional on, where its natural key resolves a row the server already holds
+          The version this create is conditional on, where its natural key resolves a row the server
+          already holds
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5031,16 +5441,20 @@ Options:
           The properties to write, as a JSON object. Whole values
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --version <VERSION>
-          The version the edit was based on. Required: an update that names no version overwrites whatever it finds
+          The version the edit was based on. Required: an update that names no version overwrites
+          whatever it finds
 
       --source-id <KEY>
-          The natural key to move the row to. The server refuses one another item already holds, so a rename does not take a name off a note
+          The natural key to move the row to. The server refuses one another item already holds, so
+          a rename does not take a name off a note
 
       --as-read
-          The version is one read before the version the copy holds now, and the server merges the edit against it rather than taking it as newer than what came in since
+          The version is one read before the version the copy holds now, and the server merges the
+          edit against it rather than taking it as newer than what came in since
 
       --type <TYPE>
           The type to move the item to. The server holds its properties to the type it enters
@@ -5051,17 +5465,20 @@ Options:
           [possible values: library, feed]
 
       --replace
-          The properties are the item's whole properties: one they leave out is cleared rather than kept
+          The properties are the item's whole properties: one they leave out is cleared rather than
+          kept
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5086,17 +5503,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5106,7 +5526,9 @@ Output:
 ### marfa device items purge
 
 ```text
-Destroy an item in the bin on the server now, and take it out of the local copy. Never queued: it needs the server, a key holding `items.purge` and write on the item's type, and an item the copy holds in the bin with no write to it waiting
+Destroy an item in the bin on the server now, and take it out of the local copy. Never queued: it
+needs the server, a key holding `items.purge` and write on the item's type, and an item the copy
+holds in the bin with no write to it waiting
 
 Usage: marfa device items purge [OPTIONS] <ID>
 
@@ -5121,20 +5543,24 @@ Options:
           [env: MARFA_DB]
 
       --version <VERSION>
-          The version the item was read at in the bin; without it the copy's own, and an item the copy does not hold is refused
+          The version the item was read at in the bin; without it the copy's own, and an item the
+          copy does not hold is refused
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5144,7 +5570,8 @@ Output:
 ### marfa device items bin
 
 ```text
-Read a page of the server's bin, newest change first. Online only, and held nowhere in the copy; each item's `updated_at` stands for when it went to the bin
+Read a page of the server's bin, newest change first. Online only, and held nowhere in the copy;
+each item's `updated_at` stands for when it went to the bin
 
 Usage: marfa device items bin [OPTIONS]
 
@@ -5161,7 +5588,8 @@ Options:
           Where the page starts, as the last page's `next_cursor` named it
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --limit <LIMIT>
           How many items at most, up to 100
@@ -5173,10 +5601,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5186,7 +5616,8 @@ Output:
 ### marfa device items restore
 
 ```text
-Take an item out of the bin and queue the restore: locally where the copy holds it, and by id where it does not
+Take an item out of the bin and queue the restore: locally where the copy holds it, and by id where
+it does not
 
 Usage: marfa device items restore [OPTIONS] <ID>
 
@@ -5201,17 +5632,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5241,17 +5675,20 @@ Options:
           [possible values: active, archived, trashed, revoked]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5261,7 +5698,8 @@ Output:
 ### marfa device items add
 
 ```text
-Add a file as an item of its own: its upload and a file item naming the bytes, two queued writes, and one for each tag
+Add a file as an item of its own: its upload and a file item naming the bytes, two queued writes,
+and one for each tag
 
 Usage: marfa device items add [OPTIONS] <FILE>
 
@@ -5279,7 +5717,8 @@ Options:
           The MIME type; the default comes from the file's extension
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --title <TITLE>
           The file item's title; the default is the file's name
@@ -5300,10 +5739,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5313,7 +5754,8 @@ Output:
 ### marfa device items attach
 
 ```text
-Attach a file to an item: its upload, a file item naming the bytes, and an `attached-to` edge, three queued writes
+Attach a file to an item: its upload, a file item naming the bytes, and an `attached-to` edge, three
+queued writes
 
 Usage: marfa device items attach [OPTIONS] <ID> <FILE>
 
@@ -5334,7 +5776,8 @@ Options:
           The MIME type; the default comes from the file's extension
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --title <TITLE>
           The file item's title; the default is the file's name
@@ -5352,10 +5795,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5365,7 +5810,8 @@ Output:
 ### marfa device items links
 
 ```text
-The links and embeds of files in an item's body, read from the local copy: each with the item it names, or why it names none yet
+The links and embeds of files in an item's body, read from the local copy: each with the item it
+names, or why it names none yet
 
 Usage: marfa device items links [OPTIONS] <ID>
 
@@ -5380,17 +5826,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5400,7 +5849,8 @@ Output:
 ### marfa device items embed
 
 ```text
-The text that embeds a file item in an item's body, which reads back as the file's `attached-to` edge to the item
+The text that embeds a file item in an item's body, which reads back as the file's `attached-to`
+edge to the item
 
 Usage: marfa device items embed [OPTIONS] <ID> <FILE>
 
@@ -5418,17 +5868,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5438,7 +5891,8 @@ Output:
 ### marfa device items thumbnail
 
 ```text
-The thumbnail an item carries, read from the local copy with no request: its MIME type and size, and its bytes written to `--out`
+The thumbnail an item carries, read from the local copy with no request: its MIME type and size, and
+its bytes written to `--out`
 
 Usage: marfa device items thumbnail [OPTIONS] <ID>
 
@@ -5456,17 +5910,20 @@ Options:
           Where to write the image's bytes
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5481,9 +5938,11 @@ Folders' settings: read from the copy, written through the folder door
 Usage: marfa device folders [OPTIONS] <COMMAND>
 
 Commands:
-  create  Create a folder's settings through the folder door, at once and never queued; settings no folder follows are refused before they are sent
+  create  Create a folder's settings through the folder door, at once and never queued; settings no
+          folder follows are refused before they are sent
   change  Change a folder's settings through the folder door, at once, each named one replaced whole
-  revoke  Retire a folder's settings through the folder door, at once. A revoked folder does not change
+  revoke  Retire a folder's settings through the folder door, at once. A revoked folder does not
+          change
   get     A folder's settings as the copy holds them
   help    Print this message or the help of the given subcommand(s)
 
@@ -5494,17 +5953,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5514,7 +5976,8 @@ Output:
 ### marfa device folders create
 
 ```text
-Create a folder's settings through the folder door, at once and never queued; settings no folder follows are refused before they are sent
+Create a folder's settings through the folder door, at once and never queued; settings no folder
+follows are refused before they are sent
 
 Usage: marfa device folders create [OPTIONS]
 
@@ -5531,41 +5994,50 @@ Options:
           The settings as a JSON object, inline
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --title <TITLE>
           The folder's name
 
       --search <JSON>
-          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`
+          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and
+          `beneath`
 
       --defaults <JSON>
-          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`
+          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`,
+          `properties`, `tags` and `edges`
 
       --include <PATTERN>
-          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret
+          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where
+          a pattern names it, and never a secret
 
       --ignore <PATTERN>
-          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern
+          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an
+          include pattern
 
       --first-placement <TYPE=DIR>
-          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable
+          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the
+          folder's root, repeatable
 
       --removal-threshold <JSON>
           When a removal pauses, as a JSON object: `files` and `fraction`
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5596,7 +6068,8 @@ Options:
           A file holding the settings as a JSON object; `-` reads stdin
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --body <JSON>
           The settings as a JSON object, inline
@@ -5605,35 +6078,43 @@ Options:
           The folder's name
 
       --search <JSON>
-          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`
+          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and
+          `beneath`
 
       --defaults <JSON>
-          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`
+          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`,
+          `properties`, `tags` and `edges`
 
       --include <PATTERN>
-          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret
+          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where
+          a pattern names it, and never a secret
 
       --ignore <PATTERN>
-          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern
+          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an
+          include pattern
 
       --first-placement <TYPE=DIR>
-          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable
+          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the
+          folder's root, repeatable
 
       --removal-threshold <JSON>
           When a removal pauses, as a JSON object: `files` and `fraction`
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5658,20 +6139,24 @@ Options:
           [env: MARFA_DB]
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5696,17 +6181,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5722,7 +6210,8 @@ Usage: marfa device search [OPTIONS] <QUERY>
 
 Arguments:
   <QUERY>
-          Words to look for, matched as the server matches them: all must match, the last as a prefix, and a query in double quotes is a phrase
+          Words to look for, matched as the server matches them: all must match, the last as a
+          prefix, and a query in double quotes is a phrase
 
 Options:
       --db <PATH>
@@ -5739,7 +6228,8 @@ Options:
           Every state, not just the active one
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --type <TYPE>
           A type identifier; its subtypes are included
@@ -5748,7 +6238,8 @@ Options:
           Hits must carry every tag given
 
       --filter <EXPR>
-          An expression in the server's listing grammar, answered as the server answers `filter`; a `backref` condition is refused
+          An expression in the server's listing grammar, answered as the server answers `filter`; a
+          `backref` condition is refused
 
       --beneath <ID>
           Only this item and what it reaches along `parent-of` edges
@@ -5759,17 +6250,20 @@ Options:
           [default: 20]
 
       --folder <ID>
-          Only what this `system.folder`'s search holds, as the folder holds it; refused where the copy's slice cannot answer the search whole
+          Only what this `system.folder`'s search holds, as the folder holds it; refused where the
+          copy's slice cannot answer the search whole
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5790,17 +6284,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5812,7 +6309,8 @@ Output:
 ```text
 Send what the queue holds and record what came back.
 
-One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain.
+One pass. A write that met a network rather than an answer is left where it was, uncounted, for the
+next drain.
 
 Usage: marfa device drain [OPTIONS]
 
@@ -5823,17 +6321,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help (see a summary with '-h')
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5845,7 +6346,8 @@ Output:
 ```text
 Clear the writes the server has answered.
 
-A queue nobody empties makes every later write slower. Blocked and dead rows stay, because a caller may still release them, and so does a refused write that carried content, until it is discarded.
+A queue nobody empties makes every later write slower. Blocked and dead rows stay, because a caller
+may still release them, and so does a refused write that carried content, until it is discarded.
 
 Usage: marfa device forget [OPTIONS]
 
@@ -5856,17 +6358,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help (see a summary with '-h')
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5878,7 +6383,8 @@ Output:
 ```text
 Take a refused write out of the queue, with the content it carried.
 
-The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it.
+The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write
+still waiting on it keeps it.
 
 Usage: marfa device discard [OPTIONS] <ID>
 
@@ -5893,17 +6399,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help (see a summary with '-h')
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5930,20 +6439,24 @@ Options:
       --reason <REASON>
           Release every write blocked for this reason instead of one by id
 
-          [possible values: credential_refused, key_spent, ancestor_unavailable, conflict_unresolved, awaiting_dependency]
+          [possible values: credential_refused, key_spent, ancestor_unavailable,
+          conflict_unresolved, awaiting_dependency]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -5953,9 +6466,11 @@ Output:
 ### marfa device withdraw
 
 ```text
-Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue, and put the copy back to what the server holds.
+Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue, and put the
+copy back to what the server holds.
 
-Sent again, such a write is refused the same way under any key. The writes held for it are refused unsent.
+Sent again, such a write is refused the same way under any key. The writes held for it are refused
+unsent.
 
 Usage: marfa device withdraw [OPTIONS] <ID>
 
@@ -5970,17 +6485,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help (see a summary with '-h')
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6001,17 +6519,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6027,10 +6548,13 @@ Usage: marfa device types [OPTIONS] <COMMAND>
 
 Commands:
   list      Every one the copy holds, by id
-  served    Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The copy is left as it is
+  served    Every one the server holds, read from it now, so a slice can be chosen before a first
+            hydration. The copy is left as it is
   get       One by id; a type inherits the fields of the types above it
-  declare   Declare the types this app saves, so a copy with no server checks what it queues against them and a hydration registers the ones the instance lacks, where the key may
-  declared  The declarations this copy holds, with the empty `fields` and the `version` a registration needs filled in
+  declare   Declare the types this app saves, so a copy with no server checks what it queues against
+            them and a hydration registers the ones the instance lacks, where the key may
+  declared  The declarations this copy holds, with the empty `fields` and the `version` a
+            registration needs filled in
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -6040,17 +6564,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6071,17 +6598,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6091,7 +6621,8 @@ Output:
 ### marfa device types served
 
 ```text
-Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The copy is left as it is
+Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The
+copy is left as it is
 
 Usage: marfa device types served [OPTIONS]
 
@@ -6102,17 +6633,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6137,17 +6671,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6157,9 +6694,11 @@ Output:
 ### marfa device types declare
 
 ```text
-Declare the types this app saves, so a copy with no server checks what it queues against them and a hydration registers the ones the instance lacks, where the key may.
+Declare the types this app saves, so a copy with no server checks what it queues against them and a
+hydration registers the ones the instance lacks, where the key may.
 
-Marfa's own types need no declaring. The call is the app's whole set, so it replaces every earlier declaration.
+Marfa's own types need no declaring. The call is the app's whole set, so it replaces every earlier
+declaration.
 
 Usage: marfa device types declare [OPTIONS]
 
@@ -6176,17 +6715,20 @@ Options:
           A file holding the same
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help (see a summary with '-h')
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6196,7 +6738,8 @@ Output:
 ### marfa device types declared
 
 ```text
-The declarations this copy holds, with the empty `fields` and the `version` a registration needs filled in
+The declarations this copy holds, with the empty `fields` and the `version` a registration needs
+filled in
 
 Usage: marfa device types declared [OPTIONS]
 
@@ -6207,17 +6750,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6233,7 +6779,8 @@ Usage: marfa device edge-types [OPTIONS] <COMMAND>
 
 Commands:
   list    Every one the copy holds, by id
-  served  Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The copy is left as it is
+  served  Every one the server holds, read from it now, so a slice can be chosen before a first
+          hydration. The copy is left as it is
   get     One by id; a type inherits the fields of the types above it
   help    Print this message or the help of the given subcommand(s)
 
@@ -6244,17 +6791,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6275,17 +6825,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6295,7 +6848,8 @@ Output:
 ### marfa device edge-types served
 
 ```text
-Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The copy is left as it is
+Every one the server holds, read from it now, so a slice can be chosen before a first hydration. The
+copy is left as it is
 
 Usage: marfa device edge-types served [OPTIONS]
 
@@ -6306,17 +6860,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6341,17 +6898,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6380,17 +6940,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6415,17 +6978,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6450,17 +7016,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6484,7 +7053,8 @@ Options:
           The item the edge starts from
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --target <ID>
           The item the edge points at
@@ -6505,10 +7075,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6538,7 +7110,8 @@ Options:
           [default: {}]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
       --version <VERSION>
           The version the edit was based on. Required, as on an item
@@ -6554,10 +7127,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6582,17 +7157,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6618,17 +7196,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6656,17 +7237,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6694,17 +7278,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6730,17 +7317,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6768,17 +7358,20 @@ Options:
           A tag, repeatable
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6806,17 +7399,20 @@ Options:
           A tag, repeatable
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6842,17 +7438,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6885,17 +7484,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6923,17 +7525,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6949,7 +7554,8 @@ Usage: marfa device blobs [OPTIONS] <COMMAND>
 
 Commands:
   put   Hold a file's bytes beside the store and queue their upload
-  get   Print where a blob's bytes are held, fetching them first where the store does not hold them yet
+  get   Print where a blob's bytes are held, fetching them first where the store does not hold them
+        yet
   help  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -6959,17 +7565,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -6997,17 +7606,20 @@ Options:
           The MIME type to send them under; the default comes from the file's extension
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7032,17 +7644,20 @@ Options:
           [env: MARFA_DB]
 
       --reader
-          Open the store to read only: never claim the writer role, never write, and refuse a path where no store has been made
+          Open the store to read only: never claim the writer role, never write, and refuse a path
+          where no store has been made
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7059,17 +7674,25 @@ Folders on this machine, a directory that holds a slice as files, and their sett
 Usage: marfa folders [OPTIONS] <COMMAND>
 
 Commands:
-  add      Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`
-  list     List the folders on this machine, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one
-  remove   Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain files. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels. A folder whose directory is gone is taken off the list
+  add      Make a directory a folder that follows a `system.folder`'s settings, which `folders
+           create` makes. Needs read on `system.folder`
+  list     List the folders on this machine, as its registry holds them. The registry is the file
+           MARFA_FOLDER_REGISTRY names, where it names one
+  remove   Take a folder off this machine: its own state under `.marfa` goes, and its files stay as
+           plain files. Refused while writes wait, except for a first sync still waiting to be
+           confirmed, which this cancels. A folder whose directory is gone is taken off the list
   status   Say where every file in the folder stands, from its own store, asking the server nothing
-  confirm  Let a folder's first sync go, or a paused large removal: its deletes are queued, and files whose items left elsewhere are taken away
-  restore  Cancel a paused large removal: files gone from the disk are written back, and items that left elsewhere are restored
+  confirm  Let a folder's first sync go, or a paused large removal: its deletes are queued, and
+           files whose items left elsewhere are taken away
+  restore  Cancel a paused large removal: files gone from the disk are written back, and items that
+           left elsewhere are restored
   hydrate  Pull what the folder's search needs into its working copy
   scan     Read the folder and queue what has changed. Sends nothing
   pull     Write what the folder's search matches out as files
-  push     Scan, drain, catch up, pull, and send the placements the pull queued: everything a folder does, once
-  create   Create a folder's settings on the server, as a `system.folder`. Needs write on `system.folder`
+  push     Scan, drain, catch up, pull, and send the placements the pull queued: everything a folder
+           does, once
+  create   Create a folder's settings on the server, as a `system.folder`. Needs write on
+           `system.folder`
   change   Change a folder's settings on the server, each named one replaced whole
   revoke   Retire a folder's settings on the server. A revoked folder does not change
   watch    Watch a folder and keep it in step
@@ -7081,10 +7704,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7094,7 +7719,8 @@ Output:
 ### marfa folders add
 
 ```text
-Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`
+Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes.
+Needs read on `system.folder`
 
 Usage: marfa folders add [OPTIONS] --folder <ID> <DIR>
 
@@ -7107,17 +7733,20 @@ Options:
           The folder's `system.folder` id
 
       --yes
-          Confirm the first sync without asking, for scripts. Without it, the add says what the first sync will do and waits for a go-ahead
+          Confirm the first sync without asking, for scripts. Without it, the add says what the
+          first sync will do and waits for a go-ahead
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7127,7 +7756,8 @@ Output:
 ### marfa folders list
 
 ```text
-List the folders on this machine, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one
+List the folders on this machine, as its registry holds them. The registry is the file
+MARFA_FOLDER_REGISTRY names, where it names one
 
 Usage: marfa folders list [OPTIONS]
 
@@ -7137,10 +7767,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7150,7 +7782,9 @@ Output:
 ### marfa folders remove
 
 ```text
-Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain files. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels. A folder whose directory is gone is taken off the list
+Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain
+files. Refused while writes wait, except for a first sync still waiting to be confirmed, which this
+cancels. A folder whose directory is gone is taken off the list
 
 Usage: marfa folders remove [OPTIONS] <DIR>
 
@@ -7164,10 +7798,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7191,10 +7827,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7204,7 +7842,8 @@ Output:
 ### marfa folders confirm
 
 ```text
-Let a folder's first sync go, or a paused large removal: its deletes are queued, and files whose items left elsewhere are taken away
+Let a folder's first sync go, or a paused large removal: its deletes are queued, and files whose
+items left elsewhere are taken away
 
 Usage: marfa folders confirm [OPTIONS] <DIR>
 
@@ -7218,10 +7857,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7231,7 +7872,8 @@ Output:
 ### marfa folders restore
 
 ```text
-Cancel a paused large removal: files gone from the disk are written back, and items that left elsewhere are restored
+Cancel a paused large removal: files gone from the disk are written back, and items that left
+elsewhere are restored
 
 Usage: marfa folders restore [OPTIONS] <DIR>
 
@@ -7245,10 +7887,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7272,10 +7916,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7299,10 +7945,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7326,10 +7974,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7353,10 +8003,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7381,35 +8033,43 @@ Options:
           The folder's name
 
       --search <JSON>
-          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`
+          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and
+          `beneath`
 
       --defaults <JSON>
-          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`
+          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`,
+          `properties`, `tags` and `edges`
 
       --include <PATTERN>
-          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret
+          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where
+          a pattern names it, and never a secret
 
       --ignore <PATTERN>
-          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern
+          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an
+          include pattern
 
       --first-placement <TYPE=DIR>
-          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable
+          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the
+          folder's root, repeatable
 
       --removal-threshold <JSON>
           When a removal pauses, as a JSON object: `files` and `fraction`
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7441,35 +8101,43 @@ Options:
           The folder's name
 
       --search <JSON>
-          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`
+          Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and
+          `beneath`
 
       --defaults <JSON>
-          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`
+          What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`,
+          `properties`, `tags` and `edges`
 
       --include <PATTERN>
-          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret
+          A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where
+          a pattern names it, and never a secret
 
       --ignore <PATTERN>
-          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern
+          A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an
+          include pattern
 
       --first-placement <TYPE=DIR>
-          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable
+          Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the
+          folder's root, repeatable
 
       --removal-threshold <JSON>
           When a removal pauses, as a JSON object: `files` and `fraction`
 
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7489,17 +8157,20 @@ Arguments:
 
 Options:
       --idempotency-key <KEY>
-          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice
+          Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written
+          twice
 
   -h, --help
           Print help
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
@@ -7526,10 +8197,12 @@ Options:
 
 Server:
       --url <URL>
-          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
 
 Output:
       --json
