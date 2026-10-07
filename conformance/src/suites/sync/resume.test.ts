@@ -318,3 +318,126 @@ describe("resuming from the head", () => {
     }
   });
 });
+
+describe("the order across item and edge frames", () => {
+  it("a purge's edge.deleted frames carry lower ids than its item.purged frame, live and replayed", async (context) => {
+    const peers = [
+      await makeNote("purge-order-a"),
+      await makeNote("purge-order-b"),
+    ];
+    const doomed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "purge-order-doomed" },
+    });
+    expect(doomed.ok, "the row to purge could not be created").toBe(true);
+    const doomedId = doomed.data.item.id;
+    const edgeIds: string[] = [];
+    for (const target of peers) {
+      const made = await client.createEdge({
+        source_id: doomedId,
+        target_id: target,
+        edge_type: "about",
+      });
+      expect(made.ok, "an edge of the row to purge failed").toBe(true);
+      edgeIds.push(made.data.edge.id);
+    }
+    const sentinelOf = (events: SseEvent[]) =>
+      events.some(
+        (e) =>
+          e.event === "item.purged" &&
+          (e.data as { item?: { id?: string } })?.item?.id === doomedId,
+      );
+
+    const { eventId } = await baselineEventId(
+      apiUrl,
+      apiKey,
+      () => makeNote("purge-order-marker"),
+      context.signal,
+    );
+    const live = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      expect((await client.deleteItem(doomedId)).ok).toBe(true);
+      expect((await client.purgeItem(doomedId)).ok).toBe(true);
+      const { events } = await collectUntil(
+        stream,
+        sentinelOf,
+        "the purge of the row to reach the stream",
+        context.signal,
+      );
+      return events;
+    });
+    // Written after the baseline marker, so the replay starts below the
+    // purge's own frames and carries them.
+    const replayed = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: eventId },
+      async (stream) => {
+        const { events } = await collectUntil(
+          stream,
+          sentinelOf,
+          "the purge of the row to reach the replay",
+          context.signal,
+        );
+        return events;
+      },
+    );
+
+    for (const [read, events] of [
+      ["live", live],
+      ["replayed", replayed],
+    ] as const) {
+      const idOf = (name: string, edge: string): bigint => {
+        const frame = events.find(
+          (e) =>
+            e.event === name &&
+            (e.data as { edge?: { id?: string } })?.edge?.id === edge,
+        );
+        expect(
+          frame?.id,
+          `the ${read} read carried no ${name} frame for the edge ${edge}`,
+        ).toBeDefined();
+        return BigInt(frame!.id!);
+      };
+      const purged = events.find(
+        (e) =>
+          e.event === "item.purged" &&
+          (e.data as { item?: { id?: string } })?.item?.id === doomedId,
+      );
+      expect(
+        purged?.id,
+        `the ${read} read carried no item.purged id`,
+      ).toBeDefined();
+      for (const edge of edgeIds) {
+        expect(
+          idOf("edge.deleted", edge) < BigInt(purged!.id!),
+          `the ${read} read gave the edge ${edge}'s deletion an id past the purge's`,
+        ).toBe(true);
+      }
+    }
+    // The two reads name the same frames for this purge in the same order,
+    // so the order is not an accident of live publication: the edges' deletions,
+    // then the row's purge, and nothing else about the row or its edges.
+    const concerning = (events: SseEvent[]) =>
+      events
+        .filter((e) => {
+          const data = e.data as {
+            item?: { id?: string };
+            edge?: { id?: string };
+          };
+          return (
+            data.item?.id === doomedId ||
+            (data.edge?.id !== undefined && edgeIds.includes(data.edge.id))
+          );
+        })
+        .map((e) => e.event);
+    const expected = ["edge.deleted", "edge.deleted", "item.purged"];
+    expect(concerning(live).filter((name) => name !== "item.deleted")).toEqual(
+      expected,
+    );
+    expect(
+      concerning(replayed).filter((name) => name !== "item.deleted"),
+    ).toEqual(expected);
+  });
+});
