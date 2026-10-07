@@ -32,6 +32,10 @@ import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 import {
+  bundlePublishedScopes,
+  catchUpClientScopeCeiling,
+} from "../auth/ceiling-catchup.js";
+import {
   renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
@@ -905,6 +909,23 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           async () => {
             const provider = storage.oauthProvider;
+            // The write the device's initiation could not make: nobody was
+            // signed in then. It precedes the approval because the redemption
+            // tests the ticked set against the stored ceiling, and it is
+            // strict because a code approved past a ceiling it was not written
+            // into could only be refused at that exchange.
+            const stored = await provider?.getClient(clientId);
+            if (stored) {
+              await catchUpClientScopeCeiling({
+                storage,
+                clientId,
+                requested: approvedScopes,
+                ceiling: stored.scopes,
+                bundleScopes: bundlePublishedScopes(getPermissionBundles()),
+                surface: "device",
+                strict: true,
+              });
+            }
             const created = await createUserAppGrant(
               storage,
               sessionResult.session.user,
