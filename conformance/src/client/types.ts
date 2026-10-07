@@ -532,6 +532,8 @@ export interface BulkEdgeInputItem {
   target_id: string;
   edge_type: string;
   properties?: Record<string, unknown>;
+  /** The version of the held edge the entry is based on. */
+  version?: number;
 }
 
 export interface BulkEdgeResultEntry {

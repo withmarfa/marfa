@@ -1132,7 +1132,7 @@ describe("custom edge-type registration", () => {
     expect(r.error?.error.code).toBe("validation_error");
   });
 
-  it("rejects registration that attempts `extends` on a core edge type (custom edges do not inherit)", async () => {
+  it("rejects registration that attempts extends on a core edge type (custom edges do not inherit)", async () => {
     const r = await client.registerEdgeType({
       id: `mock.extend.${ctx.runId}`,
       cardinality: "many-to-many",
