@@ -634,7 +634,7 @@ While a queued or in-progress `update_properties` job's patch holds a blob's dig
 
 When an `update_properties` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a job canceled as it was enqueued has ended`.
+**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a queued job naming it is canceled`, `› reports a blob afresh once a queued job naming it fails`.
 
 ### `stores/job-patch-no-reach`
 

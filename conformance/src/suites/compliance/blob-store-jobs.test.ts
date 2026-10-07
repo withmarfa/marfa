@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -12,6 +12,7 @@ import {
   DISK_ONLY,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * What a queued, running or ended property-update job does to the orphan
@@ -116,27 +117,147 @@ describe("a property-update job that has ended", () => {
     await reportedAfterEnd(hash, "completed");
   });
 
-  it("reports a blob afresh once a job canceled as it was enqueued has ended", async () => {
-    const hash = await upload("named by a job that is canceled");
-    await runJob(operator, "blob-orphans");
-    expect(await reported()).toContain(hash);
+  describe("queued behind a job that holds the worker", () => {
+    /**
+     * The bulk worker runs one job at a time, in chunks of a hundred items,
+     * so a job over this many items holds it for seconds, where a request
+     * takes milliseconds.
+     */
+    const HELD_ITEMS = 5000;
+    let tag: string;
 
-    const queued = await working.bulkAction({
-      action: "update_properties",
-      patch: { cover: hash },
-      filter: matchesNothing(),
-    });
-    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
-    const id = (queued.data as { id: string }).id;
-    // Enqueueing wakes the worker, so the job may complete before the
-    // cancel reaches it: a cancel on an ended job changes nothing, and
-    // either end leaves the blob unnamed.
-    const canceled = await working.bulkActionCancel(id);
-    expect(canceled.status, JSON.stringify(canceled.error)).toBe(200);
-    const job = await working.pollBulkActionToTerminal(id);
-    expect(["canceled", "completed"]).toContain(job.status);
+    beforeAll(async () => {
+      tag = `holds-the-worker-${crypto.randomUUID()}`;
+      for (let from = 0; from < HELD_ITEMS; from += 2500) {
+        const created = await working.bulkItems({
+          atomic: false,
+          items: Array.from({ length: 2500 }, (_, i) => ({
+            type: "core.note",
+            source: "blob-store-jobs",
+            properties: { body: `held ${String(from + i)}` },
+            tags: [tag],
+          })),
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(200);
+      }
+    }, 120_000);
 
-    await reportedAfterEnd(hash, job.status);
+    /** Enqueues the job over every item the tag matches and waits until
+     *  the worker has taken it and not yet finished it. */
+    async function holdTheWorker(): Promise<string> {
+      const queued = await working.bulkAction({
+        action: "update_properties",
+        patch: { note: "held by the long job" },
+        filter: { tags: [tag] },
+      });
+      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+      const id = (queued.data as { id: string }).id;
+      await waitFor("the worker to take the long job", async () => {
+        const job = (await working.bulkActionStatus(id)).data;
+        expect(job.status, job.error ?? "").not.toBe("completed");
+        return job.status === "in_progress" ? job : undefined;
+      });
+      return id;
+    }
+
+    /** Read as the operator, which may read any job, so a job whose key is
+     *  revoked can still be asked about. */
+    async function statusOf(id: string) {
+      const res = await operator.bulkActionStatus(id);
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data;
+    }
+
+    async function release(id: string): Promise<void> {
+      expect((await working.bulkActionCancel(id)).status).toBe(200);
+      expect((await operator.pollBulkActionToTerminal(id)).status).toBe(
+        "canceled",
+      );
+    }
+
+    it("reports a blob afresh once a queued job naming it is canceled", async () => {
+      const hash = await upload("named by a job that is canceled");
+      await runJob(operator, "blob-orphans");
+      expect(await reported()).toContain(hash);
+
+      const long = await holdTheWorker();
+      const queued = await working.bulkAction({
+        action: "update_properties",
+        patch: { cover: hash },
+        filter: matchesNothing(),
+      });
+      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+      const id = (queued.data as { id: string }).id;
+      expect((await statusOf(id)).status).toBe("queued");
+      expect((await statusOf(long)).status).toBe("in_progress");
+
+      const canceled = await working.bulkActionCancel(id);
+      expect(canceled.status, JSON.stringify(canceled.error)).toBe(200);
+      expect((await statusOf(id)).status).toBe("canceled");
+      // Still held up behind the long job: the cancel ended a job that had
+      // not started.
+      expect((await statusOf(long)).status).toBe("in_progress");
+
+      await release(long);
+      await reportedAfterEnd(hash, "canceled");
+    }, 60_000);
+
+    it("reports a blob afresh once a queued job naming it fails", async () => {
+      const hash = await upload("named by a job that fails");
+      await runJob(operator, "blob-orphans");
+      expect(await reported()).toContain(hash);
+
+      const minted = await operator.createKey({
+        label: "blob-store-jobs-queued",
+        source: "blob-store-jobs-queued",
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      const queuer = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: minted.data.key,
+      });
+
+      // The credential is asked after the job's first chunk begins, and a
+      // job matching no item has none, so this one matches a single note.
+      const own = `awaits-its-first-chunk-${crypto.randomUUID()}`;
+      const note = await working.createItem({
+        type: "core.note",
+        source: "blob-store-jobs",
+        properties: { body: "left as it was" },
+        tags: [own],
+      });
+      expect(note.status, JSON.stringify(note.error)).toBe(201);
+
+      const long = await holdTheWorker();
+      const queued = await queuer.bulkAction({
+        action: "update_properties",
+        patch: { cover: hash },
+        filter: { tags: [own] },
+      });
+      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+      const id = (queued.data as { id: string }).id;
+      expect((await statusOf(id)).status).toBe("queued");
+      expect((await statusOf(long)).status).toBe("in_progress");
+
+      // The witness: a job whose key is gone but which has not yet run
+      // still holds the blob, so it is the job's end that lifts the hold.
+      const revoked = await operator.revokeKey(minted.data.id);
+      expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
+      expect((await statusOf(id)).status).toBe("queued");
+      expect(await reported()).not.toContain(hash);
+
+      // Freeing the worker lets it reach the job, which it ends `failed`
+      // without writing: the key that queued it no longer authenticates.
+      await release(long);
+      const job = await operator.pollBulkActionToTerminal(id);
+      expect(job.status).toBe("failed");
+      expect(job.error).toMatch(/no longer authenticates/);
+      expect(
+        (await working.getItem(note.data.item.id)).data.item.properties,
+      ).toEqual({ body: "left as it was" });
+
+      await reportedAfterEnd(hash, "failed");
+    }, 60_000);
   });
 });
 
