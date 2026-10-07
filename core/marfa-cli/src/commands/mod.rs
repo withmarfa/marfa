@@ -2,6 +2,7 @@ pub mod audit;
 pub mod blobs;
 pub mod config;
 pub mod connectors;
+pub mod docs;
 pub mod edge_types;
 pub mod edges;
 pub mod events;
