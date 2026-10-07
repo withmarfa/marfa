@@ -686,6 +686,42 @@ describe("event stream contract", () => {
     }
   });
 
+  it("reads an empty Last-Event-ID as no cursor, and refuses one with an embedded space, twenty digits or an exponent", async ({
+    signal,
+  }) => {
+    // The witness that there is a log to replay: a cursor of zero carries
+    // the event of a row written before the stream opened, and an empty one
+    // does not.
+    const written = await seed("empty-cursor-history");
+    const sees = (events: { data: unknown }[]): boolean =>
+      events.some(
+        (e) => (e.data as { item?: { id?: string } })?.item?.id === written,
+      );
+    const readUntilLive = (cursor: string) =>
+      withStream(apiUrl, apiKey, { lastEventId: cursor }, async (stream) => {
+        expect(stream.response.status).toBe(200);
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_live"),
+          `stream_live after the cursor ${JSON.stringify(cursor)}`,
+          signal,
+        );
+        return events;
+      });
+
+    expect(sees(await readUntilLive("0"))).toBe(true);
+    expect(sees(await readUntilLive(""))).toBe(false);
+
+    for (const cursor of ["1 2", "12345678901234567890", "1e3"]) {
+      const refused = await askEvents(apiKey, { cursor });
+      expect(refused.status, `Last-Event-ID ${JSON.stringify(cursor)}`).toBe(
+        400,
+      );
+      expect(refused.code).toBe("validation_error");
+      expect(refused.details.errors?.[0]?.path).toBe("Last-Event-ID");
+    }
+  });
+
   it("refuses a cursor past the log's head with a terminal cursor_ahead frame", async ({
     signal,
   }) => {

@@ -660,4 +660,37 @@ describe("audit log", () => {
       await receiver.close();
     }
   });
+
+  it("lists newest first, and refuses the operator key, which does not hold audit.read", async () => {
+    const first = await client.createItem(createNote({ source: ctx.source }));
+    expect(first.ok).toBe(true);
+    trackItem(ctx, first.data.item.id);
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await client.createItem(createNote({ source: ctx.source }));
+    expect(second.ok).toBe(true);
+    trackItem(ctx, second.data.item.id);
+
+    const older = await createdRow(first.data.item.id);
+    const newer = await createdRow(second.data.item.id);
+    expect(older.created_at < newer.created_at).toBe(true);
+    const page = await client.listAudit({
+      action: "item.create",
+      created_after: new Date(Date.parse(older.created_at) - 1).toISOString(),
+      limit: 200,
+    });
+    expect(page.ok).toBe(true);
+    const ids = page.data.data.map((row) => row.id);
+    expect(ids.indexOf(newer.id)).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf(newer.id)).toBeLessThan(ids.indexOf(older.id));
+    const stamps = page.data.data.map((row) => row.created_at);
+    expect([...stamps].sort().reverse()).toEqual(stamps);
+
+    const operator = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: process.env.MARFA_OPERATOR_KEY!,
+    });
+    const refused = await operator.listAudit();
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+  });
 });

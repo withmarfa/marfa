@@ -12,6 +12,7 @@ import {
   collectUntil,
   withStream,
 } from "../../utils/stream.js";
+import { openEventStream } from "../../utils/sse.js";
 
 /**
  * "A replay is what a live subscriber would have seen": what a reconnecting
@@ -218,5 +219,182 @@ describe("replay", () => {
         `a bulk-written item (${id}) never reached the event log, so a client catching up after an import is silently short`,
       ).toBe(true);
     }
+  });
+
+  it("delivers a subtype's events live to a stream filtered by its parent type, and withholds an unrelated type", async (context) => {
+    await withStream(
+      apiUrl,
+      apiKey,
+      { query: [["type", "core.note"]] },
+      async (stream) => {
+        await new Promise((r) => setTimeout(r, 250));
+        const child = await client.createItem({
+          type: childType,
+          source: ctx.source,
+          properties: { body: "live-subtype-child" },
+        });
+        expect(child.ok).toBe(true);
+        trackItem(ctx, child.data.item.id);
+        const unrelated = await client.createItem({
+          type: "core.task",
+          source: ctx.source,
+          properties: { title: "live-subtype-unrelated" },
+        });
+        expect(unrelated.ok).toBe(true);
+        trackItem(ctx, unrelated.data.item.id);
+        const sentinel = await makeNote("live-subtype-sentinel");
+
+        const { events } = await collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(sentinel),
+          `the sentinel ${sentinel} on a stream filtered to core.note`,
+          context.signal,
+        );
+        const seen = itemIds(events);
+        expect(
+          seen.has(unrelated.data.item.id),
+          "the type filter admitted an unrelated type, so it is not filtering",
+        ).toBe(false);
+        expect(
+          seen.has(child.data.item.id),
+          `a ${childType} item is a core.note by inheritance and was dropped from a live core.note stream`,
+        ).toBe(true);
+      },
+    );
+  });
+
+  it("takes a list of types as their union, up to ten entries and not eleven", async (context) => {
+    await withStream(
+      apiUrl,
+      apiKey,
+      { query: [["type", `core.task, ${childType}`]] },
+      async (stream) => {
+        await new Promise((r) => setTimeout(r, 250));
+        const task = await client.createItem({
+          type: "core.task",
+          source: ctx.source,
+          properties: { title: "union-task" },
+        });
+        expect(task.ok).toBe(true);
+        trackItem(ctx, task.data.item.id);
+        const note = await makeNote("union-note");
+        const child = await client.createItem({
+          type: childType,
+          source: ctx.source,
+          properties: { body: "union-child" },
+        });
+        expect(child.ok).toBe(true);
+        trackItem(ctx, child.data.item.id);
+
+        const { events } = await collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(child.data.item.id),
+          "the last of two types in the list",
+          context.signal,
+        );
+        const seen = itemIds(events);
+        expect(seen.has(task.data.item.id)).toBe(true);
+        expect(
+          seen.has(note),
+          "a type outside the list was delivered, so the list is not filtering",
+        ).toBe(false);
+      },
+    );
+
+    // Ten entries are accepted, blank ones left out of the count, and the
+    // eleventh is refused.
+    const patterns = (count: number) =>
+      Array.from({ length: count - 1 }, (_, i) => `nothing${String(i)}.*`);
+    const accepted = [`core.task`, ...patterns(10)].join(",,") + ",";
+    const tooMany = ["core.task", ...patterns(11)].join(",");
+    const ten = await openEventStream(apiUrl, apiKey, {
+      query: [["type", accepted]],
+      connectTimeoutMs: 30_000,
+    });
+    try {
+      expect(ten.response.status).toBe(200);
+    } finally {
+      await ten.close();
+    }
+    const eleven = await openEventStream(apiUrl, apiKey, {
+      query: [["type", tooMany]],
+      connectTimeoutMs: 30_000,
+    });
+    try {
+      expect(eleven.response.status).toBe(400);
+      expect(
+        ((await eleven.response.json()) as { error: { code: string } }).error
+          .code,
+      ).toBe("validation_error");
+    } finally {
+      await eleven.close();
+    }
+  });
+
+  it("announces what a bulk-action job changes to a live stream and to a replay", async (context) => {
+    const tag = `replay-job-${ctx.runId}`;
+    const rows: string[] = [];
+    for (let n = 0; n < 3; n += 1) {
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        tags: [tag],
+        properties: { body: `replay-job-${String(n)}` },
+      });
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      rows.push(created.data.item.id);
+    }
+    const { eventId, markerId } = await baselineEventId(
+      apiUrl,
+      apiKey,
+      () => makeNote("replay-job-marker"),
+      context.signal,
+    );
+    trackItem(ctx, markerId);
+    const changed = (events: { event: string; data: unknown }[]) =>
+      events
+        .filter((e) => e.event === "item.state_changed")
+        .map((e) => (e.data as { item?: { id?: string } }).item?.id)
+        .filter((id): id is string => id !== undefined && rows.includes(id))
+        .sort();
+
+    const live = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      const queued = await client.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: { tags: [tag] },
+      });
+      expect(queued.status).toBe(202);
+      const job = await client.pollBulkActionToTerminal(
+        (queued.data as { id: string }).id,
+      );
+      expect(job.status).toBe("completed");
+      expect(job.succeeded).toBe(3);
+      const sentinel = await makeNote("replay-job-sentinel");
+      const { events } = await collectUntil(
+        stream,
+        (evts) => itemIds(evts).has(sentinel),
+        `the sentinel ${sentinel} after the job finished`,
+        context.signal,
+      );
+      return { events, sentinel };
+    });
+    expect(changed(live.events)).toEqual([...rows].sort());
+
+    const replayed = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: eventId },
+      (stream) =>
+        collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(live.sentinel),
+          "the replay to reach the sentinel written after the job",
+          context.signal,
+        ),
+    );
+    expect(changed(replayed.events)).toEqual([...rows].sort());
   });
 });

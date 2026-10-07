@@ -137,4 +137,57 @@ describe("a stream answers to its credential as it stands", () => {
       expect((await reader?.read())?.done).toBe(true);
     });
   });
+
+  it("names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401", async ({
+    signal,
+  }) => {
+    const { id, key } = await viewer("stream-reconnect");
+    const lastSent = await withStream(apiUrl, key, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      const sent = await task("reconnect-sent");
+      const { events } = await collectUntil(
+        stream,
+        (evts) => arrived(evts, sent),
+        `the task ${sent} before the key is revoked`,
+        signal,
+      );
+      const frame = events.find(
+        (e) => (e.data as { item?: { id?: string } }).item?.id === sent,
+      );
+      expect(frame?.id).toBeDefined();
+
+      expect((await client.revokeKey(id)).ok).toBe(true);
+      const ended = await collectUntil(
+        stream,
+        (evts) => evts.some((e) => e.event === "stream_incomplete"),
+        "the stream to say it ended",
+        signal,
+      );
+      const terminal = ended.events.find(
+        (e) => e.event === "stream_incomplete",
+      );
+      expect((terminal?.data as { cursor?: string }).cursor).toBe(frame!.id);
+      return frame!.id!;
+    });
+
+    const refused = await fetch(`${apiUrl}/events`, {
+      headers: { Authorization: `Bearer ${key}`, "Last-Event-ID": lastSent },
+    });
+    expect(refused.status).toBe(401);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("unauthorized");
+
+    // The witness: the refusal is the key's. A key that stands opens the
+    // same request.
+    const standing = await viewer("stream-reconnect-standing");
+    await withStream(
+      apiUrl,
+      standing.key,
+      { lastEventId: lastSent },
+      async (stream) => {
+        expect(stream.response.status).toBe(200);
+      },
+    );
+  });
 });
