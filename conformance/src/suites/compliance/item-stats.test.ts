@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackFolder,
+  trackItem,
+  cleanup,
+} from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -106,5 +111,143 @@ describe("GET /items/stats", () => {
     );
     expect(unknownType.status).toBe(400);
     expect(unknownType.error?.error.code).toBe("unknown_type");
+  });
+
+  it("refuses a limit, a cursor, a sort and a direction as keys it does not declare, naming each", async () => {
+    // The witness: the listing takes all four, so the refusal is the stats
+    // door's own.
+    const listed = await client.rawRequest<unknown>(
+      `/items?source=${encodeURIComponent(ctx.source)}&limit=5&sort=created_at&direction=asc`,
+    );
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+
+    for (const query of [
+      "limit=5",
+      "cursor=abc",
+      "sort=created_at",
+      "direction=asc",
+    ]) {
+      const refused = await client.rawRequest<unknown>(`/items/stats?${query}`);
+      expect(refused.status, query).toBe(400);
+      expect(refused.error?.error.code, query).toBe("validation_error");
+      expect(refused.error?.error.details?.unknown_parameters, query).toEqual([
+        query.split("=")[0],
+      ]);
+    }
+    const together = await client.rawRequest<unknown>(
+      "/items/stats?limit=5&cursor=abc&sort=created_at&direction=asc",
+    );
+    expect(together.status).toBe(400);
+    expect(
+      [
+        ...(together.error?.error.details?.unknown_parameters as string[]),
+      ].sort(),
+    ).toEqual(["cursor", "direction", "limit", "sort"]);
+  });
+
+  it("counts the system items under include=system and refuses any other include", async () => {
+    const folder = await client.createFolder({ title: `stats-${ctx.runId}` });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+    trackFolder(ctx, folder.data.item.id);
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `stats-system-${ctx.runId}` },
+    });
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+
+    const byType = async (query: string): Promise<Record<string, number>> => {
+      const res = await client.rawRequest<Record<string, number>>(
+        `/items/stats?by=type&source=${encodeURIComponent(ctx.source)}${query}`,
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data;
+    };
+    // The folder is left out by default and counted under the token, beside
+    // the same note, so the count that rose is the system one.
+    expect(Object.keys(await byType(""))).not.toContain("system.folder");
+    const withSystem = await byType("&include=system");
+    expect(withSystem["system.folder"]).toBe(1);
+    expect(withSystem["core.note"]).toBe((await byType(""))["core.note"]);
+
+    for (const include of ["edges", "metadata", "extensions", "system,edges"]) {
+      const refused = await client.rawRequest<unknown>(
+        `/items/stats?include=${include}`,
+      );
+      expect(refused.status, include).toBe(400);
+      expect(refused.error?.error.code, include).toBe("validation_error");
+    }
+  });
+
+  it("refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds", async () => {
+    const huge = `1${"0".repeat(400)}`;
+    const queries = [
+      "state=sleeping",
+      "occurred_after=banana",
+      "occurred_before=banana",
+      "updated_after=banana",
+      "updated_before=banana",
+      `filter=${encodeURIComponent(`properties.n gt ${huge}`)}`,
+    ];
+    // The witness: each filter's well-formed neighbor is counted.
+    for (const ok of [
+      "state=archived",
+      "occurred_after=2020-01-01T00:00:00Z",
+      "updated_before=2999-01-01T00:00:00Z",
+      `filter=${encodeURIComponent("properties.n gt 1")}`,
+    ]) {
+      const counted = await client.rawRequest<unknown>(`/items/stats?${ok}`);
+      expect(counted.status, ok).toBe(200);
+    }
+    for (const query of queries) {
+      const listed = await client.rawRequest<unknown>(`/items?${query}`);
+      const counted = await client.rawRequest<unknown>(`/items/stats?${query}`);
+      expect(listed.status, `listing ${query}`).toBe(400);
+      expect(counted.status, `stats ${query}`).toBe(400);
+      expect(counted.error?.error.code, query).toBe("validation_error");
+    }
+  });
+
+  it("answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any", async () => {
+    const tag = `stats-sum-${ctx.runId}`;
+    const seed = async (): Promise<string> => {
+      const made = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `${tag} ${String(Math.random())}` },
+        tags: [tag],
+      });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      trackItem(ctx, made.data.item.id);
+      return made.data.item.id;
+    };
+    const [, archived, trashed] = [await seed(), await seed(), await seed()];
+    expect((await client.transitionItem(archived, "archived")).ok).toBe(true);
+    expect((await client.deleteItem(trashed)).ok).toBe(true);
+
+    const scope = `tags=${encodeURIComponent(tag)}`;
+    const stats = async (state: string): Promise<Record<string, number>> => {
+      const res = await client.rawRequest<Record<string, number>>(
+        `/items/stats?${scope}${state}`,
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data;
+    };
+    const listed = async (state: string): Promise<number> => {
+      const res = await client.rawRequest<{ data: unknown[] }>(
+        `/items?${scope}&limit=200${state}`,
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data.data.length;
+    };
+
+    const everyState = await stats("");
+    expect(everyState).toEqual({ active: 1, archived: 1, trashed: 1 });
+    expect(await stats("&state=any")).toEqual(everyState);
+    expect(await listed("")).toBe(everyState.active);
+    expect(await listed("&state=archived")).toBe(everyState.archived);
+    const sum = Object.values(everyState).reduce((a, n) => a + n, 0);
+    expect(await listed("&state=any")).toBe(sum);
   });
 });
