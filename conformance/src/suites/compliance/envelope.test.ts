@@ -222,8 +222,10 @@ describe("one envelope for every list and search", () => {
     expect(body.next_cursor).toBeNull();
   });
 
-  for (const door of doors) {
-    it(`GET ${door.template} answers data and next_cursor`, async () => {
+  const doorRows = doors.map((door) => [door.template, door] as const);
+  it.each(doorRows)(
+    "GET %s answers data and next_cursor",
+    async (_template, door) => {
       const body = (await read(
         door.path(),
         door.operator ? operatorKey : apiKey,
@@ -244,8 +246,8 @@ describe("one envelope for every list and search", () => {
       expect(
         body.next_cursor === null || typeof body.next_cursor === "string",
       ).toBe(true);
-    });
-  }
+    },
+  );
 
   it("carries each hydrated edge block as a page", async () => {
     type Blocks = Record<string, Record<string, unknown>>;

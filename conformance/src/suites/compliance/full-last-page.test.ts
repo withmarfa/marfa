@@ -298,9 +298,11 @@ describe("a full last page answers a null cursor", () => {
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 
-  for (const [door, seed] of Object.entries(seeds)) {
-    it(`${door} answers null when the rows fill the page exactly`, async () => {
-      const read = await seed();
+  const seededDoors = Object.keys(seeds);
+  it.each(seededDoors)(
+    "%s answers null when the rows fill the page exactly",
+    async (door) => {
+      const read = await seeds[door]!();
 
       const short = await read({ limit: LIMIT - 1 });
       expect(short.data, door).toHaveLength(LIMIT - 1);
@@ -312,6 +314,6 @@ describe("a full last page answers a null cursor", () => {
       const full = await read({ limit: LIMIT });
       expect(full.data, door).toHaveLength(LIMIT);
       expect(full.next_cursor, door).toBeNull();
-    });
-  }
+    },
+  );
 });

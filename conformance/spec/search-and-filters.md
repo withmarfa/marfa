@@ -1040,7 +1040,7 @@ When a list or a search answers, the server MUST carry the rows under `data` and
 
 **Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys` and the `min_copies` of `GET /blobs/stores`.
 
-**Tests:** `compliance/envelope.test.ts › one envelope for every list and search`, `› names twenty-four doors, every one the document publishes as a page`.
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-four doors, every one the document publishes as a page`.
 
 ### `search-and-filters/page-whole-set`
 
@@ -1060,7 +1060,7 @@ When the rows of a page fill it exactly and it holds the last row, the server MU
 
 **Reason:** a walk then never ends on an empty page it was sent to. A page can still be short or empty with a cursor to follow, so a walk stops on `null` and never on a short page (`edges/read-list-short`).
 
-**Tests:** `compliance/full-last-page.test.ts › a full last page answers a null cursor`, `› covers every door that takes a cursor`.
+**Tests:** `compliance/full-last-page.test.ts › %s answers null when the rows fill the page exactly`, `› covers every door that takes a cursor`.
 
 ## Export
 
