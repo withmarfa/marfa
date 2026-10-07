@@ -184,6 +184,102 @@ describe("validation edge cases", () => {
     }
   });
 
+  it("takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search", async () => {
+    const withLength = (length: number): string => {
+      const head = 'properties.body eq "';
+      return `${head}${"x".repeat(length - head.length - 1)}"`;
+    };
+    expect(withLength(2048)).toHaveLength(2048);
+    for (const door of ["/items?", "/search?q=note&"]) {
+      const largest = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(withLength(2048))}`,
+      );
+      expect(largest.status, `${door} 2048`).toBe(200);
+      const smallest = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(withLength(2049))}`,
+      );
+      expect(smallest.status, `${door} 2049`).toBe(400);
+      expect(smallest.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("takes a filter of 10 conditions and refuses one of 11, on the listing and the search", async () => {
+    const note = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "ten", body: `tenconditions${ctx.runId}` },
+      }),
+    );
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    trackItem(ctx, note.data.item.id);
+    const joined = (count: number, logical: "AND" | "OR"): string =>
+      Array.from({ length: count }, () => `source eq "${ctx.source}"`).join(
+        ` ${logical} `,
+      );
+    for (const logical of ["AND", "OR"] as const) {
+      for (const door of ["/items?", `/search?q=tenconditions${ctx.runId}&`]) {
+        const largest = await client.rawRequest<{
+          data: ({ id: string } | { item: { id: string } })[];
+        }>(`${door}filter=${encodeURIComponent(joined(10, logical))}`);
+        expect(largest.status, `${door} ${logical} 10`).toBe(200);
+        // The witness that the ten were read and not skipped: the row is
+        // answered under them.
+        expect(
+          largest.data.data.map((r) => ("item" in r ? r.item.id : r.id)),
+        ).toContain(note.data.item.id);
+
+        const smallest = await client.rawRequest<unknown>(
+          `${door}filter=${encodeURIComponent(joined(11, logical))}`,
+        );
+        expect(smallest.status, `${door} ${logical} 11`).toBe(400);
+        expect(smallest.error?.error.code).toBe("validation_error");
+      }
+    }
+  });
+
+  it("refuses a filter that mixes AND with OR, on the listing and the search", async () => {
+    const only = (logical: "AND" | "OR") =>
+      `type eq "core.note" ${logical} state eq "active" ${logical} source eq "${ctx.source}"`;
+    const mixed = `type eq "core.note" AND state eq "active" OR source eq "${ctx.source}"`;
+    for (const door of ["/items?", "/search?q=note&"]) {
+      // The witness: each logical operator on its own is taken.
+      for (const logical of ["AND", "OR"] as const) {
+        const taken = await client.rawRequest<unknown>(
+          `${door}filter=${encodeURIComponent(only(logical))}`,
+        );
+        expect(taken.status, `${door} ${logical}`).toBe(200);
+      }
+      const refused = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(mixed)}`,
+      );
+      expect(refused.status, door).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("refuses a filter that uses OR beside an edge shorthand, which joins it with AND", async () => {
+    const target = generateId();
+    const shorthand = `edge[about]=${target}`;
+    const or = `type eq "core.note" OR type eq "core.bookmark"`;
+    const and = `type eq "core.note" AND state eq "active"`;
+    // The witness: an OR filter alone and an AND filter with the shorthand
+    // are both taken, so the refusal is the pair's.
+    const alone = await client.rawRequest<unknown>(
+      `/items?filter=${encodeURIComponent(or)}`,
+    );
+    expect(alone.status).toBe(200);
+    const withAnd = await client.rawRequest<unknown>(
+      `/items?${shorthand}&filter=${encodeURIComponent(and)}`,
+    );
+    expect(withAnd.status, JSON.stringify(withAnd.error)).toBe(200);
+
+    const refused = await client.rawRequest<unknown>(
+      `/items?${shorthand}&filter=${encodeURIComponent(or)}`,
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  });
+
   it("refuses an edge shorthand value carrying a backslash, and still takes a quote", async () => {
     // The witness: a value the shorthand quotes without trouble.
     const quoted = await client.listItems({ edge: { about: 'a"b' } });

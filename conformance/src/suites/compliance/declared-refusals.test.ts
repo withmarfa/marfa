@@ -5,6 +5,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   cleanup,
+  createSecondClient,
   createTestContext,
   getOperatorClient,
   trackEdge,
@@ -861,6 +862,191 @@ describe("a query key no door declares", () => {
     });
     if (reader.status !== 400) await reader.body?.cancel();
     expect(reader.status).toBe(400);
+  });
+
+  it("ignores a key starting with an underscore on doors beyond the item listing, the event stream included", async () => {
+    const window = "from=2031-06-10T00:00:00.000Z&to=2031-06-11T00:00:00.000Z";
+    const doors = [
+      "/items",
+      "/items/stats",
+      "/search?q=note",
+      "/export",
+      "/edges",
+      "/occurrences?" + window,
+      "/types",
+      "/edge-types",
+      "/keys",
+      "/webhooks",
+      "/connectors",
+      "/audit",
+    ];
+    for (const door of doors) {
+      const join = door.includes("?") ? "&" : "?";
+      // The witness: a key the door does not declare, spelled without the
+      // underscore, is refused on the same door, so the underscore is what
+      // the 200 below owes its answer to.
+      const named = await fetch(`${apiUrl}${door}${join}cache=1`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      expect(named.status, `${door} cache`).toBe(400);
+      await named.body?.cancel();
+      const own = await fetch(`${apiUrl}${door}${join}_cache=1`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      expect(own.status, `${door} _cache`).toBe(200);
+      await own.body?.cancel();
+    }
+    const stream = await fetch(`${apiUrl}/events?edges=none&_cache=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(stream.status).toBe(200);
+    await stream.body?.cancel();
+  });
+
+  it("names an undeclared key before it looks at the rest of the query", async () => {
+    const cases: [string, string][] = [
+      // The door's own refusal of the query, and the same query with a key
+      // the door does not declare added.
+      ["/items?limit=0", "validation_error"],
+      ["/items?tier=nope", "validation_error"],
+      ["/items?type=core.unregistered_before_stray", "unknown_type"],
+      ["/search", "missing_required_field"],
+      ["/search?q=note&limit=101", "validation_error"],
+      ["/export?format=zip", "validation_error"],
+      ["/edges?limit=501", "validation_error"],
+    ];
+    for (const [path, code] of cases) {
+      const own = await fetch(`${apiUrl}${path}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const ownBody = (await own.json()) as { error?: { code?: string } };
+      expect(own.status, path).toBe(400);
+      expect(ownBody.error?.code, path).toBe(code);
+
+      const join = path.includes("?") ? "&" : "?";
+      const both = await fetch(`${apiUrl}${path}${join}stray_before=1`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const bothBody = (await both.json()) as {
+        error?: {
+          code?: string;
+          details?: { unknown_parameters?: string[] };
+        };
+      };
+      expect(both.status, path).toBe(400);
+      expect(bothBody.error?.code, path).toBe("validation_error");
+      expect(bothBody.error?.details?.unknown_parameters, path).toEqual([
+        "stray_before",
+      ]);
+    }
+  });
+
+  it("takes a query on the doors that are not this server's to declare, and still refuses one on the client registration door", async () => {
+    // The witness: a door of ours refuses the same key.
+    const refused = await fetch(`${apiUrl}/items?${STRAY}=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(refused.status).toBe(400);
+    await refused.body?.cancel();
+
+    for (const path of [
+      "/.well-known/oauth-protected-resource",
+      "/auth/.well-known/openid-configuration",
+      "/auth/.well-known/oauth-authorization-server",
+      "/auth/sign-in",
+      "/auth/device",
+      "/auth/error",
+    ]) {
+      const bare = await fetch(`${apiUrl}${path}`);
+      expect(bare.status, `${path} without the key`).toBe(200);
+      await bare.body?.cancel();
+      const taken = await fetch(`${apiUrl}${path}?${STRAY}=1`);
+      expect(taken.status, `${path} with the key`).toBe(200);
+      await taken.body?.cancel();
+    }
+
+    // A sender's query string belongs to the sender: it is recorded, not read.
+    const owner = await createSecondClient(ctx, "inbound-query");
+    const registered = await owner.registerConnector({
+      name: `${ctx.runId} inbound query`,
+    });
+    expect(registered.status).toBe(201);
+    const endpoint = await owner.createInboundEndpoint(registered.data.id);
+    expect(endpoint.status).toBe(201);
+    const sent = await fetch(`${apiUrl}${endpoint.data.path}?${STRAY}=1`, {
+      method: "POST",
+      body: "hello",
+    });
+    expect(sent.status).toBe(202);
+    await sent.body?.cancel();
+
+    const registration = await fetch(
+      `${apiUrl}/auth/oauth2/register?${STRAY}=1`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    expect(registration.status).toBe(400);
+    const body = (await registration.json()) as {
+      error?: { details?: { unknown_parameters?: string[] } };
+    };
+    expect(body.error?.details?.unknown_parameters).toEqual([STRAY]);
+  });
+
+  it("accepts an edge shorthand on GET /items and GET /items/stats and on no other door", async () => {
+    const about = await seedItem("shorthand-target");
+    const source = await seedItem("shorthand-source");
+    const edge = await client.createEdge({
+      source_id: source,
+      target_id: about,
+      edge_type: "about",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+
+    for (const door of ["/items", "/items/stats"]) {
+      for (const key of [`edge[about]=${about}`, `backref[about]=${source}`]) {
+        const taken = await fetch(`${apiUrl}${door}?${key}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        expect(taken.status, `${door} ${key}`).toBe(200);
+        await taken.body?.cancel();
+      }
+    }
+    // The shorthand narrows, so it is read and not skipped.
+    const narrowed = await client.listItems({ edge: { about } });
+    expect(narrowed.data.data.map((row) => row.id)).toEqual([source]);
+
+    const others = [
+      "/search?q=note",
+      "/export",
+      "/edges",
+      "/types",
+      `/occurrences?from=2031-06-10T00:00:00.000Z&to=2031-06-11T00:00:00.000Z`,
+    ];
+    for (const door of others) {
+      const join = door.includes("?") ? "&" : "?";
+      for (const key of ["edge[about]", "backref[about]"]) {
+        const refused = await fetch(
+          `${apiUrl}${door}${join}${encodeURIComponent(key)}=${about}`,
+          { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        expect(refused.status, `${door} ${key}`).toBe(400);
+        const body = (await refused.json()) as {
+          error?: {
+            code?: string;
+            details?: { unknown_parameters?: string[] };
+          };
+        };
+        expect(body.error?.code).toBe("validation_error");
+        expect(body.error?.details?.unknown_parameters).toEqual([key]);
+      }
+    }
   });
 });
 
