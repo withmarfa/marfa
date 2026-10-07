@@ -1,6 +1,6 @@
 /**
  * A pipeline whose consumer can exit early must not decide anything, in a
- * `run:` block that sets `pipefail`.
+ * `run:` block or a shell script that sets `pipefail`.
  *
  * `grep -q` exits the moment it matches. Its producer is then left writing
  * into a closed pipe and dies, and `pipefail` makes the whole pipeline
@@ -21,21 +21,17 @@
  * ordinary pull request is unaffected and a very large one is not — which is
  * the worst available shape for noticing.
  *
- * **Two bounds, both load-bearing, because the obvious wider version of this
- * check asserts something false.**
+ * **The bound is load-bearing, because the obvious wider version of this
+ * check asserts something false:** only a `run:` block or a script that sets
+ * `pipefail`. GitHub runs a `run:` step under `bash -e`, not `-o pipefail`,
+ * so without an explicit set the pipeline already takes grep's own status
+ * and the shape is correct, and a check that ignored the set would flag a
+ * correct block.
  *
- *   - Only `run:` blocks that set `pipefail`. GitHub runs a `run:` step under
- *     `bash -e`, not `-o pipefail`, so without an explicit set the pipeline
- *     already takes grep's own status and the shape is correct, and a check
- *     that ignored the set would flag a correct block.
- *   - Only `if` conditions, because that is where a wrong answer becomes a
- *     wrong decision. A pipeline whose status is discarded, or one guarded
- *     with `|| true`, is outside this deliberately.
- *
- * A shell script that sets `pipefail` gets the stricter rule: no early-exit
- * pipeline at all, unless it carries `|| true`. Under `set -e` a script's
- * pipeline decides even when no `if` is written, through `|| fail`, `&&`, a
- * function used as a condition, or the script ending at it.
+ * Within that bound, no early-exit pipeline at all, unless it carries
+ * `|| true`. Under `set -e` a pipeline decides even when no `if` is written,
+ * through `|| exit`, `&&`, a function used as a condition, or the step
+ * ending at it.
  */
 import { execFileSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
@@ -47,9 +43,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOWS = join(ROOT, ".github", "workflows");
 
 /** `grep -q`, `grep -m N` and `head` all stop reading before their input ends. */
+/** A single `|`, never the `||` of a list, which reads from no pipe. */
 const EARLY_EXIT_CONSUMER =
-  /\|\s*(grep\s+(?:-\S*\s+)*-\S*q|grep\s+(?:-\S*\s+)*-m\s|head\b)/;
-const SETS_PIPEFAIL = /set\s+-\S*o?\S*\s*pipefail|set\s+-o\s+pipefail/;
+  /(?<!\|)\|(?!\|)\s*(grep\s+(?:-\S*\s+)*-\S*q|grep\s+(?:-\S*\s+)*-m\s*\d|head\b)/;
+const SETS_PIPEFAIL = /^\s*set\s[^#\n]*\bpipefail\b/m;
 
 /**
  * Split a workflow into its `run:` blocks by indentation, which is enough
@@ -81,7 +78,7 @@ export function offendingLines(text: string): string[] {
     .flatMap((block) => block.split("\n").map((l) => l.trim()))
     .filter(
       (line) =>
-        line.startsWith("if ") &&
+        !line.startsWith("#") &&
         EARLY_EXIT_CONSUMER.test(line) &&
         !line.includes("|| true"),
     );
@@ -139,6 +136,13 @@ describe("a decision taken from a pipeline that can exit early", () => {
       "if grep -qE '^packages/' <<< \"$changed\"; then",
     );
     expect(offendingLines(hereString)).toEqual([]);
+
+    // Under `set -e` a pipeline decides without an `if`.
+    const orExit = withPipefail.replace(
+      "if echo \"$changed\" | grep -qE '^packages/' ; then",
+      "echo \"$changed\" | grep -qE '^packages/' || exit 1",
+    );
+    expect(offendingLines(orExit)).toHaveLength(1);
   });
 });
 
@@ -177,5 +181,23 @@ describe("an early-exit pipeline in a script that sets pipefail", () => {
       'grep -q "ready" <<<"$(docker logs "$c" 2>&1)" || fail "not ready"',
     ].join("\n");
     expect(scriptOffendingLines(hereString)).toEqual([]);
+  });
+
+  it("reads every way of setting pipefail and of stopping early, and no list", () => {
+    for (const set of ["set -eu -o pipefail", "set -o errexit -o pipefail"]) {
+      expect(
+        scriptOffendingLines(`${set}\nlog | grep -q x || fail`),
+        set,
+      ).toHaveLength(1);
+    }
+    expect(
+      scriptOffendingLines("set -euo pipefail\nlog | grep -m1 x"),
+    ).toHaveLength(1);
+    // `||` joins two commands; neither reads from a pipe.
+    expect(
+      scriptOffendingLines(
+        "set -euo pipefail\ngrep -q a f || grep -q b f\n[ -f f ] || head -n1 g",
+      ),
+    ).toEqual([]);
   });
 });
