@@ -12,7 +12,6 @@ describe("ErrorCode", () => {
     expect(ErrorCode.FORBIDDEN).toBe("forbidden");
     expect(ErrorCode.INVALID_TRANSITION).toBe("invalid_transition");
     expect(ErrorCode.TYPE_NOT_FOUND).toBe("type_not_found");
-    expect(ErrorCode.DUPLICATE_SOURCE).toBe("duplicate_source");
   });
 
   it("includes resource-specific codes", () => {
@@ -35,7 +34,6 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.INVALID_TRANSITION)).toBe(400);
     expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.UNKNOWN_TYPE)).toBe(400);
-    expect(httpStatus(ErrorCode.DUPLICATE_SOURCE)).toBe(409);
   });
 
   it("maps resource-specific codes to expected statuses", () => {

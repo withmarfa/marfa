@@ -569,6 +569,25 @@ export function baseVersion(
   return version === undefined ? {} : { version, may_read_type: mayReadType };
 }
 
+/**
+ * A create named a natural key, `(source, source_id)`, that a row already
+ * holds. No door answers it: every door resolves the key first and updates
+ * the row. A write that does not resolve first, the archive restore, reads it
+ * as a duplicate to count.
+ */
+export class NaturalKeyHeld extends Error {
+  constructor(
+    readonly source: string,
+    readonly sourceId: string,
+    readonly existingId: string,
+  ) {
+    super(
+      `Item with source=${source} source_id=${sourceId} already exists as ${existingId}`,
+    );
+    this.name = "NaturalKeyHeld";
+  }
+}
+
 export interface ConflictResolutionInput {
   /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;

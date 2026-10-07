@@ -48,6 +48,7 @@ import {
 import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
 import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import {
@@ -739,10 +740,13 @@ async function restoreRows(
             { announce: false },
           ));
         } catch (err) {
+          if (err instanceof NaturalKeyHeld) {
+            duplicates++;
+            return;
+          }
           if (
             err instanceof MarfaError &&
-            (err.code === ErrorCode.DUPLICATE_SOURCE ||
-              err.code === ErrorCode.CONFLICT ||
+            (err.code === ErrorCode.CONFLICT ||
               err.code === ErrorCode.LINK_TAKEN)
           ) {
             duplicates++;
