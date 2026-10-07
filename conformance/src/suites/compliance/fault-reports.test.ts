@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -11,28 +12,36 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What the server reports of an unhandled fault that failed a database
- * statement, in the two places a fixture can read: its log and its error
- * webhook. Each carries the failed statement, with placeholders where the
- * values were, and the driver's own reason, and none of the values the write
- * was given.
+ * statement, in the places a fixture can read: its log, its error webhook,
+ * the log record and the span's exception event it exports, and the
+ * exception it sends to error tracking. Each carries the failed statement,
+ * with placeholders where the values were, and the driver's own reason, and
+ * none of the values the write was given.
  *
  * **A fault the fixture makes, on a server of its own.** A table the write
  * reaches is renamed in the stored file, as `internal-error.test.ts` does,
  * and the error webhook names a receiver the fixture runs.
  *
- * **What a fixture cannot reach.** The telemetry record of the log line, the
- * exception sent to error tracking and the exception event on the request's
- * span each need a collector this fixture does not run; a fault met by a
- * background job or after a response began has no arrangement that does not
- * depend on timing; and the driver's reasons a request can produce quote no
- * value of the write, so the withholding of a reason that does is not
- * reachable over HTTP. The server's own suite holds those.
+ * **Where the telemetry goes.** The server exports its log record, its
+ * spans and its exceptions over HTTP, so the receiver the fixture runs is
+ * also the collector for all three: the OTLP endpoint takes the log records
+ * and spans, and the PostHog host takes the exception sent to error tracking.
+ *
+ * **What a fixture cannot reach.** A fault met by a background job or after
+ * a response began has no arrangement that does not depend on timing, and the
+ * driver's reasons a request can produce quote no value of the write, so the
+ * withholding of a reason that does is not reachable over HTTP. The server's
+ * own suite holds those.
  */
 let server: FreshServer | undefined;
 let receiver: Server | undefined;
 
 /** What the receiver has been sent, parsed. */
 const notifications: Record<string, unknown>[] = [];
+/** What it has been sent as OTLP traces, as OTLP log records and as error tracking's events. */
+const traces: Record<string, unknown>[] = [];
+const logRecords: Record<string, unknown>[] = [];
+const trackedErrors: Record<string, unknown>[] = [];
 
 beforeAll(async () => {
   receiver = createServer((request, response) => {
@@ -40,14 +49,22 @@ beforeAll(async () => {
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
-        notifications.push(
-          JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
-            string,
-            unknown
-          >,
-        );
+        let raw = Buffer.concat(chunks);
+        if (request.headers["content-encoding"] === "gzip")
+          raw = gunzipSync(raw);
+        const parsed = JSON.parse(raw.toString("utf8")) as Record<
+          string,
+          unknown
+        >;
+        const path = request.url ?? "";
+        if (path.startsWith("/v1/traces")) traces.push(parsed);
+        else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
+        else if (path.startsWith("/batch")) trackedErrors.push(parsed);
+        else notifications.push(parsed);
       } finally {
-        response.writeHead(204).end();
+        response
+          .writeHead(200, { "Content-Type": "application/json" })
+          .end("{}");
       }
     });
   });
@@ -60,6 +77,10 @@ beforeAll(async () => {
   }
   server = await bootFreshServer("fault-reports", {
     ERROR_WEBHOOK_URL: `http://127.0.0.1:${String(address.port)}/errors`,
+    MARFA_OTEL_ENABLED: "true",
+    OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${String(address.port)}`,
+    MARFA_POSTHOG_HOST: `http://127.0.0.1:${String(address.port)}`,
+    MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -71,6 +92,13 @@ afterAll(async () => {
     receiver?.closeAllConnections();
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+/**
+ * How long a batching exporter may take to send: spans leave on a few
+ * seconds' delay and exceptions on a longer one.
+ */
+const COLLECTOR_BUDGET_MS = 60_000;
+const COLLECTOR_TEST_TIMEOUT_MS = COLLECTOR_BUDGET_MS + 15_000;
 
 /** The server's own log, which its state directory holds. */
 function serverLog(): string {
@@ -90,6 +118,86 @@ async function until<T>(
     if (Date.now() > deadline) throw new Error(`${what} never arrived`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+type OtlpValue = {
+  stringValue?: string;
+  intValue?: number | string;
+  doubleValue?: number;
+  boolValue?: boolean;
+  kvlistValue?: { values: OtlpAttribute[] };
+  arrayValue?: { values: OtlpValue[] };
+};
+type OtlpAttribute = { key: string; value: OtlpValue };
+
+/** An OTLP value as the plain value it stands for. */
+function plain(value: OtlpValue): unknown {
+  if (value.kvlistValue !== undefined)
+    return attributesOf(value.kvlistValue.values);
+  if (value.arrayValue !== undefined) return value.arrayValue.values.map(plain);
+  return (
+    value.stringValue ?? value.intValue ?? value.doubleValue ?? value.boolValue
+  );
+}
+
+function attributesOf(
+  list: OtlpAttribute[] | undefined,
+): Record<string, unknown> {
+  return Object.fromEntries((list ?? []).map((a) => [a.key, plain(a.value)]));
+}
+
+/** Every log record the collector has been sent, as its body and attributes. */
+function sentLogRecords(): {
+  body: unknown;
+  attributes: Record<string, unknown>;
+}[] {
+  type Batch = {
+    resourceLogs: {
+      scopeLogs: {
+        logRecords: { body: OtlpValue; attributes?: OtlpAttribute[] }[];
+      }[];
+    }[];
+  };
+  return (logRecords as unknown as Batch[]).flatMap((batch) =>
+    batch.resourceLogs.flatMap((resource) =>
+      resource.scopeLogs.flatMap((scope) =>
+        scope.logRecords.map((record) => ({
+          body: plain(record.body),
+          attributes: attributesOf(record.attributes),
+        })),
+      ),
+    ),
+  );
+}
+
+/** Every span the collector has been sent, with its attributes and the attributes of each event. */
+function sentSpans(): {
+  attributes: Record<string, unknown>;
+  events: { name: string; attributes: Record<string, unknown> }[];
+}[] {
+  type Batch = {
+    resourceSpans: {
+      scopeSpans: {
+        spans: {
+          attributes?: OtlpAttribute[];
+          events?: { name: string; attributes?: OtlpAttribute[] }[];
+        }[];
+      }[];
+    }[];
+  };
+  return (traces as unknown as Batch[]).flatMap((batch) =>
+    batch.resourceSpans.flatMap((resource) =>
+      resource.scopeSpans.flatMap((scope) =>
+        scope.spans.map((span) => ({
+          attributes: attributesOf(span.attributes),
+          events: (span.events ?? []).map((event) => ({
+            name: event.name,
+            attributes: attributesOf(event.attributes),
+          })),
+        })),
+      ),
+    ),
+  );
 }
 
 function postNote(marker: string, requestId: string): Promise<Response> {
@@ -197,4 +305,97 @@ describe("an unhandled fault in which a statement failed", () => {
       notifications.filter((entry) => entry.request_id === requestId),
     ).toHaveLength(1);
   });
+
+  it(
+    "is carried by the log record sent to the telemetry collector, with the statement and the driver's reason and none of the values",
+    async () => {
+      const { marker, requestId } = await faulted();
+      const record = await until(
+        "the fault's log record",
+        () =>
+          sentLogRecords().find(
+            (entry) =>
+              entry.body === "Unhandled error" &&
+              entry.attributes.request_id === requestId,
+          ),
+        COLLECTOR_BUDGET_MS,
+      );
+
+      const reported = String(record.attributes.error);
+      expect(reported).toContain("INSERT INTO event_log");
+      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
+      expect(reported).toContain("no such table: event_log");
+      // Whichever attribute of whichever record carries it.
+      expect(JSON.stringify(logRecords)).not.toContain(marker);
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "is carried by the exception event on the request's span, with the statement and the driver's reason and none of the values",
+    async () => {
+      const { marker, requestId } = await faulted();
+      const span = await until(
+        "the faulted request's span",
+        () =>
+          sentSpans().find(
+            (entry) => entry.attributes["marfa.request_id"] === requestId,
+          ),
+        COLLECTOR_BUDGET_MS,
+      );
+
+      expect(span.attributes["http.response.status_code"]).toBe(500);
+      expect(span.attributes["error.code"]).toBe("internal_error");
+      const events = span.events.filter((event) => event.name === "exception");
+      expect(events).toHaveLength(1);
+      const exception = events[0]!.attributes;
+      const reported = String(exception["exception.message"]);
+      expect(reported).toContain("INSERT INTO event_log");
+      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
+      expect(reported).toContain("no such table: event_log");
+      expect(String(exception["exception.stacktrace"])).not.toContain(marker);
+      expect(JSON.stringify(traces)).not.toContain(marker);
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "is sent to error tracking as an exception with the statement and the driver's reason and none of the values",
+    async () => {
+      const { marker, requestId } = await faulted();
+      type Event = {
+        event: string;
+        properties: {
+          request_id?: string;
+          method?: string;
+          path?: string;
+          $exception_list?: { type: string; value: string }[];
+        };
+      };
+      const sent = await until(
+        "the exception sent to error tracking",
+        () =>
+          (trackedErrors as unknown as { batch: Event[] }[])
+            .flatMap((batch) => batch.batch)
+            .find(
+              (entry) =>
+                entry.event === "$exception" &&
+                entry.properties.request_id === requestId,
+            ),
+        COLLECTOR_BUDGET_MS,
+      );
+
+      expect(sent.properties.method).toBe("POST");
+      expect(sent.properties.path).toBe("/items");
+      // The statement and the driver's reasons beneath it, one entry each.
+      const reported = (sent.properties.$exception_list ?? [])
+        .map((entry) => entry.value)
+        .join("\n");
+      expect(reported).toContain("INSERT INTO event_log");
+      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
+      expect(reported).toContain("no such table: event_log");
+      expect(JSON.stringify(trackedErrors)).not.toContain(marker);
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
+  );
 });
