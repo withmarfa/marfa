@@ -304,7 +304,7 @@ If a write names a string property longer than the field's `maxLength`, or than 
 
 When the server measures a string property against a length cap, the server MUST count UTF-16 code units.
 
-**Reason:** the server and a working copy give the same verdict for a character outside the Basic Multilingual Plane, which takes two units (`device.md` 57).
+**Reason:** the server and a working copy give the same verdict for a character outside the Basic Multilingual Plane, which takes two units (`device/declared-checked`).
 
 **Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
 
@@ -364,7 +364,7 @@ If a write names a `thumbnail` that is not `data:image/png;base64,`, `data:image
 
 The server MUST answer an item's `thumbnail` as a property on every operation and event that answers the item.
 
-**Reason:** a device holds the thumbnail with the item and never fetches it (`device.md` 29).
+**Reason:** a device holds the thumbnail with the item and never fetches it (`device/thumbnail-from-row`).
 
 **Tests:** `compliance/thumbnails.test.ts › travels inside its item on a get, a list, an event frame and an export`.
 
