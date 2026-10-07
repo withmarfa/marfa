@@ -109,6 +109,49 @@ describe("an empty type, source, tags or filter", () => {
     }
   });
 
+  it("is refused when it holds only blanks, or a list of blank entries, on every door that declares it", async () => {
+    const shapes: Record<string, string[]> = {
+      type: ["%20", "%20%20", ",", ", ", ",,", "%20,%20"],
+      tags: ["%20", ",", ", ", ",,"],
+      source: ["%20", "%20%20"],
+      filter: ["%20", "%20%20"],
+    };
+    for (const door of await doors()) {
+      for (const key of door.keys) {
+        for (const shape of shapes[key] ?? []) {
+          const query = door.path === "/search" ? "q=one&" : "";
+          const res = await get(door, `${query}${key}=${shape}`);
+          const body = (await res.json()) as {
+            error: { code: string; details?: { empty_parameters?: string[] } };
+          };
+          const where = `${door.operationId} ${key}=${shape}`;
+          expect(res.status, where).toBe(400);
+          expect(body.error.code, where).toBe("validation_error");
+          expect(body.error.details?.empty_parameters, where).toEqual([key]);
+        }
+      }
+    }
+  });
+
+  it("is not refused as empty when a list holds a real entry beside blanks", async () => {
+    // The door may still refuse the value for another reason; what matters
+    // is that it is not read as nothing to narrow by.
+    for (const query of ["type=core.note,", "tags=kept,"]) {
+      const res = await request(ctx.app, "GET", `/items?${query}`, {
+        key: ctx.workingKey,
+      });
+      const body = (await res.json()) as {
+        error?: { details?: { empty_parameters?: unknown } };
+      };
+      expect(body.error?.details?.empty_parameters, query).toBeUndefined();
+    }
+    const stream = await request(ctx.app, "GET", "/events?type=core.note,%20", {
+      key: ctx.workingKey,
+    });
+    expect(stream.status).toBe(200);
+    await stream.body?.cancel();
+  });
+
   it("is refused once for every empty key, and a filled one beside it is not named", async () => {
     const res = await request(
       ctx.app,

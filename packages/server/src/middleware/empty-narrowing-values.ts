@@ -10,6 +10,11 @@
  * that refusal is, so every door that declares one of these keys refuses it
  * the same way and a door added later does not have to remember.
  *
+ * A value that holds only blanks narrows nothing either, and so does a list
+ * whose every entry is blank, as `type=,` and `tags=, ` are: a door that
+ * trims and drops empty entries is left with no filter. `type` and `tags`
+ * are lists; `source` and `filter` are single values.
+ *
  * An edge shorthand such as `edge[<type>]=` is refused where it is read,
  * because its key carries the edge type and no schema lists it.
  */
@@ -24,9 +29,18 @@ export const NARROWING_KEYS: readonly string[] = [
   "filter",
 ];
 
+/** The keys whose value is a comma-separated list. */
+const LIST_KEYS: readonly string[] = ["type", "tags"];
+
+/** Whether a value, read as the door reads it, holds nothing to narrow by. */
+function narrowsNothing(key: string, value: string): boolean {
+  const entries = LIST_KEYS.includes(key) ? value.split(",") : [value];
+  return entries.every((entry) => entry.trim() === "");
+}
+
 /**
- * Refuse any narrowing key of `url` that `declared` lists and that holds an
- * empty value, in one `400 validation_error` naming them in
+ * Refuse any narrowing key of `url` that `declared` lists and whose value
+ * narrows nothing, in one `400 validation_error` naming them in
  * `details.empty_parameters`.
  */
 export function refuseEmptyNarrowingValuesOf(
@@ -35,8 +49,8 @@ export function refuseEmptyNarrowingValuesOf(
 ): void {
   const empty: string[] = [];
   for (const [key, value] of new URL(url).searchParams.entries()) {
-    if (value !== "") continue;
     if (!NARROWING_KEYS.includes(key) || !declared.includes(key)) continue;
+    if (!narrowsNothing(key, value)) continue;
     if (!empty.includes(key)) empty.push(key);
   }
   if (empty.length === 0) return;
@@ -44,7 +58,7 @@ export function refuseEmptyNarrowingValuesOf(
   const noun = empty.length === 1 ? "filter was" : "filters were";
   throw new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `The ${names} ${noun} sent with no value. An empty filter narrows nothing and would return everything the endpoint can read. Send a value, or leave the parameter out.`,
+    `The ${names} ${noun} sent with nothing to narrow by. A filter with no value narrows nothing and would return everything the endpoint can read. Send a value, or leave the parameter out.`,
     { empty_parameters: empty },
   );
 }
