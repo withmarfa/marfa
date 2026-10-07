@@ -13,6 +13,7 @@ import {
   openBody,
   send,
   sendChunked,
+  type RawAnswer,
 } from "../../utils/inbound-sender.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -32,6 +33,11 @@ interface Registration {
   readonly client: MarfaClient;
   id: string;
   keyId: string;
+}
+
+/** A `Retry-After` in whole seconds, and not zero. */
+function expectRetryAfter(answer: RawAnswer, what: string): void {
+  expect(answer.headers["retry-after"], what).toMatch(/^[1-9]\d*$/);
 }
 
 function minterOf(server: FreshServer): MarfaClient {
@@ -318,6 +324,7 @@ describe("the retained bytes of a registration, to the byte", () => {
     const under = await receipt(server.apiUrl);
     expect(under.status).toBe(503);
     expect(codeOf(under)).toBe("inbound_unavailable");
+    expectRetryAfter(under, "retained bytes, one under");
     expect(await stored(owner)).toHaveLength(1);
 
     await server.restart({
@@ -333,5 +340,6 @@ describe("the retained bytes of a registration, to the byte", () => {
     // Full: a third needs another charge.
     const third = await receipt(server.apiUrl);
     expect(third.status).toBe(503);
+    expectRetryAfter(third, "retained bytes, full");
   });
 });

@@ -124,6 +124,11 @@ function codeOf(answer: RawAnswer): string | undefined {
   return (JSON.parse(answer.body) as { error?: { code?: string } }).error?.code;
 }
 
+/** A `Retry-After` in whole seconds, and not zero. */
+function expectRetryAfter(answer: RawAnswer, what: string): void {
+  expect(answer.headers["retry-after"], what).toMatch(/^[1-9]\d*$/);
+}
+
 function idOf(answer: RawAnswer): string {
   expect(answer.status).toBe(202);
   return (JSON.parse(answer.body) as { id: string }).id;
@@ -202,15 +207,31 @@ describe("endpoints", () => {
 
     for (const input of [
       { duplicate_header: "not a header" },
+      { duplicate_header: "" },
+      { duplicate_header: "h".repeat(101) },
       { label: "" },
       { label: "x".repeat(201) },
     ]) {
       const invalid = await owner.client.createInboundEndpoint(owner.id, input);
-      expect(invalid.status, JSON.stringify(input)).toBe(400);
+      expect(invalid.status, JSON.stringify(input).slice(0, 40)).toBe(400);
       expect(invalid.error?.error.code).toBe("validation_error");
     }
     const listed = await owner.client.listInboundEndpoints(owner.id);
     expect(listed.data.data.map((row) => row.id)).toEqual([made.id]);
+
+    // The ends of the header name's length, and of the label's, are taken.
+    for (const input of [
+      { duplicate_header: "H" },
+      { duplicate_header: "H".repeat(100) },
+      { label: "x", duplicate_header: "X-GitHub-Delivery" },
+      { label: "x".repeat(200) },
+    ]) {
+      const taken = await owner.client.createInboundEndpoint(owner.id, input);
+      expect(taken.status, JSON.stringify(input).slice(0, 40)).toBe(201);
+      expect(taken.data.duplicate_header).toBe(
+        input.duplicate_header?.toLowerCase() ?? null,
+      );
+    }
   });
 
   it("holds a registration to ten live endpoints, and a retired one frees a place", async () => {
@@ -648,6 +669,7 @@ describe("the receiving door on an instance that names its limits", () => {
     const full = await send(server!.apiUrl, made.path, "y");
     expect(full.status).toBe(503);
     expect(codeOf(full)).toBe("inbound_unavailable");
+    expectRetryAfter(full, "backlog bytes");
     expect((await pending(owner)).map((d) => d.size)).toEqual([6]);
   });
 
@@ -657,6 +679,7 @@ describe("the receiving door on an instance that names its limits", () => {
     const over = await send(server!.apiUrl, made.path, "x".repeat(7));
     expect(over.status).toBe(503);
     expect(codeOf(over)).toBe("inbound_unavailable");
+    expectRetryAfter(over, "prospective backlog bytes");
     idOf(await send(server!.apiUrl, made.path, "x".repeat(6)));
     idOf(await send(server!.apiUrl, made.path, ""));
     expect((await pending(owner)).map((d) => d.size)).toEqual([6, 0]);
@@ -714,6 +737,7 @@ describe("the receiving door on an instance that names its limits", () => {
         const held = await send(flight.apiUrl, made.path, "x".repeat(9));
         expect(held.status).toBe(503);
         expect(codeOf(held)).toBe("inbound_unavailable");
+        expectRetryAfter(held, "bytes in flight");
         expect(await pending(owner)).toEqual([]);
         idOf(await send(flight.apiUrl, made.path, "x".repeat(8)));
         expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
@@ -1193,6 +1217,7 @@ describe("retained inbound capacity", () => {
     const refused = await send(server!.apiUrl, made.path, "");
     expect(refused.status).toBe(503);
     expect(codeOf(refused)).toBe("inbound_unavailable");
+    expectRetryAfter(refused, "retained bytes");
     expect((await pending(owner)).map((row) => row.size)).toEqual([0]);
   });
   it("round trips retention overrides and refuses invalid values", async () => {

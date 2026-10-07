@@ -545,43 +545,119 @@ describe("a credential that is missing, against what the body would be refused f
   });
 
   it("answers a body nested too deep 400 before a missing credential's 401, and a body over the cap 413", async () => {
-    const path = `/connectors/${connectorId}/hold`;
-    const ok = JSON.stringify({ process: "p" });
-    const deep = JSON.stringify({
-      process: "p",
-      nest: JSON.parse(`${"[".repeat(70)}${"]".repeat(70)}`) as unknown,
-    });
-    const overCap = (headers: Record<string, string>) =>
-      declareOversizeBody(`${apiUrl}${path}`, {
+    const REQUEST_CAP = 1024 * 1024;
+    const BULK_CAP = 16 * 1024 * 1024;
+    const doors: {
+      label: string;
+      method: "POST" | "PUT";
+      path: string;
+      body: Record<string, unknown>;
+      /** The cap the operation holds a body to. */
+      cap: number;
+    }[] = [
+      {
+        label: "POST /connectors",
         method: "POST",
-        headers: { "content-type": "application/json", ...headers },
-        bytes: 1024 * 1024 + 1,
+        path: "/connectors",
+        body: { name: "capped" },
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "POST runs",
+        method: "POST",
+        path: `/connectors/${connectorId}/runs`,
+        body: {
+          outcome: "succeeded",
+          started_at: "2026-10-05T18:00:00Z",
+          finished_at: "2026-10-05T18:00:01Z",
+        },
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "POST hold",
+        method: "POST",
+        path: `/connectors/${connectorId}/hold`,
+        body: { process: "p" },
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "PUT state",
+        method: "PUT",
+        path: `/connectors/${connectorId}/state`,
+        body: { process: "p", state: {} },
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "POST agreements",
+        method: "POST",
+        path: `/connectors/${connectorId}/agreements`,
+        body: { process: "p", clear: [UNKNOWN] },
+        cap: BULK_CAP,
+      },
+      {
+        label: "POST agreements/lookup",
+        method: "POST",
+        path: `/connectors/${connectorId}/agreements/lookup`,
+        body: { item_ids: [UNKNOWN] },
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "POST endpoints",
+        method: "POST",
+        path: `/connectors/${connectorId}/endpoints`,
+        body: {},
+        cap: REQUEST_CAP,
+      },
+      {
+        label: "POST deliveries/handled",
+        method: "POST",
+        path: `/connectors/${connectorId}/deliveries/handled`,
+        body: { ids: [UNKNOWN], outcome: "processed" },
+        cap: REQUEST_CAP,
+      },
+    ];
+    const nested = JSON.parse(`${"[".repeat(70)}${"]".repeat(70)}`) as unknown;
+
+    for (const door of doors) {
+      const { label, method, path } = door;
+      // A field of its own, which a door ignores, so that what refuses the
+      // deep body is its depth.
+      const deep = { ...door.body, _nest: nested };
+      const overCap = (headers: Record<string, string>) =>
+        declareOversizeBody(`${apiUrl}${path}`, {
+          method,
+          headers: { "content-type": "application/json", ...headers },
+          bytes: door.cap + 1,
+        });
+
+      // The witnesses: each body is refused for what it is when a credential
+      // comes with it, and the plain body alone is a missing credential's.
+      expect(
+        (await bare(method, path, JSON.stringify(door.body))).status,
+        `${label}: a plain body, no credential`,
+      ).toBe(401);
+      const withKey = await stranger.rawRequest<unknown>(path, {
+        method,
+        body: deep,
       });
+      expect(withKey.status, `${label}: deep, with a credential`).toBe(400);
+      expect(withKey.error?.error.code, label).toBe("validation_error");
+      const sizedWith = await overCap({ Authorization: `Bearer ${apiKey}` });
+      expect(
+        sizedWith.status,
+        `${label}: over the cap, with a credential`,
+      ).toBe(413);
 
-    // The witnesses: each body is refused for what it is when a credential
-    // comes with it, and the plain body alone is a missing credential's.
-    expect((await bare("POST", path, ok)).status).toBe(401);
-    expect(
-      (
-        await owner.rawRequest<unknown>(path, {
-          method: "POST",
-          body: JSON.parse(deep) as Record<string, unknown>,
-        })
-      ).status,
-    ).toBe(400);
-    const sizedWith = await overCap({
-      Authorization: `Bearer ${apiKey}`,
-    });
-    expect(sizedWith.status).toBe(413);
-
-    const nested = await bare("POST", path, deep);
-    expect(nested.status).toBe(400);
-    expect(nested.code).toBe("validation_error");
-    const sized = await overCap({});
-    expect(sized.status).toBe(413);
-    expect(
-      (JSON.parse(sized.body) as { error: { code: string } }).error.code,
-    ).toBe("request_too_large");
+      const tooDeep = await bare(method, path, JSON.stringify(deep));
+      expect(tooDeep.status, `${label}: deep`).toBe(400);
+      expect(tooDeep.code, label).toBe("validation_error");
+      const sized = await overCap({});
+      expect(sized.status, `${label}: over the cap`).toBe(413);
+      expect(
+        (JSON.parse(sized.body) as { error: { code: string } }).error.code,
+        label,
+      ).toBe("request_too_large");
+    }
   });
 
   it("answers the operator key 403 before a registration body it would be refused for", async () => {
