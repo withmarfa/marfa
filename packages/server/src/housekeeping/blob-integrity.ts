@@ -75,10 +75,22 @@ export class BlobIntegrityChecker {
         break;
       }
       await withBlobUploadLock(row.hash, async () => {
-        const intact =
-          store.kind === "disk"
-            ? await this.hashMatches(store, row.hash, row.size_bytes)
-            : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+        let intact: boolean;
+        try {
+          intact =
+            store.kind === "disk"
+              ? await this.hashMatches(store, row.hash, row.size_bytes)
+              : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+        } catch (err) {
+          // A store that cannot answer is not evidence against the copy: it
+          // is neither stamped nor struck, and the rest of the run goes on.
+          log("error", "blob.integrity_unchecked", {
+            hash: row.hash,
+            store_id: store.id,
+            error: errorMessage(err),
+          });
+          return;
+        }
         bytes += row.size_bytes;
         if (intact) {
           await this.storage.blobs.markVerified(

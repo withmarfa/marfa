@@ -11,7 +11,7 @@
  * are. That is deliberate rather than a leak: fixture bytes are generated from
  * fixed seeds, so every run converges on the same handful of hashes instead of
  * accumulating new ones. Each upload is named by a note, untimed, because a
- * key reads only bytes an item it may read references (`blobs.md` 15); the
+ * key reads only bytes an item it may read references (`blobs/lend-item`); the
  * notes and the key this suite mints go in `cleanup(ctx)` in `afterAll`.
  */
 

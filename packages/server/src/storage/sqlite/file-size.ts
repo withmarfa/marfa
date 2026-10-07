@@ -14,12 +14,11 @@ export function isFileType(type: string): boolean {
 }
 
 /**
- * The properties a file row holds once its `size_bytes` is the server's:
- * the stored length of the bytes its `blob_ref` names where that reference
- * lends, and no size where it does not, so a writer that never proved it
- * holds the bytes learns nothing of whether the instance does (`blobs.md`
- * 15). `undefined` where the row already holds exactly that, or is not a
- * file.
+ * The properties a file row holds once its `size_bytes` is the server's: the
+ * stored length of the bytes its `blob_ref` names where that reference lends,
+ * and no size where it does not, so a writer that never proved it holds the
+ * bytes learns nothing of whether the instance does (`blobs/proof-item`).
+ * `undefined` where the row already holds exactly that, or is not a file.
  *
  * Asked after the write has synced the reference index, which is where
  * whether the reference lends is decided.

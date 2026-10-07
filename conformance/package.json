@@ -23,7 +23,7 @@
     "test:conformance": "vitest run --project correctness --project compliance --project sync --project device",
     "load:cleanup": "tsx src/suites/load/cleanup-cli.ts",
     "check:statuses": "tsx scripts/check-statuses.ts",
-    "marfa:up": "RATE_LIMIT_ENABLED=false MARFA_ENRICHMENT_ENABLED=false MARFA_ENRICHMENT_OCR_ENABLED=false MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true tsx scripts/marfa-server.ts up",
+    "marfa:up": "MARFA_BLOB_CLEANUP_GRACE_MS=0 RATE_LIMIT_ENABLED=false MARFA_ENRICHMENT_ENABLED=false MARFA_ENRICHMENT_OCR_ENABLED=false MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true tsx scripts/marfa-server.ts up",
     "marfa:down": "tsx scripts/marfa-server.ts down",
     "marfa:status": "tsx scripts/marfa-server.ts status",
     "garage:up": "tsx scripts/garage.ts up",

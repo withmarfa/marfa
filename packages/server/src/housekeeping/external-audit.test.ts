@@ -318,9 +318,8 @@ describe("external and background audit units with real SQLite and disk", () => 
     const fail = vi
       .spyOn(ctx.blobs.disk, "delete")
       .mockRejectedValueOnce(new Error("disk unavailable"));
-    await expect(
-      dropBlobCopy(ctx.storage, stores, blob.hash, ctx.blobs.disk.id, 1),
-    ).rejects.toThrow("disk unavailable");
+    // The drop has committed, so it stands though the bytes stay for now.
+    await dropBlobCopy(ctx.storage, stores, blob.hash, ctx.blobs.disk.id, 1);
     expect(await ctx.storage.blobs.listLocations(blob.hash)).toHaveLength(1);
     expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toHaveLength(
       1,

@@ -263,7 +263,9 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // one of its own rows to have been purged by the scheduler and ask
     // again. Replication's cadence is an hour, so between an upload's own
     // wake and the fixture's runs nothing copies on a clock of its own.
-    MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+    // Overridable, as the limiter is below: a fixture about a positive grace
+    // boots a server of its own with one, and `marfa:up` pins zero outright.
+    MARFA_BLOB_CLEANUP_GRACE_MS: process.env.MARFA_BLOB_CLEANUP_GRACE_MS || "0",
     MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
     // Off unless the caller says otherwise. A fixture about the limiter
     // boots a server of its own with it on, and this literal sits after

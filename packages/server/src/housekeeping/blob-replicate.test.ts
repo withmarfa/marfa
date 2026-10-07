@@ -120,6 +120,36 @@ describe("BlobReplicator.runOnce", () => {
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 
+  it("goes on to the next store when one cannot be reached", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const onDisk = await upload(ctx, "the unreachable store lacks this");
+    const content = "only the unreachable store has this";
+    const onSecond = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    await second.put(onSecond, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await ctx.storage.blobs.register(onSecond, "text/plain", content.length);
+    await ctx.storage.blobs.recordLocation(onSecond, second.id);
+    const has = second.has.bind(second);
+    second.has = () => Promise.reject(new Error("store unreachable"));
+    try {
+      const replicator = new BlobReplicator(ctx.storage, stores, {
+        maxBlobs: 100,
+        maxBytes: 1024 * 1024,
+      });
+      expect(await replicator.runOnce()).toMatchObject({
+        copied: 1,
+        remaining: 1,
+      });
+    } finally {
+      second.has = has;
+    }
+    expect(await bytesOf(ctx.blobs.disk, onSecond)).toBe(content);
+    expect(await second.has(onDisk)).toBeNull();
+  });
+
   it("stops at its bounds and says how many remain", async () => {
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);

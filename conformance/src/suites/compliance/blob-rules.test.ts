@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -12,6 +12,7 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { waitFor } from "../../utils/wait.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -39,6 +40,14 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
  * ask is repeated once it has finished.
  */
 async function run<T>(name: string): Promise<T> {
+  return (await runRecorded<T>(name)).result;
+}
+
+/** A run as the door answered it: its result, and when it started and
+ *  finished. */
+async function runRecorded<T>(
+  name: string,
+): Promise<{ result: T; started_at: string; finished_at: string }> {
   for (let i = 0; i < 50; i++) {
     const res = await operator.runHousekeeping(name);
     if (res.status === 409) {
@@ -47,7 +56,11 @@ async function run<T>(name: string): Promise<T> {
     }
     expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
     expect(res.data.outcome, res.data.error ?? "").toBe("ok");
-    return res.data.result as T;
+    return {
+      result: res.data.result as T,
+      started_at: res.data.started_at,
+      finished_at: res.data.finished_at,
+    };
   }
   throw new Error(`${name} was held by a run for five seconds`);
 }
@@ -200,11 +213,11 @@ describe("the rules that keep a blob's bytes", () => {
   });
 
   it("answers a dead store link with the store's own status, not the instance's", async () => {
-    // `blobs.md` 13 names the status a dead link gets, and there are two
-    // signers to name: the instance, which answers its own refusal, and
-    // the object store once it holds the blob, whose link the instance
-    // never sees fetched. This is the store's half, taken here because
-    // this is the file that provably holds a store-signed link — in
+    // A dead link gets its signer's status, and there are two signers: the
+    // instance (`blobs/link-instance-altered`) and the object store once it
+    // holds the blob (`blobs/link-store-altered`), whose link the instance
+    // never sees fetched. This is the store's half, taken here because this
+    // file provably holds a store-signed link. In
     // `correctness/blob-correctness.test.ts` the replication scheduler
     // decides which signer answered, within a second of the upload, so
     // which status that case measures is a race.
@@ -552,5 +565,503 @@ describe("the rules that keep a blob's bytes", () => {
     expect((await operator.downloadBlob(unreferenced)).status).toBe(404);
     expect((await operator.downloadBlob(whole)).status).toBe(200);
     expect((await operator.downloadBlob(linked)).status).toBe(200);
+  });
+
+  it("keeps a blob only an earlier version of an item names, and purges one nothing names", async () => {
+    const inHistory = await uploadText("only an earlier version names this");
+    const unnamed = await uploadText("no version names this");
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `![it](${inHistory})` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const moved = await client.updateItem(note.data.item.id, {
+      properties: { body: "no longer links anything" },
+      version: note.data.item.version,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const versions = await client.getVersions(note.data.item.id);
+    expect(JSON.stringify(versions.data)).toContain(inHistory);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    // The witness: two runs purge a blob nothing names, so the one kept
+    // was kept by its history.
+    expect((await operator.downloadBlob(unnamed)).status).toBe(404);
+    const kept = await operator.downloadBlob(inHistory);
+    expect(kept.status).toBe(200);
+    expect(new TextDecoder().decode(kept.data)).toBe(
+      text("only an earlier version names this"),
+    );
+    const reported = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(reported).not.toContain(inHistory);
+  });
+
+  it("keeps the bytes of an upload that races the run that would purge them", async () => {
+    // The witness: with no upload in the way, a reported blob is purged by
+    // the next run, so the races below have something to lose.
+    const idle = await uploadText("reported and left alone");
+    await run("blob-orphans");
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(idle)).status).toBe(404);
+
+    for (let round = 0; round < 8; round++) {
+      const words = `reported, then sent while the run purges, round ${String(round)}`;
+      const hash = await uploadText(words);
+      await run("blob-orphans");
+
+      // Either order is allowed: the upload lands first and the run keeps
+      // the bytes, or the run purges them and the upload stores them again.
+      // A run the scheduler holds answers 409 and purges nothing.
+      const [sent, swept] = await Promise.all([
+        client.uploadBlob(new TextEncoder().encode(text(words)), "text/plain"),
+        operator.runHousekeeping("blob-orphans"),
+      ]);
+      expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+      expect(sent.data.hash).toBe(hash);
+      expect([200, 409]).toContain(swept.status);
+
+      const read = await operator.downloadBlob(hash);
+      expect(read.status, `round ${String(round)}`).toBe(200);
+      expect(new TextDecoder().decode(read.data)).toBe(text(words));
+    }
+  });
+
+  it("keeps the bytes a restore stores while a purge of them races it", async () => {
+    // An archive that carries one file item and its bytes, taken before the
+    // item is purged: nothing names the bytes afterwards, and a restore
+    // brings both back.
+    async function archiveThenPurge(words: string) {
+      const since = new Date(Date.now() - 1).toISOString();
+      const hash = await uploadText(words);
+      const file = await client.createItem({
+        type: "core.file",
+        source: ctx.source,
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      });
+      expect(file.ok, JSON.stringify(file.error)).toBe(true);
+      const id = file.data.item.id;
+      trackItem(ctx, id);
+      const archive = await client.exportArchive({
+        source: ctx.source,
+        occurred_after: since,
+      });
+      expect(archive.status).toBe(200);
+      expect((await client.deleteItem(id)).status).toBe(200);
+      expect((await client.purgeItem(id)).status).toBe(200);
+      return { hash, archive: archive.data };
+    }
+
+    // The witness: with no restore in the way, the report and the next run
+    // purge the bytes, so the races below have something to lose.
+    const idle = await archiveThenPurge("restorable and left alone");
+    await run("blob-orphans");
+    expect(
+      (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+    ).toContain(idle.hash);
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(idle.hash)).status).toBe(404);
+
+    for (let round = 0; round < 8; round++) {
+      const words = `reported, then restored while the run purges, round ${String(round)}`;
+      const { hash, archive } = await archiveThenPurge(words);
+      await run("blob-orphans");
+      expect(
+        (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+      ).toContain(hash);
+
+      // Either order is allowed: the restore lands first and the run keeps
+      // the bytes, or the run purges them and the restore stores them again.
+      // A run the scheduler holds answers 409 and purges nothing.
+      const [restored, swept] = await Promise.all([
+        operator.restoreArchive(archive),
+        operator.runHousekeeping("blob-orphans"),
+      ]);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_imported).toBe(1);
+      expect([200, 409]).toContain(swept.status);
+
+      const read = await operator.downloadBlob(hash);
+      expect(read.status, `round ${String(round)}`).toBe(200);
+      expect(new TextDecoder().decode(read.data)).toBe(text(words));
+    }
+  });
+
+  it("answers a link to a blob the sweep has purged as an unknown blob", async () => {
+    const hash = await uploadText("linked, then purged");
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    // The link the instance serves itself, so it does not depend on the
+    // object store's copy.
+    for (const location of (await client.listBlobLocations(hash)).data.data) {
+      if (location.kind !== "s3") continue;
+      expect(
+        (await operator.deleteBlobLocation(hash, location.store_id)).status,
+      ).toBe(200);
+    }
+    const link = await client.getBlobUrl(hash, 3600);
+    expect(link.status).toBe(200);
+    expect(new URL(link.data.url).host).toBe(
+      new URL(bootEnv("MARFA_API_URL")).host,
+    );
+    const witness = await fetch(link.data.url);
+    expect(witness.status).toBe(200);
+    await witness.arrayBuffer();
+
+    const id = file.data.item.id;
+    expect((await client.deleteItem(id)).status).toBe(200);
+    expect((await client.purgeItem(id)).status).toBe(200);
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    const gone = await fetch(link.data.url);
+    expect(gone.status).toBe(404);
+    const body = (await gone.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
+});
+
+describe("what the orphan sweep keeps", () => {
+  /** A file item naming the bytes, as the whole value of `blob_ref`. */
+  async function fileNaming(hash: string): Promise<string> {
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    trackItem(ctx, file.data.item.id);
+    return file.data.item.id;
+  }
+
+  async function noteSaying(
+    body: string,
+  ): Promise<{ id: string; version: number }> {
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    return { id: note.data.item.id, version: note.data.item.version };
+  }
+
+  it("keeps a blob that only an item in the bin, an archived item, an extension or an earlier version names", async () => {
+    const binned = await uploadText("named by an item in the bin");
+    const archived = await uploadText("named by an archived item");
+    const extended = await uploadText("named by a metadata extension");
+    const versioned = await uploadText("named by an earlier version");
+    const unnamed = await uploadText("named by nothing at all");
+
+    const binnedId = await fileNaming(binned);
+    expect((await client.deleteItem(binnedId)).status).toBe(200);
+    const archivedId = await fileNaming(archived);
+    const moved = await client.transitionItem(archivedId, "archived");
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const extension = await noteSaying("an extension names a blob");
+    const written = await client.setItemExtension(
+      extension.id,
+      `blobrules.${ctx.runId}`,
+      { cover: extended },
+    );
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    const earlier = await noteSaying(`was ![it](${versioned})`);
+    const rewritten = await client.updateItem(earlier.id, {
+      properties: { body: "no longer links anything" },
+      version: earlier.version,
+    });
+    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
+    expect(
+      JSON.stringify((await client.getVersions(earlier.id)).data),
+    ).toContain(versioned);
+
+    await run("blob-orphans");
+    const reported = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    await run("blob-orphans");
+
+    // The witness: the blob nothing names is reported and then purged by the
+    // same two runs, so they could have taken the others.
+    expect(reported).toContain(unnamed);
+    expect((await operator.downloadBlob(unnamed)).status).toBe(404);
+    for (const hash of [binned, archived, extended, versioned]) {
+      expect(reported, hash).not.toContain(hash);
+      expect((await operator.downloadBlob(hash)).status, hash).toBe(200);
+    }
+  });
+
+  it("counts a digest as a reference by its run of lowercase hex, whatever form it is written in", async () => {
+    const hexOf = (hash: string) => hash.slice("sha256:".length);
+    const forms: Array<[string, (hex: string) => string]> = [
+      ["bare hex", (hex) => `see ${hex} here`],
+      ["a link", (hex) => `![it](sha256:${hex})`],
+      ["a url-encoded colon in capitals", (hex) => `?hash=sha256%3A${hex}&x=1`],
+      [
+        "a url-encoded colon in lowercase",
+        (hex) => `?hash=sha256%3a${hex}&x=1`,
+      ],
+      [
+        "a backslash escape beside it",
+        (hex) => String.raw`line one\n${hex}\nline two`,
+      ],
+      ["letters that are not hex beside it", (hex) => `Z${hex}Z`],
+      ["underscores beside it", (hex) => `_${hex}_`],
+    ];
+    const notReferences: Array<[string, (hex: string) => string]> = [
+      ["63 characters", (hex) => hex.slice(0, 63)],
+      ["63 characters from the end", (hex) => hex.slice(1)],
+      ["a hex character before it", (hex) => `0${hex}`],
+      ["a hex character after it", (hex) => `${hex}0`],
+    ];
+    const kept: Array<[string, string]> = [];
+    for (const [name, write] of forms) {
+      const hash = await uploadText(`named by ${name}`);
+      await noteSaying(write(hexOf(hash)));
+      kept.push([name, hash]);
+    }
+    const dropped: Array<[string, string]> = [];
+    for (const [name, write] of notReferences) {
+      const hash = await uploadText(`named by ${name}`);
+      await noteSaying(write(hexOf(hash)));
+      dropped.push([name, hash]);
+    }
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    for (const [name, hash] of kept) {
+      expect((await operator.downloadBlob(hash)).status, name).toBe(200);
+    }
+    // Reported and purged by the same two runs that kept the rest, so each
+    // of these was producible as a purge.
+    for (const [name, hash] of dropped) {
+      expect((await operator.downloadBlob(hash)).status, name).toBe(404);
+    }
+  });
+
+  it("records when a run first reported a blob", async () => {
+    const hash = await uploadText("reported with the time of the run");
+    const first = await runRecorded<{ reported: number; purged: number }>(
+      "blob-orphans",
+    );
+    expect(first.result.reported).toBeGreaterThanOrEqual(1);
+    const row = (await operator.listBlobOrphans()).data.data.find(
+      (each) => each.hash === hash,
+    );
+    expect(row).toBeDefined();
+    expect(Date.parse(row!.reported_at)).not.toBeNaN();
+    expect(row!.reported_at >= first.started_at).toBe(true);
+    expect(row!.reported_at <= first.finished_at).toBe(true);
+  });
+});
+
+describe("how the copies are placed and removed", () => {
+  it("replicates an upload on its own, each copy with its own recorded time", async () => {
+    const before = Date.now();
+    const hash = await uploadReferencedText("copied with no run asked for");
+    // No run is asked for: the housekeeping cadence is an hour, so a second
+    // copy can only come from the wake the upload sent.
+    const locations = await waitFor("the object store's copy", async () => {
+      const rows = (await client.listBlobLocations(hash)).data.data;
+      return rows.length === 2 ? rows : undefined;
+    });
+    const after = Date.now();
+    expect(kinds(locations)).toEqual(["disk", "s3"]);
+    const disk = locations.find((row) => row.kind === "disk")!;
+    const copy = locations.find((row) => row.kind === "s3")!;
+    for (const row of [disk, copy]) {
+      expect(Date.parse(row.recorded_at)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(row.recorded_at)).toBeLessThanOrEqual(after);
+    }
+    expect(copy.recorded_at >= disk.recorded_at).toBe(true);
+    // Oldest first.
+    expect(locations.map((row) => row.recorded_at)).toEqual(
+      locations.map((row) => row.recorded_at).sort(),
+    );
+  });
+
+  it("removes a dropped copy's bytes from its store", async () => {
+    const hash = await uploadReferencedText("dropped from each store in turn");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const link = (await client.getBlobUrl(hash)).data.url;
+    // The witness: both stores hold the bytes before either is dropped.
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect((await fetch(link)).status).toBe(200);
+
+    expect((await operator.deleteBlobLocation(hash, disk.id)).status).toBe(200);
+    expect(existsSync(diskPathFor(hash))).toBe(false);
+    await replicateToZero();
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    expect((await fetch(link)).status).toBe(404);
+    await replicateToZero();
+  });
+
+  it("records a drop, a replication and a purge in the audit log", async () => {
+    const audited = async (action: string, hash: string) =>
+      (await client.listAudit({ action, resource_id: hash })).data.data;
+    const hash = await uploadReferencedText("dropped and replicated again");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+
+    // Whether the server's own wake or the run above placed the copy, one
+    // row says it was placed, and from where.
+    const replicated = await audited("blob.copy_replicated", hash);
+    expect(replicated).toHaveLength(1);
+    expect(replicated[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: hash,
+      details: { from: disk.id, store_id: s3.id },
+    });
+    expect(await audited("blob.copy_dropped", hash)).toHaveLength(0);
+
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    const dropped = await audited("blob.copy_dropped", hash);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: hash,
+      details: { store_id: s3.id },
+    });
+
+    // The copy put back is a second placement.
+    await replicateToZero();
+    expect(await audited("blob.copy_replicated", hash)).toHaveLength(2);
+
+    const orphan = await uploadText("purged with a row in the log");
+    expect(await audited("blob.purge", orphan)).toHaveLength(0);
+    await run("blob-orphans");
+    expect(await audited("blob.purge", orphan)).toHaveLength(0);
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(orphan)).status).toBe(404);
+    const purged = await audited("blob.purge", orphan);
+    expect(purged).toHaveLength(1);
+    expect(purged[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: orphan,
+    });
+    expect(purged[0]!.details).toEqual({});
+  });
+
+  it("removes a purged blob's bytes from every store", async () => {
+    const hash = await uploadText("purged from the disk and the object store");
+    await replicateToZero();
+    const link = (await operator.getBlobUrl(hash)).data.url;
+    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect((await fetch(link)).status).toBe(200);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect(existsSync(diskPathFor(hash))).toBe(false);
+    expect((await fetch(link)).status).toBe(404);
+  });
+
+  it("never lets two concurrent drops take both copies", async () => {
+    const hash = await uploadReferencedText("two copies, two drops at once");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+
+    const answers = await Promise.all(
+      stores.map((store) => operator.deleteBlobLocation(hash, store.id)),
+    );
+
+    const statuses = answers.map((answer) => answer.status).sort();
+    for (const answer of answers) {
+      expect([200, 409]).toContain(answer.status);
+      if (answer.status === 409) {
+        expect(answer.error?.error.code).toBe("copies_below_minimum");
+      }
+    }
+    expect(statuses).toContain(200);
+    expect(
+      (await client.listBlobLocations(hash)).data.data.length,
+    ).toBeGreaterThanOrEqual(1);
+    expect((await client.downloadBlob(hash)).status).toBe(200);
+    await replicateToZero();
+  });
+
+  it("answers the drop door's refusals in their order", async () => {
+    const hash = await uploadReferencedText("dropped through a bare hex");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const base = bootEnv("MARFA_API_URL");
+    const drop = (path: string, key?: string) =>
+      fetch(`${base}/blobs/${path}`, {
+        method: "DELETE",
+        headers: key === undefined ? {} : { Authorization: `Bearer ${key}` },
+      });
+    const code = async (response: Response) =>
+      ((await response.json()) as { error: { code: string } }).error.code;
+    const malformed = "not-a-hash";
+    const unregistered = `sha256:${"0".repeat(64)}`;
+    const operatorKey = process.env.MARFA_OPERATOR_KEY!;
+    const working = await client.deleteBlobLocation(malformed, "no-such-store");
+
+    // No credential first, then a credential that is not the operator key,
+    // whatever the hash and the store are.
+    const anonymous = await drop(`${malformed}/locations/no-such-store`);
+    expect(anonymous.status).toBe(401);
+    expect(await code(anonymous)).toBe("unauthorized");
+    expect(working.status).toBe(403);
+    expect(working.error?.error.code).toBe("forbidden");
+
+    // The operator key reaches the hash: malformed, then unregistered, then
+    // the store, whatever the store is.
+    const bad = await drop(`${malformed}/locations/${s3.id}`, operatorKey);
+    expect(bad.status).toBe(400);
+    expect(await code(bad)).toBe("validation_error");
+    const unknownBlob = await drop(
+      `${unregistered}/locations/no-such-store`,
+      operatorKey,
+    );
+    expect(unknownBlob.status).toBe(404);
+    expect(await code(unknownBlob)).toBe("blob_not_found");
+    const unknownStore = await drop(
+      `${hash}/locations/no-such-store`,
+      operatorKey,
+    );
+    expect(unknownStore.status).toBe(404);
+    expect(await code(unknownStore)).toBe("blob_location_not_found");
+
+    // The witness for all of them: the copy is still there, and the same
+    // door drops it once the hash is the bare hex of a registered blob.
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+      "s3",
+    ]);
+    const bare = await drop(
+      `${hash.slice("sha256:".length)}/locations/${s3.id}`,
+      operatorKey,
+    );
+    expect(bare.status).toBe(200);
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+    ]);
+    // Last, the minimum: every check above it passed for this copy too.
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const last = await drop(`${hash}/locations/${disk.id}`, operatorKey);
+    expect(last.status).toBe(409);
+    expect(await code(last)).toBe("copies_below_minimum");
+    await replicateToZero();
   });
 });

@@ -339,6 +339,48 @@ describe("BlobIntegrityChecker.runOnce", () => {
     expect(await stubHolds(wrong)).toBe(false);
   });
 
+  it("neither stamps nor strikes a copy in a store that cannot answer, and checks the rest", async () => {
+    ctx = await createTestContext();
+    const held = await upload(ctx, "held on disk and in an unreachable store");
+    const stub: BlobStore = {
+      id: "unreachable-object-store",
+      kind: "s3",
+      locator: "s3://unreachable/blobs",
+      attach: () => Promise.resolve(),
+      put: () => Promise.resolve(),
+      get: () => Promise.reject(new Error("store unreachable")),
+      has: () => Promise.reject(new Error("store unreachable")),
+      delete: () => Promise.reject(new Error("store unreachable")),
+    };
+    await ctx.storage.blobs.attachStore({
+      id: stub.id,
+      kind: stub.kind,
+      locator: stub.locator,
+    });
+    await ctx.storage.blobs.recordLocation(held, stub.id);
+    const all = [ctx.blobs.disk, stub];
+    const checker = new BlobIntegrityChecker(
+      ctx.storage,
+      { stores: all, byId: (id) => all.find((s) => s.id === id) },
+      { maxRows: 100, maxBytes: 1024 * 1024 },
+    );
+    const silenced = quiet();
+    let result;
+    try {
+      result = await checker.runOnce();
+    } finally {
+      silenced.restore();
+    }
+    expect(result).toMatchObject({ verified: 1, struck: 0 });
+    const locations = await ctx.storage.blobs.listLocations(held);
+    expect(
+      locations.find((l) => l.store_id === stub.id)?.verified_at,
+    ).toBeNull();
+    expect(
+      locations.find((l) => l.store_id === ctx!.blobs.disk.id)?.verified_at,
+    ).not.toBeNull();
+  });
+
   it("counts no strike for a row dropped between the listing and the check", async () => {
     // The listing named a copy; by the time the check reaches it an
     // operator has dropped the row. Nothing was found wrong with a copy

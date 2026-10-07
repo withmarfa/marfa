@@ -71,9 +71,22 @@ export class BlobReplicator {
         // Under the per-hash lock a purge takes, and only while the row
         // stands: a copy put after a purge removed the row and the bytes
         // would be bytes in a store that nothing names and nothing sweeps.
-        const placed = await withBlobUploadLock(blob.hash, () =>
-          this.copy(blob.hash, target),
-        );
+        let placed: boolean;
+        try {
+          placed = await withBlobUploadLock(blob.hash, () =>
+            this.copy(blob.hash, target),
+          );
+        } catch (err) {
+          if (!(err instanceof StoreUnreachable)) throw err;
+          // A store that cannot be reached fails every copy into it, so the
+          // run moves on to the next store rather than ending.
+          log("error", "blob.replicate_failed", {
+            hash: blob.hash,
+            to: target.id,
+            error: errorMessage(err.cause),
+          });
+          break;
+        }
         if (!placed) continue;
         copied += 1;
         bytes += blob.size_bytes;
@@ -95,10 +108,10 @@ export class BlobReplicator {
   private async copy(hash: string, target: BlobStore): Promise<boolean> {
     if (!(await this.storage.blobs.get(hash))) return false;
     await finishCopyDeletion(this.storage, target, hash);
-    const present = (await target.has(hash)) !== null;
+    const present = (await reaching(() => target.has(hash))) !== null;
     const source = await this.sourceFor(hash, target.id);
     if (!source) return false;
-    const read = await source.get(hash);
+    const read = await reaching(() => source.get(hash));
     if (!read) {
       // The log names a copy the store no longer has. The integrity
       // check is what strikes it; the next run finds another source.
@@ -169,5 +182,21 @@ export class BlobReplicator {
     return (
       candidates.find((store) => store.kind === "disk") ?? candidates[0] ?? null
     );
+  }
+}
+
+/** A store that failed to answer, as against the database failing. */
+class StoreUnreachable extends Error {
+  constructor(cause: unknown) {
+    super("a blob store did not answer", { cause });
+    this.name = "StoreUnreachable";
+  }
+}
+
+async function reaching<T>(ask: () => Promise<T>): Promise<T> {
+  try {
+    return await ask();
+  } catch (err) {
+    throw new StoreUnreachable(err);
   }
 }

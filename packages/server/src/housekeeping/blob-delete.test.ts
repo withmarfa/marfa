@@ -65,6 +65,31 @@ describe("dropBlobCopy", () => {
     ).rejects.toBeInstanceOf(LocationNotFound);
     expect(await second.has(hash)).not.toBeNull();
   });
+
+  it("succeeds once committed when the store cannot delete the bytes, and leaves the deletion to retry", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const content = "held twice, one delete refused";
+    const hash = await upload(ctx, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await ctx.storage.blobs.recordLocation(hash, second.id);
+    const original = ctx.blobs.disk.delete.bind(ctx.blobs.disk);
+    ctx.blobs.disk.delete = () => Promise.reject(new Error("refused"));
+    try {
+      await dropBlobCopy(ctx.storage, stores, hash, ctx.blobs.disk.id, 1);
+    } finally {
+      ctx.blobs.disk.delete = original;
+    }
+    const left = await ctx.storage.blobs.listLocations(hash);
+    expect(left.map((location) => location.store_id)).toEqual([second.id]);
+    const pending = await ctx.storage.blobs.listPendingCopyDeletions(100);
+    expect(pending).toContainEqual(
+      expect.objectContaining({ hash, store_id: ctx.blobs.disk.id }),
+    );
+  });
 });
 
 /** Holds a store's `delete` open until released, so a deletion in flight

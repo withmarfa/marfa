@@ -4,9 +4,11 @@
  * door also serves. Any run of exactly 64 lowercase hex characters counts,
  * whatever else is beside it, because a run read wrongly as a hash only
  * keeps bytes longer, while a hash missed deletes bytes something still
- * shows.
+ * shows. A run straight after `%3a` counts too: that escape ends in a hex
+ * letter, and an encoder may write it lowercase.
  */
-const BLOB_DIGEST_IN_TEXT = /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/g;
+const BLOB_DIGEST_IN_TEXT =
+  /(?:(?<=%3a)|(?<![0-9a-f]))[0-9a-f]{64}(?![0-9a-f])/g;
 
 /**
  * Recursively scan a value tree for blob hashes (`sha256:...`).

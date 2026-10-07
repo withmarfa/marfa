@@ -236,7 +236,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 74. WHEN a device takes in bytes for a file item, as it attaches a file, adds one or pushes a folder's file that is not a document (38, 46, `folders.md` 36), it MUST store their length as `size_bytes` on the file item it saves, and on the update that names new bytes, where the item's type is `core.file` or inherits from it.
 
-**Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs.md` 31). A type outside the file family does not declare the field, so it is not given one.
+**Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs/file-size-set`). A type outside the file family does not declare the field, so it is not given one.
 
 **Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`. Core `tests::a_file_taken_in_shows_the_length_of_its_bytes_before_any_server_answers`.
 

@@ -1611,7 +1611,7 @@ describe("the scripted answers match the server's", () => {
       { same: ["hash", "mime_type", "size_bytes"] },
     );
 
-    // A link is answered for bytes an item names (`blobs.md` 15), as a
+    // A link is answered for bytes an item names (`blobs/lend-item`), as a
     // device asks for one only for an item it holds.
     const naming = await client.createItem({
       type: "core.note",
