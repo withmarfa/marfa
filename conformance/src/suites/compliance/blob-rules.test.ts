@@ -588,4 +588,71 @@ describe("the rules that keep a blob's bytes", () => {
     );
     expect(reported).not.toContain(inHistory);
   });
+
+  it("keeps the bytes of an upload that races the run that would purge them", async () => {
+    // The witness: with no upload in the way, a reported blob is purged by
+    // the next run, so the races below have something to lose.
+    const idle = await uploadText("reported and left alone");
+    await run("blob-orphans");
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(idle)).status).toBe(404);
+
+    for (let round = 0; round < 8; round++) {
+      const words = `reported, then sent while the run purges, round ${String(round)}`;
+      const hash = await uploadText(words);
+      await run("blob-orphans");
+
+      // Either order is allowed: the upload lands first and the run keeps
+      // the bytes, or the run purges them and the upload stores them again.
+      // A run the scheduler holds answers 409 and purges nothing.
+      const [sent, swept] = await Promise.all([
+        client.uploadBlob(new TextEncoder().encode(text(words)), "text/plain"),
+        operator.runHousekeeping("blob-orphans"),
+      ]);
+      expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+      expect(sent.data.hash).toBe(hash);
+      expect([200, 409]).toContain(swept.status);
+
+      const read = await operator.downloadBlob(hash);
+      expect(read.status, `round ${String(round)}`).toBe(200);
+      expect(new TextDecoder().decode(read.data)).toBe(text(words));
+    }
+  });
+
+  it("answers a link to a blob the sweep has purged as an unknown blob", async () => {
+    const hash = await uploadText("linked, then purged");
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    // The link the instance serves itself, so it does not depend on the
+    // object store's copy.
+    for (const location of (await client.listBlobLocations(hash)).data.data) {
+      if (location.kind !== "s3") continue;
+      expect(
+        (await operator.deleteBlobLocation(hash, location.store_id)).status,
+      ).toBe(200);
+    }
+    const link = await client.getBlobUrl(hash, 3600);
+    expect(link.status).toBe(200);
+    expect(new URL(link.data.url).host).toBe(
+      new URL(bootEnv("MARFA_API_URL")).host,
+    );
+    const witness = await fetch(link.data.url);
+    expect(witness.status).toBe(200);
+    await witness.arrayBuffer();
+
+    const id = file.data.item.id;
+    expect((await client.deleteItem(id)).status).toBe(200);
+    expect((await client.purgeItem(id)).status).toBe(200);
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    const gone = await fetch(link.data.url);
+    expect(gone.status).toBe(404);
+    const body = (await gone.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
 });

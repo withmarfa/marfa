@@ -7,6 +7,7 @@ import {
   getOperatorClient,
 } from "../../utils/setup.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { readTarGzEntry } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let operator: MarfaClient;
@@ -294,5 +295,119 @@ describe("how a blob's bytes are served", () => {
     const whole = await ranged("bytes=-3");
     expect(whole.status).toBe(200);
     expect(await whole.text()).toBe("0123456789");
+  });
+
+  it("serves a ranged answer as the same sandboxed download, on every instance door", async () => {
+    const content = new TextEncoder().encode(
+      `<svg onload="fetch('/keys')"></svg> ${ctx.runId}`,
+    );
+    const upload = await uploadReferenced(client, ctx, content, "text/html");
+    expect(upload.status).toBe(201);
+    const hash = upload.data.hash;
+    const range = { Range: "bytes=1-5" };
+    const slice = content.slice(1, 6);
+
+    // The witness: the same door answers the whole of it with the headers.
+    const whole = await client.downloadBlob(hash);
+    expect(whole.status).toBe(200);
+    expectInertDownload(whole.headers, hash, "GET /blobs/{hash}");
+
+    const partial = await client.downloadBlob(hash, range);
+    expect(partial.status).toBe(206);
+    expect(new Uint8Array(partial.data)).toEqual(slice);
+    expect(partial.headers.get("content-range")).toBe(
+      `bytes 1-5/${String(content.length)}`,
+    );
+    expectInertDownload(partial.headers, hash, "ranged GET /blobs/{hash}");
+
+    const head = await client.headBlob(hash, range);
+    expect(head.status).toBe(206);
+    expectInertDownload(head.headers, hash, "ranged HEAD /blobs/{hash}");
+
+    const url = await instanceLink(hash);
+    for (const method of ["GET", "HEAD"]) {
+      const fetched = await fetch(url, { method, headers: range });
+      expect(fetched.status).toBe(206);
+      expect(fetched.headers.get("content-range")).toBe(
+        `bytes 1-5/${String(content.length)}`,
+      );
+      expectInertDownload(fetched.headers, hash, `ranged ${method} the link`);
+    }
+  });
+
+  it("serves an image as a download and never inline, on every instance door", async () => {
+    for (const [type, content] of [
+      ["image/png", `not a png, only typed as one ${ctx.runId}`],
+      [
+        "image/svg+xml",
+        `<svg xmlns="http://www.w3.org/2000/svg"/> ${ctx.runId}`,
+      ],
+    ] as const) {
+      const bytes = new TextEncoder().encode(content);
+      const upload = await uploadReferenced(client, ctx, bytes, type);
+      expect(upload.status, type).toBe(201);
+      const hash = upload.data.hash;
+
+      const download = await client.downloadBlob(hash);
+      expect(download.status, type).toBe(200);
+      expect(download.headers.get("content-type"), type).toBe(type);
+      expectInertDownload(download.headers, hash, `GET ${type}`);
+
+      const head = await client.headBlob(hash);
+      expect(head.headers.get("content-type"), type).toBe(type);
+      expectInertDownload(head.headers, hash, `HEAD ${type}`);
+
+      const fetched = await fetch(await instanceLink(hash));
+      expect(fetched.status, type).toBe(200);
+      expect(fetched.headers.get("content-type"), type).toBe(type);
+      expectInertDownload(fetched.headers, hash, `the link to ${type}`);
+    }
+  });
+
+  it("answers a HEAD, a ranged read and a link with the type the first upload fixed", async () => {
+    const content = new TextEncoder().encode(
+      `typed once, read again ${ctx.runId}`,
+    );
+    const first = await uploadReferenced(client, ctx, content, "text/plain");
+    expect(first.status).toBe(201);
+    const hash = first.data.hash;
+    const second = await client.uploadBlob(content, "text/html");
+    expect(second.status).toBe(201);
+    expect(second.data.mime_type).toBe("text/plain");
+
+    expect((await client.headBlob(hash)).headers.get("content-type")).toBe(
+      "text/plain",
+    );
+    const partial = await client.downloadBlob(hash, { Range: "bytes=0-3" });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get("content-type")).toBe("text/plain");
+    const fetched = await fetch(await instanceLink(hash), { method: "HEAD" });
+    expect(fetched.headers.get("content-type")).toBe("text/plain");
+  });
+
+  it("sends an export archive as a download under its own name, whatever blobs it carries", async () => {
+    const content = new TextEncoder().encode(
+      `carried by an archive ${ctx.runId}`,
+    );
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
+    expect(upload.status).toBe(201);
+    const hash = upload.data.hash;
+
+    const archive = await client.exportArchive({
+      type: "core.note",
+      source: ctx.source,
+    });
+    expect(archive.status).toBe(200);
+    // The witness: the archive does carry the blob's bytes.
+    expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBe(
+      new TextDecoder().decode(content),
+    );
+    expect(archive.headers.get("content-type")).toBe("application/gzip");
+    expect(archive.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="marfa-export-\d{4}-\d{2}-\d{2}\.tar\.gz"$/,
+    );
+    expect(archive.headers.get("content-disposition")).not.toContain(
+      hash.slice("sha256:".length),
+    );
   });
 });

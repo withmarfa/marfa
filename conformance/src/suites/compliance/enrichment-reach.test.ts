@@ -4,6 +4,8 @@
  * one.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -176,5 +178,89 @@ describe("the enrichment sweep and a blob's reach", () => {
     expect((await planter.downloadBlob(secretUpload.data.hash)).status).toBe(
       404,
     );
+  });
+
+  it("reads the width, height and duration only of bytes the file's own reference lends", async () => {
+    const image = readFileSync(
+      fileURLToPath(new URL("./fixtures/image-sample.gif", import.meta.url)),
+    );
+    // Eight-bit mono PCM at 8000 samples a second: two seconds of silence.
+    const wav = Buffer.alloc(44 + 16000, 0x80);
+    wav.write("RIFF", 0, "ascii");
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8, "ascii");
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(8000, 24);
+    wav.writeUInt32LE(8000, 28);
+    wav.writeUInt16LE(1, 32);
+    wav.writeUInt16LE(8, 34);
+    wav.write("data", 36, "ascii");
+    wav.writeUInt32LE(16000, 40);
+
+    const minted = await owner.createKey({
+      label: "media files only",
+      source: "enrichment-reach-media",
+      type_permissions: {
+        "core.file.image": "write",
+        "core.file.audio": "write",
+      },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    const fileWriter = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    const media = [
+      { type: "core.file.image", mime: "image/gif", bytes: image },
+      { type: "core.file.audio", mime: "audio/wav", bytes: wav },
+    ];
+    const items: { type: string; named: string; own: string }[] = [];
+    for (const { type, mime, bytes } of media) {
+      const sent = await owner.uploadBlob(bytes, mime);
+      expect(sent.status, type).toBe(201);
+      // The owner's note lends the bytes to note readers; the file writer
+      // names them without ever sending them.
+      const linked = await owner.createItem({
+        type: "core.note",
+        properties: { body: `![it](${sent.data.hash})` },
+      });
+      expect(linked.status, type).toBe(201);
+      const named = await fileWriter.createItem({
+        type,
+        properties: { blob_ref: sent.data.hash, mime_type: mime },
+      });
+      expect(named.status, JSON.stringify(named.error)).toBe(201);
+      const own = await owner.createItem({
+        type,
+        properties: { blob_ref: sent.data.hash, mime_type: mime },
+      });
+      expect(own.status, JSON.stringify(own.error)).toBe(201);
+      items.push({
+        type,
+        named: named.data.item.id,
+        own: own.data.item.id,
+      });
+    }
+
+    await sweep();
+    const read = async (client: MarfaClient, id: string) => {
+      const res = await client.getItem(id);
+      expect(res.status).toBe(200);
+      return res.data.item.properties;
+    };
+    const [gif, audio] = items as [(typeof items)[0], (typeof items)[0]];
+    // The witness: the sweep reads what a file's own reference lends.
+    const ownImage = await read(owner, gif.own);
+    expect(ownImage.width).toBe(30);
+    expect(ownImage.height).toBe(20);
+    expect(await read(owner, audio.own)).toMatchObject({ duration: 2 });
+
+    const namedImage = await read(fileWriter, gif.named);
+    expect(namedImage.width).toBeUndefined();
+    expect(namedImage.height).toBeUndefined();
+    expect((await read(fileWriter, audio.named)).duration).toBeUndefined();
   });
 });

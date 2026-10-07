@@ -9,6 +9,7 @@ import {
   trackFolder,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 import { readTarGzEntry, tarGz } from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
@@ -794,6 +795,82 @@ describe("who may read and upload a blob", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
   });
 
+  it("refuses an upload under a grant that names no registered type, and takes one once a type is registered under it", async () => {
+    const namespace = `fixture.${ctx.runId}.later`;
+    const pattern = await keyHolding({ [`${namespace}.*`]: "write" });
+    const system = await keyHolding({
+      "system.folder": "write",
+      "core.note": "read",
+    });
+    const systemWildcard = await keyHolding({ "system.*": "write" });
+    const writer = await keyHolding({ "core.note": "write" });
+
+    const attempt = async (as: MarfaClient, words: string) => {
+      const bytes = new TextEncoder().encode(`${words} ${ctx.runId}`);
+      return { bytes, res: await as.uploadBlob(bytes, "text/plain") };
+    };
+    // The witness: a key that writes a registered type is taken.
+    expect((await attempt(writer.client, "taken")).res.status).toBe(201);
+
+    for (const [name, refused] of [
+      ["a pattern naming no type", pattern],
+      ["a system type", system],
+      ["every system type", systemWildcard],
+    ] as const) {
+      const { bytes, res } = await attempt(refused.client, `refused ${name}`);
+      expect(res.status, name).toBe(403);
+      expect(res.error?.error.code, name).toBe("type_not_permitted");
+      expect((await operator.headBlob(sha256(bytes))).status, name).toBe(404);
+    }
+
+    const registered = await client.registerType({
+      id: `${namespace}.kind`,
+      fields: {},
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackType(ctx, `${namespace}.kind`);
+    const later = await attempt(pattern.client, "taken once registered");
+    expect(later.res.status, JSON.stringify(later.res.error)).toBe(201);
+    // A grant on a system type still writes nothing registered.
+    expect((await attempt(system.client, "still refused")).res.status).toBe(
+      403,
+    );
+  });
+
+  it("refuses a key that may not upload before it reads the body it sent", async () => {
+    const reader = await keyHolding({ "core.note": "read" });
+    const writer = await keyHolding({ "core.note": "write" });
+    const bodies = [
+      ["multipart/form-data", new TextEncoder().encode(`a form ${ctx.runId}`)],
+      ["text/plain", new Uint8Array(0)],
+    ] as const;
+    for (const [type, body] of bodies) {
+      // The witness: a key that may upload is told what is wrong with it.
+      const told = await writer.client.uploadBlob(body, type);
+      expect(told.status, type).toBe(400);
+      expect(told.error?.error.code, type).toBe("validation_error");
+
+      const refused = await reader.client.uploadBlob(body, type);
+      expect(refused.status, type).toBe(403);
+      expect(refused.error?.error.code, type).toBe("type_not_permitted");
+    }
+  });
+
+  it("refuses the operator key an export and takes a working key's", async () => {
+    await noteSaying("an export the operator may not make");
+    const reader = await keyHolding({ "core.note": "read" });
+    for (const format of ["ndjson", "archive"]) {
+      const res = await operator.rawRequest(`/export?format=${format}`);
+      expect(res.status, format).toBe(403);
+      expect(res.error?.error.code, format).toBe("type_not_permitted");
+    }
+    const archive = await reader.client.exportArchive({
+      type: "core.note",
+      source: ctx.source,
+    });
+    expect(archive.status).toBe(200);
+  });
+
   it("serves the operator key every blob and takes its uploads", async () => {
     const hash = await upload("bytes the operator reads unreferenced");
     expect(await readingDoors(operator, hash)).toEqual(SERVED);
@@ -1214,5 +1291,464 @@ describe("which write that names a digest lends it", () => {
       }),
     );
     expect(await readingDoors(reader.client, later)).toEqual(SERVED);
+  });
+
+  it("keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone", async () => {
+    const hash = await upload("bytes behind a link outliving its reach");
+    const id = await fileNaming(hash);
+    const reader = await keyHolding({ "core.file": "read" });
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+    const link = await reader.client.getBlobUrl(hash, 600);
+    expect(link.status).toBe(200);
+    const expected = `bytes behind a link outliving its reach ${ctx.runId}`;
+
+    const narrowed = await client.updateKey(reader.id, {
+      type_permissions: { "core.note": "read" },
+    });
+    expect(narrowed.ok, JSON.stringify(narrowed.error)).toBe(true);
+    // The witness: the narrowed key no longer reaches the bytes by any door.
+    expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+    expect(await (await fetch(link.data.url)).text()).toBe(expected);
+
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    expect((await client.purgeItem(id)).ok).toBe(true);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    expect(await (await fetch(link.data.url)).text()).toBe(expected);
+  });
+
+  it("serves a blob an edge names through a source in the bin, and stops once the source is purged", async () => {
+    const hash = await upload("named by an edge from a binned source");
+    const source = await noteSaying("a source that goes to the bin");
+    const target = await noteSaying("a target that stays");
+    const reader = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+    const edge = await client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "about",
+      properties: { cover: hash },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    expect((await client.deleteItem(source.id)).ok).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    expect((await client.purgeItem(source.id)).ok).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("serves a blob an extension names through an item in the bin, and stops once the item is purged", async () => {
+    const hash = await upload("named by an extension on a binned item");
+    const item = await noteSaying("an item that goes to the bin");
+    const namespace = `blobreach.${ctx.runId}`;
+    const reader = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
+    const written = await client.setItemExtension(item.id, namespace, {
+      cover: hash,
+    });
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    expect((await client.transitionItem(item.id, "archived")).ok).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+    expect((await client.deleteItem(item.id)).ok).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    expect((await client.purgeItem(item.id)).ok).toBe(true);
+    expect(await readingDoors(reader.client, hash)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("serves a blob an extension names to a key whose label is the namespace, and to no key labeled another", async () => {
+    const hash = await upload("named by an extension a label reads");
+    const item = await noteSaying("an item whose namespace is a label");
+    const namespace = `labeled.${ctx.runId}`;
+    const labeled = await client.createKey({
+      label: namespace,
+      source: `${ctx.source}-labeled`,
+      type_permissions: { "core.note": "read" },
+    });
+    expect(labeled.ok, JSON.stringify(labeled.error)).toBe(true);
+    trackKey(ctx, labeled.data.id);
+    const owner = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: labeled.data.key,
+    });
+    const other = await keyHolding({ "core.note": "read" });
+
+    const written = await client.setItemExtension(item.id, namespace, {
+      cover: hash,
+    });
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    expect(await readingDoors(owner, hash)).toEqual(SERVED);
+    expect(await readingDoors(other.client, hash)).toEqual(UNKNOWN);
+  });
+
+  it("leaves out of an export archive a digest a property names without lending it, and one only an earlier version names", async () => {
+    const planter = await keyHolding({ "core.note": "write" });
+    const own = await planter.client.getCurrentKey();
+    expect(own.ok, JSON.stringify(own.error)).toBe(true);
+    const sent = async (words: string) => {
+      const res = await planter.client.uploadBlob(
+        new TextEncoder().encode(`${words} ${ctx.runId}`),
+        "text/plain",
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(201);
+      return res.data.hash;
+    };
+    const proved = await sent("an archive carries what its writer sent");
+    const earlier = await sent("an archive leaves what only a version names");
+    const planted = await upload(
+      "an archive leaves what its writer never sent",
+    );
+
+    const created = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: `![a](${proved}) ![b](${planted}) ![c](${earlier})` },
+    });
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    const edited = await planter.client.updateItem(created.data.item.id, {
+      properties: { body: `![a](${proved}) ![b](${planted})` },
+      version: created.data.item.version,
+    });
+    expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+    // The witness: the writer is served what it sent, and neither of the
+    // others, though the instance holds all three.
+    expect(await readingDoors(planter.client, proved)).toEqual(SERVED);
+    for (const hash of [planted, earlier]) {
+      expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+    }
+
+    const archive = await planter.client.exportArchive({
+      type: "core.note",
+      source: own.data.source,
+    });
+    expect(archive.status).toBe(200);
+    const manifest = JSON.parse(
+      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+    ) as { blobs: Record<string, unknown> };
+    expect(Object.keys(manifest.blobs)).toEqual([proved]);
+    expect(readTarGzEntry(archive.data, `blobs/${proved}`)).not.toBeNull();
+    for (const hash of [planted, earlier]) {
+      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBeNull();
+    }
+  });
+
+  it("leaves out of an export archive the bytes an edge or an extension lends to a key that may not read them", async () => {
+    const inProperty = await upload("an archive carries this property digest");
+    const inEdge = await upload("an archive carries this only with the edge");
+    const inExtension = await upload(
+      "an archive carries this only with the namespace",
+    );
+    const source = await noteSaying(`![it](${inProperty})`);
+    const target = await noteSaying("the far end of an edge that lends");
+    const namespace = `blobreach.${ctx.runId}`;
+    expect(
+      (
+        await client.createEdge({
+          source_id: source.id,
+          target_id: target.id,
+          edge_type: "about",
+          properties: { cover: inEdge },
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await client.setItemExtension(source.id, namespace, {
+          cover: inExtension,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const exporters = [
+      { name: "neither", edge: false, extension: false },
+      { name: "the edge", edge: true, extension: false },
+      { name: "the namespace", edge: false, extension: true },
+    ];
+    for (const { name, edge, extension } of exporters) {
+      const exporter = await keyHolding(
+        { "core.note": "read" },
+        {
+          ...(edge && { edge_permissions: { about: "read" } }),
+          ...(extension && { extension_permissions: { [namespace]: "read" } }),
+        },
+      );
+      const archive = await exporter.client.exportArchive({
+        type: "core.note",
+        source: ctx.source,
+      });
+      expect(archive.status, name).toBe(200);
+      const carried = (hash: string) =>
+        readTarGzEntry(archive.data, `blobs/${hash}`) !== null;
+      expect(carried(inProperty), name).toBe(true);
+      expect(carried(inEdge), name).toBe(edge);
+      expect(carried(inExtension), name).toBe(extension);
+    }
+  });
+
+  it("writes on each export line the digests that lend, and no namespace that lends none", async () => {
+    const planter = await keyHolding(
+      { "core.note": "write" },
+      {
+        edge_permissions: { about: "write" },
+        extension_permissions: { "*": "write" },
+      },
+    );
+    const own = await planter.client.getCurrentKey();
+    expect(own.ok, JSON.stringify(own.error)).toBe(true);
+    const sent = async (words: string) => {
+      const res = await planter.client.uploadBlob(
+        new TextEncoder().encode(`${words} ${ctx.runId}`),
+        "text/plain",
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(201);
+      return res.data.hash;
+    };
+    const lendingProperty = await sent("a line lists this property digest");
+    const lendingEdge = await sent("a line lists this edge digest");
+    const lendingExtension = await sent("a line lists this extension digest");
+    const plantedProperty = await upload("a line omits this property digest");
+    const plantedEdge = await upload("a line omits this edge digest");
+    const plantedExtension = await upload("a line omits this extension digest");
+
+    const note = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: `![a](${lendingProperty}) ![b](${plantedProperty})` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const far = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: "the far end" },
+    });
+    expect(far.ok, JSON.stringify(far.error)).toBe(true);
+    trackItem(ctx, far.data.item.id);
+    const edge = await planter.client.createEdge({
+      source_id: note.data.item.id,
+      target_id: far.data.item.id,
+      edge_type: "about",
+      properties: { cover: lendingEdge, alt: plantedEdge },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    const lendsNamespace = `lends.${ctx.runId}`;
+    const plantsNamespace = `plants.${ctx.runId}`;
+    for (const [namespace, hash] of [
+      [lendsNamespace, lendingExtension],
+      [plantsNamespace, plantedExtension],
+    ] as const) {
+      const written = await planter.client.setItemExtension(
+        note.data.item.id,
+        namespace,
+        { cover: hash },
+      );
+      expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    }
+
+    const archive = await client.exportArchive({
+      type: "core.note",
+      source: own.data.source,
+    });
+    expect(archive.status).toBe(200);
+    const lines = (name: string) =>
+      (readTarGzEntry(archive.data, name) ?? "")
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => JSON.parse(line) as Record<string, any>);
+    const itemLine = lines("items.ndjson").find(
+      (line) => line.item.id === note.data.item.id,
+    );
+    expect(itemLine?.lending_blobs).toEqual([lendingProperty]);
+    expect(itemLine?.lending_extensions).toEqual({
+      [lendsNamespace]: [lendingExtension],
+    });
+    // The witness: the namespace left out is on the line, holding its digest.
+    expect(itemLine?.metadata.extensions[plantsNamespace]).toEqual({
+      cover: plantedExtension,
+    });
+    const edgeLine = lines("edges.ndjson").find(
+      (line) => line.edge.id === edge.data.edge.id,
+    );
+    expect(edgeLine?.lending_blobs).toEqual([lendingEdge]);
+  });
+
+  it("gives each digest on a keep-both copy's edges the standing it had on the edge copied", async () => {
+    const lending = await upload("a copied edge keeps this lending");
+    const planted = await upload("a copied edge keeps this dead");
+    const source = await noteSaying("the note a stale write forks");
+    const lendingTarget = await noteSaying("the target of the lending edge");
+    const plantedTarget = await noteSaying("the target of the planted edge");
+    const bare = await keyHolding(
+      { "core.note": "write" },
+      { edge_permissions: { about: "write" } },
+    );
+    const reader = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+    const lendingEdge = await client.createEdge({
+      source_id: source.id,
+      target_id: lendingTarget.id,
+      edge_type: "about",
+      properties: { cover: lending },
+    });
+    const plantedEdge = await bare.client.createEdge({
+      source_id: source.id,
+      target_id: plantedTarget.id,
+      edge_type: "about",
+      properties: { cover: planted },
+    });
+    expect(lendingEdge.ok, JSON.stringify(lendingEdge.error)).toBe(true);
+    expect(plantedEdge.ok, JSON.stringify(plantedEdge.error)).toBe(true);
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(reader.client, planted)).toEqual(UNKNOWN);
+
+    // A stale write that collides forks the note, and the fork copies the
+    // note's edges.
+    const winner = await client.updateItem(source.id, {
+      properties: { body: "the winner" },
+      version: source.version,
+    });
+    expect(winner.ok, JSON.stringify(winner.error)).toBe(true);
+    const forked = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${source.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "the loser" },
+        version: source.version,
+      },
+    });
+    expect(forked.ok, JSON.stringify(forked.error)).toBe(true);
+    const copyId = forked.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copied = await client.listItemEdges(String(copyId), {
+      edge_type: "about",
+    });
+    expect(copied.ok, JSON.stringify(copied.error)).toBe(true);
+    expect(copied.data.data).toHaveLength(2);
+
+    // With the edges that were copied from gone, only the copies lend.
+    for (const original of [lendingEdge, plantedEdge]) {
+      expect((await client.deleteEdge(original.data.edge.id)).ok).toBe(true);
+    }
+    expect(await readingDoors(reader.client, lending)).toEqual(SERVED);
+    expect(await readingDoors(client, planted)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(planted)).status).toBe(200);
+  });
+
+  it("restores an edge's and an extension's reach only for the digests their archive lines say lent", async () => {
+    const blobs = Object.fromEntries(
+      [
+        "lent by a namespace",
+        "held by a namespace that lent nothing",
+        "lent by an edge",
+        "held by an edge that lent nothing",
+        "held by an edge whose line lists no digests",
+      ].map((words) => [
+        words,
+        new TextEncoder().encode(`restored, ${words} ${ctx.runId}`),
+      ]),
+    ) as Record<string, Uint8Array>;
+    const [namespaceLent, namespaceDead, edgeLent, edgeDead, edgeUnlisted] =
+      Object.values(blobs).map(sha256) as [
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+    const ids = { source: uuidv7(), target: uuidv7() };
+    const lendsNamespace = `restored.lends.${ctx.runId}`;
+    const plantsNamespace = `restored.plants.${ctx.runId}`;
+    const noteLine = (id: string, extensions: Record<string, unknown>) =>
+      JSON.stringify({
+        item: {
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `a restored note ${id}` },
+        },
+        metadata: { tags: [], extensions },
+        ...(id === ids.source && {
+          lending_extensions: { [lendsNamespace]: [namespaceLent] },
+        }),
+      });
+    const edgeLine = (
+      properties: Record<string, string>,
+      lending: unknown,
+      [from, to] = [ids.source, ids.target],
+    ) =>
+      JSON.stringify({
+        edge: {
+          id: uuidv7(),
+          source_id: from,
+          target_id: to,
+          edge_type: "about",
+          properties,
+        },
+        lending_blobs: lending,
+      });
+    const archive = tarGz([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({
+          version: 0,
+          format: "marfa-archive-v0",
+          created_at: new Date().toISOString(),
+          item_count: 2,
+          edge_count: 2,
+          blob_count: Object.keys(blobs).length,
+          type_count: 0,
+          edge_type_count: 0,
+          blobs: Object.fromEntries(
+            Object.values(blobs).map((data) => [
+              sha256(data),
+              { mime_type: "text/plain", size_bytes: data.length },
+            ]),
+          ),
+        }),
+      },
+      {
+        name: "items.ndjson",
+        body: `${noteLine(ids.source, {
+          [lendsNamespace]: { cover: namespaceLent },
+          [plantsNamespace]: { cover: namespaceDead },
+        })}\n${noteLine(ids.target, {})}\n`,
+      },
+      {
+        name: "edges.ndjson",
+        body: `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
+      },
+      ...Object.values(blobs).map((data) => ({
+        name: `blobs/${sha256(data)}`,
+        body: data,
+      })),
+      { name: "types.ndjson", body: "" },
+    ]);
+    const restored = await operator.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.edges_imported).toBe(2);
+    trackItem(ctx, ids.source);
+    trackItem(ctx, ids.target);
+
+    // The suite's key reads every namespace and edge, so what it is not
+    // served is a digest the archive did not say lent.
+    for (const hash of [namespaceLent, edgeLent]) {
+      expect(await readingDoors(client, hash)).toEqual(SERVED);
+    }
+    for (const hash of [namespaceDead, edgeDead, edgeUnlisted]) {
+      expect(await readingDoors(client, hash)).toEqual(UNKNOWN);
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+    }
   });
 });
