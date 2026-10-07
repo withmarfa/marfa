@@ -84,6 +84,12 @@ If a credential that the operation admits sends `GET /items`, `GET /items/stats`
 
 **Tests:** `compliance/validation.test.ts › refuses an empty type, source, tags or filter rather than reading everything`.
 
+### `search-and-filters/empty-narrowing-first`
+
+If a request to `GET /search` or `GET /occurrences` carries an empty narrowing value and lacks a parameter the operation requires, then the server MUST answer the empty value's `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
+
 ### `search-and-filters/empty-narrowing-bulk`
 
 If the `filter` of `POST /items/bulk-actions` carries `type`, `source`, `tags` or `filter` with no value or with only blanks, or carries `tags` as an empty list or a list of blank entries, then the server MUST answer `400 validation_error` naming each such field as `filter.<field>` in `details.empty_parameters`.
@@ -91,6 +97,12 @@ If the `filter` of `POST /items/bulk-actions` carries `type`, `source`, `tags` o
 **Reason:** a filter field with no value narrows nothing, so an action built from a variable that was never filled in would match every item the credential may write.
 
 **Tests:** `compliance/validation.test.ts › refuses an empty or blank type, source, tags or filter in a bulk-action filter`.
+
+### `search-and-filters/empty-narrowing-bulk-order`
+
+If the body of `POST /items/bulk-actions` carries an empty `filter` field and also a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's refusal.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
 
 ## The type filter
 
@@ -104,9 +116,9 @@ When `GET /items/stats`, `GET /search`, `GET /export`, `GET /events` or `POST /i
 
 ### `search-and-filters/type-wildcard`
 
-When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` or `GET /events` ends in `.*`, the server MUST select the items of the type named by the part before `.*` and of every type whose name starts with that part and a dot.
+When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` or `GET /events` ends in `.*`, the server MUST select the items of the type named by the part before `.*`, of every type whose name starts with that part and a dot, and of every type declared under it.
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`, `compliance/types.test.ts › selects with a type the types declared under it, as with its own name`.
 
 ### `search-and-filters/type-unknown`
 

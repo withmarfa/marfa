@@ -64,6 +64,12 @@ When `GET /occurrences` answers a credential whose type map reads some event typ
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › GET /occurrences answers the readable subtype of an event type the key may not read`.
 
+### `occurrences/type-names`
+
+When `GET /occurrences` names a `type`, the server MUST answer the events of that type and of the types under it, a type declared under `core.event` included, and of no other type.
+
+**Tests:** `compliance/occurrences.test.ts › answers the events of the type it names, a type declared under core.event included`.
+
 ### `occurrences/source-filter`
 
 Where the `enforcement.source_filter` that holds for the credential names a type of event and names sources, the server MUST leave out of `GET /occurrences` every occurrence of an event of that type, or of a type under it, whose source the filter does not name.
@@ -195,6 +201,14 @@ When a moved occurrence is in a window, and its series is `active` and one the c
 **Reason:** the exception names its series and the slot it replaced, wherever it is shown.
 
 **Tests:** `compliance/recurrence.test.ts › carries series_id and replaces on a moved occurrence in a window that holds only its new time`, `› carries series_id and replaces on a moved occurrence in a window that holds both times`.
+
+### `occurrences/moved-ids-hidden`
+
+When a moved occurrence is in a window and its series is not one the credential may read, the server MUST answer it without `series_id` and without `replaces`.
+
+**Reason:** the fields would name a row the credential may not read.
+
+**Tests:** `compliance/recurrence.test.ts › names no series a moved occurrence belongs to when the series is not readable`.
 
 ### `occurrences/moved-own-times`
 
