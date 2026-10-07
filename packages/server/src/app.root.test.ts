@@ -128,3 +128,13 @@ describe("GET /", () => {
     expect(config.instance_id).toBe(root.instance_id);
   });
 });
+
+describe("Vary: Accept", () => {
+  it("rides a refusal at the root, and no other path's answer", async () => {
+    const refused = await ctx.app.request("/?stray=1");
+    expect(refused.status).toBe(400);
+    expect(refused.headers.get("vary")).toContain("Accept");
+    const elsewhere = await ctx.app.request("/health");
+    expect(elsewhere.headers.get("vary") ?? "").not.toContain("Accept");
+  });
+});
