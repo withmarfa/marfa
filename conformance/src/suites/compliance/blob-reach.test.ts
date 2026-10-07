@@ -995,12 +995,26 @@ function succeeded(res: { ok: boolean; error?: unknown }): void {
  * through the same door and lends, so the credit is the proof's and not the
  * door's.
  */
-async function expectDoorCredits(door: Door): Promise<void> {
+async function expectDoorCredits(
+  door: Door,
+  { edges = false }: { edges?: boolean } = {},
+): Promise<void> {
   doors += 1;
   const writes = { "core.note": "write", "core.bookmark": "write" };
-  const sender = await keyHolding(writes);
-  const stranger = await keyHolding(writes);
-  const reader = await keyHolding({ "*": "read" });
+  // A door that writes an edge's properties needs the edge map as well, on
+  // the writers and on the key that reads back through it.
+  const sender = await keyHolding(
+    writes,
+    edges ? { edge_permissions: { about: "write" } } : {},
+  );
+  const stranger = await keyHolding(
+    writes,
+    edges ? { edge_permissions: { about: "write" } } : {},
+  );
+  const reader = await keyHolding(
+    { "*": "read" },
+    edges ? { edge_permissions: { about: "read" } } : {},
+  );
   const sent = await sender.client.uploadBlob(
     new TextEncoder().encode(
       `named through a door ${String(doors)} ${ctx.runId}`,
@@ -1437,6 +1451,62 @@ describe("which write that names a digest lends it", () => {
         expect(job.succeeded).toBe(1);
       };
     });
+  });
+
+  it("lends a digest named by a bulk edge create only when its writer sent the bytes", async () => {
+    await expectDoorCredits(
+      async (writer) => {
+        const source = await noteOf(writer, { body: "a bulk edge's source" });
+        const target = await noteOf(writer, { body: "a bulk edge's target" });
+        return async (hash) => {
+          const res = await writer.bulkEdges({
+            edges: [
+              {
+                source_id: source.id,
+                target_id: target.id,
+                edge_type: "about",
+                properties: { cover: hash },
+              },
+            ],
+          });
+          succeeded(res);
+          expect(res.data.counts.created).toBe(1);
+        };
+      },
+      { edges: true },
+    );
+  });
+
+  it("lends a digest named by a bulk edge update only when its writer sent the bytes", async () => {
+    await expectDoorCredits(
+      async (writer) => {
+        const source = await noteOf(writer, { body: "a bulk edge's source" });
+        const target = await noteOf(writer, { body: "a bulk edge's target" });
+        succeeded(
+          await writer.createEdge({
+            source_id: source.id,
+            target_id: target.id,
+            edge_type: "about",
+            properties: { title: "before" },
+          }),
+        );
+        return async (hash) => {
+          const res = await writer.bulkEdges({
+            edges: [
+              {
+                source_id: source.id,
+                target_id: target.id,
+                edge_type: "about",
+                properties: { cover: hash },
+              },
+            ],
+          });
+          succeeded(res);
+          expect(res.data.counts.updated).toBe(1);
+        };
+      },
+      { edges: true },
+    );
   });
 
   it("lends a digest named in a folder's settings only when its writer could read the blob", async () => {
