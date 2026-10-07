@@ -10,6 +10,12 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createBookmark, createNote } from "../../generators/items.js";
+import type { SseEvent } from "../../utils/sse.js";
+import {
+  baselineEventId,
+  collectUntil,
+  withStream,
+} from "../../utils/stream.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -19,9 +25,10 @@ import {
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "edge-hidden-limits",
   ));
@@ -230,6 +237,148 @@ describe("what a key is told of an item it cannot read through a readable one", 
     const byId = await writer.getEdge(edge);
     expect(byId.status).toBe(200);
     expect(byId.data.edge.target_id).toBe(secret);
+  });
+
+  /** A note and a bookmark joined by an edge of a type of its own, a key
+   *  that reads the note only and one that reads both, and the event cursor
+   *  from before the edge was written. */
+  async function hiddenTargetEdge(label: string, signal: AbortSignal) {
+    const edgeType = `mock.hidden-${label}.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.status).toBe(201);
+    trackEdgeType(ctx, edgeType);
+    const keyOf = async (name: string, bookmarks?: "read") => {
+      const minted = await client.createKey({
+        label: `edge-hidden-${label}-${name}`,
+        source: `${ctx.source}-edge-hidden-${label}-${name}`,
+        permissions: [],
+        type_permissions: {
+          "core.note": "write",
+          ...(bookmarks && { "core.bookmark": bookmarks }),
+        },
+        edge_permissions: { "*": "write" },
+      });
+      expect(minted.ok).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return {
+        key: minted.data.key,
+        client: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+      };
+    };
+    const blind = await keyOf("blind");
+    const sighted = await keyOf("sighted", "read");
+
+    const { eventId, markerId } = await baselineEventId(
+      apiUrl,
+      apiKey,
+      async () => {
+        const r = await client.createItem(createNote({ source: ctx.source }));
+        expect(r.status).toBe(201);
+        return r.data.item.id;
+      },
+      signal,
+    );
+    trackItem(ctx, markerId);
+
+    const n = await client.createItem(createNote({ source: ctx.source }));
+    expect(n.status).toBe(201);
+    trackItem(ctx, n.data.item.id);
+    const b = await client.createItem(createBookmark({ source: ctx.source }));
+    expect(b.status).toBe(201);
+    trackItem(ctx, b.data.item.id);
+    const note = n.data.item.id;
+    const secret = b.data.item.id;
+    const e = await client.createEdge({
+      source_id: note,
+      target_id: secret,
+      edge_type: edgeType,
+    });
+    expect(e.status).toBe(201);
+    trackEdge(ctx, e.data.edge.id);
+    const edge = e.data.edge.id;
+    expect((await blind.client.getItem(note)).status).toBe(200);
+    expect((await blind.client.getItem(secret)).status).toBe(404);
+    expect((await sighted.client.getItem(secret)).status).toBe(200);
+
+    return { edgeType, blind, sighted, eventId, note, secret, edge };
+  }
+
+  it("names a hidden target's id on every read of an edge the key may read", async ({
+    signal,
+  }) => {
+    const { edgeType, blind, eventId, note, secret, edge } =
+      await hiddenTargetEdge("every-read", signal);
+
+    const listed = await blind.client.listEdges({ edge_type: edgeType });
+    expect(listed.status).toBe(200);
+    expect(listed.data.data.map((x) => [x.id, x.target_id])).toEqual([
+      [edge, secret],
+    ]);
+
+    const read = await blind.client.getItem(note);
+    expect(read.status).toBe(200);
+    expect(
+      read.data.item.edges?.[edgeType]?.data.map((x) => x.target_id),
+    ).toEqual([secret]);
+
+    const page = await blind.client.listItems({
+      source: ctx.source,
+      type: "core.note",
+      include: "edges",
+      limit: 200,
+    });
+    expect(page.status).toBe(200);
+    expect(
+      page.data.data
+        .find((i) => i.id === note)
+        ?.edges?.[edgeType]?.data.map((x) => x.target_id),
+    ).toEqual([secret]);
+
+    const edgeIdsOf = (events: SseEvent[]): string[] =>
+      events
+        .filter((x) => x.event === "edge.created")
+        .map((x) => (x.data as { edge: { id: string } }).edge.id);
+    await withStream(apiUrl, blind.key, { lastEventId: eventId }, async (s) => {
+      const { events } = await collectUntil(
+        s,
+        (evts) => edgeIdsOf(evts).includes(edge),
+        `the edge ${edge} on a replay for a key that cannot read its target`,
+        signal,
+      );
+      const created = events.find(
+        (x) =>
+          x.event === "edge.created" &&
+          (x.data as { edge: { id: string } }).edge.id === edge,
+      );
+      expect(
+        (created?.data as { edge: { target_id: string } }).edge.target_id,
+      ).toBe(secret);
+    });
+  });
+
+  it("leaves an edge out of an export when the key cannot read its target", async ({
+    signal,
+  }) => {
+    const { blind, sighted, edge } = await hiddenTargetEdge("export", signal);
+
+    // An export holds the relationships among the items it carries.
+    const exportedEdges = async (c: MarfaClient): Promise<string[]> => {
+      const r = await c.exportItems({ source: ctx.source });
+      expect(r.status).toBe(200);
+      return r.data
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map(
+          (line) =>
+            JSON.parse(line) as { edge?: { id: string }; item?: unknown },
+        )
+        .flatMap((record) => (record.edge ? [record.edge.id] : []));
+    };
+    expect(await exportedEdges(sighted.client)).toContain(edge);
+    expect(await exportedEdges(blind.client)).not.toContain(edge);
   });
 
   it("trashes a hidden child with the parent the key deletes", async () => {
