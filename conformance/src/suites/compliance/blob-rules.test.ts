@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -12,6 +12,7 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { waitFor } from "../../utils/wait.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -39,6 +40,14 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
  * ask is repeated once it has finished.
  */
 async function run<T>(name: string): Promise<T> {
+  return (await runRecorded<T>(name)).result;
+}
+
+/** A run as the door answered it: its result, and when it started and
+ *  finished. */
+async function runRecorded<T>(
+  name: string,
+): Promise<{ result: T; started_at: string; finished_at: string }> {
   for (let i = 0; i < 50; i++) {
     const res = await operator.runHousekeeping(name);
     if (res.status === 409) {
@@ -47,7 +56,11 @@ async function run<T>(name: string): Promise<T> {
     }
     expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
     expect(res.data.outcome, res.data.error ?? "").toBe("ok");
-    return res.data.result as T;
+    return {
+      result: res.data.result as T,
+      started_at: res.data.started_at,
+      finished_at: res.data.finished_at,
+    };
   }
   throw new Error(`${name} was held by a run for five seconds`);
 }
@@ -654,5 +667,141 @@ describe("the rules that keep a blob's bytes", () => {
     expect(gone.status).toBe(404);
     const body = (await gone.json()) as { error: { code: string } };
     expect(body.error.code).toBe("blob_not_found");
+  });
+});
+
+describe("what the orphan sweep keeps", () => {
+  /** A file item naming the bytes, as the whole value of `blob_ref`. */
+  async function fileNaming(hash: string): Promise<string> {
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    trackItem(ctx, file.data.item.id);
+    return file.data.item.id;
+  }
+
+  async function noteSaying(
+    body: string,
+  ): Promise<{ id: string; version: number }> {
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    return { id: note.data.item.id, version: note.data.item.version };
+  }
+
+  it("keeps a blob that only an item in the bin, an archived item, an extension or an earlier version names", async () => {
+    const binned = await uploadText("named by an item in the bin");
+    const archived = await uploadText("named by an archived item");
+    const extended = await uploadText("named by a metadata extension");
+    const versioned = await uploadText("named by an earlier version");
+    const unnamed = await uploadText("named by nothing at all");
+
+    const binnedId = await fileNaming(binned);
+    expect((await client.deleteItem(binnedId)).status).toBe(200);
+    const archivedId = await fileNaming(archived);
+    const moved = await client.transitionItem(archivedId, "archived");
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const extension = await noteSaying("an extension names a blob");
+    const written = await client.setItemExtension(
+      extension.id,
+      `blobrules.${ctx.runId}`,
+      { cover: extended },
+    );
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    const earlier = await noteSaying(`was ![it](${versioned})`);
+    const rewritten = await client.updateItem(earlier.id, {
+      properties: { body: "no longer links anything" },
+      version: earlier.version,
+    });
+    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
+    expect(
+      JSON.stringify((await client.getVersions(earlier.id)).data),
+    ).toContain(versioned);
+
+    await run("blob-orphans");
+    const reported = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    await run("blob-orphans");
+
+    // The witness: the blob nothing names is reported and then purged by the
+    // same two runs, so they could have taken the others.
+    expect(reported).toContain(unnamed);
+    expect((await operator.downloadBlob(unnamed)).status).toBe(404);
+    for (const hash of [binned, archived, extended, versioned]) {
+      expect(reported, hash).not.toContain(hash);
+      expect((await operator.downloadBlob(hash)).status, hash).toBe(200);
+    }
+  });
+
+  it("counts a digest as a reference by its run of lowercase hex, whatever form it is written in", async () => {
+    const hexOf = (hash: string) => hash.slice("sha256:".length);
+    const forms: Array<[string, (hex: string) => string]> = [
+      ["bare hex", (hex) => `see ${hex} here`],
+      ["a link", (hex) => `![it](sha256:${hex})`],
+      ["a url-encoded colon in capitals", (hex) => `?hash=sha256%3A${hex}&x=1`],
+      [
+        "a url-encoded colon in lowercase",
+        (hex) => `?hash=sha256%3a${hex}&x=1`,
+      ],
+      [
+        "a backslash escape beside it",
+        (hex) => String.raw`line one\n${hex}\nline two`,
+      ],
+      ["letters that are not hex beside it", (hex) => `Z${hex}Z`],
+      ["underscores beside it", (hex) => `_${hex}_`],
+    ];
+    const notReferences: Array<[string, (hex: string) => string]> = [
+      ["63 characters", (hex) => hex.slice(0, 63)],
+      ["63 characters from the end", (hex) => hex.slice(1)],
+      ["a hex character before it", (hex) => `0${hex}`],
+      ["a hex character after it", (hex) => `${hex}0`],
+    ];
+    const kept: Array<[string, string]> = [];
+    for (const [name, write] of forms) {
+      const hash = await uploadText(`named by ${name}`);
+      await noteSaying(write(hexOf(hash)));
+      kept.push([name, hash]);
+    }
+    const dropped: Array<[string, string]> = [];
+    for (const [name, write] of notReferences) {
+      const hash = await uploadText(`named by ${name}`);
+      await noteSaying(write(hexOf(hash)));
+      dropped.push([name, hash]);
+    }
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    for (const [name, hash] of kept) {
+      expect((await operator.downloadBlob(hash)).status, name).toBe(200);
+    }
+    // Reported and purged by the same two runs that kept the rest, so each
+    // of these was producible as a purge.
+    for (const [name, hash] of dropped) {
+      expect((await operator.downloadBlob(hash)).status, name).toBe(404);
+    }
+  });
+
+  it("records when a run first reported a blob", async () => {
+    const hash = await uploadText("reported with the time of the run");
+    const first = await runRecorded<{ reported: number; purged: number }>(
+      "blob-orphans",
+    );
+    expect(first.result.reported).toBeGreaterThanOrEqual(1);
+    const row = (await operator.listBlobOrphans()).data.data.find(
+      (each) => each.hash === hash,
+    );
+    expect(row).toBeDefined();
+    expect(Date.parse(row!.reported_at)).not.toBeNaN();
+    expect(row!.reported_at >= first.started_at).toBe(true);
+    expect(row!.reported_at <= first.finished_at).toBe(true);
   });
 });
