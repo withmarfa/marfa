@@ -2,7 +2,7 @@
 
 `GET /events` is a server-sent event stream of every mutation, resumable by cursor, and outbound webhooks deliver the same events to a URL. The audit log, which records the writes the events announce, closes the chapter.
 
-Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `read-views/copy-bootstrap` and the rules after it in `read-views.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors.md` 22.
+Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `read-views/copy-bootstrap` and the rules after it in `read-views.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 
 ## Opening a stream
 
