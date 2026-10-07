@@ -1298,6 +1298,9 @@ describe("starting with a setting outside its rule", () => {
         SQLITE_BUSY_BUDGET_MS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
         S3_ENDPOINT: "https://objects.example.test",
+        // With no bucket the endpoint is parsed and never reached, whatever
+        // object store the run's environment names.
+        S3_BUCKET: "",
         VERSION_RECENT_DAYS: "40",
         VERSION_DAILY_SNAPSHOT_DAYS: "40",
         VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
