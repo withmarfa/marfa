@@ -450,7 +450,7 @@ When the server is stopped, the server MUST end each event stream it has open wi
 
 When the server is stopped, the server MUST end an open copy stream, `GET /events?edges=all&copy=1`, with a terminal `stream_incomplete` frame.
 
-**Tests:** TODO fixture: open a copy stream on a server of the fixture's own, stop it, read the frame.
+**Tests:** `compliance/stream-shutdown.test.ts › ends an open copy stream with stream_incomplete when the server is stopped, and exits with status 0`.
 
 ### `instance/stop-ends-late-stream`
 
@@ -874,7 +874,7 @@ While any setting is outside its own rule, the server MUST NOT report in the sam
 
 **Reason:** a rule between two settings, or one that `NODE_ENV` decides, cannot be read until every setting parses.
 
-**Tests:** TODO fixture: boot with one setting outside its own rule and two that disagree, and read the one line the refusal holds.
+**Tests:** `compliance/instance-lifecycle.test.ts › names only the setting outside its rule, and holds back the cross-field rule until every setting parses`.
 
 ## Settings
 
