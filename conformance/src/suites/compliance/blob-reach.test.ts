@@ -1311,6 +1311,80 @@ describe("which write that names a digest lends it", () => {
     expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
   });
 
+  it("keeps a lending digest on an edge lending through later writes by a key that never sent the bytes", async () => {
+    const hash = await upload("an edge lends whatever later writes keep it");
+    const source = await noteSaying("a lending edge's source");
+    const target = await noteSaying("a lending edge's target");
+    const bare = await keyHolding(
+      { "core.note": "write" },
+      { edge_permissions: { about: "write" } },
+    );
+    const reader = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+    const edge = await client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "about",
+      properties: { cover: hash },
+    });
+    succeeded(edge);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    const edited = await bare.client.updateEdge(edge.data.edge.id, {
+      properties: { title: "edited beside it" },
+      version: edge.data.edge.version,
+    });
+    succeeded(edited);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    // A write that names the digest under a second property keeps it too.
+    const named = await bare.client.updateEdge(edge.data.edge.id, {
+      properties: { alt: hash, title: "named twice" },
+      version: edited.data.edge.version,
+    });
+    succeeded(named);
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+  });
+
+  it("keeps a lending digest in an extension lending through later writes by a key that never sent the bytes", async () => {
+    const hash = await upload(
+      "an extension lends whatever later writes keep it",
+    );
+    const item = await noteSaying("a lending namespace's item");
+    const namespace = `lending.${ctx.runId}`;
+    const bare = await keyHolding(
+      { "core.note": "write" },
+      { extension_permissions: { [namespace]: "write" } },
+    );
+    const reader = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
+    succeeded(
+      await client.setItemExtension(item.id, namespace, { cover: hash }),
+    );
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+
+    // An extension is replaced whole, so a write beside the digest names it
+    // again, and one that moves it to another property keeps it.
+    succeeded(
+      await bare.client.setItemExtension(item.id, namespace, {
+        cover: hash,
+        title: "edited beside it",
+      }),
+    );
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+    succeeded(
+      await bare.client.setItemExtension(item.id, namespace, {
+        title: hash,
+        note: "rewritten",
+      }),
+    );
+    expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
+  });
+
   it("lends a digest named by a bulk create only when its writer sent the bytes", async () => {
     await expectDoorCredits(async (writer) => async (hash) => {
       const res = await writer.bulkItems([
