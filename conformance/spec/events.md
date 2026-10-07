@@ -72,6 +72,12 @@ The server MUST give the `cursor` of `stream_cursor` as the id, in decimal, of t
 
 **Tests:** `compliance/events-contract.test.ts › opens with a stream_cursor frame naming the log head`.
 
+### `events/stream-cursor-empty-log`
+
+While the log holds no event, the server MUST give the `cursor` of `stream_cursor` as `"0"`.
+
+**Tests:** `sync/stream-contract.test.ts › announces cursor 0 on a log that holds no event`.
+
 ### `events/stream-cursor-resumable`
 
 When a client resumes from the `cursor` of `stream_cursor`, the server MUST send every event written after the announcement and none written before it.
@@ -230,7 +236,7 @@ When the server retires events from the log, the server MUST retire an event onl
 
 **Reason:** a hole in the middle of the log would let a cursor look valid while the events after it were gone.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/event-retention.test.ts › retires the oldest events together, never leaving a hole`.
 
 ### `events/retention-keeps-newest`
 
@@ -238,7 +244,7 @@ The server MUST NOT retire the newest event the log holds.
 
 **Reason:** the oldest retained id is then always there for a reader to check a cursor against.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/event-retention.test.ts › keeps the newest event however old it is`.
 
 ## Order and exactly once
 
@@ -294,7 +300,7 @@ When a stream has sent or replayed events up to an id, the server MUST NOT send 
 
 If the log holds an event the server can no longer read, then the server MUST NOT replay it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/stream-unreadable-rows.test.ts › does not replay an event it cannot read`.
 
 ### `events/unreadable-row-live-copy`
 
@@ -406,11 +412,11 @@ If `edges` is neither `all` nor `none`, then the server MUST answer `400 validat
 
 ### `events/edges-ignore-type`
 
-While `type` is set, the server MUST send the edge events the credential may read for edges between items of the filtered type.
+While `type` is set and `edges` is not `none`, the server MUST send every edge event the credential may read, whatever the types of the edge's ends.
 
-**Reason:** a filtered stream still carries the graph between the items it shows.
+**Reason:** `type` selects item frames; an edge is selected by `edges` and by what the credential may read.
 
-**Tests:** `sync/stream-contract.test.ts › delivers edge events to a stream filtered by item type`.
+**Tests:** `sync/stream-contract.test.ts › delivers edge events to a stream filtered by item type`, `› sends an edge event under a type filter whatever the types of its ends`.
 
 ## What an event frame carries
 
@@ -420,7 +426,7 @@ The cascade marks `trashed_by_cascade`, `trashed_with`, `restored_with` and `pur
 
 The server MUST send an item event as `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged` or `item.state_changed`, with `event_type` naming it and `item` holding the item.
 
-**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`.
+**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
 ### `events/metadata-event`
 
@@ -448,7 +454,7 @@ When a stream replays an event, the server MUST give the subscriber the frame th
 
 The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.deleted`, with `event_type` naming it and `edge` holding the edge.
 
-**Tests:** `compliance/edge-events.test.ts › SSE delivers edge.created and edge.deleted`, `compliance/events-contract.test.ts › announces edge.updated when an edge's properties change`.
+**Tests:** `compliance/edge-events.test.ts › SSE delivers edge.created and edge.deleted`, `compliance/events-contract.test.ts › announces edge.updated when an edge's properties change`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
 ### `events/edge-source-type`
 
@@ -516,13 +522,13 @@ When a retention job purges an item, the server MUST send `item.purged` for it.
 
 **Reason:** the log's retention and the bin's are set independently, and a device resuming from a cursor inside the log's retention would otherwise keep a row the instance has dropped.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/event-retention.test.ts › announces item.purged for an item the retention job purges`.
 
 ### `events/sweep-purge-edges`
 
 When a retention job purges an item, the server MUST send `edge.deleted` for each edge the item had, with `purged_with` naming the item.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/event-retention.test.ts › announces edge.deleted for each edge of an item the retention job purges, naming the item`.
 
 ### `events/keyed-repeat-silent`
 
@@ -586,6 +592,12 @@ When a key that holds a stream open is revoked, the server MUST end the stream w
 
 **Tests:** `compliance/stream-credential.test.ts › ends with credential_ended when the key is revoked, and sends nothing after`.
 
+### `events/credential-grant-revoked`
+
+When the grant of an app whose access token holds a stream open is revoked, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
+
+**Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended when its app's grant is revoked`.
+
 ### `events/credential-nothing-after`
 
 When a key that holds a stream open is revoked, the server MUST NOT send the stream an event written after the revocation.
@@ -596,7 +608,7 @@ When a key that holds a stream open is revoked, the server MUST NOT send the str
 
 When a key that holds a stream open passes its `expires_at`, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended once its key expires`.
 
 ### `events/credential-token-expired`
 
