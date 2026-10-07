@@ -313,52 +313,51 @@ describe("POST /items/bulk with retype", () => {
 });
 
 describe("POST /items/bulk-actions match caps", () => {
-  it("refuses a bulk action matching more than 10,000 items when it names no max_items", async () => {
-    const tag = `limits-default-cap-${ctx.runId}`;
-    try {
-      await seedTagged(client, DEFAULT_MATCH_CAP + 1, tag);
-      const filter = { tags: [tag] };
+  // Each cap test seeds its rows on a server of its own: tens of thousands of
+  // events on the shared server would hold back every later file's webhook
+  // deliveries while the scheduler walks past them.
+  it(
+    "refuses a bulk action matching more than 10,000 items when it names no max_items",
+    async () => {
+      const server = await bootFreshServer("bulk-limits-default-cap");
+      try {
+        const own = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const tag = `limits-default-cap-${ctx.runId}`;
+        await seedTagged(own, DEFAULT_MATCH_CAP + 1, tag);
+        const filter = { tags: [tag] };
 
-      const refused = await client.bulkAction({
-        action: "transition",
-        state: "archived",
-        filter,
-        dry_run: true,
-      });
-      expect(refused.status).toBe(400);
-      expect(refused.error?.error.code).toBe("bulk_cap_exceeded");
-      expect(refused.error?.error.details).toMatchObject({
-        cap: DEFAULT_MATCH_CAP,
-      });
+        const refused = await own.bulkAction({
+          action: "transition",
+          state: "archived",
+          filter,
+          dry_run: true,
+        });
+        expect(refused.status).toBe(400);
+        expect(refused.error?.error.code).toBe("bulk_cap_exceeded");
+        expect(refused.error?.error.details).toMatchObject({
+          cap: DEFAULT_MATCH_CAP,
+        });
 
-      const named = await client.bulkAction({
-        action: "transition",
-        state: "archived",
-        filter,
-        dry_run: true,
-        max_items: DEFAULT_MATCH_CAP + 1,
-      });
-      expect(named.status, JSON.stringify(named.error)).toBe(200);
-      expect((named.data as BulkActionResponse).matched).toBe(
-        DEFAULT_MATCH_CAP + 1,
-      );
-    } finally {
-      const covers = DEFAULT_MATCH_CAP + 1;
-      await runToCompletion(client, {
-        action: "transition",
-        state: "trashed",
-        filter: { tags: [tag] },
-        max_items: covers,
-      });
-      const purged = await runToCompletion(client, {
-        action: "purge",
-        confirm: "PURGE",
-        filter: { tags: [tag], state: "trashed" },
-        max_items: covers,
-      });
-      expect(purged.succeeded).toBe(covers);
-    }
-  }, 300_000);
+        const named = await own.bulkAction({
+          action: "transition",
+          state: "archived",
+          filter,
+          dry_run: true,
+          max_items: DEFAULT_MATCH_CAP + 1,
+        });
+        expect(named.status, JSON.stringify(named.error)).toBe(200);
+        expect((named.data as BulkActionResponse).matched).toBe(
+          DEFAULT_MATCH_CAP + 1,
+        );
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS + 300_000,
+  );
 
   it(
     "counts a max_items above 50,000 as 50,000",
