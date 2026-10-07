@@ -120,6 +120,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // and the error code census test holds `errors.md` to the codes the server
   // sends.
   [/^conformance\/spec\//, ["workspace", "conformance"]],
+  // The binary's command reference is generated from its command tree, and
+  // a unit test in `marfa-cli` holds the committed file to it. Only the core
+  // checks run the Rust tests.
+  [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks", "core-checks-linux"]],
   // Markdown anywhere else is read only by Prettier, and a package's README
   // by the version check. A fixture is test input and a generated tree is
   // checked file by file, so those fall through to their folder's rule.
