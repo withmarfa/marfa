@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { createHash } from "node:crypto";
 import {
   bytesOf,
   clientsFor,
@@ -81,5 +82,94 @@ describe("a property-update job and the orphan report", () => {
     });
     expect(queued.status, JSON.stringify(queued.error)).toBe(202);
     expect(await reported()).not.toContain(hash);
+  });
+});
+
+describe("a property-update job that has ended", () => {
+  /** The run after a report purges, so this answers what became of the
+   *  bytes once the job could no longer hold them. */
+  async function reportedAfterEnd(hash: string, ended: string) {
+    expect(await reported(), ended).not.toContain(hash);
+    await runJob(operator, "blob-orphans");
+    expect(await reported(), ended).toContain(hash);
+    expect((await operator.downloadBlob(hash)).status, ended).toBe(200);
+    await runJob(operator, "blob-orphans");
+    expect((await operator.downloadBlob(hash)).status, ended).toBe(404);
+  }
+
+  it("reports a blob afresh once the job whose patch named it ends", async () => {
+    const hash = await upload("named by a job that completes");
+    await runJob(operator, "blob-orphans");
+    expect(await reported()).toContain(hash);
+
+    const queued = await working.bulkAction({
+      action: "update_properties",
+      patch: { cover: hash },
+      filter: matchesNothing(),
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await working.pollBulkActionToTerminal(
+      (queued.data as { id: string }).id,
+    );
+    expect(job.status).toBe("completed");
+
+    await reportedAfterEnd(hash, "completed");
+  });
+
+  it("reports a blob afresh once a job canceled as it was enqueued has ended", async () => {
+    const hash = await upload("named by a job that is canceled");
+    await runJob(operator, "blob-orphans");
+    expect(await reported()).toContain(hash);
+
+    const queued = await working.bulkAction({
+      action: "update_properties",
+      patch: { cover: hash },
+      filter: matchesNothing(),
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const id = (queued.data as { id: string }).id;
+    // Enqueueing wakes the worker, so the job may complete before the
+    // cancel reaches it: a cancel on an ended job changes nothing, and
+    // either end leaves the blob unnamed.
+    const canceled = await working.bulkActionCancel(id);
+    expect(canceled.status, JSON.stringify(canceled.error)).toBe(200);
+    const job = await working.pollBulkActionToTerminal(id);
+    expect(["canceled", "completed"]).toContain(job.status);
+
+    await reportedAfterEnd(hash, job.status);
+  });
+});
+
+describe("a property-update job whose patch names a digest no blob holds", () => {
+  it("completes a job whose patch names a digest no blob holds", async () => {
+    const unknown = `sha256:${createHash("sha256")
+      .update(`held by no blob ${crypto.randomUUID()}`)
+      .digest("hex")}`;
+    // The witness: the registry holds no blob under the name.
+    expect((await operator.downloadBlob(unknown)).status).toBe(404);
+
+    const tag = `holds-an-unknown-digest-${crypto.randomUUID()}`;
+    const note = await working.createItem({
+      type: "core.note",
+      source: "blob-store-jobs",
+      properties: { body: "waiting for a digest" },
+      tags: [tag],
+    });
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+
+    const queued = await working.bulkAction({
+      action: "update_properties",
+      patch: { body: unknown },
+      filter: { tags: [tag] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await working.pollBulkActionToTerminal(
+      (queued.data as { id: string }).id,
+    );
+    expect(job.status, job.error ?? "").toBe("completed");
+    expect(job.result).toMatchObject({ matched: 1, succeeded: 1, errored: 0 });
+    expect(
+      (await working.getItem(note.data.item.id)).data.item.properties.body,
+    ).toBe(unknown);
   });
 });
