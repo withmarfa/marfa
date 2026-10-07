@@ -159,9 +159,8 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
         )
     };
     assert_eq!(listed("core.note").unwrap().len(), 1);
-    assert_eq!(listed("").unwrap().len(), 1);
     assert_eq!(listed("core.*").unwrap().len(), 1);
-    for malformed in ["core", "Core.note", "keys.thing"] {
+    for malformed in ["", "core", "Core.note", "keys.thing"] {
         assert!(
             matches!(
                 listed(malformed),
