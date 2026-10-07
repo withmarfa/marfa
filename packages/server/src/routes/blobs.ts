@@ -655,6 +655,19 @@ export function blobRoutes(
       );
     }
 
+    // Only a store with a recorded copy answers: a copy struck or dropped
+    // can linger in its store until its deletion is retried.
+    const holding = new Set(
+      (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    );
+    const stores = blobs.stores.filter((store) => holding.has(store.id));
+    if (stores.length === 0) {
+      throw new MarfaError(
+        ErrorCode.BLOB_NOT_FOUND,
+        "No store holds the bytes of this blob",
+      );
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": record.mime_type,
       "Content-Disposition": blobDisposition(hash),
@@ -664,7 +677,7 @@ export function blobRoutes(
     };
 
     // The registry is the truth for the headers, so a HEAD answers without
-    // touching a store. Hono answers HEAD by running this handler and
+    // reading a store. Hono answers HEAD by running this handler and
     // dropping the body; a stream opened for a body nobody reads would hold
     // its file open, so the stream is never opened.
     if (headOnly) {
@@ -681,7 +694,7 @@ export function blobRoutes(
     }
 
     let read: BlobRead | null = null;
-    for (const store of blobs.stores) {
+    for (const store of stores) {
       read = await store.get(hash, range ?? undefined);
       if (read) break;
     }
