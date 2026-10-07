@@ -12,17 +12,23 @@ import {
   trackEdge,
   trackEdgeType,
   trackKey,
+  trackWebhook,
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createBookmark } from "../../generators/items.js";
-import { readTarGzEntry } from "../../utils/archive.js";
+import { listTarGzEntries, readTarGzEntry } from "../../utils/archive.js";
+import { startReceiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext("compliance", "export"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "export",
+  ));
 });
 
 afterAll(async () => {
@@ -435,5 +441,436 @@ describe("export", () => {
     });
     expect(readable.status).toBe(200);
     expect(readable.data.length).toBeGreaterThan(0);
+  });
+});
+
+/** The parsed lines of one line file of an archive. */
+function archiveLines<T = Record<string, unknown>>(
+  archive: Uint8Array,
+  name: string,
+): T[] {
+  const text = readTarGzEntry(archive, name);
+  expect(text, `${name} is a member of the archive`).not.toBeNull();
+  return (text ?? "")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as T);
+}
+
+function archiveItemIds(archive: Uint8Array): string[] {
+  return archiveLines<{ item: MarfaItem }>(archive, "items.ndjson").map(
+    (line) => line.item.id,
+  );
+}
+
+/** A key of its own under a source of its own, so a row count can be exact. */
+async function writerOfItsOwn(label: string): Promise<{
+  writer: MarfaClient;
+  source: string;
+}> {
+  const source = `${ctx.source}-${label}`;
+  const minted = await client.createKey({
+    label: `export-${label}`,
+    source,
+    permissions: [],
+    type_permissions: { "*": "write" },
+    edge_permissions: { "*": "write" },
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  trackKey(ctx, minted.data.id);
+  return {
+    writer: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+    source,
+  };
+}
+
+async function noteIn(
+  writer: MarfaClient,
+  source: string,
+  extra: Partial<Parameters<MarfaClient["createItem"]>[0]> = {},
+): Promise<string> {
+  const made = await writer.createItem({
+    ...createNote({ source }),
+    ...extra,
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  trackItem(ctx, made.data.item.id);
+  return made.data.item.id;
+}
+
+describe("the states an export carries", () => {
+  /** An active row, an archived one and a trashed one, under a source of its own. */
+  async function oneOfEachState() {
+    const { writer, source } = await writerOfItsOwn(
+      `states-${String(Math.random()).slice(2, 8)}`,
+    );
+    const active = await noteIn(writer, source);
+    const archived = await noteIn(writer, source);
+    expect((await writer.transitionItem(archived, "archived")).ok).toBe(true);
+    const trashed = await noteIn(writer, source);
+    expect((await writer.deleteItem(trashed)).ok).toBe(true);
+    return { source, active, archived, trashed };
+  }
+
+  const idsOf = (raw: string) => parseNdjson(raw).map((l) => l.item.id);
+
+  it("carries every row it holds, the bin included, when it names state=any, on both formats", async () => {
+    const { source, active, archived, trashed } = await oneOfEachState();
+    const stream = await client.exportItems({ source, state: "any" });
+    expect(stream.status).toBe(200);
+    expect(idsOf(stream.data).sort()).toEqual(
+      [active, archived, trashed].sort(),
+    );
+    const archive = await client.exportArchive({ source, state: "any" });
+    expect(archive.status).toBe(200);
+    expect(archiveItemIds(archive.data).sort()).toEqual(
+      [active, archived, trashed].sort(),
+    );
+  });
+
+  it("carries only the rows in the bin when it names state=trashed, on both formats", async () => {
+    const { source, active, archived, trashed } = await oneOfEachState();
+    const stream = await client.exportItems({ source, state: "trashed" });
+    expect(stream.status).toBe(200);
+    expect(idsOf(stream.data)).toEqual([trashed]);
+    const archive = await client.exportArchive({ source, state: "trashed" });
+    expect(archive.status).toBe(200);
+    expect(archiveItemIds(archive.data)).toEqual([trashed]);
+    // The witness: the same source names the other two under their states.
+    expect(
+      idsOf((await client.exportItems({ source, state: "active" })).data),
+    ).toEqual([active]);
+    expect(
+      archiveItemIds(
+        (await client.exportArchive({ source, state: "archived" })).data,
+      ),
+    ).toEqual([archived]);
+  });
+
+  it("carries archived rows and leaves out the bin when an archive names no state", async () => {
+    const { source, active, archived } = await oneOfEachState();
+    const archive = await client.exportArchive({ source });
+    expect(archive.status).toBe(200);
+    expect(archiveItemIds(archive.data).sort()).toEqual(
+      [active, archived].sort(),
+    );
+  });
+});
+
+describe("the archive's contents", () => {
+  const archiveOf = async (source: string): Promise<Uint8Array> => {
+    const archive = await client.exportArchive({ source });
+    expect(archive.status).toBe(200);
+    return archive.data;
+  };
+
+  it("opens an archive with its manifest, and the manifest counts what the archive holds", async () => {
+    const { writer, source } = await writerOfItsOwn("manifest");
+    const bytes = new Uint8Array(Buffer.from(`manifest bytes ${ctx.runId}`));
+    const upload = await writer.uploadBlob(bytes, "text/plain");
+    expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
+    const withBlob = await noteIn(writer, source, {
+      properties: { body: `![bytes](${upload.data.hash})` },
+    });
+    const a = await noteIn(writer, source);
+    const b = await noteIn(writer, source);
+    const edge = await writer.createEdge({
+      source_id: a,
+      target_id: b,
+      edge_type: "about",
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const archive = await archiveOf(source);
+    const entries = listTarGzEntries(archive).map((e) => e.name);
+    expect(entries.slice(0, 4)).toEqual([
+      "manifest.json",
+      "items.ndjson",
+      "edges.ndjson",
+      "types.ndjson",
+    ]);
+    expect(entries.slice(4)).toEqual([`blobs/${upload.data.hash}`]);
+
+    const manifest = JSON.parse(
+      readTarGzEntry(archive, "manifest.json") ?? "{}",
+    ) as Record<string, unknown>;
+    const typeLines = archiveLines(archive, "types.ndjson");
+    expect(manifest).toMatchObject({
+      version: 0,
+      format: "marfa-archive-v0",
+      item_count: 3,
+      edge_count: 1,
+      blob_count: 1,
+      type_count: typeLines.filter((l) => "type" in l).length,
+      edge_type_count: typeLines.filter((l) => "edge_type" in l).length,
+      blobs: {
+        [upload.data.hash]: {
+          mime_type: "text/plain",
+          size_bytes: bytes.length,
+        },
+      },
+    });
+    expect(archiveItemIds(archive).sort()).toEqual([withBlob, a, b].sort());
+    expect(archiveLines(archive, "edges.ndjson")).toHaveLength(1);
+    expect(Number.isNaN(Date.parse(String(manifest.created_at)))).toBe(false);
+  });
+
+  it("holds nothing in an archive but its manifest, items, edges, types and blobs", async () => {
+    // A key, a webhook, a configuration and a tombstone all exist, so what
+    // the archive does not carry is a choice it made.
+    const { writer, source } = await writerOfItsOwn("scope");
+    const receiver = await startReceiver();
+    try {
+      const hook = await client.createWebhook({
+        url: receiver.hookUrl(`scope-${ctx.runId}`),
+        events: ["item.created"],
+      });
+      expect(hook.status, JSON.stringify(hook.error)).toBe(201);
+      trackWebhook(ctx, hook.data.id, client);
+
+      const linked = `user.exportscope${ctx.runId}`;
+      const registered = await client.registerType({
+        id: linked,
+        fields: { vendor_id: { type: "string" } },
+        link_field: "vendor_id",
+      });
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+      const purgedLink = `purged-link-${ctx.runId}`;
+      const made = await writer.createItem({
+        type: linked,
+        source,
+        properties: { vendor_id: purgedLink },
+      });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      expect((await writer.deleteItem(made.data.item.id)).ok).toBe(true);
+      expect((await client.purgeItem(made.data.item.id)).ok).toBe(true);
+      const tombstone = await client.lookupItems({
+        type: linked,
+        links: [purgedLink],
+      });
+      expect(tombstone.data.tombstones).toHaveLength(1);
+      expect((await client.getConfig()).ok).toBe(true);
+      await noteIn(writer, source);
+
+      const archive = await client.exportArchive({ state: "any", source });
+      expect(archive.status).toBe(200);
+      const entries = listTarGzEntries(archive.data);
+      expect(entries.map((e) => e.name).sort()).toEqual([
+        "edges.ndjson",
+        "items.ndjson",
+        "manifest.json",
+        "types.ndjson",
+      ]);
+      const everything = entries.map((e) => e.body.toString("utf8")).join("\n");
+      for (const absent of [
+        hook.data.id,
+        hook.data.secret,
+        receiver.hookUrl(`scope-${ctx.runId}`),
+        purgedLink,
+        apiKey,
+      ]) {
+        expect(everything, absent).not.toContain(absent);
+      }
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  it("carries every registered type and edge type in an archive, whatever its selection and credential reach", async () => {
+    const typeId = `user.exporttypes${ctx.runId}`;
+    const edgeTypeId = `exporttypes.${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: typeId,
+          fields: { label: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const edgeType = await client.registerEdgeType({
+      id: edgeTypeId,
+      cardinality: "many-to-many",
+    });
+    expect(edgeType.ok, JSON.stringify(edgeType.error)).toBe(true);
+    trackEdgeType(ctx, edgeTypeId);
+    const types = await client.listTypes();
+    const edgeTypes = await client.listEdgeTypes();
+    expect(types.data.next_cursor).toBeNull();
+    expect(edgeTypes.data.next_cursor).toBeNull();
+
+    // A selection that holds no row of the registered type, under a key that
+    // reads one type only.
+    const narrow = await client.createKey({
+      label: "export-types-narrow",
+      source: `${ctx.source}-types-narrow`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+    });
+    expect(narrow.ok, JSON.stringify(narrow.error)).toBe(true);
+    trackKey(ctx, narrow.data.id);
+    const reader = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.data.key,
+    });
+    const nothing = { type: "core.note", source: `no-rows-${ctx.runId}` };
+
+    for (const credential of [client, reader]) {
+      const archive = await credential.exportArchive(nothing);
+      expect(archive.status).toBe(200);
+      expect(archiveItemIds(archive.data)).toEqual([]);
+      const lines = archiveLines<{
+        type?: { id: string };
+        edge_type?: { id: string };
+      }>(archive.data, "types.ndjson");
+      const carriedTypes = lines.flatMap((l) => (l.type ? [l.type.id] : []));
+      const carriedEdgeTypes = lines.flatMap((l) =>
+        l.edge_type ? [l.edge_type.id] : [],
+      );
+      expect(carriedTypes).toContain(typeId);
+      expect(carriedEdgeTypes).toContain(edgeTypeId);
+      // The build ships its own `core.` and `system.` types on every boot, so
+      // what the archive carries is what was registered beside them, and the shipped
+      // edge types likewise.
+      for (const registered of types.data.data.filter(
+        (t) => !/^(core|system)\./.test(t.id),
+      )) {
+        expect(carriedTypes, registered.id).toContain(registered.id);
+      }
+      for (const registered of edgeTypes.data.data.filter((e) => !e.shipped)) {
+        expect(carriedEdgeTypes, registered.id).toContain(registered.id);
+      }
+      const manifest = JSON.parse(
+        readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+      ) as { type_count: number; edge_type_count: number };
+      expect(manifest.type_count).toBe(carriedTypes.length);
+      expect(manifest.edge_type_count).toBe(carriedEdgeTypes.length);
+    }
+  });
+});
+
+describe("an archive is the selection as it stood when its headers arrived", () => {
+  /**
+   * Requests an archive of `source`, runs `afterHeaders` once the response has
+   * begun and before any of its body is read, then reads the body. The server
+   * answers only once it has read the whole selection, so what `afterHeaders`
+   * writes comes after the selection and cannot be in it.
+   */
+  async function archiveWrittenToAfterHeaders(
+    source: string,
+    afterHeaders: () => Promise<void>,
+  ): Promise<Uint8Array> {
+    const response = await fetch(
+      `${apiUrl}/export?format=archive&source=${encodeURIComponent(source)}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    expect(response.status).toBe(200);
+    await afterHeaders();
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  const titleOf = (archive: Uint8Array, id: string): unknown =>
+    archiveLines<{ item: MarfaItem }>(archive, "items.ndjson").find(
+      (line) => line.item.id === id,
+    )?.item.properties.title;
+
+  it("counts every row the archive holds in its manifest when the headers arrive", async () => {
+    const { writer, source } = await writerOfItsOwn("selection");
+    const a = await noteIn(writer, source);
+    const b = await noteIn(writer, source);
+    const edge = await writer.createEdge({
+      source_id: a,
+      target_id: b,
+      edge_type: "about",
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    let writtenAfter = "";
+    const archive = await archiveWrittenToAfterHeaders(source, async () => {
+      writtenAfter = await noteIn(writer, source);
+    });
+    const manifest = JSON.parse(
+      readTarGzEntry(archive, "manifest.json") ?? "{}",
+    ) as { item_count: number; edge_count: number };
+    expect(manifest.item_count).toBe(2);
+    expect(manifest.edge_count).toBe(1);
+    expect(archiveItemIds(archive).sort()).toEqual([a, b].sort());
+    expect(archiveLines(archive, "edges.ndjson")).toHaveLength(1);
+    // The witness: a later export carries the row the first one did not.
+    const later = await client.exportArchive({ source });
+    expect(archiveItemIds(later.data)).toContain(writtenAfter);
+  });
+
+  it("carries a row as it stood when the export read it, whatever is written to it after the headers", async () => {
+    const { writer, source } = await writerOfItsOwn("as-read");
+    const id = await noteIn(writer, source, {
+      properties: { title: "as read", body: "before" },
+    });
+    const archive = await archiveWrittenToAfterHeaders(source, async () => {
+      const read = await writer.getItem(id);
+      const patched = await writer.updateItem(id, {
+        version: read.data.item.version,
+        properties: { title: "written after the headers" },
+      });
+      expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
+    });
+    const [line] = archiveLines<{ item: MarfaItem }>(archive, "items.ndjson");
+    expect(line?.item.id).toBe(id);
+    expect(titleOf(archive, id)).toBe("as read");
+    expect(line?.item.version).toBe(1);
+    // The witness: the write landed, and a later export carries it.
+    const later = await client.exportArchive({ source });
+    expect(titleOf(later.data, id)).toBe("written after the headers");
+  });
+
+  it("does not carry an item created after the headers arrived", async () => {
+    const { writer, source } = await writerOfItsOwn("created-after");
+    const before = await noteIn(writer, source);
+    let after = "";
+    const archive = await archiveWrittenToAfterHeaders(source, async () => {
+      after = await noteIn(writer, source);
+    });
+    expect(archiveItemIds(archive)).toEqual([before]);
+    const later = await client.exportArchive({ source });
+    expect(archiveItemIds(later.data).sort()).toEqual([before, after].sort());
+  });
+
+  it("carries an edge created before the export began, and not one created after its headers arrived", async () => {
+    const { writer, source } = await writerOfItsOwn("edge-after");
+    const a = await noteIn(writer, source);
+    const b = await noteIn(writer, source);
+    const early = await writer.createEdge({
+      source_id: a,
+      target_id: b,
+      edge_type: "about",
+    });
+    expect(early.ok, JSON.stringify(early.error)).toBe(true);
+    trackEdge(ctx, early.data.edge.id);
+
+    let lateId = "";
+    const archive = await archiveWrittenToAfterHeaders(source, async () => {
+      const late = await writer.createEdge({
+        source_id: b,
+        target_id: a,
+        edge_type: "about",
+      });
+      expect(late.ok, JSON.stringify(late.error)).toBe(true);
+      trackEdge(ctx, late.data.edge.id);
+      lateId = late.data.edge.id;
+    });
+    const carried = archiveLines<{ edge: MarfaEdge }>(
+      archive,
+      "edges.ndjson",
+    ).map((line) => line.edge.id);
+    expect(carried).toEqual([early.data.edge.id]);
+    // The witness: both endpoints were carried, so the later edge was
+    // eligible and a later export holds it.
+    const later = await client.exportArchive({ source });
+    expect(
+      archiveLines<{ edge: MarfaEdge }>(later.data, "edges.ndjson")
+        .map((line) => line.edge.id)
+        .sort(),
+    ).toEqual([early.data.edge.id, lateId].sort());
   });
 });

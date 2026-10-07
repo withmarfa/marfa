@@ -14,7 +14,13 @@
 import { describe, it, expect } from "vitest";
 import { randomBytes } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { blobHash, itemsArchive, readTarGzEntry, tarGz } from "./archive.js";
+import {
+  blobHash,
+  itemsArchive,
+  listTarGzEntries,
+  readTarGzEntry,
+  tarGz,
+} from "./archive.js";
 
 /** The same archive with the first entry's size field written differently. */
 function rewriteFirstSize(archive: Uint8Array, field: string): Uint8Array {
@@ -70,6 +76,22 @@ describe("readTarGzEntry", () => {
     expect(() => readTarGzEntry(tar, "manifest.json")).toThrow(
       /unreadable size/,
     );
+  });
+});
+
+describe("listTarGzEntries", () => {
+  it("lists every member in the order the archive carries them", () => {
+    expect(listTarGzEntries(tarGz(three)).map((e) => e.name)).toEqual([
+      "manifest.json",
+      "items.ndjson",
+      "edges.ndjson",
+    ]);
+  });
+
+  it("reads each member's body, including one that fills a block and one that is empty", () => {
+    expect(
+      listTarGzEntries(tarGz(three)).map((e) => e.body.toString("utf8")),
+    ).toEqual(['{"version":2}', "x".repeat(512), ""]);
   });
 });
 
