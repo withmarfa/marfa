@@ -828,9 +828,9 @@ describe("the scripted answers match the server's", () => {
       {
         same: ["error.code"],
         shape: ["error.message"],
-        // The server says the row is in the bin (`errors.md` 12). No device
-        // reads it yet; the device change that keeps a refused write where
-        // the person can get it back models it here when it starts to.
+        // The server says the row is in the bin (`errors/bin-trashed`). No
+        // device reads it yet; the device change that keeps a refused write
+        // where the person can get it back models it here when it starts to.
         absent: ["error.details"],
       },
     );
@@ -1349,9 +1349,9 @@ describe("the scripted answers match the server's", () => {
       {
         same: ["error.code"],
         shape: ["error.message"],
-        // The grant the key lacks (`errors.md` 11). No device reads it yet;
-        // the device change that holds a write a narrowed key refused models
-        // it here when it starts to.
+        // The grant the key lacks (`errors/grant-type`). No device reads it
+        // yet; the device change that holds a write a narrowed key refused
+        // models it here when it starts to.
         absent: ["error.details"],
       },
     );
@@ -2086,8 +2086,8 @@ describe("the scripted answers match the server's", () => {
           "error.details.edge_type",
           "error.details.required",
         ],
-        // The grant the key lacks (`errors.md` 11), for the reason the type
-        // refusal above gives.
+        // The grant the key lacks (`errors/edge-denied-details`), for the
+        // reason the type refusal above gives.
         absent: ["error.details.grant"],
       },
     );

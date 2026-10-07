@@ -39362,9 +39362,6 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
@@ -39430,9 +39427,6 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },

@@ -104,7 +104,7 @@ export const HARNESS_CODES: Readonly<Record<string, string>> = {
   request_too_large:
     "the body cap, drawn on the doors whose own chapter says what it means there",
   write_contention:
-    "the database's write lock, drawn by holding it from outside the server on the doors `errors.md` 10 names",
+    "the database's write lock, drawn by holding it from outside the server on the doors `errors/contention` names",
   internal_error:
     "a fault the server holds no refusal for, which no request provokes; drawn once, on `GET /audit`, by renaming a table in the fixture server's own file",
 };

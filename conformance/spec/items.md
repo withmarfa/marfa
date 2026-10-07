@@ -862,7 +862,7 @@ When `GET /items/{id}` names an archived item the key may read, the server MUST 
 
 ### `items/write-in-bin`
 
-If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors.md` 12).
+If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors/bin-trashed`).
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
@@ -1554,7 +1554,7 @@ If a metadata, tag or extension operation names an item that does not exist, the
 
 ### `items/metadata-write-grant`
 
-If a key that may read an item's type but not write it writes the item's tags or extensions, then the server MUST answer `403 type_not_permitted` with `details.grant` naming the type and the level it lacks (`errors.md` 11).
+If a key that may read an item's type but not write it writes the item's tags or extensions, then the server MUST answer `403 type_not_permitted` with `details.grant` naming the type and the level it lacks (`errors/grant-type`).
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `compliance/extensions.test.ts › refuses a replace and a delete to a key that may read the item's type and not write it`.
 

@@ -43,8 +43,10 @@
  * (`routes/events.ts`), both export shapes (`routes/export.ts` and
  * `routes/export-archive.ts`), the blob
  * bytes on both of their doors and on `HEAD` (`routes/blobs.ts`, one
- * function serving the bearer door and the link door), and a replayed answer
- * served from the idempotency store (`middleware/idempotency.ts`). The last
+ * function serving the bearer door and the link door), a replayed answer
+ * served from the idempotency store (`middleware/idempotency.ts`), and the
+ * sign-in library's answer to `POST /auth/oauth2/register`, the one door of
+ * its that the document publishes (`app.ts`). The idempotency replay
  * is the one a reader is most likely to miss, because it is served from the
  * middleware rather than from a route: a replay is still an answer to an API
  * request, and a caller correlating it with a log line needs the same id as

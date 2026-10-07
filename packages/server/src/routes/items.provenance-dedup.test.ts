@@ -10,6 +10,7 @@
  * re-sync, permanently, because two dedup checks on the same write path
  * disagreed about state.
  */
+import { NaturalKeyHeld } from "../storage/interface.js";
 import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -83,7 +84,7 @@ describe("provenance dedup is scoped, not instance-wide", () => {
 });
 
 describe("the same upstream record", () => {
-  it("refuses a duplicate at the store", async () => {
+  it("refuses a duplicate at the store, as a refusal no door answers", async () => {
     const shared = { source: "feed-inner", source_id: "upstream-inner" };
     await itemWrites(ctx.storage).create({
       type: "core.note",
@@ -96,7 +97,7 @@ describe("the same upstream record", () => {
         properties: { title: "two", body: "x" },
         ...shared,
       }),
-    ).rejects.toThrow(/already exists/);
+    ).rejects.toBeInstanceOf(NaturalKeyHeld);
   });
 });
 

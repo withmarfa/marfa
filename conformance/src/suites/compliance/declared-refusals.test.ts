@@ -22,6 +22,8 @@ import {
 import {
   expectMatchesSchema,
   publishedOperations,
+  servedDocument,
+  validatorFor,
 } from "../../utils/openapi.js";
 
 /**
@@ -859,5 +861,55 @@ describe("a query key no door declares", () => {
     });
     if (reader.status !== 400) await reader.body?.cancel();
     expect(reader.status).toBe(400);
+  });
+});
+
+describe("the write contention a door can meet", () => {
+  it("is declared 503 write_contention on every operation that takes a credential, and on registration", async () => {
+    const document = await servedDocument();
+    const contention = {
+      error: {
+        code: "write_contention",
+        message: "The database was busy.",
+        details: { budget_ms: 5000 },
+      },
+    };
+    const notContention = {
+      error: { code: "item_not_found", message: "Not found." },
+    };
+
+    const takingACredential: string[] = [];
+    const missing: string[] = [];
+    const wrongShape: string[] = [];
+    for (const [path, item] of Object.entries(document.paths)) {
+      for (const [method, operation] of Object.entries(item)) {
+        if (!["get", "post", "put", "patch", "delete"].includes(method)) {
+          continue;
+        }
+        const takes = (operation as { security?: unknown[] }).security;
+        const door = `${method.toUpperCase()} ${path}`;
+        if (
+          (takes === undefined || takes.length === 0) &&
+          path !== "/auth/oauth2/register"
+        ) {
+          continue;
+        }
+        takingACredential.push(door);
+        const declared = operation.responses?.["503"];
+        const schema = declared?.content?.["application/json"]?.schema;
+        if (schema === undefined) {
+          missing.push(door);
+          continue;
+        }
+        const validate = validatorFor(schema, document);
+        if (!validate(contention) || validate(notContention)) {
+          wrongShape.push(door);
+        }
+      }
+    }
+    expect(takingACredential.length).toBeGreaterThan(90);
+    expect(takingACredential).toContain("POST /auth/oauth2/register");
+    expect(missing).toEqual([]);
+    expect(wrongShape).toEqual([]);
   });
 });

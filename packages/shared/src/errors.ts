@@ -43,7 +43,6 @@ export enum ErrorCode {
   TYPE_NOT_PERMITTED = "type_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
-  DUPLICATE_SOURCE = "duplicate_source",
   INVALID_CLIENT = "invalid_client",
   RATE_LIMITED = "rate_limited",
   CONFLICT = "conflict",
@@ -84,16 +83,13 @@ export enum ErrorCode {
   TYPE_CHAIN_UNRESOLVABLE = "type_chain_unresolvable",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
-  /** No key row carries this id. */
   API_KEY_NOT_FOUND = "api_key_not_found",
-  /** No grant row carries this id. */
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
   /**
    * The instance already has an owner, so `POST /owner` has nothing to
    * create. `GET /owner` says who.
    */
   OWNER_EXISTS = "owner_exists",
-  /** The instance has no owner yet; `POST /owner` creates one. */
   OWNER_NOT_FOUND = "owner_not_found",
   /**
    * The request body exceeded the global JSON-write size cap
@@ -110,10 +106,10 @@ export enum ErrorCode {
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
   /**
-   * A child type registration redeclares a field that is already defined
-   * by an ancestor in its parent chain. Inherited fields keep their
-   * parent-type meaning in every descendant; redefining breaks the
-   * generic-reader contract. See `validateTypeSchema`.
+   * A child type redeclares a field an ancestor defines, with another
+   * shape. Inherited fields keep their parent-type meaning in every
+   * descendant; reshaping one breaks the generic-reader contract. See
+   * `validateTypeSchema`.
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
   /**
@@ -138,7 +134,6 @@ export enum ErrorCode {
   // ---------------------------------------------------------------------
   // Edge error codes
   // ---------------------------------------------------------------------
-  /** Edge creation / update violated cardinality or type constraints. */
   EDGE_CONSTRAINT_VIOLATION = "edge_constraint_violation",
   /**
    * An edge creation would close a cycle: a self-loop on any edge type, or a
@@ -146,20 +141,14 @@ export enum ErrorCode {
    * acyclic by construction.
    */
   EDGE_CYCLE = "edge_cycle",
-  /** The referenced edge_type is not in the core or custom registry. */
   EDGE_TYPE_NOT_FOUND = "edge_type_not_found",
-  /** The caller lacks the required edge-type permission for this verb. */
   EDGE_PERMISSION_DENIED = "edge_permission_denied",
-  /** The referenced edge id does not exist. */
   EDGE_NOT_FOUND = "edge_not_found",
   // ---------------------------------------------------------------------
   // Bulk operations
   // ---------------------------------------------------------------------
-  /** A destructive bulk action was called without the required `confirm` literal. */
   BULK_CONFIRMATION_REQUIRED = "bulk_confirmation_required",
-  /** A bulk action matched more items than `max_items` permits. */
   BULK_CAP_EXCEEDED = "bulk_cap_exceeded",
-  /** An atomic bulk upsert failed on one item and rolled back the whole batch. */
   BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
   /**
    * A referenced bulk-action job id does not exist or is not visible to
@@ -182,14 +171,11 @@ export enum ErrorCode {
   /** The housekeeping job is in the middle of a run, and a housekeeping job
    *  never overlaps itself. */
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
-  /** `GET /connectors/{id}` and the doors under it: no such registration. */
   CONNECTOR_NOT_FOUND = "connector_not_found",
   /** Another process holds the connector's registration until
    *  `details.expires_at`. */
   CONNECTOR_HELD = "connector_held",
-  /** An endpoint id the connector's registration does not carry. */
   ENDPOINT_NOT_FOUND = "endpoint_not_found",
-  /** A delivery id the connector's registration does not carry. */
   DELIVERY_NOT_FOUND = "delivery_not_found",
   /**
    * An inbound endpoint cannot take a delivery now: its connector's backlog
@@ -197,7 +183,6 @@ export enum ErrorCode {
    * Retryable: the sender records a failure it can deliver again.
    */
   INBOUND_UNAVAILABLE = "inbound_unavailable",
-  /** A body that did not finish arriving within the door's deadline. */
   REQUEST_TIMEOUT = "request_timeout",
   /**
    * Every streaming connection slot is in use and none freed within the
@@ -306,87 +291,364 @@ export enum ErrorCode {
   IDEMPOTENCY_RESULT_NOT_RETAINED = "idempotency_result_not_retained",
 }
 
-/** Maps each error code to its HTTP status code. */
-const STATUS_MAP: Record<ErrorCode, number> = {
-  [ErrorCode.NOT_FOUND]: 404,
-  [ErrorCode.ITEM_NOT_FOUND]: 404,
-  [ErrorCode.BLOB_NOT_FOUND]: 404,
-  [ErrorCode.VALIDATION_ERROR]: 400,
-  [ErrorCode.MISSING_REQUIRED_FIELD]: 400,
-  [ErrorCode.UNKNOWN_TYPE]: 400,
-  [ErrorCode.INVALID_ID]: 400,
-  [ErrorCode.VERSION_CONFLICT]: 409,
-  [ErrorCode.READ_VIEW_CHANGED]: 409,
-  [ErrorCode.ANCESTOR_UNAVAILABLE]: 409,
-  [ErrorCode.UNAUTHORIZED]: 401,
-  [ErrorCode.FORBIDDEN]: 403,
-  [ErrorCode.TYPE_NOT_PERMITTED]: 403,
-  [ErrorCode.INVALID_TRANSITION]: 400,
-  [ErrorCode.TYPE_NOT_FOUND]: 404,
-  [ErrorCode.DUPLICATE_SOURCE]: 409,
-  [ErrorCode.INVALID_CLIENT]: 400,
-  [ErrorCode.RATE_LIMITED]: 429,
-  [ErrorCode.CONFLICT]: 409,
-  [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
-  [ErrorCode.TYPE_IN_USE]: 409,
-  [ErrorCode.EDGE_TYPE_IN_USE]: 409,
-  [ErrorCode.TYPE_HAS_SUBTYPES]: 409,
-  [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: 409,
-  [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
-  [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
-  [ErrorCode.API_KEY_NOT_FOUND]: 404,
-  [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,
-  [ErrorCode.OWNER_EXISTS]: 409,
-  [ErrorCode.OWNER_NOT_FOUND]: 404,
-  [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
-  [ErrorCode.REQUEST_TOO_LARGE]: 413,
-  [ErrorCode.RANGE_NOT_SATISFIABLE]: 416,
-  [ErrorCode.INVALID_PROPERTIES]: 400,
-  [ErrorCode.INVALID_SCHEMA]: 400,
-  [ErrorCode.INHERITANCE_VIOLATION]: 400,
-  [ErrorCode.PROPERTY_SHADOWS_FIELD]: 400,
-  [ErrorCode.EDGE_CONSTRAINT_VIOLATION]: 400,
-  [ErrorCode.EDGE_CYCLE]: 400,
-  [ErrorCode.EDGE_TYPE_NOT_FOUND]: 404,
-  [ErrorCode.EDGE_PERMISSION_DENIED]: 403,
-  [ErrorCode.EDGE_NOT_FOUND]: 404,
-  [ErrorCode.BULK_CONFIRMATION_REQUIRED]: 400,
-  [ErrorCode.BULK_CAP_EXCEEDED]: 400,
-  [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
-  [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
-  [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
-  [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
-  [ErrorCode.ID_REUSED]: 409,
-  [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
-  [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
-  [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
-  [ErrorCode.CONNECTOR_HELD]: 409,
-  [ErrorCode.ENDPOINT_NOT_FOUND]: 404,
-  [ErrorCode.DELIVERY_NOT_FOUND]: 404,
-  [ErrorCode.INBOUND_UNAVAILABLE]: 503,
-  [ErrorCode.REQUEST_TIMEOUT]: 408,
-  [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
-  [ErrorCode.WRITE_CONTENTION]: 503,
-  [ErrorCode.SOURCE_ID_CONFLICT]: 409,
-  [ErrorCode.LINK_TAKEN]: 409,
-  [ErrorCode.TYPE_MISMATCH]: 409,
+/**
+ * What a client is told about a code the server can answer: the status it
+ * comes with and the condition it stands for.
+ *
+ * This is the one place a code, its status and its meaning are tied
+ * together. `httpStatus` reads it, and the contract's table of codes
+ * (`conformance/spec/errors.md`) is written from it, so neither can say
+ * something this does not.
+ */
+export interface ErrorCodeInfo {
+  /** The HTTP status the code answers with. */
+  status: number;
+  /**
+   * What the table shows in place of `status`, for a code whose status is
+   * not its own.
+   */
+  statusLabel?: string;
+  /**
+   * The condition, as a client meets it: what is the case
+   * when this code comes back, not which line of the server throws it.
+   */
+  summary: string;
+}
+
+/**
+ * The code of a fault nothing else named a refusal for. It is not a member
+ * of `ErrorCode` because nothing throws it: the error handler answers it for
+ * an error no code was given to.
+ */
+export const INTERNAL_ERROR = "internal_error";
+
+/** Every code the server can answer: the enum and `internal_error`. */
+export type AnsweredCode = ErrorCode | typeof INTERNAL_ERROR;
+
+/**
+ * `bulk_atomic_rollback` is the one code whose status is not its own: a page
+ * is refused for the reason the entry inside it was refused, and the outer
+ * code says only that the page went back. The `status` here is what the
+ * server falls back on.
+ */
+export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
+  [ErrorCode.NOT_FOUND]: {
+    status: 404,
+    summary: "The request names a path or address the server does not serve.",
+  },
+  [ErrorCode.ITEM_NOT_FOUND]: {
+    status: 404,
+    summary:
+      "No item the caller may read has this id: it does not exist, is in the bin, or is of a type the caller may not read.",
+  },
+  [ErrorCode.BLOB_NOT_FOUND]: {
+    status: 404,
+    summary:
+      "No blob the caller may read has this hash, or no attached store holds its bytes.",
+  },
+  [ErrorCode.VALIDATION_ERROR]: {
+    status: 400,
+    summary:
+      "The request is malformed or breaks a rule that no other code names, such as a bad body, parameter, cursor or limit.",
+  },
+  [ErrorCode.MISSING_REQUIRED_FIELD]: {
+    status: 400,
+    summary:
+      "A field the operation requires is absent. `details.field` names it.",
+  },
+  [ErrorCode.UNKNOWN_TYPE]: {
+    status: 400,
+    summary: "A well-formed type identifier names a type nobody registered.",
+  },
+  [ErrorCode.INVALID_ID]: {
+    status: 400,
+    summary: "An item, edge or folder id is not a well-formed identifier.",
+  },
+  [ErrorCode.VERSION_CONFLICT]: {
+    status: 409,
+    summary:
+      "The write names a version that is no longer the current one. The answer carries the current state.",
+  },
+  [ErrorCode.READ_VIEW_CHANGED]: {
+    status: 409,
+    summary:
+      "A conditional copy read or copy stream carries a proof for a read view that has since changed. Rebuild the working copy.",
+  },
+  [ErrorCode.ANCESTOR_UNAVAILABLE]: {
+    status: 409,
+    summary:
+      "The write names a version that has no snapshot the caller may merge against.",
+  },
+  [ErrorCode.UNAUTHORIZED]: {
+    status: 401,
+    summary:
+      "The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.",
+  },
+  [ErrorCode.FORBIDDEN]: {
+    status: 403,
+    summary:
+      "The credential is valid but lacks a standing permission, reach or origin the operation needs.",
+  },
+  [ErrorCode.TYPE_NOT_PERMITTED]: {
+    status: 403,
+    summary:
+      "The credential holds no grant on the type at the level the operation asks for.",
+  },
+  [ErrorCode.INVALID_TRANSITION]: {
+    status: 400,
+    summary:
+      "The move is not one the current state of the item or folder allows.",
+  },
+  [ErrorCode.TYPE_NOT_FOUND]: {
+    status: 404,
+    summary: "No registered type has this identifier.",
+  },
+  [ErrorCode.INVALID_CLIENT]: {
+    status: 400,
+    summary: "The device sign-in page names a client that is not registered.",
+  },
+  [ErrorCode.RATE_LIMITED]: {
+    status: 429,
+    summary:
+      "The credential, or an inbound endpoint, is past its request cap for the current window.",
+  },
+  [ErrorCode.CONFLICT]: {
+    status: 409,
+    summary:
+      "The request collides with the current state in a way that no other code names.",
+  },
+  [ErrorCode.TYPE_ALREADY_EXISTS]: {
+    status: 409,
+    summary: "A type is already registered under this identifier.",
+  },
+  [ErrorCode.TYPE_IN_USE]: {
+    status: 409,
+    summary:
+      "Items of the type still exist, the bin included, and the delete did not ask to force.",
+  },
+  [ErrorCode.EDGE_TYPE_IN_USE]: {
+    status: 409,
+    summary:
+      "Edges of the edge type still exist, and the delete did not ask to force.",
+  },
+  [ErrorCode.TYPE_HAS_SUBTYPES]: {
+    status: 409,
+    summary:
+      "Another type declares this type as its parent. Forcing the delete does not override this.",
+  },
+  [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: {
+    status: 409,
+    summary:
+      "The stored parent chain of a type is circular or too deep to resolve. `PUT /types/{id}` still accepts a corrected schema.",
+  },
+  [ErrorCode.CORE_TYPE_IMMUTABLE]: {
+    status: 403,
+    summary:
+      "The type ships with the platform, so it cannot be replaced or deleted.",
+  },
+  [ErrorCode.WEBHOOK_NOT_FOUND]: {
+    status: 404,
+    summary: "No webhook subscription this credential registered has this id.",
+  },
+  [ErrorCode.API_KEY_NOT_FOUND]: {
+    status: 404,
+    summary:
+      "No key the caller can reach has this id, or the key was already revoked.",
+  },
+  [ErrorCode.OAUTH_GRANT_NOT_FOUND]: {
+    status: 404,
+    summary: "No app grant has this id.",
+  },
+  [ErrorCode.OWNER_EXISTS]: {
+    status: 409,
+    summary: "The instance already has an owner.",
+  },
+  [ErrorCode.OWNER_NOT_FOUND]: {
+    status: 404,
+    summary: "The instance has no owner yet.",
+  },
+  [ErrorCode.COMPATIBLE_WITH_VIOLATION]: {
+    status: 422,
+    summary:
+      "A `compatible_with` declaration names a target that does not exist, or leaves out a field the target requires.",
+  },
+  [ErrorCode.REQUEST_TOO_LARGE]: {
+    status: 413,
+    summary: "The request body is over the cap for its operation.",
+  },
+  [ErrorCode.RANGE_NOT_SATISFIABLE]: {
+    status: 416,
+    summary:
+      "A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.",
+  },
+  [ErrorCode.INVALID_PROPERTIES]: {
+    status: 400,
+    summary: "An item's properties break the schema of its type.",
+  },
+  [ErrorCode.INVALID_SCHEMA]: {
+    status: 400,
+    summary: "A type or edge type carries a schema the server cannot accept.",
+  },
+  [ErrorCode.INHERITANCE_VIOLATION]: {
+    status: 400,
+    summary:
+      "A type changes the shape of a field it inherits, or a parent gains a field that a child declares with another shape.",
+  },
+  [ErrorCode.PROPERTY_SHADOWS_FIELD]: {
+    status: 400,
+    summary:
+      "A type declares a field with the name of a first-class item field.",
+  },
+  [ErrorCode.EDGE_CONSTRAINT_VIOLATION]: {
+    status: 400,
+    summary:
+      "An edge write breaks a constraint of its edge type or of the link graph, such as cardinality, endpoint types or a duplicate.",
+  },
+  [ErrorCode.EDGE_CYCLE]: {
+    status: 400,
+    summary:
+      "An edge would close a cycle: a self-loop on any edge type, or a loop on an edge type that must stay acyclic.",
+  },
+  [ErrorCode.EDGE_TYPE_NOT_FOUND]: {
+    status: 404,
+    summary: "No edge type is registered under this identifier.",
+  },
+  [ErrorCode.EDGE_PERMISSION_DENIED]: {
+    status: 403,
+    summary:
+      "The credential lacks the edge-type permission the operation needs.",
+  },
+  [ErrorCode.EDGE_NOT_FOUND]: {
+    status: 404,
+    summary: "No edge the caller may read has this id.",
+  },
+  [ErrorCode.BULK_CONFIRMATION_REQUIRED]: {
+    status: 400,
+    summary:
+      "A destructive bulk action was sent without its confirmation literal.",
+  },
+  [ErrorCode.BULK_CAP_EXCEEDED]: {
+    status: 400,
+    summary: "A bulk action matched more items than its `max_items` allows.",
+  },
+  [ErrorCode.BULK_ATOMIC_ROLLBACK]: {
+    status: 400,
+    statusLabel: "The inner refusal's",
+    summary:
+      "An atomic bulk page failed on one entry, so nothing was written. `details` names the entry and the refusal.",
+  },
+  [ErrorCode.BULK_JOB_NOT_FOUND]: {
+    status: 404,
+    summary: "No bulk action job the caller can see has this id.",
+  },
+  [ErrorCode.BLOB_LOCATION_NOT_FOUND]: {
+    status: 404,
+    summary: "The named store holds no copy of the blob, or is not attached.",
+  },
+  [ErrorCode.COPIES_BELOW_MINIMUM]: {
+    status: 409,
+    summary:
+      "Dropping the copy would leave fewer live copies than the instance's minimum.",
+  },
+  [ErrorCode.ID_REUSED]: {
+    status: 409,
+    summary: "A caller-minted id already names a different item or edge.",
+  },
+  [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: {
+    status: 404,
+    summary:
+      "The instance runs no housekeeping job of this name, or has switched it off.",
+  },
+  [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: {
+    status: 409,
+    summary: "The housekeeping job is in the middle of a run.",
+  },
+  [ErrorCode.CONNECTOR_NOT_FOUND]: {
+    status: 404,
+    summary: "No connector registration the credential may read has this id.",
+  },
+  [ErrorCode.CONNECTOR_HELD]: {
+    status: 409,
+    summary:
+      "Another process holds the connector's registration until `details.expires_at`.",
+  },
+  [ErrorCode.ENDPOINT_NOT_FOUND]: {
+    status: 404,
+    summary: "The connector's registration has no endpoint with this id.",
+  },
+  [ErrorCode.DELIVERY_NOT_FOUND]: {
+    status: 404,
+    summary: "The connector's registration has no delivery with this id.",
+  },
+  [ErrorCode.INBOUND_UNAVAILABLE]: {
+    status: 503,
+    summary:
+      "An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.",
+  },
+  [ErrorCode.REQUEST_TIMEOUT]: {
+    status: 408,
+    summary:
+      "An inbound webhook delivery did not finish arriving before its deadline.",
+  },
+  [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: {
+    status: 503,
+    summary:
+      "The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.",
+  },
+  [ErrorCode.WRITE_CONTENTION]: {
+    status: 503,
+    summary:
+      "A write could not get the store's write lock within the busy budget. Retry it unchanged.",
+  },
+  [ErrorCode.SOURCE_ID_CONFLICT]: {
+    status: 409,
+    summary:
+      "A change to `source_id` names a natural key that another item already holds under the same source.",
+  },
+  [ErrorCode.LINK_TAKEN]: {
+    status: 409,
+    summary:
+      "A write would give an item a link that another item of its type holds.",
+  },
+  [ErrorCode.TYPE_MISMATCH]: {
+    status: 409,
+    summary:
+      "The request declares a type other than the type of the item it resolved.",
+  },
   // A genuine 409: the key is held by a request in flight, or contention
   // kept it changing hands. Something else got there first, which is
   // exactly what a client branching on 409 expects to mean.
-  [ErrorCode.IDEMPOTENCY_KEY_IN_FLIGHT]: 409,
+  [ErrorCode.IDEMPOTENCY_KEY_IN_FLIGHT]: {
+    status: 409,
+    summary:
+      "An `Idempotency-Key` is held by another request, or kept changing hands. Retry.",
+  },
   // 422 rather than 409: the request is refused because of what the caller
   // sent, not because of what the server holds, and a client branching on
   // 409 to mean "somebody else got there first" must not catch this.
-  [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 422,
+  [ErrorCode.IDEMPOTENCY_KEY_REUSED]: {
+    status: 422,
+    summary:
+      "An `Idempotency-Key` is sent with a different request than the one it first named.",
+  },
   // 422 for the same reason. Nothing got there first: the record exists,
   // the write is not repeated, and the only thing missing is the body, so a
   // client that reads 409 as a conflict would act on this exactly wrongly.
-  [ErrorCode.IDEMPOTENCY_RESULT_NOT_RETAINED]: 422,
+  [ErrorCode.IDEMPOTENCY_RESULT_NOT_RETAINED]: {
+    status: 422,
+    summary:
+      "An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.",
+  },
+  [INTERNAL_ERROR]: {
+    status: 500,
+    summary:
+      "A fault that nothing else names a refusal for. The answer says nothing of what failed.",
+  },
 };
 
 /** Returns the HTTP status code for a given error code. */
 export function httpStatus(code: ErrorCode): number {
-  return STATUS_MAP[code];
+  return ERROR_CODES[code].status;
 }
 
 /** Structured error thrown by the server. Carries a typed code and HTTP status. */
@@ -396,9 +658,9 @@ export class MarfaError extends Error {
   readonly details?: Record<string, unknown>;
 
   /**
-   * `status` comes from `STATUS_MAP` and is overridden by one code.
+   * `status` comes from `ERROR_CODES` and is overridden by one code.
    *
-   * The map is the single place a code and its status are tied together,
+   * That table is the single place a code and its status are tied together,
    * and keeping it that way is what stops the two drifting across a
    * hundred throw sites. The exception is `bulk_atomic_rollback`, whose
    * status is not its own: a page is refused for the reason the entry
@@ -416,7 +678,7 @@ export class MarfaError extends Error {
     super(message);
     this.name = "MarfaError";
     this.code = code;
-    this.status = status ?? STATUS_MAP[code];
+    this.status = status ?? ERROR_CODES[code].status;
     this.details = details;
   }
 

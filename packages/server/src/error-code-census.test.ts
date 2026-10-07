@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { ErrorCode } from "@withmarfa/shared";
+import { ERROR_CODES, ErrorCode } from "@withmarfa/shared";
 
 const SRC = resolve(import.meta.dirname);
 const REPO = resolve(SRC, "../../..");
@@ -19,19 +19,12 @@ const REPO = resolve(SRC, "../../..");
  * both.
  */
 
-/** The codes no door answers, and why the chapter has no row for each. */
-const NEVER_ANSWERED: Record<string, string> = {
-  duplicate_source:
-    "the storage layer's refusal of a second row under one natural key, which every door resolves first and an archive restore counts as a duplicate",
-};
-
 /**
  * The codes the published document does not declare, each on a door it does
  * not publish. A code that appears in the document is not listed, so an entry
  * that goes stale fails.
  */
 const UNPUBLISHED_DOORS: Record<string, string> = {
-  duplicate_source: "no door answers it (above)",
   invalid_client: "the device consent page, `GET /auth/device/consent`",
   oauth_grant_not_found: "the grants door, `DELETE /auth/grants/{id}`",
   inbound_unavailable: "an inbound webhook address",
@@ -136,7 +129,7 @@ function declaredCodes(): Set<string> {
 
 describe("the codes the server sends and the error chapter", () => {
   const sent = codesSent();
-  const answered = [...sent.keys()].filter((code) => !(code in NEVER_ANSWERED));
+  const answered = [...sent.keys()];
 
   it("reads the codes the server sends, the one outside the enum included", () => {
     // The control for the checks below: a read that found nothing would pass
@@ -145,6 +138,13 @@ describe("the codes the server sends and the error chapter", () => {
     expect(sent.get("internal_error")).toBe("middleware/error-handler.ts");
     expect(sent.get("housekeeping_job_running")).toBe("the ErrorCode enum");
     expect(rowsOf(ERRORS_CHAPTER).length).toBeGreaterThan(50);
+  });
+
+  it("describes in ERROR_CODES exactly the codes the server sends", () => {
+    // The chapter's table is written from ERROR_CODES, so a code sent that it
+    // does not hold would be missing from the contract, and one it holds that
+    // nothing sends would be a promise the server does not keep.
+    expect(Object.keys(ERROR_CODES).sort()).toEqual([...sent.keys()].sort());
   });
 
   it("has a row in errors.md for every code the server answers with", () => {
@@ -170,7 +170,6 @@ describe("the codes the server sends and the error chapter", () => {
   it("has no row for a code the server does not send", () => {
     const rows = rowsOf(ERRORS_CHAPTER);
     expect(rows.filter((code) => !sent.has(code))).toEqual([]);
-    expect(rows.filter((code) => code in NEVER_ANSWERED)).toEqual([]);
   });
 
   it("declares every code answered in the published document, but for those on doors it does not publish", () => {
@@ -186,22 +185,5 @@ describe("the codes the server sends and the error chapter", () => {
       Object.keys(UNPUBLISHED_DOORS).filter((c) => declared.has(c)),
     ).toEqual([]);
     expect(declared.has("internal_error")).toBe(true);
-  });
-
-  it("lists as never answered only a code whose one thrower is absorbed", () => {
-    // `duplicate_source` is thrown by the item store and read by the archive
-    // restore, which counts it as a duplicate. A third site that reached it
-    // could answer it, and this is where that is noticed.
-    const sites = sourceFiles(SRC)
-      .filter((file) =>
-        readFileSync(file, "utf8").includes("ErrorCode.DUPLICATE_SOURCE"),
-      )
-      .map((file) => relative(SRC, file))
-      .sort();
-    expect(Object.keys(NEVER_ANSWERED)).toEqual(["duplicate_source"]);
-    expect(sites).toEqual([
-      "routes/restore-archive.ts",
-      "storage/sqlite/item-store.ts",
-    ]);
   });
 });

@@ -174,16 +174,14 @@ describe("the published spec declares the headers the server sets", () => {
   });
 
   it("declares X-Error-Code on error responses and not on success", () => {
-    // No exceptions: every error response declares the header and every
-    // success response does not.
-    //
-    // This held `PATCH /items/{id} 409` while that response was the one
-    // error the handler never saw. It still returns rather than throws, but
-    // it now stamps the header itself — as does the edge conflict, the other
-    // 4xx that returns. The empty set is the seam: a future response that
-    // answers 4xx without throwing is declared here honestly rather than
-    // quietly claiming a header it does not send.
-    const KNOWN_UNSTAMPED = new Set<string>([]);
+    // Every error response declares the header and every success response
+    // does not, but registration's `401` and `415`, which the sign-in
+    // library answers in its own shape. The item and edge conflicts return
+    // rather than throw, and stamp the header themselves.
+    const KNOWN_UNSTAMPED = new Set<string>([
+      "POST /auth/oauth2/register 401",
+      "POST /auth/oauth2/register 415",
+    ]);
     const wrong: string[] = [];
     for (const [key, responses] of operations) {
       for (const [status, response] of Object.entries(responses)) {

@@ -30,7 +30,7 @@ import type { Storage } from "../storage/interface.js";
 import type { Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish } from "../pubsub.js";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { ERROR_CODES, ErrorCode, MarfaError } from "@withmarfa/shared";
 import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import { blobProof } from "../routes/_blob-reach.js";
 import { writeItem } from "../storage/item-write.js";
@@ -318,7 +318,7 @@ function fansOutFor(input: BulkActionInput): boolean {
   return input.enable_fanout ?? false;
 }
 
-function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
+export function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
   if (err instanceof MarfaError) {
     return {
       id,
@@ -327,7 +327,14 @@ function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
       ...(err.details && { details: err.details }),
     };
   }
-  if (err instanceof Error && "code" in err && typeof err.code === "string") {
+  // Only a code the error table holds reaches a client; a driver's or a
+  // transaction's own code is a fault like any other.
+  if (
+    err instanceof Error &&
+    "code" in err &&
+    typeof err.code === "string" &&
+    Object.hasOwn(ERROR_CODES, err.code)
+  ) {
     return { id, code: err.code, message: originalErrorMessage(err) };
   }
   return {

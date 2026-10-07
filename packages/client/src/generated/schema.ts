@@ -20274,7 +20274,6 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20308,7 +20307,6 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
                 content: {

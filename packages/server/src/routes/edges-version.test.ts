@@ -127,9 +127,9 @@ describe("an edge carries a version", () => {
       edge?: WireEdge;
     };
     expect(refusal.error.code).toBe("version_conflict");
-    // `error.status`, because a `version_conflict` carries it on every door
-    // and `errors.md` 1 exempts exactly those envelopes from the rule that
-    // the error object holds no status.
+    // `error.status`, because a `version_conflict` carries it on every door and
+    // `errors/status-version-envelope` exempts exactly those envelopes from the
+    // rule that the error object holds no status.
     expect(refusal.error.status).toBe(409);
     // Under `current`, the key every `version_conflict` uses. A client
     // reading `body.current.version` off the item door reads it here too.

@@ -177,7 +177,9 @@ describe("an Idempotency-Key repeated while its first request is still being ser
     expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
     expect(await liveItems()).toBe(before + 1);
 
-    expect(leaveClaimed(key, new Date())).toBe(1);
+    // Ten seconds inside the 60-second lease, so that the bound is what holds
+    // the key and not the claim being new.
+    expect(leaveClaimed(key, new Date(Date.now() - 50 * 1000))).toBe(1);
     const busy = await send("POST", "/items", request, {
       "Idempotency-Key": key,
     });
@@ -188,8 +190,9 @@ describe("an Idempotency-Key repeated while its first request is still being ser
     expect(await liveItems()).toBe(before + 1);
 
     // A claim nobody is serving does not hold the key for good: a writer
-    // that died leaves one, and the retry the code asks for takes it over.
-    expect(leaveClaimed(key, new Date(Date.now() - 60 * 60 * 1000))).toBe(1);
+    // that died leaves one, and the retry the code asks for takes it over
+    // once it is a second past the lease.
+    expect(leaveClaimed(key, new Date(Date.now() - 61 * 1000))).toBe(1);
     const taken = await send("POST", "/items", request, {
       "Idempotency-Key": key,
     });

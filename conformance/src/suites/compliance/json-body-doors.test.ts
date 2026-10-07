@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { itemsArchive } from "../../utils/archive.js";
 import {
+  createSecondClient,
   createTestContext,
   trackItem,
+  trackKey,
   trackType,
   cleanup,
 } from "../../utils/setup.js";
@@ -282,5 +286,381 @@ describe("the doors that lost or broke data without a JSON Content-Type", () => 
         expect(await itemTags(id), `${door} ${way.name}`).toEqual(before);
       }
     }
+  });
+});
+
+/** What a JSON door answers a body not sent as JSON: statement 13's refusal. */
+async function expectRefusedAsNotJson(): Promise<void> {
+  const res = await fetch(`${apiUrl}/items`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "text/plain",
+    },
+    body: JSON.stringify({ type: "core.note", properties: { body: "x" } }),
+  });
+  expect(res.status).toBe(400);
+  expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+    "validation_error",
+  );
+}
+
+describe("a door that does not take its body as JSON", () => {
+  it("takes the bytes of a blob sent under text/plain, which a JSON door refuses when sent that way", async () => {
+    await expectRefusedAsNotJson();
+
+    const bytes = `blob bytes ${ctx.runId}`;
+    const res = await fetch(`${apiUrl}/blobs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: bytes,
+    });
+    expect(res.status).toBe(201);
+    const stored = (await res.json()) as {
+      hash: string;
+      mime_type: string;
+      size_bytes: number;
+    };
+    expect(stored.mime_type).toBe("text/plain");
+    expect(stored.size_bytes).toBe(Buffer.byteLength(bytes));
+  });
+
+  it("takes an archive sent under text/plain, which a JSON door refuses when sent that way", async () => {
+    await expectRefusedAsNotJson();
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+
+    const id = uuidv7();
+    const archive = itemsArchive([
+      {
+        id,
+        type: "core.note",
+        source: ctx.source,
+        source_id: `restore-text-plain-${ctx.runId}`,
+        properties: { body: "restored under text/plain" },
+      },
+    ]);
+    const res = await fetch(`${apiUrl}/restore`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${operatorKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: Buffer.from(archive),
+    });
+    trackItem(ctx, id);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(((await res.json()) as { imported: number }).imported).toBe(1);
+  });
+
+  it("takes a delivery to an inbound address sent under text/plain, which a JSON door refuses when sent that way", async () => {
+    await expectRefusedAsNotJson();
+
+    const owner = await createSecondClient(ctx, "inbound-owner");
+    const registered = await owner.registerConnector({
+      name: `${ctx.runId} inbound`,
+    });
+    expect(registered.status).toBe(201);
+    const endpoint = await owner.createInboundEndpoint(registered.data.id, {});
+    expect(endpoint.status).toBe(201);
+
+    const res = await fetch(`${apiUrl}${endpoint.data.path}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "a sender's delivery, not JSON",
+    });
+    expect(res.status).toBe(202);
+  });
+
+  it("leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape", async () => {
+    const registration = {
+      redirect_uris: ["https://example.com/callback"],
+      client_name: `${ctx.source}-not-json-registration`,
+    };
+    // The witness: the same registration sent as JSON is made.
+    const made = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registration),
+    });
+    expect(made.status).toBe(201);
+
+    for (const headers of [
+      { "Content-Type": "text/plain" },
+      {} as Record<string, string>,
+    ]) {
+      const res = await fetch(`${apiUrl}/auth/oauth2/register`, {
+        method: "POST",
+        headers,
+        body: new Blob([JSON.stringify(registration)], {
+          type: headers["Content-Type"] ?? "",
+        }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(res.status, JSON.stringify(headers)).toBe(415);
+      expect(body.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+      expect(body).not.toHaveProperty("error");
+    }
+  });
+});
+
+const NOT_JSON_WAY = WAYS.find((way) => way.name === "a body under text/plain");
+
+function plainTextWay(): (typeof WAYS)[number] {
+  if (NOT_JSON_WAY === undefined) throw new Error("no text/plain way");
+  return NOT_JSON_WAY;
+}
+
+describe("a request the door would refuse before it reads the body", () => {
+  const type = () => `user.json_order_${ctx.runId.replaceAll("-", "_")}`;
+
+  beforeAll(async () => {
+    const registered = await client.registerType({
+      id: type(),
+      label: "JSON order",
+      version: 0,
+      fields: {},
+    });
+    expect(registered.ok).toBe(true);
+    trackType(ctx, type(), client);
+  });
+
+  async function mintKey(
+    label: string,
+    permissions: string[],
+  ): Promise<string> {
+    const minted = await client.createKey({
+      label: `${ctx.source}-${label}`,
+      source: `${ctx.source}-${label}`,
+      permissions,
+      type_permissions: { "*": "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    return minted.data.key;
+  }
+
+  it("answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal", async () => {
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const way = plainTextWay();
+
+    const wrong: string[] = [];
+    const doors = await jsonDoors();
+    expect(doors.length).toBeGreaterThan(30);
+    for (const door of doors) {
+      const options = door.startsWith("PUT /types/")
+        ? { path: `/types/${type()}` }
+        : {};
+      const [method, template] = door.split(" ") as [string, string];
+      const path =
+        options.path ?? template.replace(/\{[^}]+\}/g, () => randomUUID());
+
+      const anonymous = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: way.headers,
+        body: way.body?.("{}"),
+      });
+      const refusal = (await anonymous.json()) as { error?: { code?: string } };
+      if (anonymous.status !== 401 || refusal.error?.code !== "unauthorized") {
+        wrong.push(`${door} with no credential: ${String(anonymous.status)}`);
+      }
+
+      // The witness: a credential that reaches the door is answered for the
+      // body, so the 401 above was the credential's absence and nothing else.
+      let reached = await send(door, way, apiKey, options);
+      if (reached.status === 403) {
+        reached = await send(door, way, operatorKey ?? "", options);
+      }
+      if (reached.status !== 400) {
+        wrong.push(`${door} with a credential: ${String(reached.status)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  }, 120_000);
+
+  it("answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body", async () => {
+    const doors: { door: string; permission: string }[] = [
+      { door: "POST /webhooks", permission: "webhooks.manage" },
+      { door: "PUT /config", permission: "config.manage" },
+      { door: "POST /keys", permission: "keys.mint" },
+    ];
+    const way = plainTextWay();
+    const without = await mintKey("without-permission", []);
+
+    for (const { door, permission } of doors) {
+      const refused = await send(door, way, without);
+      const refusal = (await refused.json()) as {
+        error: { code: string; details?: { required_scope?: string } };
+      };
+      expect(refused.status, door).toBe(403);
+      expect(refusal.error.code, door).toBe("forbidden");
+      expect(refusal.error.details?.required_scope, door).toBe(permission);
+
+      const holder = await mintKey(`holds-${permission}`, [permission]);
+      const answered = await send(door, way, holder);
+      expect(answered.status, door).toBe(400);
+      expect(
+        ((await answered.json()) as { error: { code: string } }).error.code,
+        door,
+      ).toBe("validation_error");
+    }
+  });
+
+  it("answers 403 forbidden on the operator's own door to a key that is not the operator key, where the operator key is answered 400", async () => {
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const way = plainTextWay();
+
+    const refused = await send("POST /owner", way, apiKey);
+    expect(refused.status).toBe(403);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("forbidden");
+
+    const answered = await send("POST /owner", way, operatorKey ?? "");
+    expect(answered.status).toBe(400);
+    expect(
+      ((await answered.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+  });
+
+  it("answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON", async () => {
+    const created = await client.createItem(createNote({ source: ctx.source }));
+    expect(created.ok).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    const minted = await client.createKey({
+      label: `${ctx.source}-reads-notes`,
+      source: `${ctx.source}-reads-notes`,
+      type_permissions: { "core.note": "read" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+
+    // The witness: the grant is what the door will want, so a body sent as
+    // JSON is refused for the missing grant.
+    const asJson = await fetch(`${apiUrl}/items/${id}/tags`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${minted.data.key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tags: ["x"] }),
+    });
+    expect(asJson.status).toBe(403);
+    expect(
+      ((await asJson.json()) as { error: { code: string } }).error.code,
+    ).toBe("type_not_permitted");
+
+    const asText = await send(
+      "POST /items/{id}/tags",
+      plainTextWay(),
+      minted.data.key,
+      {
+        path: `/items/${id}/tags`,
+      },
+    );
+    expect(asText.status).toBe(400);
+    expect(
+      ((await asText.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+  });
+});
+
+describe("an Idempotency-Key reused with a body sent under another Content-Type", () => {
+  function post(
+    key: string,
+    contentType: string | undefined,
+  ): Promise<Response> {
+    const body = JSON.stringify({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: key },
+    });
+    return fetch(`${apiUrl}/items`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Idempotency-Key": key,
+        ...(contentType === undefined ? {} : { "Content-Type": contentType }),
+      },
+      body: contentType === undefined ? new Blob([body]) : body,
+    });
+  }
+
+  /** How many notes this file's key holds whose body is the key written. */
+  async function written(key: string): Promise<number> {
+    const listed = await client.listItems({
+      source: ctx.source,
+      type: "core.note",
+      limit: 200,
+    });
+    expect(listed.ok).toBe(true);
+    return listed.data.data.filter((item) => item.properties.body === key)
+      .length;
+  }
+
+  it("answers 422 idempotency_key_reused to a retry sent as JSON after a first request that was not, and writes nothing", async () => {
+    for (const notJson of ["text/plain", undefined]) {
+      const key = `not-json-first-${ctx.runId}-${String(notJson)}`;
+
+      const first = await post(key, notJson);
+      expect(first.status, String(notJson)).toBe(400);
+      expect(await written(key)).toBe(0);
+
+      const retry = await post(key, "application/json");
+      expect(retry.status, String(notJson)).toBe(422);
+      expect(retry.headers.get("X-Error-Code")).toBe("idempotency_key_reused");
+      expect(retry.headers.get("Idempotency-Replayed")).toBeNull();
+      expect(await written(key)).toBe(0);
+    }
+  });
+
+  it("answers 422 idempotency_key_reused to a retry not sent as JSON after a first request that was, and replays nothing", async () => {
+    const key = `json-first-${ctx.runId}`;
+
+    const first = await post(key, "application/json");
+    expect(first.status).toBe(201);
+    const created = (await first.json()) as { item: { id: string } };
+    trackItem(ctx, created.item.id);
+    expect(await written(key)).toBe(1);
+
+    const retry = await post(key, "text/plain");
+    expect(retry.status).toBe(422);
+    expect(retry.headers.get("X-Error-Code")).toBe("idempotency_key_reused");
+    expect(retry.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(await written(key)).toBe(1);
+
+    // The witness: the key holds the first answer, which the same request
+    // replays.
+    const replay = await post(key, "application/json");
+    expect(replay.status).toBe(201);
+    expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(((await replay.json()) as { item: { id: string } }).item.id).toBe(
+      created.item.id,
+    );
+  });
+
+  it("replays to a retry that spells the JSON type another way", async () => {
+    const key = `spelling-${ctx.runId}`;
+    const first = await post(key, "application/json; charset=utf-8");
+    expect(first.status).toBe(201);
+    const created = (await first.json()) as { item: { id: string } };
+    trackItem(ctx, created.item.id);
+
+    for (const spelling of ["application/json", "APPLICATION/JSON"]) {
+      const retry = await post(key, spelling);
+      expect(retry.status, spelling).toBe(201);
+      expect(retry.headers.get("Idempotency-Replayed"), spelling).toBe("true");
+      expect(
+        ((await retry.json()) as { item: { id: string } }).item.id,
+        spelling,
+      ).toBe(created.item.id);
+    }
+    expect(await written(key)).toBe(1);
   });
 });

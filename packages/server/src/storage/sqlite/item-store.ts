@@ -76,6 +76,7 @@ import type {
   TombstoneSelector,
 } from "../interface.js";
 import {
+  NaturalKeyHeld,
   encodeKeyedCursor,
   cursorSortKey,
   decodeKeyedCursorNullable,
@@ -740,11 +741,7 @@ export class SqliteItemStore implements ItemStore {
           .where(and(...dedupConditions))
           .get();
         if (existing) {
-          throw new MarfaError(
-            ErrorCode.DUPLICATE_SOURCE,
-            `Item with source=${input.source} source_id=${input.source_id} already exists`,
-            { existing_id: existing.id },
-          );
+          throw new NaturalKeyHeld(input.source, input.source_id, existing.id);
         }
       }
 
