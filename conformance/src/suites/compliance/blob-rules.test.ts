@@ -949,6 +949,11 @@ describe("how the copies are placed and removed", () => {
     expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
       "disk",
     ]);
+    // Last, the minimum: every check above it passed for this copy too.
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const last = await drop(`${hash}/locations/${disk.id}`, operatorKey);
+    expect(last.status).toBe(409);
+    expect(await code(last)).toBe("copies_below_minimum");
     await replicateToZero();
   });
 });
