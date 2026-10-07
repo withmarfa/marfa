@@ -17,15 +17,18 @@ import {
 let server: FreshServer;
 /** A second server, because stopping one is the test and it stays stopped. */
 let served: FreshServer;
+/** A third, for the copy stream. */
+let copied: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("stream-shutdown");
   served = await bootFreshServer("stream-shutdown-sent");
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  copied = await bootFreshServer("stream-shutdown-copy");
+}, 3 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.all([server.stop(), served.stop()]);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  await Promise.all([server.stop(), served.stop(), copied.stop()]);
+}, 3 * FRESH_SERVER_TIMEOUT_MS);
 
 /** The grace a container runtime gives a stopped process, by default. */
 const GRACE_MS = 10_000;
@@ -144,6 +147,44 @@ describe("stopping the instance with an event stream open", () => {
       });
       expect(sent[1]).not.toBe(sent[0]);
       expect(text).not.toMatch(/id: [^\n]*\nevent: stream_incomplete/);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends an open copy stream with stream_incomplete when the server is stopped, and exits with status 0",
+    async () => {
+      const response = await fetch(`${copied.apiUrl}/events?edges=all&copy=1`, {
+        headers: { Authorization: `Bearer ${copied.workingKey}` },
+      });
+      expect(response.status).toBe(200);
+      const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      // The stream was live, so the stop had something to end.
+      while (!text.includes("event: stream_live")) {
+        const chunk = await reader.read();
+        expect(chunk.done, "the copy stream ended before it was live").toBe(
+          false,
+        );
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+
+      copied.signal("SIGTERM");
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+
+      const frame = /event: stream_incomplete\ndata: (.*)\n/.exec(text)?.[1];
+      expect(JSON.parse(frame ?? "{}")).toMatchObject({
+        event_type: "stream_incomplete",
+        reason: "server_stopping",
+        cursor: null,
+      });
+      expect(text).not.toMatch(/id: [^\n]*\nevent: stream_incomplete/);
+      expect(await copied.exit()).toMatchObject({ code: 0, signal: null });
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
