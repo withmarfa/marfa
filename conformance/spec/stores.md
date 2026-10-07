@@ -164,7 +164,7 @@ While no attached store holds a recorded copy of a blob the instance has registe
 
 **Reason:** the bytes of a copy struck or dropped can stay in their store until a later run deletes them, and they are not the blob's.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-store-folders.test.ts › answers HEAD as GET does for a blob that lost its last copy`.
 
 ## Links
 
@@ -206,7 +206,7 @@ When a run of `blob-replicate` copies bytes that do not hash to the blob's name,
 
 **Reason:** the receiving store hashes the bytes it is sent before it names them, so a corrupt copy in one store does not spread to another.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-store-bounds.test.ts › records no copy for bytes that do not hash to the blob's name`.
 
 ### `stores/replicate-result`
 
@@ -358,7 +358,7 @@ When a run of `blob-integrity` checks an object-store copy whose object is missi
 
 **Reason:** the check asks the store for the object's size and fetches no bytes, so an object altered at the same length is not found.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
 
 ### `stores/integrity-strikes`
 
@@ -411,6 +411,20 @@ The `blob-orphans` housekeeping job reports before it deletes. The referee boots
 When the operator key sends `GET /blobs/orphans`, the server MUST answer `200` with the report, each row carrying a `hash`, `mime_type`, `size_bytes` and `reported_at`.
 
 **Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
+
+### `stores/orphan-enqueue-lifts`
+
+When an `update_properties` job whose patch names a blob's digest is enqueued through `POST /items/bulk-actions`, the server MUST take the blob off the orphan report.
+
+**Reason:** the job's patch is a reference while the job is queued or in progress (`stores/reference-job-patch`), so the report is lifted at once, as an upload's and a write's are.
+
+**Tests:** `compliance/blob-store-jobs.test.ts › lifts the report when an update_properties job naming the digest is enqueued`.
+
+### `stores/orphan-listing-order`
+
+When the operator key sends `GET /blobs/orphans`, the server MUST list the report's rows oldest `reported_at` first.
+
+**Tests:** `compliance/blob-store-settings.test.ts › lists the orphan report oldest first`.
 
 ### `stores/orphan-operator-only`
 
@@ -560,7 +574,33 @@ While `POST /restore` of an archive that carries a blob the orphan report names 
 
 **Reason:** either order is allowed. The restore lands first and takes the blob off the report, or the run purges the blob and the restore stores its bytes again.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-rules.test.ts › keeps the bytes a restore stores while a purge of them races it`.
+
+## The audit log
+
+### `stores/audit-strike`
+
+When a run of `blob-integrity` strikes a copy, the server MUST write an audit entry with `action` `blob.copy_struck`, `resource_id` the blob's hash and `details` naming the `store_id` and the store's `kind`.
+
+**Tests:** `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`, `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
+
+### `stores/audit-replicate`
+
+When a run of `blob-replicate` records a copy, the server MUST write an audit entry with `action` `blob.copy_replicated`, `resource_id` the blob's hash and `details` naming the store copied `from` and the receiving `store_id`.
+
+**Tests:** `compliance/blob-rules.test.ts › records a drop, a replication and a purge in the audit log`.
+
+### `stores/audit-drop`
+
+When the operator key drops a copy, the server MUST write an audit entry with `action` `blob.copy_dropped`, `resource_id` the blob's hash and `details` naming the `store_id`.
+
+**Tests:** `compliance/blob-rules.test.ts › records a drop, a replication and a purge in the audit log`.
+
+### `stores/audit-purge`
+
+When a run of `blob-orphans` purges a blob, the server MUST write an audit entry with `action` `blob.purge` and `resource_id` the blob's hash.
+
+**Tests:** `compliance/blob-rules.test.ts › records a drop, a replication and a purge in the audit log`.
 
 ## What a run of the sweep keeps
 
@@ -600,7 +640,7 @@ While a queued or in-progress `update_properties` job's patch holds a blob's dig
 
 When a canceled, failed or completed `update_properties` job ends, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a job canceled as it was enqueued has ended`.
 
 ### `stores/job-patch-no-reach`
 
@@ -614,7 +654,7 @@ While a queued or in-progress `update_properties` job's patch names a blob's dig
 
 When a queued or in-progress `update_properties` job's patch names a digest no blob holds, the server MUST NOT fail the job for it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-store-jobs.test.ts › completes a job whose patch names a digest no blob holds`.
 
 ## What counts as a reference
 
