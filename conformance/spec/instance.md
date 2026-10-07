@@ -184,7 +184,7 @@ When the server starts on a copy of the data directory that read the database fi
 
 **Reason:** a copy that reads the files one after another with no such transaction can take the database file before a checkpoint and the log after it, and so hold a database that is not whole. The blobs are read last so that every blob a copied row names is in the copy.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/instance-lifecycle.test.ts › restores every write acknowledged before the first read from a copy taken file by file under a held read transaction, and loses writes from the same copy without one`.
 
 ### `instance/salt-refuses-credentials`
 
@@ -286,7 +286,7 @@ If a component's probe has given no answer within two seconds, then the server M
 
 **Reason:** a refusal is known and a silence is not.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/health.test.ts › answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released`.
 
 ### `instance/health-disk-down`
 
@@ -306,7 +306,7 @@ If the bytes available on either the database's volume or the disk store's volum
 
 **Reason:** only a measured shortage is a failure.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/health.test.ts › answers the disk component degraded, never down, and the status 200 when the free space of the blob folder's volume cannot be read, and ok once it can`.
 
 ### `instance/health-write-reuse`
 
@@ -767,6 +767,12 @@ When the server refuses `PUT /config`, the server MUST NOT record a `config.upda
 If a key holding `config.manage` sends `GET /config` or `PUT /config` with a query key, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/instance-config.test.ts › refuses a query key on both operations`.
+
+### `instance/config-query-key-order`
+
+If a request to `GET /config` or `PUT /config` carries a query key, then the server MUST answer `401 unauthorized` to no credential or one it does not hold, and `403 forbidden` to a credential without `config.manage`, before it refuses the query key.
+
+**Tests:** `compliance/instance-config.test.ts › asks for a credential, then config.manage, before it reads the query, so a query key is refused 401, then 403, then 400`.
 
 ### `instance/config-cap-refused`
 
