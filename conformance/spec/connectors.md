@@ -202,7 +202,7 @@ The server MUST name `connectors` among the `features` that `GET /` answers.
 
 ## Removing a registration
 
-The webhook endpoints and deliveries of a registration go with it, as `inbound-webhooks/endpoints-go-with-it` says.
+The webhook endpoints and deliveries of a registration go with it, as `inbound-webhooks/endpoints-go-with-it` and `inbound-webhooks/deliveries-go-with-it` say.
 
 ### `connectors/delete-answer`
 

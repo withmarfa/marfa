@@ -160,7 +160,15 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 When a registration is removed, the server MUST answer a request to the address of each of its endpoints with `404`.
 
-**Reason:** an address of a removed registration is one no live endpoint holds, as `inbound-webhooks/address-unknown` says, and the deliveries its endpoints stored go with the registration.
+**Reason:** an address of a removed registration is one no live endpoint holds, as `inbound-webhooks/address-unknown` says.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › goes with its registration, and its deliveries with it`.
+
+### `inbound-webhooks/deliveries-go-with-it`
+
+When a registration is removed, the server MUST answer `GET /connectors/{id}/deliveries` for it `404 connector_not_found`.
+
+**Reason:** the deliveries its endpoints stored go with the registration.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › goes with its registration, and its deliveries with it`.
 
