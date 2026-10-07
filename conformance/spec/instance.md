@@ -16,8 +16,6 @@ When `GET /` is answered with the description, the server MUST give it an `insta
 
 When a key holding `config.manage` sends `GET /config`, the server MUST answer an `instance_id` equal to the one the root answers.
 
-**Reason:** a key without the permission is refused under `types/config-permission`.
-
 **Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
 ### `instance/id-in-archive`
@@ -132,9 +130,9 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `instance/contract-header`
 
-The server MUST send `X-Marfa-Contract`, with the number the root answers as `contract`, on every answer it gives, whether it is a read, a refusal, a page, a stream, a download, a request the rate limiter refuses or a preflight.
+The server MUST send `X-Marfa-Contract`, with the number the root answers as `contract`, on every answer to a request whose request line, headers and `Host` it can parse, whether it is a read, a refusal, a page, a stream, a download, a request the rate limiter refuses or a preflight.
 
-**Reason:** a client checks the answer it is about to read against the contract it was built for, so the header cannot be missing on the answers a layer in front of the routes shapes.
+**Reason:** a client checks the answer it is about to read against the contract it was built for, so the header cannot be missing on the answers a layer in front of the routes shapes. A request the server cannot parse is refused by the HTTP layer before anything that knows the contract sees it.
 
 **Tests:** `compliance/instance.test.ts › sends its contract version on every answer, a refusal included`, `› sends its contract version on every kind of answer, not only a JSON body`, `compliance/contract-header.test.ts › sends its contract version on a request the limiter refuses`, `› sends its contract version on a preflight from an origin the instance allows`.
 
@@ -198,7 +196,7 @@ When the server starts on a data directory with an `API_KEY_SALT` other than the
 
 ### `instance/salt-original-accepted`
 
-When the server starts again under the `API_KEY_SALT` a key was minted under, the server MUST accept that key.
+When the server starts again under the `API_KEY_SALT` that a key, the operator key or an app's access token was minted under, the server MUST accept that credential as it did before a start under another salt refused it.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the operator key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`.
 
@@ -256,13 +254,13 @@ When no component is `down`, the server MUST answer `GET /health` with `200`, wh
 
 ### `instance/health-database-down`
 
-If the database refuses a read, then the server MUST answer the `database` component of `GET /health` as `down`.
+If the database refuses a read of the table of keys, then the server MUST answer the `database` component of `GET /health` as `down`.
 
 **Tests:** `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`.
 
 ### `instance/health-write-down`
 
-If the database refuses a write although it answers reads, then the server MUST answer the `database_write` component of `GET /health` as `down`.
+If the database refuses the write that the `database_write` probe makes, with any code other than `write_contention`, then the server MUST answer the `database_write` component of `GET /health` as `down`.
 
 **Reason:** a database that reads can still refuse every write, because the volume is read-only or full, and only a committed write shows it.
 
@@ -292,19 +290,19 @@ If a component's probe has given no answer within two seconds, then the server M
 
 ### `instance/health-disk-down`
 
-If the volume with the least room, of the database's volume and the disk store's volume, has less than 1 MiB available, then the server MUST answer the `disk` component of `GET /health` as `down`.
+If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `down`.
 
 **Tests:** waiting on #1444.
 
 ### `instance/health-disk-degraded`
 
-If the volume with the least room, of the database's volume and the disk store's volume, has less than 64 MiB and at least 1 MiB available, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
+If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 64 MiB and at least 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
 **Tests:** waiting on #1444.
 
 ### `instance/health-disk-unknown`
 
-If the bytes available on a volume cannot be read, then the server MUST answer the `disk` component of `GET /health` as `degraded`, never `down`.
+If the bytes available on either the database's volume or the disk store's volume cannot be read, then the server MUST answer the `disk` component of `GET /health` as `degraded`, never `down`.
 
 **Reason:** only a measured shortage is a failure.
 
@@ -312,7 +310,7 @@ If the bytes available on a volume cannot be read, then the server MUST answer t
 
 ### `instance/health-write-reuse`
 
-When `GET /health` is called within ten seconds of the last attempt of the write probe, the server MUST answer the `database_write` component with the outcome of that attempt, a refusal included.
+When `GET /health` is called while an attempt of the `database_write` probe's write is in progress, or less than ten seconds after the last attempt finished, the server MUST answer the `database_write` component with the outcome of that attempt, a refusal included.
 
 **Reason:** the operation takes no credential, so what a caller can make the server do through it stays small.
 
@@ -326,19 +324,19 @@ The server MUST commit the write of the `database_write` probe at most once in t
 
 ### `instance/health-write-again`
 
-When `GET /health` is called ten seconds or more after the last attempt of the write probe, the server MUST attempt the write again.
+When `GET /health` is called while no attempt of the `database_write` probe's write is in progress, ten seconds or more after the last attempt finished, the server MUST attempt the write again.
 
 **Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`.
 
 ### `instance/health-error-operator`
 
-When the operator key sends `GET /health` while a component's probe has failed, the server MUST include the text of that component's error as its `error`.
+While a component is `degraded` or `down` and the database can read the table of keys, when the operator key sends `GET /health`, the server MUST answer that component with an `error` that says why.
 
 **Tests:** `compliance/health.test.ts › is given to the operator key and to no other caller`.
 
 ### `instance/health-error-others`
 
-When a request that carries no credential, or any credential other than the operator key, sends `GET /health`, the server MUST NOT include the text of a component's error in the answer.
+When a request that carries no credential, or any credential other than the operator key, sends `GET /health`, the server MUST NOT answer an `error` on any component.
 
 **Reason:** the text is the database's or the operating system's own and carries paths and driver detail.
 
@@ -346,7 +344,7 @@ When a request that carries no credential, or any credential other than the oper
 
 ### `instance/health-error-key-table`
 
-While the database cannot read the table of keys, the server MUST NOT include the text of a component's error in the answer to `GET /health` for any caller, the operator key included.
+While the database cannot read the table of keys, the server MUST NOT answer an `error` on any component of `GET /health` to any caller, the operator key included.
 
 **Reason:** a request the server cannot tell is from the operator key is not given the text.
 
@@ -372,7 +370,7 @@ If the server starts on a database that holds the retired setting `space_config`
 
 ### `instance/upgrade-refuses-schema`
 
-If the server starts on a database in which a table lacks a column the server declares, carries a column or an index it does not declare, or is missing while another table holds a row, then the server MUST refuse to start.
+If the server starts on a database in which a table, an index or a trigger the server declares differs from the server's definition of it, a table the server declares carries an index or a trigger the server does not declare, or a table the server declares is missing while another of its own tables holds a row, then the server MUST refuse to start.
 
 **Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
 
@@ -482,7 +480,7 @@ When the server has sent the `stream_incomplete` frame on a stream because it is
 
 ### `instance/stop-waits-for-work`
 
-When the server is stopped, the server MUST wait for the bulk action and the housekeeping runs in flight, the webhook deliveries among them, before it closes its storage.
+When the server is stopped, the server MUST let the bulk action and the housekeeping runs in flight, the webhook deliveries among them, finish before it closes its storage, unless a run outlives the stop's wait for it.
 
 **Reason:** a run cut off mid-write leaves its record unwritten.
 
@@ -514,7 +512,7 @@ If a request that was open at the signal is still open when the server's wait fo
 
 ### `instance/stop-slow-run-exit-0`
 
-If a bulk action or a housekeeping run outlives the stop's wait for it, then the server MUST exit with status 0.
+If a bulk action or a housekeeping run outlives the stop's wait for it while the server and its storage close within theirs, then the server MUST exit with status 0.
 
 **Reason:** the run is resumed at the next start, so it does not make the stop a failure.
 
@@ -524,7 +522,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it, then the
 
 ### `instance/long-job-health`
 
-While the server runs an archive export, an archive restore, an NDJSON export, a bulk action or a housekeeping sweep that walks rows, the server MUST answer `GET /health` in a time that does not grow with the number of items the job covers.
+While the server runs an archive export, an archive restore, an NDJSON export, a bulk action, the blob orphan sweep, version thinning or the retirement of inactive grants, the server MUST answer `GET /health` in a time that does not grow with the number of items the job covers.
 
 **Reason:** the database driver runs each statement synchronously behind a promise, so a job that never hands the process to other requests stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. `search-and-filters.md` 65, 75 and 78 state the turns a restore and an export give. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
@@ -536,7 +534,7 @@ The one address answers a page or the description by what the caller asks for in
 
 ### `instance/root-page`
 
-When `GET /` carries an `Accept` that names `text/html` and either does not name `application/json` or names it after `text/html`, the server MUST answer `200` with an HTML page.
+When the server does not refuse `GET /` and the request carries an `Accept` that names `text/html` and either does not name `application/json` or names it after `text/html`, the server MUST answer `200` with an HTML page.
 
 **Reason:** a person who opens the server's address in a browser was handed the instance's description as raw JSON, with nothing in it to read and nothing to do next.
 
@@ -544,7 +542,7 @@ When `GET /` carries an `Accept` that names `text/html` and either does not name
 
 ### `instance/root-description`
 
-When `GET /` carries no `Accept`, or an `Accept` that does not name `text/html`, or one that names `application/json` before `text/html`, the server MUST answer `200` with the description.
+When the server does not refuse `GET /` and the request carries no `Accept`, or an `Accept` that does not name `text/html`, or one that names `application/json` before `text/html`, the server MUST answer `200` with the description.
 
 **Reason:** a program asking for the description must never be handed a page, and `*/*`, which is what a program sends by default, is the description.
 
@@ -552,7 +550,7 @@ When `GET /` carries no `Accept`, or an `Accept` that does not name `text/html`,
 
 ### `instance/root-vary`
 
-The server MUST send `Vary: Accept` on every answer to `GET /` and `HEAD /`, a refusal included.
+The server MUST send a `Vary` header that names `Accept` on every answer to `GET /` and `HEAD /`, a refusal included.
 
 **Reason:** the one address answers a page or the description by what the caller asks for, and a cache must not hand one the other's, nor a refusal to a caller it was not meant for.
 
@@ -614,7 +612,7 @@ The server creates its tables one statement at a time, so a start that is stoppe
 
 ### `instance/unfinished-completed`
 
-When the server starts on a database that holds some of its own tables, lacks the rest and differs from its schema in nothing else, and none of the tables it creates holds a row, the server MUST create the tables it lacks and start.
+When the server starts on a database that holds some of its own tables, lacks the rest, differs from its schema in nothing else and holds neither `custom_types` nor `custom_edge_types`, and none of the tables it creates holds a row, the server MUST create the tables it lacks and start.
 
 **Reason:** nothing is written to the server's own tables before the last is made, so none holds a row, and refusing the database would send an owner looking for another build when no other build wrote it.
 
@@ -628,7 +626,7 @@ When the server completes an unfinished database, the server MUST leave it holdi
 
 ### `instance/unfinished-foreign-ignored`
 
-When the server starts on a database that holds some of its own tables, lacks the rest and holds rows only in tables it does not create, the server MUST create the tables it lacks and start.
+When the server starts on a database that holds some of its own tables, lacks the rest, differs from its schema in nothing else and holds neither `custom_types` nor `custom_edge_types`, and holds rows only in tables it does not create, the server MUST create the tables it lacks and start.
 
 **Reason:** a table the server does not create, such as a replication sidecar's, may hold rows and does not count.
 
@@ -646,7 +644,7 @@ When the server completes an unfinished database, the server MUST leave the rows
 
 ### `instance/config-unauthenticated`
 
-If a request that carries no credential, or a credential the instance does not hold, sends `GET /config` or `PUT /config`, then the server MUST answer `401 unauthorized`, whatever the body of a `PUT` holds.
+If a request that carries no credential, or a credential the instance does not hold, sends `GET /config` or `PUT /config`, then the server MUST answer `401 unauthorized`, whatever a `PUT` body within the request cap holds.
 
 **Tests:** `compliance/instance-config.test.ts › answers 401 unauthorized to both operations for no credential and for a key the instance does not hold`, `› asks for a credential, then config.manage, before it reads the body`.
 
@@ -660,13 +658,13 @@ If the operator key sends `GET /config` or `PUT /config`, then the server MUST a
 
 ### `instance/config-permission-first`
 
-If a key without `config.manage` sends `PUT /config` with a body that is also wrong, then the server MUST answer `403 forbidden` and not name the fault in the body.
+If a key without `config.manage` sends `PUT /config` with a body within the request cap that is also wrong, then the server MUST answer `403 forbidden` rather than refuse the body.
 
 **Tests:** `compliance/instance-config.test.ts › asks for a credential, then config.manage, before it reads the body`.
 
 ### `instance/config-takes-back-read`
 
-When a key holding `config.manage` sends `PUT /config` with a body that carries the `instance_id` a `GET /config` answered, the server MUST answer `200`.
+When a key holding `config.manage` sends `PUT /config` with a body that is otherwise valid and carries the `instance_id` a `GET /config` answered, the server MUST answer `200`.
 
 **Reason:** the use of an operation that replaces the whole is to read the configuration, change one lever and send it back, and an identity that the read hands over must not be refused as an unknown key.
 
@@ -760,7 +758,7 @@ When the server refuses `PUT /config`, the server MUST NOT record a `config.upda
 
 ### `instance/config-query-key`
 
-If `GET /config` or `PUT /config` carries a query key, then the server MUST answer `400 validation_error`.
+If a key holding `config.manage` sends `GET /config` or `PUT /config` with a query key, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/instance-config.test.ts › refuses a query key on both operations`.
 
@@ -780,7 +778,7 @@ When the server refuses a `PUT /config` for a body larger than the request cap, 
 
 ### `instance/config-at-cap-accepted`
 
-When a key holding `config.manage` sends `PUT /config` with a body of exactly the request cap, the server MUST accept it.
+When a key holding `config.manage` sends `PUT /config` with an otherwise valid body of exactly the request cap, the server MUST accept it.
 
 **Tests:** `compliance/instance-config.test.ts › refuses a body past the request cap with 413 request_too_large, and keeps the configuration`.
 
@@ -846,7 +844,7 @@ If a setting that holds a secret is outside its rule, then the server MUST NOT p
 
 ### `instance/settings-secret-padded`
 
-If a setting that holds a secret has whitespace around its value, then the server MUST refuse to start and name the setting.
+If a setting whose allowed values the settings table gives as text with no whitespace around it has whitespace around its value, then the server MUST refuse to start and name the setting.
 
 **Reason:** a secret is used as written, never trimmed, so the whitespace would be part of it.
 
@@ -874,7 +872,7 @@ While any setting is outside its own rule, the server MUST NOT report in the sam
 
 ## Settings
 
-The server reads each of these environment variables once, when it starts: a blank value counts as unset, and a value outside the allowed values stops the server from starting and names the setting.
+The server reads each of these environment variables once, when it starts, and a blank value counts as unset. What a value outside its allowed values does is under "Settings refused at boot".
 
 <!-- settings-table:start -->
 
