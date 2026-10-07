@@ -4,6 +4,7 @@ import {
   MAX_PAGE_LIMIT,
   MIN_PAGE_LIMIT,
 } from "../../page-limits.js";
+import { distinctTags } from "../../tag-limits.js";
 import {
   eq,
   and,
@@ -224,11 +225,11 @@ export function allowedTypesCondition(
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 /**
- * A file row's `size_bytes` made the server's (`stampedFileSize`), written
- * in the transaction that wrote the row, once its reference index has
- * decided whether `blob_ref` lends. A create passes `arrange` to keep a
- * size it adds where a read answers it (`items.md` 46). Answers what the
- * row now holds.
+ * A file row's `size_bytes` made the server's (`stampedFileSize`), written in
+ * the transaction that wrote the row, once its reference index has decided
+ * whether `blob_ref` lends. A create passes `arrange` to keep a size it adds
+ * where a read answers it (`items/property-order-create`). Answers what the row
+ * now holds.
  */
 async function keepFileSize(
   tx: SqliteTx,
@@ -805,7 +806,7 @@ export class SqliteItemStore implements ItemStore {
         .insert(metadata)
         .values({
           item_id: id,
-          tags: JSON.stringify(input.tags ?? []),
+          tags: JSON.stringify(distinctTags(input.tags ?? [])),
         })
         .run();
 

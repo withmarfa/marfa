@@ -92,6 +92,43 @@ describe("metadata doors", () => {
     expect(order.indexOf(tieEarly)).toBeLessThan(order.indexOf(tieLate));
   });
 
+  it("keeps each tag once, whichever operation writes it", async () => {
+    const a = `md-once-a-${ctx.runId}`;
+    const b = `md-once-b-${ctx.runId}`;
+
+    const created = await client.createItem(
+      createNote({ source: ctx.source, tags: [a, b, a, a] }),
+    );
+    expect(created.status).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    expect(created.data.metadata.tags).toEqual([a, b]);
+
+    const bulk = await client.bulkItems({
+      items: [createNote({ source: ctx.source, tags: [b, b, a] })],
+      atomic: false,
+    });
+    expect(bulk.status).toBe(200);
+    const bulkId = bulk.data.results[0]?.id;
+    expect(bulkId).toBeDefined();
+    trackItem(ctx, bulkId!);
+    expect((await client.getMetadata(bulkId!)).data.metadata.tags).toEqual([
+      b,
+      a,
+    ]);
+
+    const replaced = await client.replaceMetadata(created.data.item.id, {
+      tags: [b, b, a, b],
+    });
+    expect(replaced.status).toBe(200);
+    expect(replaced.data.metadata.tags).toEqual([b, a]);
+
+    const counts = new Map(
+      (await client.listTags()).data.data.map((t) => [t.tag, t.count]),
+    );
+    expect(counts.get(a)).toBe(2);
+    expect(counts.get(b)).toBe(2);
+  });
+
   it("refuses a tags body that is not an array", async () => {
     const id = await seed();
     const r = await client.rawRequest(`/items/${id}/tags`, {

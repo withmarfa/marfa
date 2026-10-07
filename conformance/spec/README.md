@@ -101,7 +101,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 
 ### Chapters still numbered
 
-Chapters move to this form one at a time. Until a chapter moves, its statements are numbered and cited as `` `items.md` 5 ``.
+Chapters move to this form one at a time. Until a chapter moves, its statements are numbered and cited as `` `edges.md` 5 ``.
 
 When a chapter moves, `scripts/spec-ids.ts` moves every reference from its old numbers to its IDs. It stops and asks wherever one old statement became several. A numbered reference into a chapter that has moved fails `spec-citations.test.ts`.
 

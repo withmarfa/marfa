@@ -74,7 +74,7 @@
 
 21. The server SHALL NOT answer `409 duplicate_source`.
 
-    Reason: a create naming a natural key a row holds is an upsert onto that row, including two sent together (`items.md` 5), so no door has a collision to report. The storage layer raises the code for a second row under one natural key, and the archive restore reads it as a row it already holds and counts it among its `duplicates`. A bulk entry under `create_only` that names such a key is skipped with the reason `duplicate_source`, which is a reason and not a code.
+    Reason: a create naming a natural key a row holds is an upsert onto that row, including two sent together (`items/natural-key-upsert` and `items/natural-key-concurrent`), so no door has a collision to report. The storage layer raises the code for a second row under one natural key, and the archive restore reads it as a row it already holds and counts it among its `duplicates`. A bulk entry under `create_only` that names such a key is skipped with the reason `duplicate_source`, which is a reason and not a code.
 
     Tests: `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `› lands concurrent creates of one natural key on one row`, `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`.
 

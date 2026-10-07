@@ -18,7 +18,7 @@ const META_LANDING: &str = "folder_file_landing";
 const FOLDER_KEY: &str = "folder";
 const VERSION_KEY: &str = "version";
 
-const HEADER: &str = "# This folder's settings, the system.folder it follows. An edit here is\n# sent through the folder door by `folders push`, or while watching.\n";
+const HEADER: &str = "# This folder's settings, the system.folder it follows. An edit here is\n# sent through the folder operations by `folders push`, or while watching.\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SettingsFileReport {

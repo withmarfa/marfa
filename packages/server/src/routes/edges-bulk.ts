@@ -556,12 +556,12 @@ export function edgesBulkRoutes(storage: Storage) {
     const operationId = generateId();
     const run = async (): Promise<BulkEdgeResult[]> => {
       // In atomic mode, judge every entry's ids and write gates before any
-      // entry is looked up, as the item door does (`items.md` 31). The
-      // transaction is what undoes a refused page; this pass decides which
-      // refusal the page answers with. Left to the per-entry pass, a stale
-      // entry ahead of a forbidden one would answer first, as a `409`, and
-      // the caller would re-read the edge over a refusal whose cause is a
-      // permission it lacks.
+      // entry is looked up, as the item door does
+      // (`items/bulk-atomic-gates-first`). The transaction is what undoes a
+      // refused page; this pass decides which refusal the page answers with.
+      // Left to the per-entry pass, a stale entry ahead of a forbidden one
+      // would answer first, as a `409`, and the caller would re-read the edge
+      // over a refusal whose cause is a permission it lacks.
       if (atomic) {
         for (const [i, raw] of rawEdges.entries()) {
           const shape = !isValidId(raw.source_id)

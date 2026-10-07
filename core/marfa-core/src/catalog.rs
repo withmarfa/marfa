@@ -12,7 +12,7 @@ use crate::wire::{WireCatalog, WireEdgeType};
 const TITLE_PROPERTY: &str = "title";
 
 /// Fields the server takes on every type, optional, which no read of a type
-/// lists (`items.md` 68).
+/// lists (`items/create-null-optional`).
 const EVERY_TYPE_TAKES: [&str; 2] = ["attachments", "links"];
 const BODY_PROPERTY: &str = "body";
 
@@ -514,7 +514,7 @@ impl Catalog {
 
     /// A create's properties as the server holds them: a null on a field
     /// the type declares and does not require is dropped, and one on a
-    /// property it does not declare is kept (`items.md` 68).
+    /// property it does not declare is kept (`items/create-null-optional`).
     pub(crate) fn created_properties(
         &self,
         type_id: &str,
@@ -590,9 +590,10 @@ impl Catalog {
     }
 
     /// A create's properties in the order the server answers them
-    /// (`items.md` 46): the fields the type declares, in the order a read of
-    /// the type lists them, its parent's before its own and a field declared
-    /// again keeping the place it first took, then the rest as given.
+    /// (`items/property-order-create`): the fields the type declares, in the
+    /// order a read of the type lists them, its parent's before its own and a
+    /// field declared again keeping the place it first took, then the rest as
+    /// given.
     pub(crate) fn in_answer_order(
         &self,
         type_id: &str,

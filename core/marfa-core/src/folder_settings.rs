@@ -1,7 +1,7 @@
-//! A folder's settings read from the copy, its search answered from the
-//! copy, and its settings written through the folder door. The door is the
-//! only one that writes a `system.folder` (`items.md` 49), so a write here is
-//! sent at once and never queued.
+//! A folder's settings read from the copy, its search answered from the copy,
+//! and its settings written through the folder door. The door is the only one
+//! that writes a `system.folder` (`items/folder-create` and
+//! `items/system-types`), so a write here is sent at once and never queued.
 
 use serde_json::{Map, Value};
 

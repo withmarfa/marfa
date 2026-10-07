@@ -193,4 +193,54 @@ describe("a signed-in app's idempotency key", () => {
     expect(own.headers.get("Idempotency-Replayed")).toBeNull();
     expect(own.data.item.id).not.toBe(first.data.item.id);
   });
+
+  it("lets a refreshed token read and cancel the jobs an earlier token queued", async () => {
+    const app = await register("job-app");
+    const tokens = await approve(app);
+    const tag = `signed-in-job-${randomUUID()}`;
+    const note = await new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: tokens.access_token,
+    }).rawRequest<{ item: { id: string } }>("/items", {
+      method: "POST",
+      body: {
+        type: "core.note",
+        properties: { body: "for a job" },
+        tags: [tag],
+      },
+    });
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    const queued = await new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: tokens.access_token,
+    }).bulkAction({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const jobId = (queued.data as { id: string }).id;
+
+    const refreshed = await tokenFor(app, {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+    });
+    expect(refreshed.access_token).not.toBe(tokens.access_token);
+    const asRefreshed = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: refreshed.access_token,
+    });
+    expect((await asRefreshed.bulkActionStatus(jobId)).status).toBe(200);
+    expect((await asRefreshed.bulkActionCancel(jobId)).status).toBe(200);
+
+    // The witness: the job is held to the pair, so another app of the same
+    // person is refused it.
+    const other = await approve(await register("job-other-app"));
+    const refused = await new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: other.access_token,
+    }).bulkActionStatus(jobId);
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+  });
 });

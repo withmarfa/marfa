@@ -210,7 +210,7 @@ describe("favorite reserved tag", () => {
     expect(ids).not.toContain(r.data.item.id);
   });
 
-  it("favorite is not a separate metadata field — it lives in tags", async () => {
+  it("favorite is not a separate metadata field; it lives in tags", async () => {
     const r = await client.createItem(
       createNote({ source: ctx.source, tags: ["favorite"] }),
     );

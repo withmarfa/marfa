@@ -484,7 +484,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
         (Some(reason), _) => Some(format!(
             "the settings file is not in force, and the settings before it are: {reason}"
         )),
-        (None, true) => Some("the settings file's edit went through the folder door".into()),
+        (None, true) => Some("the settings file's edit went through the folder operations".into()),
         (None, false) => None,
     }
 }

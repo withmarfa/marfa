@@ -513,7 +513,7 @@ impl Http {
     }
 
     /// The row the server holds in the bin under `id`, which a read by id
-    /// answers `404` as it answers a row that is gone (`items.md` 19).
+    /// answers `404` as it answers a row that is gone (`items/get-missing`).
     pub fn trashed_item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         let filter = format!("id eq {}", serde_json::Value::String(id.to_string()));
         Ok(self
@@ -565,8 +565,9 @@ impl Http {
         Ok(page.data)
     }
 
-    /// `POST /items/{id}/purge` at the version the caller read (`items.md`
-    /// 28), so a row that moved since is refused `409` rather than destroyed.
+    /// `POST /items/{id}/purge` at the version the caller read
+    /// (`items/purge-version`), so a row that moved since is refused `409`
+    /// rather than destroyed.
     pub fn purge_item(&self, id: &str, version: i64) -> Result<(), CoreError> {
         let version = version.to_string();
         let reply = self.call(Call {

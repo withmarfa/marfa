@@ -20,7 +20,7 @@ import { rowToMetadata } from "./helpers.js";
 import { sourceFilterToRawSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncExtensionBlobReferences } from "./blob-references.js";
-import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
+import { MAX_TAGS_PER_ITEM, distinctTags } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
   /** The search store, because every tag write is also an index write. */
@@ -234,7 +234,8 @@ export class SqliteMetadataStore implements MetadataStore {
     return rowToMetadata(row);
   }
 
-  async set(itemId: string, tags: string[]): Promise<Metadata> {
+  async set(itemId: string, sent: string[]): Promise<Metadata> {
+    const tags = distinctTags(sent);
     await this.db.transaction(async (tx) => {
       const row = await tx
         .select()
@@ -242,15 +243,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId))
         .get();
       const current = row ? rowToMetadata(row).tags : [];
-      // Counted on the array as sent rather than on a projection of it,
-      // because this writer stores it verbatim: what the row will hold is
-      // exactly what arrived. The merging writers count a deduplicated set
-      // for the same reason — each counts what it writes.
       if (tags.length > MAX_TAGS_PER_ITEM && tags.length > current.length) {
-        // The wholesale replace answers to the same bound as the merging
-        // writers, and on the same read the write uses. Fires on an increase
-        // only, so a row already over the bound stays rewritable downward —
-        // see MAX_TAGS_PER_ITEM.
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
@@ -280,8 +273,8 @@ export class SqliteMetadataStore implements MetadataStore {
         mergedTags.length > current.tags.length
       ) {
         // Inside the transaction that computes the set, on the same read the
-        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
-        // holds, and why it fires only on an increase.
+        // write uses. The note in `tag-limits.ts` says why that is the copy
+        // that holds, and why it fires only on an increase.
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
@@ -311,8 +304,8 @@ export class SqliteMetadataStore implements MetadataStore {
         merged.length > current.tags.length
       ) {
         // Inside the transaction that computes the set, on the same read the
-        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
-        // holds, and why it fires only on an increase.
+        // write uses. The note in `tag-limits.ts` says why that is the copy
+        // that holds, and why it fires only on an increase.
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,

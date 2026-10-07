@@ -1762,9 +1762,9 @@ fn queue_create(
         &catalog.created_properties(&draft.r#type, &draft.properties),
     );
     // A key naming a row the server answered sends no tier, since the server
-    // leaves that row's tier as it stands (`items.md` 7) and one sent would
-    // move it. A key naming a create still waiting sends that create's tier:
-    // if the create is refused, this one makes the row, and left out the
+    // leaves that row's tier as it stands (`items/tier-upsert`) and one sent
+    // would move it. A key naming a create still waiting sends that create's
+    // tier: if the create is refused, this one makes the row, and left out the
     // tier would be the credential's default.
     let keyed_tier = target.as_ref().and_then(|held| held.tier);
     if draft.tier.is_none() && unresolved {

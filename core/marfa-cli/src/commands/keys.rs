@@ -105,7 +105,7 @@ pub struct PermissionMapArgs {
     /// A profile field and its level, `email=read`, repeatable.
     #[arg(long = "profile-permission", value_name = "FIELD=LEVEL")]
     pub profile_permissions: Vec<String>,
-    /// The enforcement override, as the JSON object the door takes.
+    /// The enforcement override, as the JSON object the operation takes.
     #[arg(long, value_name = "JSON")]
     pub enforcement_override: Option<String>,
 }

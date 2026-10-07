@@ -202,7 +202,7 @@ pub enum Conflict {
 }
 
 /// The key a write is answered from the server's record under, when sent
-/// again. Optional on every write door that takes it.
+/// again. Optional on every write operation that takes it.
 #[derive(Debug, Default, Args)]
 pub struct IdempotencyArgs {
     /// Sent as `Idempotency-Key`, so a repeat is answered from the record
@@ -298,7 +298,7 @@ pub struct CreateArgs {
     /// resolves a row the server already holds.
     #[arg(long)]
     pub version: Option<i64>,
-    /// Edges to write with it, as the JSON object the door takes.
+    /// Edges to write with it, as the JSON object the operation takes.
     #[arg(long, value_name = "JSON")]
     pub edges: Option<String>,
     #[command(flatten)]
@@ -334,7 +334,7 @@ pub struct UpdateArgs {
     /// item already holds.
     #[arg(long, value_name = "KEY")]
     pub source_id: Option<String>,
-    /// Edges to write with it, as the JSON object the door takes.
+    /// Edges to write with it, as the JSON object the operation takes.
     #[arg(long, value_name = "JSON")]
     pub edges: Option<String>,
     /// How a colliding write is settled: `auto` asks the server to resolve
@@ -424,7 +424,7 @@ pub struct BulkFilterArgs {
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
     /// One state. Unset excludes the bin, as a listing does; there is no
-    /// `any` on this door.
+    /// `any` on this operation.
     #[arg(long)]
     pub state: Option<ItemState>,
     /// The source the items were written under.
@@ -470,7 +470,7 @@ pub enum BulkActionCommand {
     /// match is left as it is and reported. Match the bin with `--state trashed`. Needs
     /// `items.purge` and `--confirm PURGE`.
     Purge {
-        /// The word `PURGE`, because the door asks for it out loud.
+        /// The word `PURGE`, because the operation asks for it out loud.
         #[arg(long, value_name = "PURGE")]
         confirm: Option<String>,
         #[command(flatten)]

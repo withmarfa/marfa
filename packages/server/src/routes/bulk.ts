@@ -663,7 +663,7 @@ export function bulkRoutes(storage: Storage) {
       // whatever rows the store holds. Left to the per-entry pass, a stale
       // entry ahead of it would answer first, as a `409`, and the caller
       // would re-read the row over a refusal whose cause is a permission it
-      // lacks (`items.md` 31).
+      // lacks (`items/bulk-atomic-gates-first`).
       if (atomic) {
         const enforcement = resolveEnforcement(
           await readInstanceConfig(storage.settings),
@@ -683,6 +683,7 @@ export function bulkRoutes(storage: Storage) {
             throw bulkAtomicRollback(i, {
               code: ErrorCode.VALIDATION_ERROR,
               message: "occurred_at must be an ISO 8601 string",
+              details: { field: "occurred_at" },
             });
           }
           // Before the write gate, because the single door asks it first
@@ -895,6 +896,7 @@ export function bulkRoutes(storage: Storage) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "occurred_at must be an ISO 8601 string",
+        { field: "occurred_at" },
       );
     }
     if (action === "update_tags") {

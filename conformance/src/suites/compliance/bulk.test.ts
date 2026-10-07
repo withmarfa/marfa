@@ -24,7 +24,12 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote, createTask, generateId } from "../../generators/items.js";
+import {
+  createBookmark,
+  createNote,
+  createTask,
+  generateId,
+} from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -608,6 +613,51 @@ describe("bulk", () => {
     }
   });
 
+  it("acknowledges an upsert entry naming the id of an item in the bin, and refuses one of another type", async () => {
+    const created = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "binned" } }),
+    );
+    expect(created.status).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteItem(id)).ok).toBe(true);
+
+    // The witness: the single create acknowledges the same id.
+    const single = await client.createItem(
+      createNote({ id, source: ctx.source, properties: { body: "again" } }),
+    );
+    expect(single.status, JSON.stringify(single.error)).toBe(200);
+    expect(single.data.acknowledged).toBe(true);
+
+    const upserted = await client.bulkItems({
+      items: [createNote({ id, properties: { body: "again" } })],
+    });
+    expect(upserted.status, JSON.stringify(upserted.error)).toBe(200);
+    expect(upserted.data.results[0]).toMatchObject({
+      outcome: "skipped",
+      id,
+      reason: "trashed",
+    });
+
+    const otherType = await client.bulkItems({
+      items: [{ id, type: "core.task", properties: { title: "again" } }],
+      atomic: false,
+    });
+    expect(otherType.status).toBe(200);
+    expect(otherType.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "id_reused" },
+    });
+
+    const binned = await client.listItems({
+      state: "trashed",
+      source: ctx.source,
+      limit: 100,
+    });
+    const row = binned.data.data.find((item) => item.id === id);
+    expect(row?.properties.body).toBe("binned");
+  });
+
   it("reads a natural key over trashed rows, as the single create does", async () => {
     const sourceId = `trashed-${ctx.runId}`;
     const created = await client.createItem({
@@ -1030,6 +1080,39 @@ describe("bulk_action", () => {
     const got = await client.getItem(active!);
     expect(got.status).toBe(200);
     expect(got.data.item.state).toBe("active");
+  });
+
+  it("reports a refused row in a job's errors and goes on to the next", async () => {
+    const tag = `ba-continue-${ctx.runId}`;
+    const [first] = await seedTagged(1, tag);
+    // A bookmark's `url` must be a string, so the patch below refuses it and
+    // takes the notes on either side of it.
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source, tags: [tag] }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const [last] = await seedTagged(1, tag);
+
+    const result = await runToCompletion({
+      action: "update_properties",
+      patch: { url: 7 },
+      filter: { tags: [tag] },
+    });
+    expect(result.matched).toBe(3);
+    expect(result.succeeded).toBe(2);
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        id: bookmark.data.item.id,
+        code: "invalid_properties",
+      }),
+    ]);
+    for (const id of [first!, last!]) {
+      expect((await client.getItem(id)).data.item.properties.url).toBe(7);
+    }
+    expect(
+      (await client.getItem(bookmark.data.item.id)).data.item.properties.url,
+    ).toBe("https://example.com/article");
   });
 
   it("purge without confirm returns 400 bulk_confirmation_required", async () => {

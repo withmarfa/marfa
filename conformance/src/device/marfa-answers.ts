@@ -858,7 +858,8 @@ export const answers = {
     body: withMetadata(item, tags),
   }),
   /** A create whose natural key resolved a row the server holds: `200` and
-   *  that row, under its own id, as an update answers (`items.md` 5). */
+   *  that row, under its own id, as an update answers
+   *  (`items/natural-key-upsert`). */
   upserted: (item: Record<string, unknown>, tags: string[] = []): Answer => ({
     kind: "json",
     status: 200,

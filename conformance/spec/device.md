@@ -56,7 +56,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 31. **A local list and a local search answer the active state when the caller names none**, which is the default the server's listing grammar gives (`search-and-filters.md` 2 and 12). A working copy holds every state its slice carries, because a row leaving the active state is a change a catch-up has to see; what the default decides is which of them a read answers. A device whose default differed from the server's would answer a question the server answers differently, with nothing to say which one the caller got. `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`.
 
-32. **A local read by id answers every state but the bin**, which is the server's rule on the same door (`items.md` 19 and 26). An archived row stays readable by id and a trashed one reads as absent. The default a list applies is about which rows a question with no subject returns; a read naming one row has a subject, and narrowing it further would hide a row the caller is holding the id of. `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
+32. **A local read by id answers every state but the bin**, which is the server's rule on the same door (`items/get-missing` and `items/archived-readable`). An archived row stays readable by id and a trashed one reads as absent. The default a list applies is about which rows a question with no subject returns; a read naming one row has a subject, and narrowing it further would hide a row the caller is holding the id of. `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
 
 33. **A local search never answers a row in the bin, under any state value.** A trashed row is removed from the full-text index on the write that trashes it rather than narrowed out of the query, which is the server's rule on its own index (`search-and-filters.md` 12). So the widening reaches every state the index holds and the bin is not one of them, and `state=trashed` on this door matches nothing rather than matching the row. A device that indexed it would answer a search the server it copies answers nothing for, and would do it under every state value rather than one. `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`.
 
@@ -146,19 +146,19 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 60. WHEN a write carries a tag that is empty, is blank as JavaScript's `trim` reads blank, or exceeds 128 UTF-16 code units, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything, on every door that adds a tag: a create, a tag add, a metadata merge or replace, a file added with tags, and a folder's sync of a document's tags in (`folders.md` 55).
 
-**Reason:** a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items.md` 62) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
+**Reason:** a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items/tag-text`) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
 
 **Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
 
 61. WHEN a create or an edit names a property with no characters, including one a folder's sync of a document carries (`folders.md` 55), a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything.
 
-**Reason:** the server refuses such a name on every door that writes properties (`items.md` 63), and a device that took it would hold a row the server never will.
+**Reason:** the server refuses such a name on every door that writes properties (`items/property-name-empty`), and a device that took it would hold a row the server never will.
 
 **Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
 
 ## Property order
 
-62. WHEN a device writes a row to its copy, the device MUST hold the row's properties in the order the server answers them where the server still holds the row at the version the copy holds when the write arrives (`items.md` 46), but for a create naming a natural key, whose answer may land on a row the server already holds (`queue-and-verdicts.md` 39).
+62. WHEN a device writes a row to its copy, the device MUST hold the row's properties in the order the server answers them where the server still holds the row at the version the copy holds when the write arrives (`items/property-order-create`, `items/property-order-merge` and `items/property-order-replace`), but for a create naming a natural key, whose answer may land on a row the server already holds (`queue-and-verdicts.md` 39).
 
 **Reason:** an app shows an item as a document in its properties' order, and a copy that showed one order until the server answered and another after would move a person's fields under them as the queue drained. A write another device's reaches first is merged by the server (`versions.md`), in an order no device can know beforehand, and the answer then gives the copy the server's order. So a create of a new row holds the declared fields first, in the order the copy's catalog lists the type's fields, and the rest in the order written; a merging edit keeps each property where the row holds it and adds the rest after them; a whole edit based on the version the copy holds keeps the order it sends, laid back over a refilled copy or moved onto an answer ahead of it (`queue-and-verdicts.md` 45) as when it was made, and one said to be read earlier is held as a merge (`queue-and-verdicts.md` 43); and a property named by an array index comes first, in numeric order, as the server's JavaScript orders it.
 
@@ -168,7 +168,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 63. WHERE a slice names a `system.*` type, a working copy MUST hold that type's rows at either tier.
 
-**Reason:** the server stamps a `system.folder` with the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows. A slice of every type, which only a folder's own hydration makes, still holds no `system.*` row, as a bare listing answers none (`items.md` 16 and `folders.md` 2).
+**Reason:** the server stamps a `system.folder` with the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows. A slice of every type, which only a folder's own hydration makes, still holds no `system.*` row, as a bare listing answers none (`items/system-types` and `folders.md` 2).
 
 **Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`. Core `folder_settings::tests::a_folder_named_by_type_is_held_at_either_tier_and_every_type_leaves_it_out`.
 
@@ -202,9 +202,9 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
 
-69. WHEN a caller creates, changes or revokes a folder's settings through a working copy, the device MUST send the request to the folder door at once (`items.md` 49 to 52), under an idempotency key, and MUST NOT queue it.
+69. WHEN a caller creates, changes or revokes a folder's settings through a working copy, the device MUST send the request to the folder door at once (`items/folder-create`, `items/folder-change` and `items/folder-revoke`), under an idempotency key, and MUST NOT queue it.
 
-**Reason:** the folder door is the only door that writes a `system.folder` (`items.md` 16), and a drain sends to the item doors, so a folder write queued offline would wait on a door no drain reaches.
+**Reason:** the folder door is the only door that writes a `system.folder` (`items/system-types`), and a drain sends to the item doors, so a folder write queued offline would wait on a door no drain reaches.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`. Core `folder_settings::tests::a_folder_is_created_changed_and_revoked_through_the_folder_door_and_held_at_once`.
 
@@ -266,7 +266,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Tests:** `device/purge.test.ts › sends nothing to another instance at the same address, and expires the copy`.
 
-79. WHEN a device purges a row, the device MUST send `POST /items/{id}/purge` at once, naming the version the caller names or else the version the copy holds (`items.md` 28), and MUST NOT queue it.
+79. WHEN a device purges a row, the device MUST send `POST /items/{id}/purge` at once, naming the version the caller names or else the version the copy holds (`items/purge-version`), and MUST NOT queue it.
 
 **Reason:** a purge held in a queue would destroy a row long after the person who asked had stopped looking. The version is the one the person was shown, and trashing does not move it, so a row another device restored and edited since is refused `409 version_conflict` rather than destroyed.
 
@@ -306,7 +306,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 85. IF a caller pins a row the server holds in the bin and the key may read, THEN a device MUST refuse `not_found` with the code `trashed`, pinning nothing.
 
-**Reason:** a read by id answers a row in the bin `404` as it answers one that is gone (`items.md` 19), so the device asks the bin which it is, and the caller can offer to restore the row rather than report it lost. A row of a type the key may not read answers as a missing one in the bin too (`keys-and-oauth.md` 20), so it is refused `not_found` as one.
+**Reason:** a read by id answers a row in the bin `404` as it answers one that is gone (`items/get-missing`), so the device asks the bin which it is, and the caller can offer to restore the row rather than report it lost. A row of a type the key may not read answers as a missing one in the bin too (`keys-and-oauth.md` 20), so it is refused `not_found` as one.
 
 **Tests:** `device/bin-live.test.ts › refuses to pin a row in the bin, saying so`.
 
@@ -404,7 +404,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 100. WHEN a caller creates an item or an edge through a working copy under an id of its own, the device MUST refuse an id that is not a lowercase UUIDv7, `validation` with the code `invalid_id`, before it saves or queues anything.
 
-**Reason:** the server refuses such an id `400 invalid_id` on `POST /items` and `POST /edges`, and refuses a read by it the same way (`items.md` 19). A copy that queued one would show a row that can never reach the server, and could not read the row back to put itself right when the create was refused (`queue-and-verdicts.md` 12).
+**Reason:** the server refuses such an id `400 invalid_id` on `POST /items` and `POST /edges`, and refuses a read by it the same way (`items/create-id-format` and `items/get-malformed-id`). A copy that queued one would show a row that can never reach the server, and could not read the row back to put itself right when the create was refused (`queue-and-verdicts.md` 12).
 
 **Tests:** `device/local-refusals.test.ts › refuses a create or an edge naming an id the server refuses, before it saves or queues anything`. Core `validation::tests::an_id_is_taken_as_the_server_takes_one`, `refusal_tests::a_create_or_an_edge_naming_an_id_the_server_refuses_is_refused_before_it_is_queued`.
 
