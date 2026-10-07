@@ -503,7 +503,7 @@ describe("audit log", () => {
     expect(entries.map((entry) => entry.details.index).sort()).toEqual([0, 3]);
     expect(new Set(entries.map((e) => e.details.operation_id)).size).toBe(1);
   });
-  it("records export.run before the export's stream begins, and again for an export refused after it", async () => {
+  it("records export.run before the export's stream begins, and none for an export it refuses", async () => {
     const { since } = await seedHolding(`audit-export-${ctx.runId}`);
     const exportAs = (credential: string, query: string) =>
       fetch(`${apiUrl}/export?${query}`, {
@@ -530,13 +530,12 @@ describe("audit log", () => {
       (await ownEntries("export.run", since)).map((e) => e.details.format),
     ).toEqual(["archive", "ndjson"]);
 
-    // Refused after the entry is written: the type and the time bounds are
-    // read once the record exists, so an export that was never served still
-    // leaves one.
+    // An export refused for its type or its time bounds is never served, and
+    // leaves no entry.
     const badBound = await exportAs(apiKey, "occurred_after=banana");
     expect(badBound.status).toBe(400);
     await badBound.text();
-    expect(await ownEntries("export.run", since)).toHaveLength(3);
+    expect(await ownEntries("export.run", since)).toHaveLength(2);
 
     const narrow = await client.createKey({
       label: "audit-export-narrow",
@@ -557,11 +556,9 @@ describe("audit log", () => {
       since,
       narrow.data.id,
     );
-    expect(refusedEntries).toHaveLength(1);
-    expect(refusedEntries[0]!.details).toEqual({ format: "ndjson" });
+    expect(refusedEntries).toEqual([]);
 
-    // Refused before it: a credential that reaches no type is turned away at
-    // the door, ahead of the handler that writes the entry.
+    // Nor does a credential that reaches no type, turned away at the door.
     const operator = process.env.MARFA_OPERATOR_KEY!;
     const turnedAway = await exportAs(operator, "");
     expect(turnedAway.status).toBe(403);

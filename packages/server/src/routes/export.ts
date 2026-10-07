@@ -152,20 +152,6 @@ export function exportRoutes(
 
     const query = c.req.valid("query");
 
-    // Audit the export attempt before streaming starts, stamped for both
-    // the archive and NDJSON paths. An export is a bulk extraction of the
-    // instance, so the record has to exist whether or not the stream that
-    // follows completes.
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "export.run",
-      resource_type: "export",
-      details: {
-        format: query.format ?? "ndjson",
-      },
-    });
-
     // An export is a list read, so the instance's read-narrowing lever
     // applies to it. Leaving it out would make the control bypassable by
     // swapping endpoint rather than by rewording the query.
@@ -204,6 +190,19 @@ export function exportRoutes(
     const source = query.source;
 
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+
+    // Audited once the request is accepted and before streaming starts, for
+    // both formats: an export is a bulk extraction of the instance, so the
+    // record has to exist whether or not the stream that follows completes.
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      key_id: c.get("apiKey")?.id,
+      action: "export.run",
+      resource_type: "export",
+      details: {
+        format: query.format ?? "ndjson",
+      },
+    });
 
     // Both formats are one door with one query schema, so the archive reads
     // the filter the NDJSON path has just validated rather than the raw
