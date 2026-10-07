@@ -75,6 +75,9 @@ async function marfa(
     const pending = run(requireBinary(), args, {
       env,
       timeout: 30_000,
+      // A docs page at the most the command reads is 10 MiB, twice over in
+      // `--json`.
+      maxBuffer: 64 * 1024 * 1024,
     });
     // An empty write can outlive a short-lived --help process and raise EPIPE.
     pending.child.stdin?.end(stdin || undefined);
@@ -847,6 +850,215 @@ describe("every command holds the server to the contract", () => {
     expect(down.code, down.stderr).toBe(3);
     expect(down.stdout).toBe("");
     expect(refusal(down.stderr).error.code).toBe("docs_unreachable");
+  });
+
+  /** A docs site's answer for a page: Markdown, as the real site serves it. */
+  const markdownPage = (body: string | Buffer, status = 200): Answer => ({
+    kind: "bytes",
+    status,
+    body: Buffer.from(body),
+    contentType: "text/markdown; charset=utf-8",
+  });
+
+  /** The command against a docs site, with a Marfa server's address and key beside it. */
+  const docs = (site: string, args: string[]) =>
+    marfa(["--json", "docs", ...args], undefined, {
+      MARFA_DOCS_URL: site,
+      MARFA_API_URL: "http://127.0.0.1:1",
+      MARFA_API_KEY: KEY,
+    });
+
+  it("exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it", async () => {
+    server = await ScriptedServer.start();
+    server.answer("GET", "/api/docs/search", {
+      kind: "json",
+      status: 200,
+      contract: null,
+      body: { hits: "catch-all" },
+    });
+    server.answer("GET", "/api/docs/topics", {
+      kind: "bytes",
+      status: 200,
+      body: Buffer.from("<html>catch-all</html>"),
+      contentType: "application/json",
+    });
+    for (const args of [["search", "files"], ["topics"]]) {
+      const outcome = await docs(server.url, args);
+      expect(outcome.code, outcome.stderr).toBe(3);
+      expect(outcome.stdout).toBe("");
+      expect(refusal(outcome.stderr).error.code).toBe("decoding");
+      expect(outcome.stderr).not.toContain("<html>");
+    }
+    expect(sent(server)).toEqual([
+      "GET /api/docs/search",
+      "GET /api/docs/topics",
+    ]);
+  });
+
+  it("exits 3 with decoding for a docs page served as HTML, printing none of it", async () => {
+    server = await ScriptedServer.start();
+    // Consumed in order: the catch-all page first, then the Markdown.
+    server.answer(
+      "GET",
+      "/get-started/files.md",
+      {
+        kind: "bytes",
+        status: 200,
+        body: Buffer.from("<html>catch-all</html>"),
+        contentType: "text/html; charset=utf-8",
+      },
+      markdownPage("# Files\n"),
+    );
+    const outcome = await docs(server.url, ["get-started/files"]);
+    expect(outcome.code, outcome.stderr).toBe(3);
+    expect(outcome.stdout).toBe("");
+    expect(refusal(outcome.stderr).error.code).toBe("decoding");
+    expect(outcome.stderr).not.toContain("<html>");
+    // The witness: the same page served as Markdown is printed.
+    const served = await docs(server.url, ["get-started/files"]);
+    expect(served.code, served.stderr).toBe(0);
+    expect(JSON.parse(served.stdout).markdown).toBe("# Files\n");
+  });
+
+  /** `/r0.md` redirects to `/r1.md` and so on, `hops` times, then serves the page. */
+  async function redirecting(hops: number): Promise<ScriptedServer> {
+    const started = await ScriptedServer.start();
+    started.answer("GET", /^\/r\d+\.md$/, (request) => {
+      const at = Number(/\/r(\d+)\.md/.exec(request.pathname)?.[1]);
+      return at < hops
+        ? {
+            kind: "json",
+            status: 302,
+            contract: null,
+            body: {},
+            headers: { location: `/r${String(at + 1)}.md` },
+          }
+        : markdownPage("# Moved\n");
+    });
+    return started;
+  }
+
+  it("follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that", async () => {
+    server = await redirecting(5);
+    const five = await docs(server.url, ["r0"]);
+    expect(five.code, five.stderr).toBe(0);
+    expect(JSON.parse(five.stdout).markdown).toBe("# Moved\n");
+    expect(sent(server)).toHaveLength(6);
+    await server.stop();
+
+    server = await redirecting(6);
+    const six = await docs(server.url, ["r0"]);
+    expect(six.code, six.stderr).toBe(3);
+    expect(six.stdout).toBe("");
+    expect(refusal(six.stderr).error.code).toBe("docs_unreachable");
+    expect(sent(server)).toHaveLength(6);
+  });
+
+  it("reports the address a docs page was asked for, not the one a redirect led to", async () => {
+    server = await redirecting(2);
+    const outcome = await docs(server.url, ["r0"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(JSON.parse(outcome.stdout).url).toBe(`${server.url}/r0.md`);
+    expect(sent(server)).toEqual(["GET /r0.md", "GET /r1.md", "GET /r2.md"]);
+  });
+
+  it("refuses --url and --key on docs with usage, sending nothing", async () => {
+    server = await ScriptedServer.start();
+    for (const flags of [
+      ["--url", server.url],
+      ["--key", KEY],
+    ]) {
+      for (const command of [
+        ["topics"],
+        ["search", "files"],
+        ["get-started/files"],
+      ]) {
+        const outcome = await marfa(
+          [...flags, "--json", "docs", ...command],
+          undefined,
+          { MARFA_DOCS_URL: server.url },
+        );
+        expect(outcome.code, outcome.stderr).toBe(2);
+        expect(outcome.stdout).toBe("");
+        expect(refusal(outcome.stderr).error.code).toBe("usage");
+      }
+    }
+    expect(server.requests).toEqual([]);
+  });
+
+  it("refuses a docs page path it does not accept with invalid, sending nothing", async () => {
+    server = await ScriptedServer.start();
+    for (const named of ["../outside", "a b", "a//b", "a%2fb", "/", ""]) {
+      const outcome = await docs(server.url, [named]);
+      expect(outcome.code, `${named}: ${outcome.stderr}`).toBe(1);
+      expect(outcome.stdout).toBe("");
+      expect(refusal(outcome.stderr).error.code).toBe("invalid");
+    }
+    expect(server.requests).toEqual([]);
+  });
+
+  it("refuses a docs address that is not http or https with invalid, sending nothing", async () => {
+    server = await ScriptedServer.start();
+    const host = server.url.replace("http://", "");
+    for (const address of ["not a url", `ftp://${host}`, host]) {
+      const outcome = await docs(address, ["get-started/files"]);
+      expect(outcome.code, `${address}: ${outcome.stderr}`).toBe(1);
+      expect(outcome.stdout).toBe("");
+      expect(refusal(outcome.stderr).error.code).toBe("invalid");
+    }
+    expect(server.requests).toEqual([]);
+  });
+
+  it("exits 3 with decoding for a docs answer larger than the command reads", async () => {
+    const limit = 10 * 1024 * 1024;
+    server = await ScriptedServer.start();
+    server.answer("GET", "/big.md", markdownPage(Buffer.alloc(limit + 1, "a")));
+    server.answer("GET", "/exact.md", markdownPage(Buffer.alloc(limit, "a")));
+    const big = await docs(server.url, ["big"]);
+    expect(big.code, big.stderr.slice(0, 300)).toBe(3);
+    expect(big.stdout).toBe("");
+    expect(refusal(big.stderr).error.code).toBe("decoding");
+    // The witness: a body of exactly the limit is read.
+    const exact = await docs(server.url, ["exact"]);
+    expect(exact.code, exact.stderr.slice(0, 300)).toBe(0);
+    expect(JSON.parse(exact.stdout).markdown).toHaveLength(limit);
+  });
+
+  it("exits 3 with decoding for a docs page that is not UTF-8", async () => {
+    server = await ScriptedServer.start();
+    server.answer(
+      "GET",
+      "/get-started/files.md",
+      markdownPage(Buffer.from([0xff, 0xfe, 0xfd])),
+    );
+    const outcome = await docs(server.url, ["get-started/files"]);
+    expect(outcome.code, outcome.stderr).toBe(3);
+    expect(outcome.stdout).toBe("");
+    expect(refusal(outcome.stderr).error.code).toBe("decoding");
+  });
+
+  it("reads one docs page however it is named: with a slash, under docs/, with .md, or by its address", async () => {
+    server = await ScriptedServer.start();
+    server.answer("GET", "/get-started/files.md", markdownPage("# Files\n"));
+    for (const named of [
+      "get-started/files",
+      "/get-started/files",
+      "get-started/files/",
+      "get-started/files.md",
+      "docs/get-started/files",
+      "/docs/get-started/files.md",
+      "get-started/files#a-heading",
+      "https://docs.marfa.so/get-started/files",
+      "https://docs.marfa.so/docs/get-started/files.md",
+    ]) {
+      const outcome = await docs(server.url, [named]);
+      expect(outcome.code, `${named}: ${outcome.stderr}`).toBe(0);
+      expect(JSON.parse(outcome.stdout).path).toBe("get-started/files");
+    }
+    expect(new Set(sent(server))).toEqual(
+      new Set(["GET /get-started/files.md"]),
+    );
+    expect(sent(server)).toHaveLength(9);
   });
 
   it("posts redelivery with encoded ids and no body", async () => {

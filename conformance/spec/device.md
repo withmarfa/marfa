@@ -452,35 +452,87 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 ## The docs site
 
-107. WHEN `marfa docs` reads the documentation, the binary MUST send each request to the docs site, which is the address in `MARFA_DOCS_URL` where that is set and not empty and `https://docs.marfa.so` otherwise, whatever `MARFA_API_URL` holds: a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
+107. WHEN `marfa docs` reads the documentation, the command MUST send each request to the docs site, which is the address in `MARFA_DOCS_URL` where that is set and not empty and `https://docs.marfa.so` otherwise, whatever `MARFA_API_URL` holds: a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
 
 **Reason:** the docs site is not a Marfa instance. The command needs no server, store or key, so an agent can read the docs before it has any of them.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`, `commands::docs::tests::the_topics_are_read_from_their_own_door`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
 
-108. WHEN `marfa docs` sends a request to the docs site, the binary MUST send no credential, whatever `MARFA_API_KEY` holds.
+108. WHEN `marfa docs` sends a request to the docs site, the command MUST send no credential, whatever `MARFA_API_KEY` holds.
 
 **Reason:** the docs site has no keys, so a credential sent to it would reach a host that never asked for one.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`.
 
-109. WHEN the docs site answers `marfa docs`, the binary MUST read the answer whether or not it names a contract.
+109. WHEN the docs site answers `marfa docs`, the command MUST read the answer whether or not it names a contract.
 
 **Reason:** the docs site names no contract, so the check the binary holds a server's answers to (39) would refuse every page.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_page_is_read_without_checking_a_contract`.
 
-110. IF the docs site answers `404` for the page `marfa docs` is given, THEN the binary MUST exit 1 with `docs_page_not_found`, naming the path.
+110. IF the docs site answers `404` for the page `marfa docs` is given, THEN the command MUST exit 1 with `docs_page_not_found`, naming the path.
 
 **Reason:** a retry does not change a missing page. The message points to `marfa docs search`, where an agent that guessed a path can find the page it meant.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_missing_page_is_named_and_refused`.
 
-111. IF the docs site cannot be reached, or answers with a server fault or a status the command does not read, THEN the binary MUST exit 3 with `docs_unreachable`, naming the site's address.
+111. IF the docs site cannot be reached, or answers with a server fault or a status the command does not read, THEN the command MUST exit 3 with `docs_unreachable`, naming the site's address.
 
 **Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything (`queue-and-verdicts.md` 17).
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_site_that_is_not_listening_is_unreachable`, `commands::docs::tests::a_site_that_answers_with_a_server_fault_or_nothing_useful_is_unreachable`.
+
+112. WHEN `marfa docs` is given a page by its path, with or without a leading or trailing slash, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
+
+**Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`. Core `commands::docs::tests::every_way_to_name_a_page_is_one_path`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
+
+113. IF the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+
+**Reason:** an answer the command cannot read is not a refusal and not a lost connection, and printing part of it would pass a proxy's or a catch-all page's words off as the docs.
+
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it`. Core `commands::docs::tests::an_answer_that_is_not_the_json_expected_is_a_decoding_error`, `tests/docs.rs::an_answer_that_is_not_the_json_expected_leaves_by_three`.
+
+114. IF the docs site answers a page `marfa docs` asked for as `text/html`, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+
+**Reason:** a site's catch-all page must never be printed as the page asked for.
+
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page served as HTML, printing none of it`. Core `commands::docs::tests::an_answer_that_is_not_the_json_expected_is_a_decoding_error`, `tests/docs.rs::a_page_served_as_html_is_never_printed`.
+
+115. IF the body of a success from the docs site is larger than 10 MiB (10,485,760 bytes), THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+
+**Reason:** a page or the list of pages is far smaller, so a body that large is not what the command asked for, and a retry does not change it. It is not `docs_unreachable`, which says the site may answer next time.
+
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs answer larger than the command reads`. Core `commands::docs::tests::a_body_larger_than_the_command_reads_is_a_decoding_error_whatever_the_status_says_after`.
+
+116. IF the body of a success from the docs site is not UTF-8, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page that is not UTF-8`. Core `commands::docs::tests::a_body_that_is_not_utf8_is_a_decoding_error_but_a_refusal_is_still_a_refusal`.
+
+117. IF the docs site answers more than five redirects in a row to one request of `marfa docs`, THEN the command MUST exit 3 with `docs_unreachable`.
+
+**Reason:** the command follows redirects up to that, in case the docs site moves a page, because it sends no credential for a redirect to carry to another host. More than five is a loop, which is the site failing. A working copy follows no redirect from a server (42).
+
+**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`, `commands::docs::tests::a_sixth_redirect_in_a_row_is_the_site_failing`.
+
+118. WHERE `--json` is given, WHEN `marfa docs` reads a page, the command MUST report in `url` the address it asked for, whether or not a redirect led it to another.
+
+**Tests:** `device/contract.test.ts › reports the address a docs page was asked for, not the one a redirect led to`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`.
+
+119. IF `--url` or `--key` is given to `marfa docs`, THEN the command MUST exit 2 with `usage` and send no request.
+
+**Reason:** both name a Marfa server and a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
+
+**Tests:** `device/contract.test.ts › refuses --url and --key on docs with usage, sending nothing`. Core `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+
+120. IF the page `marfa docs` is given, once a leading or trailing slash, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, THEN the command MUST exit 1 with `invalid` and send no request.
+
+**Reason:** a path outside that set could leave the docs site's pages or carry another request in its name.
+
+**Tests:** `device/contract.test.ts › refuses a docs page path it does not accept with invalid, sending nothing`. Core `commands::docs::tests::a_name_that_is_not_a_path_is_refused_before_anything_is_sent`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+
+121. IF `MARFA_DOCS_URL` is set and not empty, and is not an `http` or `https` address with a host and no query or fragment, THEN the command MUST exit 1 with `invalid` and send no request.
+
+**Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`. Core `commands::docs::tests::the_address_must_be_http_or_https`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
 
 ## What the real server cannot be made to produce
 
