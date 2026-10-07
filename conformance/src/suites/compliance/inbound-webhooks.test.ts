@@ -610,6 +610,37 @@ describe("the receiving door on an instance that names its limits", () => {
     idOf(await send(server!.apiUrl, third.path, "x"));
   });
 
+  it("counts the unhandled deliveries a retired endpoint stored toward the backlog, until they are handled", async () => {
+    const owner = await freshConnector("backlog-retired");
+    const retiring = await endpoint(owner);
+    const live = await endpoint(owner);
+    const stored: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      stored.push(idOf(await send(server!.apiUrl, retiring.path, "x")));
+    }
+    expect(
+      (await owner.client.retireInboundEndpoint(owner.id, retiring.id)).status,
+    ).toBe(200);
+
+    // Two on the live endpoint make five, the backlog's whole room, with
+    // three of them held by an address that no longer answers.
+    for (let i = 0; i < 2; i++) {
+      idOf(await send(server!.apiUrl, live.path, "x"));
+    }
+    const full = await send(server!.apiUrl, live.path, "x");
+    expect(full.status).toBe(503);
+    expect(codeOf(full)).toBe("inbound_unavailable");
+
+    // The witness: handled, the retired endpoint's deliveries stop counting,
+    // so it was they that filled the room.
+    const marked = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: stored,
+      outcome: "processed",
+    });
+    expect(marked.status).toBe(200);
+    idOf(await send(server!.apiUrl, (await endpoint(owner)).path, "x"));
+  });
+
   it("refuses while the backlog's bytes are full", async () => {
     const owner = await freshConnector("backlog-bytes");
     const made = await endpoint(owner);
@@ -885,6 +916,97 @@ describe("reading and handling", () => {
     expect(after?.duplicate_of).toEqual({ id: original, outcome: "processed" });
   });
 
+  it("refuses a state it does not know, rather than answering the unhandled deliveries", async () => {
+    const owner = await connector("read-state-invalid");
+    const made = await endpoint(owner);
+    const handled = idOf(await send(apiUrl, made.path, "handled"));
+    const waiting = idOf(await send(apiUrl, made.path, "waiting"));
+    expect(
+      (
+        await owner.client.markInboundDeliveriesHandled(owner.id, {
+          ids: [handled],
+          outcome: "processed",
+        })
+      ).status,
+    ).toBe(200);
+
+    for (const [state, ids] of [
+      ["pending", [waiting]],
+      ["handled", [handled]],
+      ["any", [handled, waiting]],
+    ] as const) {
+      const listed = await owner.client.listInboundDeliveries(owner.id, {
+        state,
+      });
+      expect(listed.status, state).toBe(200);
+      expect(listed.data.data.map((d) => d.id).sort(), state).toEqual(
+        [...ids].sort(),
+      );
+    }
+    for (const state of ["done", "Handled", "all", ""]) {
+      const refused = await owner.client.rawRequest<unknown>(
+        `/connectors/${owner.id}/deliveries?state=${state}`,
+      );
+      expect(refused.status, state).toBe(400);
+      expect(refused.error?.error.code, state).toBe("validation_error");
+    }
+  });
+
+  it("gives no duplicate_of to a delivery that arrives without its endpoint's duplicate header", async () => {
+    const owner = await connector("read-duplicate-absent");
+    const keyed = await endpoint(owner, {
+      duplicate_header: "X-GitHub-Delivery",
+    });
+    const bare = [
+      idOf(await send(apiUrl, keyed.path, "{}")),
+      idOf(await send(apiUrl, keyed.path, "{}")),
+    ];
+    // The witnesses: the endpoint does mark a repeat of a value it was sent.
+    const original = idOf(
+      await send(apiUrl, keyed.path, "{}", ["X-GitHub-Delivery", "guid-1"]),
+    );
+    const repeat = idOf(
+      await send(apiUrl, keyed.path, "{}", ["X-GitHub-Delivery", "guid-1"]),
+    );
+    const another = idOf(await send(apiUrl, keyed.path, "{}"));
+
+    const byId = new Map((await pending(owner)).map((d) => [d.id, d]));
+    expect(byId.size).toBe(5);
+    expect(byId.get(repeat)?.duplicate_of).toEqual({
+      id: original,
+      outcome: null,
+    });
+    for (const id of [...bare, original, another]) {
+      expect(byId.get(id)?.duplicate_of, id).toBeNull();
+    }
+  });
+
+  it("gives no duplicate_of to a delivery whose value only another endpoint of the registration carried", async () => {
+    const owner = await connector("read-duplicate-other");
+    const header = { duplicate_header: "X-GitHub-Delivery" };
+    const first = await endpoint(owner, header);
+    const second = await endpoint(owner, header);
+    const deliver = async (path: string, value: string) =>
+      idOf(await send(apiUrl, path, "{}", ["X-GitHub-Delivery", value]));
+    const onFirst = await deliver(first.path, "guid-1");
+    const onSecond = await deliver(second.path, "guid-1");
+    // The witnesses: each endpoint marks a repeat of what it carried itself.
+    const repeatOnFirst = await deliver(first.path, "guid-1");
+    const repeatOnSecond = await deliver(second.path, "guid-1");
+
+    const byId = new Map((await pending(owner)).map((d) => [d.id, d]));
+    expect(byId.get(onFirst)?.duplicate_of).toBeNull();
+    expect(byId.get(onSecond)?.duplicate_of).toBeNull();
+    expect(byId.get(repeatOnFirst)?.duplicate_of).toEqual({
+      id: onFirst,
+      outcome: null,
+    });
+    expect(byId.get(repeatOnSecond)?.duplicate_of).toEqual({
+      id: onSecond,
+      outcome: null,
+    });
+  });
+
   it("answers each id of a handled mark once, in the order first named", async () => {
     const owner = await connector("read-mark-order");
     const made = await endpoint(owner);
@@ -962,7 +1084,7 @@ describe("reading and handling", () => {
         { ids: [id], outcome: "done" },
         "validation_error",
       ],
-      ["no outcome", { ids: [id] }, "validation_error"],
+      ["no outcome", { ids: [id] }, "missing_required_field"],
       ["no ids named", { outcome: "processed" }, "missing_required_field"],
     ];
     for (const [what, body, code] of refusals) {

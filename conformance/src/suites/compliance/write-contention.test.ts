@@ -9,6 +9,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HeldLock } from "../../utils/held-lock.js";
+import { codeOf, idOf, send } from "../../utils/inbound-sender.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -326,6 +327,44 @@ describe("contention on the write lock", () => {
     // The witness: released, the same registration is served.
     const served = await register();
     expect(served.status).toBe(201);
+  }, 120_000);
+
+  it("refuses an inbound receipt 503 write_contention and stores nothing, then takes the same receipt once the lock is gone", async () => {
+    const own = new MarfaClient({
+      baseUrl: impatient!.apiUrl,
+      apiKey: (
+        await clientFor(impatient!).createKey({
+          label: "contention-receipt",
+          source: "contention-receipt",
+          default_tier: "library",
+        })
+      ).data.key,
+    });
+    const registered = await own.registerConnector({ name: "contention" });
+    expect(registered.status).toBe(201);
+    const made = await own.createInboundEndpoint(registered.data.id);
+    expect(made.status).toBe(201);
+
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      const refused = await send(impatient!.apiUrl, made.data.path, "pending");
+      expect(
+        refused.status,
+        `a contended receipt answered ${String(refused.status)}`,
+      ).toBe(503);
+      expect(codeOf(refused)).toBe("write_contention");
+    } finally {
+      await lock.release();
+    }
+    const none = await own.listInboundDeliveries(registered.data.id, {
+      state: "any",
+    });
+    expect(none.data.data).toEqual([]);
+
+    // The witness: released, the receipt the sender sends again is stored.
+    const id = idOf(await send(impatient!.apiUrl, made.data.path, "pending"));
+    const stored = await own.listInboundDeliveries(registered.data.id);
+    expect(stored.data.data.map((row) => row.id)).toEqual([id]);
   }, 120_000);
 
   it("waits out a briefly held lock on the default budget", async () => {
