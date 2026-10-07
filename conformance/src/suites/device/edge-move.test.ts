@@ -29,7 +29,7 @@ const LINK = "01a00000-0000-7000-8000-0000000000e3";
 
 /**
  * A move of a target, which the server answers without changing its read
- * view (`read-views.md` 3), so the copy reads the moved edge back. A move of
+ * view (`read-views/view-keeps-edge-writes`), so the copy reads the moved edge back. A move of
  * a source expires the copy once answered; `edge-move-live.test.ts` holds
  * that against the real server.
  */

@@ -195,7 +195,7 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     await withStream(apiUrl, apiKey, {}, async (stream) => {
       await new Promise((settle) => setTimeout(settle, 200));
       // A move of an edge's source changes the server's read view
-      // (`read-views.md` 3): the move is answered, and the copy expires.
+      // (`read-views/view-moves-edge-source`): the move is answered, and the copy expires.
       const drained = await device().drain();
       expect(drained.ok).toBe(false);
       if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");

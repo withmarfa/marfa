@@ -2449,7 +2449,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
   it("refuses a create whose natural key names a row, and moves the copy onto that row", async () => {
     // Another device's create landed under the same natural key after this
     // copy last read, so the create here, conditional on nothing being there,
-    // is refused, and the envelope names the row that is (`versions.md` 10).
+    // is refused, and the envelope names the row that is (`versions/create-names-row`).
     const OTHER = { id: "01a00000-0000-7000-8000-00000000000b", version: 1 };
     const THEIRS = { id: "01a00000-0000-7000-8000-0000000000c1", version: 2 };
     harness = await hydratedHarness("queue-create-refused-onto-held", {
@@ -2822,7 +2822,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
 
   it("refuses a create whose natural key names a row somebody trashed, and forgets its row", async () => {
     // The server acknowledges such a create with the row in the bin and
-    // writes nothing (`versions.md` 10).
+    // writes nothing (`versions/create-trashed-version`).
     const BINNED = "01a00000-0000-7000-8000-0000000000b1";
     harness = await hydratedHarness("queue-create-onto-trashed");
     const { device, server } = harness;
@@ -4432,7 +4432,7 @@ describe("an edit behind an edit of the same row", () => {
   /**
    * The edge door as the server keeps it: an edit on the version the edge is
    * at is merged into its properties and moves it on, and one on any other is
-   * refused naming the edge as it stands (`versions.md` 16, 17).
+   * refused naming the edge as it stands (`edges/update-stale-answer`).
    */
   function scriptEdgeDoor(harnessUnderTest: Harness): {
     version: number;

@@ -16,7 +16,7 @@ The contract has two halves.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
-- `read-views.md`: how a read view shapes the items an answer carries.
+- `read-views.md`: the copy stream, conditional reads, and the read view that certifies what a working copy holds.
 - `blobs.md`: uploads, downloads, ranges and the blob link.
 - `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
 - `housekeeping.md`: the jobs the server runs on itself.

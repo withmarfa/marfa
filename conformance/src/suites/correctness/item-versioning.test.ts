@@ -380,7 +380,7 @@ describe("item versioning", () => {
 
   it("merges a stale write on an item field nobody else changed", async () => {
     // The witness for the case above, and the rule it must not break:
-    // `versions.md` 11 merges a stale write whose changed fields did not
+    // `versions/merge-stale` merges a stale write whose changed fields did not
     // collide, and widening the check to the three item fields does not
     // make every stale write carrying one a refusal.
     const r = await client.createItem(
@@ -1027,7 +1027,7 @@ describe("item versioning", () => {
   });
 
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
-    // `versions.md` 11 applies a stale write's genuine changes over the
+    // `versions/merge-replace-clear` applies a stale write's genuine changes over the
     // current row. Under `properties_mode: replace` the body is the whole of
     // the caller's properties, so a field the ancestor had and the body
     // lacks is one of those changes: the caller cleared it.

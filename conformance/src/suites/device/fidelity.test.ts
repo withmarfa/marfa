@@ -1127,7 +1127,7 @@ describe("the scripted answers match the server's", () => {
         },
         ["body", "title"],
         // core.note declares both of its text fields keep-both
-        // (`versions.md` 12); a policy naming one of them would send a device
+        // (`types/merge-policy`); a policy naming one of them would send a device
         // looking for a sibling it was never told to expect.
         {
           fields: { body: "keep_both_copies", notes: "keep_both_copies" },

@@ -9,8 +9,8 @@ import {
 import type { Answer } from "./scripted-server.js";
 
 /** `core.note`'s policy, which the server answers a collision with
- *  (`versions.md` 12). The door's rows are notes and files, and a file's
- *  properties collide under the same default. */
+ *  (`versions/stale-merge-policy`). The door's rows are notes and files, and
+ *  a file's properties collide under the same default. */
 const NOTE_MERGE_POLICY = {
   fields: { body: "keep_both_copies", notes: "keep_both_copies" },
   default: "last_writer_wins",
@@ -38,7 +38,7 @@ export interface DoorRow {
   occurred_at?: string;
   /** `archived`, where a transition moved it there. */
   state?: string;
-  /** A conflicted copy's `derived-from` edge to its original (`versions.md` 22). */
+  /** A conflicted copy's `derived-from` edge to its original (`versions/copy-link`). */
   derivedFrom?: { id: string; target: string };
 }
 
@@ -80,7 +80,7 @@ export interface DoorDecision {
 /**
  * The item doors a folder's drain reaches, deciding as the real server does
  * (`items/natural-key-upsert`, `items/natural-key-id-mismatch` and
- * `items/source-unclaimed`; `versions.md` 10, 18).
+ * `items/source-unclaimed`; `versions/create-order`).
  *
  * A folder fixture scripts its server with this rather than with fixed
  * answers, because what a folder does depends on what the server decides:
@@ -179,7 +179,7 @@ export class FolderDoor {
         };
       }
       // A row in the bin is acknowledged and not written, whatever version
-      // the create carries (`versions.md` 10).
+      // the create carries (`versions/create-trashed-version`).
       if (held.trashed === true) {
         return { answer: this.acknowledged(incumbent) };
       }
@@ -196,7 +196,7 @@ export class FolderDoor {
       // A version makes the upsert conditional. A version the row has moved
       // past is merged against its snapshot, and one no snapshot covers is
       // refused: zero, which the server never mints, among them
-      // (`versions.md` 9, 10, 18).
+      // (`versions/create-ancestor-none`).
       const ancestor =
         sent.version === undefined
           ? undefined
@@ -271,11 +271,13 @@ export class FolderDoor {
    * An update, which moves none of type, source or key unless it names the
    * key. On the version the row is at it lands. On one the row has moved
    * past it is merged against that version's snapshot as the server merges
-   * it (`versions.md` 8, 11, 13): a property, or the natural key, that only
-   * it changed is applied, one both changed collides, and a collision is
-   * refused where the caller did not ask the server to resolve. Where it did,
-   * a last-writer property and the natural key take this write's value, and a
-   * keep-both property keeps the row's while this write's goes to a sibling:
+   * it (`versions/merge-stale`, `versions/stale-collision`,
+   * `versions/auto-resolved` and `versions/copy-written`): a property, or
+   * the natural key, that only it changed is applied, one both changed
+   * collides, and a collision is refused where the caller did not ask the
+   * server to resolve. Where it did, a last-writer property and the natural
+   * key take this write's value, and a keep-both property keeps the row's
+   * while this write's goes to a sibling:
    * the row's properties with the losing values laid over, under the row's
    * type and source and no natural key, tagged as a conflicted copy.
    */

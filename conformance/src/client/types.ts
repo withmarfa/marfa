@@ -420,9 +420,9 @@ export interface MergePolicy {
  * A snapshot of an item at one version, as a conflict envelope carries it.
  *
  * The three item fields ride beside the properties because the version
- * check covers them and `conflicting_fields` can name one (`versions.md`
- * 8): a client told that `tier` collided and shown neither side's value
- * has been named a reason it cannot act on.
+ * check covers them and `conflicting_fields` can name one
+ * (`versions/collision-item-field`): a client told that `tier` collided and
+ * shown neither side's value has been named a reason it cannot act on.
  */
 export interface ConflictSnapshot {
   /** The row the snapshot is of: the only way a create that named a natural
