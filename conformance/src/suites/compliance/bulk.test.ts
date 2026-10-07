@@ -24,7 +24,12 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote, createTask, generateId } from "../../generators/items.js";
+import {
+  createBookmark,
+  createNote,
+  createTask,
+  generateId,
+} from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -1030,6 +1035,39 @@ describe("bulk_action", () => {
     const got = await client.getItem(active!);
     expect(got.status).toBe(200);
     expect(got.data.item.state).toBe("active");
+  });
+
+  it("reports a refused row in a job's errors and goes on to the next", async () => {
+    const tag = `ba-continue-${ctx.runId}`;
+    const [first] = await seedTagged(1, tag);
+    // A bookmark's `url` must be a string, so the patch below refuses it and
+    // takes the notes on either side of it.
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source, tags: [tag] }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const [last] = await seedTagged(1, tag);
+
+    const result = await runToCompletion({
+      action: "update_properties",
+      patch: { url: 7 },
+      filter: { tags: [tag] },
+    });
+    expect(result.matched).toBe(3);
+    expect(result.succeeded).toBe(2);
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        id: bookmark.data.item.id,
+        code: "invalid_properties",
+      }),
+    ]);
+    for (const id of [first!, last!]) {
+      expect((await client.getItem(id)).data.item.properties.url).toBe(7);
+    }
+    expect(
+      (await client.getItem(bookmark.data.item.id)).data.item.properties.url,
+    ).toBe("https://example.com/article");
   });
 
   it("purge without confirm returns 400 bulk_confirmation_required", async () => {
