@@ -8,6 +8,7 @@ import {
   SETTING_NAMES,
   SettingsError,
   defaultTessdataDir,
+  describeSettings,
   loadConfig,
 } from "./config.js";
 
@@ -526,4 +527,94 @@ it.each([
   );
   expect(refusal({ [name]: String(maximum + 1) })).toContain(name);
   expect(loadConfig({ [name]: "0" })).toHaveProperty(field, 0);
+});
+
+describe("the settings as data", () => {
+  const described = describeSettings();
+
+  /** The lines of a refusal that name this setting and say its own rule is broken, not a rule it shares with another. */
+  function ruleRefusal(name: string, raw: string): string {
+    return refusal({ [name]: raw })
+      .split("\n")
+      .filter(
+        (line) =>
+          line.trim().startsWith(`${name} must be `) &&
+          !line.includes("must be at least"),
+      )
+      .join("\n");
+  }
+
+  it("describes every setting once, in the order the schema states them", () => {
+    expect(described.map((s) => s.name)).toEqual([...SETTING_NAMES]);
+  });
+
+  it("gives every setting one plain sentence about what it controls", () => {
+    for (const { name, description } of described) {
+      expect(description, name).toMatch(/^[A-Z].*\.$/);
+      expect(description, name).not.toContain("\u2014");
+    }
+  });
+
+  it("states no default for a secret", () => {
+    const secrets = described.filter((s) => s.secret);
+    expect(secrets.map((s) => s.name)).toContain("API_KEY_SALT");
+    for (const setting of secrets) {
+      expect(setting.default, setting.name).toBeUndefined();
+    }
+  });
+
+  it("explains in words a default that derives from something else", () => {
+    const note = (name: string) =>
+      described.find((s) => s.name === name)?.defaultNote;
+    expect(note("API_KEY_SALT")).toContain("Required in production");
+    expect(note("MARFA_AUTH_BASE_URL")).toContain("Required in production");
+    expect(note("MARFA_AUTH_SECRET")).toContain("Required in production");
+  });
+
+  it("states a default its own rule accepts, and that loads", () => {
+    for (const setting of described) {
+      if (setting.default === undefined) continue;
+      expect(
+        ruleRefusal(setting.name, String(setting.default)),
+        setting.name,
+      ).toBe("");
+    }
+  });
+
+  it("states bounds that are the ones the setting refuses at", () => {
+    for (const { name, rule } of described) {
+      if (rule.kind === "count") {
+        expect(ruleRefusal(name, String(rule.min)), `${name} at min`).toBe("");
+        if (rule.min > 0) {
+          expect(
+            ruleRefusal(name, String(rule.min - 1)),
+            `${name} below min`,
+          ).not.toBe("");
+        }
+        if (rule.max !== undefined) {
+          expect(ruleRefusal(name, String(rule.max)), `${name} at max`).toBe(
+            "",
+          );
+          expect(
+            ruleRefusal(name, String(rule.max + 1)),
+            `${name} above max`,
+          ).not.toBe("");
+        }
+      }
+      if (rule.kind === "decimal") {
+        expect(ruleRefusal(name, String(rule.min)), `${name} at min`).toBe("");
+        expect(ruleRefusal(name, String(rule.max)), `${name} at max`).toBe("");
+        expect(
+          ruleRefusal(name, String(rule.max + 1)),
+          `${name} above max`,
+        ).not.toBe("");
+      }
+      if (rule.kind === "choice") {
+        for (const value of rule.values) {
+          expect(ruleRefusal(name, value), `${name}=${value}`).toBe("");
+        }
+        expect(ruleRefusal(name, "not-a-choice"), name).not.toBe("");
+      }
+    }
+  });
 });
