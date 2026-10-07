@@ -22,9 +22,13 @@ import {
 
 const MAX_BYTES = 64;
 const IN_FLIGHT_BYTES = 8;
+const BACKLOG_BYTES = 4;
+const RETAINED_DELIVERIES = 2;
 
 let server: FreshServer;
 let minter: MarfaClient;
+let capacityServer: FreshServer;
+let capacityMinter: MarfaClient;
 let serial = 0;
 
 beforeAll(async () => {
@@ -40,11 +44,24 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  // A second instance whose backlog counts are out of reach, so that what
+  // fills is the bytes of what is unhandled, or what a registration retains.
+  capacityServer = await bootFreshServer("inbound-check-order-capacity", {
+    RATE_LIMIT_ENABLED: "false",
+    MARFA_INBOUND_BACKLOG_BYTES: String(BACKLOG_BYTES),
+    MARFA_INBOUND_RETAINED_DELIVERIES: String(RETAINED_DELIVERIES),
+    MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
+  });
+  capacityMinter = new MarfaClient({
+    baseUrl: capacityServer.apiUrl,
+    apiKey: capacityServer.workingKey,
+  });
+}, 4 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server.stop();
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  await capacityServer.stop();
+}, 4 * FRESH_SERVER_TIMEOUT_MS);
 
 interface Registration {
   client: MarfaClient;
@@ -52,17 +69,19 @@ interface Registration {
 }
 
 /** A registration with no delivery yet, so its backlog is empty. */
-async function registration(): Promise<Registration> {
+async function registration(
+  on: { server: FreshServer; minter: MarfaClient } = { server, minter },
+): Promise<Registration> {
   serial += 1;
   const label = `order-${String(serial)}`;
-  const minted = await minter.createKey({
+  const minted = await on.minter.createKey({
     label,
     source: label,
     default_tier: "library",
   });
   expect(minted.status).toBe(201);
   const client = new MarfaClient({
-    baseUrl: server.apiUrl,
+    baseUrl: on.server.apiUrl,
     apiKey: minted.data.key,
   });
   const registered = await client.registerConnector({ name: label });
@@ -158,6 +177,60 @@ describe("a receipt that meets two refusals", () => {
     );
     expect(declared.status).toBe(413);
     expect(codeOf(declared)).toBe("request_too_large");
+  });
+
+  it("answers a declared length over the limit 413 before the backlog's bytes and the retained capacity's 503", async () => {
+    const on = { server: capacityServer, minter: capacityMinter };
+    const declare = (path: string) =>
+      answerToUnfinished(capacityServer.apiUrl, path, MAX_BYTES + 1);
+
+    // The backlog's bytes: four bytes unhandled are the whole of them.
+    const bytes = await registration(on);
+    const filled = await bytes.client.createInboundEndpoint(bytes.id);
+    expect(filled.status).toBe(201);
+    idOf(
+      await send(
+        capacityServer.apiUrl,
+        filled.data.path,
+        "x".repeat(BACKLOG_BYTES),
+      ),
+    );
+    // The witness that the bytes are full: one more byte is refused for
+    // them, with the count nowhere near its limit.
+    const refused = await send(capacityServer.apiUrl, filled.data.path, "y");
+    expect(refused.status).toBe(503);
+    expect(codeOf(refused)).toBe("inbound_unavailable");
+    const overBytes = await declare(filled.data.path);
+    expect(overBytes.status).toBe(413);
+    expect(codeOf(overBytes)).toBe("request_too_large");
+
+    // What a registration retains: two deliveries, both handled, so that
+    // nothing is unhandled and only the retained count is full.
+    const kept = await registration(on);
+    const full = await kept.client.createInboundEndpoint(kept.id);
+    expect(full.status).toBe(201);
+    for (let i = 0; i < RETAINED_DELIVERIES; i++) {
+      const id = idOf(await send(capacityServer.apiUrl, full.data.path, ""));
+      const marked = await kept.client.markInboundDeliveriesHandled(kept.id, {
+        ids: [id],
+        outcome: "processed",
+      });
+      expect(marked.status).toBe(200);
+    }
+    const retained = await send(capacityServer.apiUrl, full.data.path, "");
+    expect(retained.status).toBe(503);
+    expect(codeOf(retained)).toBe("inbound_unavailable");
+    const overRetained = await declare(full.data.path);
+    expect(overRetained.status).toBe(413);
+    expect(codeOf(overRetained)).toBe("request_too_large");
+
+    // The witness for both: with room, the same declaration is the length's
+    // and the same body is taken.
+    const open = await registration(on);
+    const spare = await open.client.createInboundEndpoint(open.id);
+    expect(spare.status).toBe(201);
+    expect((await declare(spare.data.path)).status).toBe(413);
+    idOf(await send(capacityServer.apiUrl, spare.data.path, "x"));
   });
 
   it("answers a declared length over the limit 413 before the body's 408", async () => {
