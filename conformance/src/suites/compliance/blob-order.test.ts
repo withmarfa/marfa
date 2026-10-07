@@ -11,6 +11,7 @@
  * format, the signature and expiry, and then the blob's existence.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
@@ -172,7 +173,7 @@ describe("the order a blob operation meets its refusals in", () => {
     expect(verdict(told)).toMatchObject(STRAY);
     expect(told.error?.error.code).toBe("validation_error");
     // Neither stored the bytes.
-    expect((await operator.headBlob(await sha256(bytes))).status).toBe(404);
+    expect((await operator.headBlob(sha256(bytes))).status).toBe(404);
   });
 
   it("answers a stray query key on an upload before the body it carries", async () => {
@@ -390,9 +391,8 @@ describe("the order a blob operation meets its refusals in", () => {
   });
 });
 
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return `sha256:${Buffer.from(digest).toString("hex")}`;
+function sha256(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 /** The status of a `fetch`, its body drained. */
