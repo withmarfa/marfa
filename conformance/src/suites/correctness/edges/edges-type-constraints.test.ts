@@ -9,9 +9,11 @@ import {
   cleanup,
 } from "../../../utils/setup.js";
 import {
+  createAlbum,
   createBookmark,
   createHighlight,
   createNote,
+  createSeries,
 } from "../../../generators/items.js";
 
 let client: MarfaClient;
@@ -152,6 +154,68 @@ describe("edge type-constraints", () => {
     });
     expect(edge.ok).toBe(true);
     trackEdge(ctx, edge.data.edge.id);
+  });
+
+  it("in-collection refuses a source that is itself a container, as nesting", async () => {
+    const album = await makeItem(createAlbum({ source: ctx.source }));
+    const otherAlbum = await makeItem(createAlbum({ source: ctx.source }));
+    const series = await makeItem(createSeries({ source: ctx.source }));
+    const note = await makeItem(createNote({ source: ctx.source }));
+
+    // The witness: a source that is no container joins the album, so the
+    // refusals below are the source and not the edge type or the target.
+    const joined = await client.createEdge({
+      source_id: note,
+      target_id: album,
+      edge_type: "in-collection",
+    });
+    expect(joined.status, JSON.stringify(joined.error)).toBe(201);
+    trackEdge(ctx, joined.data.edge.id);
+
+    const sources = [
+      { id: album, type: "core.media.album" },
+      { id: series, type: "core.media.series" },
+    ];
+    for (const source of sources) {
+      const refused = await client.createEdge({
+        source_id: source.id,
+        target_id: otherAlbum,
+        edge_type: "in-collection",
+      });
+      expect(refused.status, source.type).toBe(400);
+      expect(refused.error?.error.code).toBe("edge_constraint_violation");
+      expect(refused.error?.error.details).toEqual({
+        edge_type: "in-collection",
+        source_id: source.id,
+        source_type: source.type,
+        constraint: "nesting",
+      });
+    }
+
+    const held = await client.listItemEdges(album, {
+      edge_type: "in-collection",
+    });
+    expect(held.data.data).toEqual([]);
+
+    // The same refusal on the doors that write an edge beside an item.
+    const inline = await client.createItem({
+      ...createAlbum({ source: ctx.source }),
+      edges: { "in-collection": [otherAlbum] },
+    });
+    expect(inline.status).toBe(400);
+    expect(inline.error?.error.code).toBe("edge_constraint_violation");
+    expect(inline.error?.error.details?.constraint).toBe("nesting");
+
+    const bulk = await client.bulkEdges({
+      edges: [
+        { source_id: album, target_id: otherAlbum, edge_type: "in-collection" },
+      ],
+      atomic: false,
+    });
+    expect(bulk.status).toBe(200);
+    expect(bulk.data.counts).toMatchObject({ created: 0, errored: 1 });
+    expect(bulk.data.results[0]?.error?.code).toBe("edge_constraint_violation");
+    expect(bulk.data.results[0]?.error?.details?.constraint).toBe("nesting");
   });
 });
 

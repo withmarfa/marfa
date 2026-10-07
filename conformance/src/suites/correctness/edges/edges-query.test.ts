@@ -93,6 +93,66 @@ describe("edge query filters on /items", () => {
     expect(ids).toContain(source.data.item.id);
   });
 
+  it("answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type", async () => {
+    const target = await makeItem("exact-target");
+    const linked: string[] = [];
+    for (const label of ["one", "two", "three"]) {
+      const r = await client.createItem({
+        type: "core.note",
+        properties: { body: `exact-linked-${label}` },
+        source: ctx.source,
+        edges: { about: [target] },
+      });
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      linked.push(r.data.item.id);
+      for (const section of Object.values(r.data.item.edges ?? {})) {
+        for (const edge of section.data) trackEdge(ctx, edge.id);
+      }
+    }
+    const otherType = await client.createItem({
+      type: "core.note",
+      properties: { body: "exact-other-type" },
+      source: ctx.source,
+      edges: { references: [target] },
+    });
+    expect(otherType.ok).toBe(true);
+    trackItem(ctx, otherType.data.item.id);
+    for (const section of Object.values(otherType.data.item.edges ?? {})) {
+      for (const edge of section.data) trackEdge(ctx, edge.id);
+    }
+    const unlinked = await makeItem("exact-unlinked");
+
+    const listing = await client.listItemBackrefs(target, {
+      edge_type: "about",
+      limit: 500,
+    });
+    expect(listing.ok).toBe(true);
+    const fromListing = listing.data.data.map((e) => e.source_id).sort();
+    expect(fromListing).toEqual([...linked].sort());
+
+    const full = await client.listItems({
+      filter: `edge[about] eq "${target}"`,
+      limit: 200,
+    });
+    expect(full.ok).toBe(true);
+    expect(full.data.next_cursor).toBeNull();
+    const fullIds = full.data.data.map((i) => i.id);
+    expect(fullIds.sort()).toEqual(fromListing);
+    expect(fullIds).not.toContain(otherType.data.item.id);
+    expect(fullIds).not.toContain(unlinked);
+
+    // The control for the full form being a filter at all: the other type
+    // names the other item and no other.
+    const references = await client.listItems({
+      filter: `edge[references] eq "${target}"`,
+      limit: 200,
+    });
+    expect(references.data.data.map((i) => i.id)).toEqual([
+      otherType.data.item.id,
+    ]);
+  });
+
   it("combines edge filter with type to narrow results", async () => {
     const target = await makeItem("combo-target");
     const noteLinked = await client.createItem({

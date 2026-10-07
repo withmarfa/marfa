@@ -296,6 +296,79 @@ describe("a repeated create is acknowledged", () => {
     ).toEqual(["edge.created"]);
   });
 
+  it("answers an edge repeat naming other properties with the stored row, unchanged and unannounced", async (context) => {
+    const made = await Promise.all(
+      ["source", "target", "sentinel-target"].map((label) =>
+        client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `acknowledged-edge-row-${label}` },
+        }),
+      ),
+    );
+    for (const r of made) {
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+    }
+    const [source, target, spare] = made.map((r) => r.data.item.id) as [
+      string,
+      string,
+      string,
+    ];
+
+    const id = uuidv7();
+    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+
+      const first = await client.createEdge({
+        id,
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+        properties: { note: "first" },
+      });
+      expect(first.status).toBe(201);
+      trackEdge(ctx, id);
+
+      const repeat = await client.createEdge({
+        id,
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+        properties: { note: "second" },
+      });
+
+      const sentinel = await client.createEdge({
+        source_id: source,
+        target_id: spare,
+        edge_type: "about",
+      });
+      expect(sentinel.ok).toBe(true);
+      trackEdge(ctx, sentinel.data.edge.id);
+
+      const seen = await collectUntil(
+        stream,
+        (events) => framesForEdge(events, sentinel.data.edge.id).length > 0,
+        `edge.created for the sentinel written after the edge repeat (${sentinel.data.edge.id})`,
+        context.signal,
+      );
+      return { first, repeat, events: seen.events };
+    });
+
+    expect(outcome.repeat.status).toBe(200);
+    expect(outcome.repeat.data.acknowledged).toBe(true);
+    expect(
+      outcome.repeat.data.edge,
+      "the repeat did not return the row the first create stored",
+    ).toEqual(outcome.first.data.edge);
+
+    const stored = await client.getEdge(id);
+    expect(stored.data.edge).toEqual(outcome.first.data.edge);
+    expect(stored.data.edge.version).toBe(1);
+
+    expect(framesForEdge(outcome.events, id)).toEqual(["edge.created"]);
+  });
+
   it("refuses an edge id that names a different triple", async () => {
     const [a, b, c] = await Promise.all([
       client.createItem({

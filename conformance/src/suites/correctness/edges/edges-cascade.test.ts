@@ -390,6 +390,78 @@ describe("edge cascade semantics", () => {
     expect(del2.ok).toBe(true);
   });
 
+  it("purges an item held by a block edge, taking its edges on both ends", async () => {
+    const etId = `mock.purgeblock.${ctx.runId}`;
+    const register = async (cascade: "orphan" | "block") => {
+      const reg = await client.registerEdgeType({
+        id: etId,
+        cardinality: "many-to-many",
+        cascade_on_delete: cascade,
+      });
+      expect(reg.status, JSON.stringify(reg.error)).toBe(201);
+    };
+
+    // An item reaches the bin holding an edge of a blocking type only when
+    // the type was registered otherwise at the time: a delete is refused
+    // while a blocking edge stands. So the type is registered to orphan, the
+    // item is trashed holding its edges, and the registration is replaced
+    // by one that blocks.
+    await register("orphan");
+    trackEdgeType(ctx, etId);
+    const held = await makeItem("pb-held");
+    const upstream = await makeItem("pb-upstream");
+    const downstream = await makeItem("pb-downstream");
+    const unrelatedFrom = await makeItem("pb-other-from");
+    const unrelatedTo = await makeItem("pb-other-to");
+    const inbound = await client.createEdge({
+      source_id: upstream,
+      target_id: held,
+      edge_type: etId,
+    });
+    const outbound = await client.createEdge({
+      source_id: held,
+      target_id: downstream,
+      edge_type: etId,
+    });
+    const unrelated = await client.createEdge({
+      source_id: unrelatedFrom,
+      target_id: unrelatedTo,
+      edge_type: etId,
+    });
+    for (const e of [inbound, outbound, unrelated]) {
+      expect(e.status, JSON.stringify(e.error)).toBe(201);
+      trackEdge(ctx, e.data.edge.id);
+    }
+    expect((await client.deleteItem(held)).ok).toBe(true);
+
+    expect((await client.deleteEdgeType(etId, true)).ok).toBe(true);
+    await register("block");
+
+    // The witness: this type blocks, so a live item holding one of its
+    // edges cannot be deleted.
+    const blocked = await client.deleteItem(unrelatedFrom);
+    expect(blocked.status).toBe(400);
+    expect(blocked.error?.error.code).toBe("edge_constraint_violation");
+
+    // Both edges of the trashed item are still stored, held by the type.
+    expect((await client.getEdge(inbound.data.edge.id)).status).toBe(200);
+    expect((await client.getEdge(outbound.data.edge.id)).status).toBe(200);
+
+    const purged = await client.purgeItem(held);
+    expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+
+    for (const gone of [inbound, outbound]) {
+      const read = await client.getEdge(gone.data.edge.id);
+      expect(read.status).toBe(404);
+      expect(read.error?.error.code).toBe("edge_not_found");
+    }
+    const listed = await client.listEdges({ edge_type: etId, limit: 500 });
+    expect(listed.data.data.map((e) => e.id)).toEqual([unrelated.data.edge.id]);
+    expect((await client.listItemEdges(upstream)).data.data).toEqual([]);
+    expect((await client.listItemBackrefs(downstream)).data.data).toEqual([]);
+    expect((await client.getEdge(unrelated.data.edge.id)).status).toBe(200);
+  });
+
   it("a transition into the bin takes what a delete takes, and a restore brings it back", async () => {
     const parent = await makeItem("t-parent");
     const child = await makeItem("t-child");
