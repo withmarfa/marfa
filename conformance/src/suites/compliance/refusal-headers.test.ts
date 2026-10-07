@@ -288,6 +288,39 @@ describe("X-Error-Code", () => {
     expect(res.status).toBe(401);
     expect(res.headers.get("Content-Type")).toContain("text/html");
     expect(res.headers.get("X-Error-Code")).toBe("unauthorized");
+
+    // Which of the two comes first in `Accept` decides, whatever else it
+    // lists, so the page is sent where `text/html` leads and the envelope
+    // where `application/json` does.
+    for (const accept of [
+      "text/html, application/json",
+      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "TEXT/HTML",
+    ]) {
+      const page = await fetch(`${apiUrl}/items`, {
+        headers: { Accept: accept },
+      });
+      expect(page.status, accept).toBe(401);
+      expect(page.headers.get("Content-Type"), accept).toContain("text/html");
+      expect(page.headers.get("X-Error-Code"), accept).toBe("unauthorized");
+      expect(await page.text(), accept).toContain("<html");
+    }
+    for (const accept of [
+      "application/json, text/html",
+      "application/json,text/html;q=0.9",
+      "*/*",
+    ]) {
+      const envelope = await fetch(`${apiUrl}/items`, {
+        headers: { Accept: accept },
+      });
+      expect(envelope.status, accept).toBe(401);
+      expect(envelope.headers.get("Content-Type"), accept).toContain(
+        "application/json",
+      );
+      expect(envelope.headers.get("X-Error-Code"), accept).toBe("unauthorized");
+      const body = (await envelope.json()) as { error: { code: string } };
+      expect(body.error.code, accept).toBe("unauthorized");
+    }
   });
 });
 
