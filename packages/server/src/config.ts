@@ -858,7 +858,7 @@ const settingsShape = {
   ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
-    "How long a write refused with `SQLITE_BUSY` is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
+    "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
     { min: 0, max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   BLOB_PATH: setting(
