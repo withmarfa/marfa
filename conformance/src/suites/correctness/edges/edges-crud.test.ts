@@ -354,4 +354,58 @@ describe("edges CRUD", () => {
     expect(byType["about"]).toEqual([aboutB]);
     expect(byType["parent-of"]).toEqual([parentTarget]);
   });
+
+  it("PATCH /items with an edge list replaces that type's edges, an empty list removes them, and a type not named stays", async () => {
+    const [kept, first, second, replacement] = await Promise.all(
+      [1, 2, 3, 4].map(() => makeItem()),
+    );
+    const created = await client.createItem({
+      type: "core.note",
+      properties: { body: "patch-replace" },
+      edges: { about: [first!, second!], references: [kept!] },
+    });
+    expect(created.ok).toBe(true);
+    const itemId = created.data.item.id;
+    trackItem(ctx, itemId);
+    const heldBefore = await client.listItemEdges(itemId);
+    expect(heldBefore.data.data).toHaveLength(3);
+    const aboutBefore = heldBefore.data.data.filter(
+      (e) => e.edge_type === "about",
+    );
+    const referencesBefore = heldBefore.data.data.find(
+      (e) => e.edge_type === "references",
+    )!;
+
+    const targetsOf = async (edgeType: string): Promise<string[]> => {
+      const r = await client.listItemEdges(itemId, { edge_type: edgeType });
+      expect(r.ok).toBe(true);
+      for (const edge of r.data.data) trackEdge(ctx, edge.id);
+      return r.data.data.map((e) => e.target_id).sort();
+    };
+
+    const replaced = await client.updateItem(itemId, {
+      edges: { about: [replacement!] },
+      version: created.data.item.version,
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(await targetsOf("about")).toEqual([replacement!]);
+    for (const gone of aboutBefore) {
+      expect((await client.getEdge(gone.id)).status).toBe(404);
+    }
+    expect(await targetsOf("references")).toEqual([kept!]);
+
+    const emptied = await client.updateItem(itemId, {
+      edges: { about: [] },
+      version: replaced.data.item.version,
+    });
+    expect(emptied.status, JSON.stringify(emptied.error)).toBe(200);
+    expect(await targetsOf("about")).toEqual([]);
+
+    // The type that was never named is the same edge it was, not one
+    // removed and made again.
+    const stillThere = await client.getEdge(referencesBefore.id);
+    expect(stillThere.status).toBe(200);
+    expect(stillThere.data.edge).toEqual(referencesBefore);
+    expect(Object.keys(emptied.data.item.edges ?? {})).toEqual(["references"]);
+  });
 });

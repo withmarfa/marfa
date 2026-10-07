@@ -453,4 +453,147 @@ describe("edges.bulk", () => {
     const madeId = accepted.data.results[0].id;
     if (madeId) trackEdge(ctx, madeId);
   });
+
+  it("answers an entry repeating a held edge id and triple as updated, or skipped under create_only, and a skipped entry writes nothing", async () => {
+    const { sourceId, targetId } = await makePair();
+    const id = uuidv7();
+    const held = await client.createEdge({
+      id,
+      source_id: sourceId,
+      target_id: targetId,
+      edge_type: "about",
+      properties: { n: 1 },
+    });
+    expect(held.status).toBe(201);
+    trackEdge(ctx, id);
+    const entry = {
+      id,
+      source_id: sourceId,
+      target_id: targetId,
+      edge_type: "about",
+      properties: { n: 2 },
+    };
+
+    // Not acknowledged as the single door acknowledges a repeat: the entry is
+    // matched by its triple and judged as a bulk entry is.
+    const skipped = await client.bulkEdges({
+      edges: [entry],
+      mode: "create_only",
+    });
+    expect(skipped.status).toBe(200);
+    expect(skipped.data.counts).toEqual({
+      created: 0,
+      updated: 0,
+      skipped: 1,
+      errored: 0,
+    });
+    expect(skipped.data.results[0]).toEqual({
+      index: 0,
+      outcome: "skipped",
+      id,
+      reason: "duplicate_edge",
+    });
+    const unchanged = await client.getEdge(id);
+    expect(unchanged.data.edge).toEqual(held.data.edge);
+
+    const updated = await client.bulkEdges({ edges: [entry], mode: "upsert" });
+    expect(updated.status).toBe(200);
+    expect(updated.data.counts).toEqual({
+      created: 0,
+      updated: 1,
+      skipped: 0,
+      errored: 0,
+    });
+    expect(updated.data.results[0]).toEqual({
+      index: 0,
+      outcome: "updated",
+      id,
+    });
+    const merged = await client.getEdge(id);
+    expect(merged.data.edge.id).toBe(id);
+    expect(merged.data.edge.properties).toEqual({ n: 2 });
+    expect(merged.data.edge.version).toBe(held.data.edge.version + 1);
+  });
+
+  it("takes a page of 5,000 entries and refuses one of 5,001", async () => {
+    const taken = await makePair();
+    const refused = await makePair();
+    const page = (pair: { sourceId: string; targetId: string }, n: number) => ({
+      edges: Array.from({ length: n }, () => ({
+        source_id: pair.sourceId,
+        target_id: pair.targetId,
+        edge_type: "about",
+      })),
+      mode: "create_only" as const,
+    });
+
+    const over = await client.bulkEdges(page(refused, 5001));
+    expect(over.status).toBe(400);
+    expect(over.error?.error.code).toBe("validation_error");
+    expect(over.error?.error.details).toMatchObject({
+      cap: 5000,
+      provided: 5001,
+    });
+
+    const at = await client.bulkEdges(page(taken, 5000));
+    expect(at.status, JSON.stringify(at.error)).toBe(200);
+    expect(at.data.counts).toEqual({
+      created: 1,
+      updated: 0,
+      skipped: 4999,
+      errored: 0,
+    });
+    expect(at.data.results).toHaveLength(5000);
+    trackEdge(ctx, String(at.data.results[0]?.id));
+
+    // The witness for the refused page having written nothing: the same pair
+    // takes an edge now, which a first entry written before the refusal
+    // would have made a duplicate.
+    const nothing = await client.listItemEdges(refused.sourceId);
+    expect(nothing.data.data).toHaveLength(0);
+    const witness = await client.bulkEdges(page(refused, 1));
+    expect(witness.data.counts.created).toBe(1);
+    trackEdge(ctx, String(witness.data.results[0]?.id));
+  });
+
+  it("answers an empty edges list with 200 and no results", async () => {
+    const res = await client.bulkEdges({ edges: [] });
+    expect(res.status).toBe(200);
+    expect(res.data).toEqual({
+      counts: { created: 0, updated: 0, skipped: 0, errored: 0 },
+      results: [],
+    });
+  });
+
+  it("writes nothing from a page with one bad entry when atomic is left out", async () => {
+    const good = await makePair();
+    const bad = await makePair();
+    const edges = [
+      {
+        source_id: good.sourceId,
+        target_id: good.targetId,
+        edge_type: "about",
+      },
+      {
+        source_id: bad.sourceId,
+        target_id: "not-a-valid-id",
+        edge_type: "about",
+      },
+    ];
+
+    const omitted = await client.bulkEdges({ edges });
+    expect(omitted.status).toBe(400);
+    expect(omitted.error?.error.code).toBe("bulk_atomic_rollback");
+    const none = await client.listItemEdges(good.sourceId);
+    expect(none.data.data).toHaveLength(0);
+
+    // The witness: the same page with atomic off writes the good entry, so
+    // the entry was writable and the default is what withheld it.
+    const loose = await client.bulkEdges({ edges, atomic: false });
+    expect(loose.status).toBe(200);
+    expect(loose.data.counts).toMatchObject({ created: 1, errored: 1 });
+    const written = await client.listItemEdges(good.sourceId);
+    expect(written.data.data).toHaveLength(1);
+    trackEdge(ctx, written.data.data[0]!.id);
+  });
 });
