@@ -119,6 +119,70 @@ describe("occurrences", () => {
     expect(inverted.error?.error.code).toBe("validation_error");
   });
 
+  it("reads each bound of the window in any ISO 8601 spelling and answers the window in UTC", async () => {
+    const id = await seedEvent(
+      `occ-spelling-${ctx.runId}`,
+      "2031-08-10T10:00:00.000Z",
+      "2031-08-10T11:00:00.000Z",
+    );
+    // Every pair names the same window, 10:00Z to 12:00Z on 10 August 2031.
+    for (const [from, to] of [
+      ["2031-08-10T10:00:00Z", "2031-08-10T12:00:00Z"],
+      ["2031-08-10T10:00:00.000Z", "2031-08-10T12:00:00.000Z"],
+      ["2031-08-10T12:00:00+02:00", "2031-08-10T14:00:00+02:00"],
+      ["2031-08-10T05:00:00-05:00", "2031-08-10T07:00:00-05:00"],
+      ["2031-08-10T10:00Z", "2031-08-10T12:00Z"],
+    ]) {
+      const r = await client.listOccurrences({ from, to });
+      expect(r.status, `${from} ${to}: ${JSON.stringify(r.error)}`).toBe(200);
+      expect(r.data.window).toEqual({
+        from: "2031-08-10T10:00:00.000Z",
+        to: "2031-08-10T12:00:00.000Z",
+      });
+      expect(r.data.data.map((o) => o.item.id)).toContain(id);
+    }
+
+    // A date with no time is its midnight in UTC.
+    const dates = await client.listOccurrences({
+      from: "2031-08-10",
+      to: "2031-08-11",
+    });
+    expect(dates.status, JSON.stringify(dates.error)).toBe(200);
+    expect(dates.data.window).toEqual({
+      from: "2031-08-10T00:00:00.000Z",
+      to: "2031-08-11T00:00:00.000Z",
+    });
+    expect(dates.data.data.map((o) => o.item.id)).toContain(id);
+  });
+
+  it("refuses a bound that is no timestamp, naming which", async () => {
+    // The witness: the same request with readable bounds is answered.
+    const ok = await client.listOccurrences({
+      from: "2031-08-10T00:00:00Z",
+      to: "2031-08-11T00:00:00Z",
+    });
+    expect(ok.status).toBe(200);
+
+    for (const [from, to, named] of [
+      ["banana", "2031-08-11T00:00:00Z", "from"],
+      ["2031-08-10T00:00:00Z", "banana", "to"],
+    ] as const) {
+      const r = await client.listOccurrences({ from, to });
+      expect(r.status, named).toBe(400);
+      expect(r.error?.error.code, named).toBe("validation_error");
+      expect(r.error?.error.details, named).toHaveProperty(named);
+    }
+  });
+
+  it("refuses a window whose end is its start", async () => {
+    const r = await client.listOccurrences({
+      from: "2031-08-10T00:00:00Z",
+      to: "2031-08-10T00:00:00Z",
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("validation_error");
+  });
+
   it("refuses a request with no credential", async () => {
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
     const r = await anonymous.listOccurrences({
