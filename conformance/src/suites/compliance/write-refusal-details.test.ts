@@ -268,14 +268,65 @@ describe("a refusal caused by a missing grant names it", () => {
     expect(fenced.error?.error.code).toBe("type_not_permitted");
     expect(fenced.error?.error.details?.grant).toBeUndefined();
 
+    // A map that reaches no type is refused every door of the data plane, and
+    // no grant it could be given on one type would change that for the next.
+    const reachesNone = await keyWith("reaches-none", {
+      type_permissions: {},
+    });
+    const reader = await keyWith("reaches-notes", {
+      type_permissions: { "core.note": "read" },
+    });
+    const target = await note("no grant opens this");
+    for (const path of ["/items", `/items/${target.id}`]) {
+      expect((await reader.rawRequest(path)).status, path).toBe(200);
+      const refused = await reachesNone.rawRequest(path);
+      expect(refused.status, path).toBe(403);
+      expect(refused.error?.error.code, path).toBe("type_not_permitted");
+      expect(refused.error?.error.details?.grant, path).toBeUndefined();
+    }
+    const writeless = await reachesNone.createItem({
+      type: "core.note",
+      properties: { body: "refused" },
+    });
+    expect(writeless.status).toBe(403);
+    expect(writeless.error?.error.details?.grant).toBeUndefined();
+
+    // A reserved extension namespace is fenced off whatever the key holds on
+    // it, where a namespace the key lacks is named.
+    const extender = await keyWith("extender", {
+      type_permissions: { "core.note": "write" },
+      extension_permissions: { "*": "write" },
+    });
+    const stored = await extender.setItemExtension(target.id, "notes-app", {
+      pinned: true,
+    });
+    expect(stored.status, JSON.stringify(stored.error)).toBe(200);
+    for (const namespace of ["core", "marfa", "system"]) {
+      const reserved = await extender.setItemExtension(target.id, namespace, {
+        pinned: true,
+      });
+      expect(reserved.status, namespace).toBe(403);
+      expect(reserved.error?.error.code, namespace).toBe("forbidden");
+      expect(reserved.error?.error.details?.grant, namespace).toBeUndefined();
+    }
+
+    // A blob upload takes write on some type, and a key holding write on none
+    // is refused whichever type it might be given.
+    const bytes = new TextEncoder().encode(`upload ${ctx.runId}`);
+    expect((await extender.uploadBlob(bytes, "text/plain")).status).toBe(201);
+    const upload = await reader.uploadBlob(bytes, "text/plain");
+    expect(upload.status).toBe(403);
+    expect(upload.error?.error.code).toBe("type_not_permitted");
+    expect(upload.error?.error.details?.grant).toBeUndefined();
+
     // A row the key may not read is not a refusal at all: it is missing.
     const blind = await keyWith("blind", {
       type_permissions: { "core.task": "write" },
     });
-    const target = await note("unreadable");
-    const patched = await blind.updateItem(target.id, {
+    const hidden = await note("unreadable");
+    const patched = await blind.updateItem(hidden.id, {
       properties: { body: "x" },
-      version: target.version,
+      version: hidden.version,
     });
     expect(patched.status).toBe(404);
     expect(patched.error?.error.details).toBeUndefined();
