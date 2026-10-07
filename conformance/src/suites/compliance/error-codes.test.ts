@@ -36,6 +36,7 @@ describe("error codes", () => {
       });
       expect(response.status).toBe(400);
       expect(response.error?.error.code).toBe("missing_required_field");
+      expect(response.error?.error.details).toMatchObject({ field: "type" });
     });
   });
 

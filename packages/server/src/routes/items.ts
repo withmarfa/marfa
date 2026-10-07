@@ -1490,7 +1490,9 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     if (body.occurred_at && !isValidTimestamp(body.occurred_at)) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at", {
+        field: "occurred_at",
+      });
     }
     const key = requireAuth(c);
     // Resolving the row, every rule the write must pass, the write itself
@@ -2053,6 +2055,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "occurred_at must be an ISO 8601 string",
+        { field: "occurred_at" },
       );
     }
     if (body.retype === true && body.type === undefined) {

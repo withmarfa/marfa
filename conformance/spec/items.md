@@ -36,7 +36,7 @@ When `POST /items` names a lowercase UUIDv7 `id` that no item holds, the server 
 
 If `POST /items` names an `id` that is not a lowercase UUIDv7, then the server MUST answer `400 invalid_id`.
 
-**Tests:** `compliance/item-limits.test.ts › refuses a client-minted id that is not a lowercase UUIDv7`.
+**Tests:** `compliance/validation.test.ts › refuses a client-minted id that is not a lowercase UUIDv7`.
 
 ### `items/create-repeat`
 
@@ -212,13 +212,13 @@ When the server compares an `occurred_at` in a write at a stale version with the
 
 When a write names an `occurred_at` date-time with no zone, the server MUST read it as UTC.
 
-**Tests:** `compliance/item-limits.test.ts › reads a zone-less occurred_at as UTC`.
+**Tests:** `compliance/occurred-at.test.ts › reads a zone-less occurred_at as UTC`.
 
 ### `items/occurred-at-invalid`
 
 If a write names an `occurred_at` that is not a timestamp, then the server MUST answer `400 validation_error` with `details.field` `occurred_at`.
 
-**Tests:** `compliance/item-limits.test.ts › refuses an occurred_at that is not a timestamp, naming the field`.
+**Tests:** `compliance/occurred-at.test.ts › refuses an occurred_at that is not a timestamp, naming the field`.
 
 ### `items/occurred-at-range`
 
@@ -258,13 +258,13 @@ When a natural-key upsert names no `tier`, on `POST /items` or `POST /items/bulk
 
 When a create names a `state` the type's lifecycle can reach from `active`, the server MUST create the item in that state.
 
-**Tests:** `compliance/item-limits.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`.
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`.
 
 ### `items/initial-state-refused`
 
 If a create names a `state` the type's lifecycle cannot reach from `active`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/item-limits.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`, `compliance/bulk.test.ts › leaves a state alone on an entry that resolves a row rather than creating one`.
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`, `compliance/bulk.test.ts › leaves a state alone on an entry that resolves a row rather than creating one`.
 
 ### `items/initial-state-bulk-update`
 
@@ -292,13 +292,13 @@ When a write names an empty string for a property, the server MUST store it as t
 
 If a write names a string property containing U+0000, then the server MUST answer `400 invalid_properties` naming the field.
 
-**Tests:** `compliance/item-limits.test.ts › refuses a NUL in a string property, naming the field`.
+**Tests:** `compliance/validation.test.ts › refuses a NUL in a string property, naming the field`.
 
 ### `items/property-length-cap`
 
 If a write names a string property longer than the field's `maxLength`, or than 100,000 where the field declares none, then the server MUST answer `400 invalid_properties` naming the field.
 
-**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/item-limits.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/adversarial.test.ts › refuses a body over the field's length cap with invalid_properties`.
+**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/validation.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/adversarial.test.ts › refuses a body over the field's length cap with invalid_properties`.
 
 ### `items/property-length-units`
 
@@ -330,7 +330,7 @@ When a create that makes an item carries a null for a field its type declares an
 
 ### `items/property-order-create`
 
-When a create makes an item, the server MUST answer its properties with the fields the type declares first, in the order a read of the type lists them (`types.md` 8), then every other property in the order the write sent it, on the write's answer, a read by id and a listing.
+When a create makes an item, the server MUST answer its properties with the fields the type declares first, in the order a read of the type lists them, then every other property in the order the write sent it, on the write's answer, a read by id and a listing.
 
 **Tests:** `compliance/validation.test.ts › orders properties by the type's fields, then by the order they were sent`, `› puts no property ahead of the type's own that a read of the type does not list`.
 
@@ -534,7 +534,7 @@ When a merge names a null for a property the item's type declares optional, or d
 
 If a merge names a null for a property the item's type requires, then the server MUST answer `400 invalid_properties` naming it.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a null on a field the type requires under a merge`.
+**Tests:** `compliance/validation.test.ts › refuses a null on a field the type requires under a merge`.
 
 ### `items/update-null-replace`
 
@@ -612,7 +612,7 @@ If a move names a type nothing registered, on `PATCH /items/{id}` or a `POST /it
 
 If a move names a type the key may not write, then the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a retype into a type the key may not write`.
+**Tests:** `compliance/type-permissions.test.ts › refuses a retype into a type the key may not write`.
 
 ### `items/retype-same-type`
 
@@ -878,13 +878,13 @@ When `DELETE /items/{id}` names no `version`, the server MUST move the item to t
 
 If `DELETE /items/{id}` or `POST /items/{id}/purge` names a `version` that is not a positive whole number, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/trash.test.ts › refuses a delete or purge version that is not a positive whole number`.
+**Tests:** `compliance/purge-preconditions.test.ts › refuses a delete or purge version that is not a positive whole number`.
 
 ### `items/trash-cascade`
 
 When a delete or a transition into the bin moves an item, on its own operation or in a bulk action, the server MUST move into the bin every item a cascading edge (`edges.md` 16) reaches from it, at every depth.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › a transition into the bin takes what a delete takes, and a restore brings it back`, `correctness/lifecycle-transitions.test.ts › takes what a cascade reaches on a bulk transition into the bin, and brings it back on a restore`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › a transition into the bin takes what a delete takes, and a restore brings it back`, `› takes what a cascade reaches on a bulk transition into the bin, and brings it back on a restore`.
 
 ### `items/trash-cascade-announced`
 
