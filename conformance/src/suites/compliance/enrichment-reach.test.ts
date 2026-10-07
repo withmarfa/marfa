@@ -180,6 +180,50 @@ describe("the enrichment sweep and a blob's reach", () => {
     );
   });
 
+  it("keeps a lending blob_ref lending after the sweep writes onto the file", async () => {
+    const bytes = new TextEncoder().encode("the bilby ledger, page one");
+    const sent = await owner.uploadBlob(bytes, "text/plain");
+    expect(sent.status).toBe(201);
+    const file = await owner.createItem({
+      type: "core.file",
+      properties: {
+        blob_ref: sent.data.hash,
+        mime_type: "text/plain",
+        title: "sent by its writer, read by the sweep",
+      },
+    });
+    expect(file.status, JSON.stringify(file.error)).toBe(201);
+
+    const minted = await owner.createKey({
+      label: "files read only",
+      source: "enrichment-reach-lent",
+      type_permissions: { "core.file": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    const reader = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+    // The witness: the reference lends before the sweep writes.
+    expect((await reader.downloadBlob(sent.data.hash)).status).toBe(200);
+
+    await sweep();
+    // The sweep wrote, as no credential, and left a new version of the file.
+    const swept = await owner.getItem(file.data.item.id);
+    expect(swept.status).toBe(200);
+    expect(swept.data.item.properties.extracted_text).toBe(
+      "the bilby ledger, page one",
+    );
+    expect(swept.data.item.version).toBeGreaterThan(file.data.item.version);
+    expect(swept.data.item.properties.blob_ref).toBe(sent.data.hash);
+
+    const after = await reader.downloadBlob(sent.data.hash);
+    expect(after.status).toBe(200);
+    expect(new TextDecoder().decode(after.data)).toBe(
+      "the bilby ledger, page one",
+    );
+  });
+
   it("reads the width, height and duration only of bytes the file's own reference lends", async () => {
     const image = readFileSync(
       fileURLToPath(new URL("./fixtures/image-sample.gif", import.meta.url)),

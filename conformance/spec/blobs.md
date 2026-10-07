@@ -588,7 +588,7 @@ While an item, an edge or an extension namespace keeps naming a digest through a
 
 **Reason:** a write that keeps a digest decides nothing about it, so no later write, one made for no credential included, withdraws what another proved.
 
-**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`, `› keeps a lending digest on an edge lending through later writes by a key that never sent the bytes`, `› keeps a lending digest in an extension lending through later writes by a key that never sent the bytes`.
+**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`, `› keeps a lending digest on an edge lending through later writes by a key that never sent the bytes`, `› keeps a lending digest in an extension lending through later writes by a key that never sent the bytes`, `compliance/enrichment-reach.test.ts › keeps a lending blob_ref lending after the sweep writes onto the file`.
 
 ### `blobs/proof-repair`
 
