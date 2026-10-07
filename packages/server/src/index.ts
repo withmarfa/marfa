@@ -95,7 +95,7 @@ async function main() {
   setRuntimeNamespaceRoots(await resolveAllRegisteredNamespaceRoots(storage));
 
   // Fold the runtime custom-type namespaces into the active permission
-  // bundles, so a custom type under a claimed publisher handle is offerable
+  // bundles, so a custom type under a publisher root is offerable
   // through the default consent set rather than only `user.*`. The
   // operator's override, when set, outranks the derivation.
   const bundles =

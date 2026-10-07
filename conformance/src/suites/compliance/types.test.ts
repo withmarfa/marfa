@@ -44,34 +44,77 @@ describe("type registration and listing", () => {
     expect(typeIds).toContain("core.bookmark");
   });
 
-  it("lists every shipped type the suite writes against", async () => {
-    // A fixture elsewhere names each of these, so a registry that stopped
-    // shipping one would take that fixture down with a refusal nothing here
-    // explains. Pinning the set makes the registry answer for it directly.
+  it("ships exactly the core types, each with fields and a label", async () => {
     const shipped = [
       "core.bookmark",
       "core.entity",
       "core.entity.person",
       "core.entity.place",
       "core.event",
+      "core.file",
+      "core.file.audio",
       "core.file.image",
+      "core.file.video",
       "core.highlight",
+      "core.media",
+      "core.media.album",
       "core.media.article",
       "core.media.book",
+      "core.media.episode",
+      "core.media.film",
+      "core.media.series",
+      "core.media.song",
       "core.message",
       "core.note",
       "core.task",
     ];
-
     const r = await client.listTypes();
     expect(r.ok).toBe(true);
-    const byId = new Map(r.data.data.map((t) => [t.id, t]));
-
-    for (const id of shipped) {
-      const entry = byId.get(id);
-      expect(entry, `${id} is not in GET /types`).toBeDefined();
-      expect(Object.keys(entry!.fields).length).toBeGreaterThan(0);
+    const core = r.data.data.filter((t) => t.id.startsWith("core."));
+    expect(core.map((t) => t.id).sort()).toEqual(shipped);
+    for (const type of core) {
+      expect(Object.keys(type.fields).length, type.id).toBeGreaterThan(0);
+      expect(type.label, type.id).toBeTruthy();
     }
+  });
+
+  it("selects a type filter's items by identifier and by declared parent alike", async () => {
+    const root = `user.subtree-${ctx.runId}`;
+    const fields = { name: { type: "string" as const } };
+    const named = `${root}.named`;
+    const declared = `user.declares-${ctx.runId}`;
+    const lookalike = `${root}x`;
+    for (const body of [
+      { id: root, fields },
+      { id: named, fields },
+      { id: declared, parent: root, fields },
+      { id: lookalike, fields },
+    ]) {
+      const r = await client.registerType(body);
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+    }
+    // The witness for the name half: the child names no parent.
+    expect((await client.getType(named)).data.parent).toBeUndefined();
+
+    const ids = new Map<string, string>();
+    for (const type of [root, named, declared, lookalike]) {
+      const created = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: { name: type },
+      });
+      expect(created.status, JSON.stringify(created.error)).toBe(201);
+      trackItem(ctx, created.data.item.id);
+      ids.set(type, created.data.item.id);
+    }
+
+    const listed = await client.listItems({ type: root, limit: 100 });
+    expect(listed.ok).toBe(true);
+    const got = listed.data.data.map((i) => i.id);
+    expect(got).toContain(ids.get(root));
+    expect(got).toContain(ids.get(named));
+    expect(got).toContain(ids.get(declared));
+    expect(got).not.toContain(ids.get(lookalike));
   });
 
   it("declares executable on core.file, which every file type inherits", async () => {
