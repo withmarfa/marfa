@@ -1111,7 +1111,7 @@ describe("starting with a setting outside its rule", () => {
     FRESH_SERVER_TIMEOUT_MS,
   );
 
-  it.each([
+  const disagreeing: [string, Record<string, string>, string][] = [
     [
       "VERSION_DAILY_SNAPSHOT_DAYS",
       { VERSION_RECENT_DAYS: "40", VERSION_DAILY_SNAPSHOT_DAYS: "39" },
@@ -1133,7 +1133,9 @@ describe("starting with a setting outside its rule", () => {
       },
       'MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS (got "499")',
     ],
-  ])(
+  ];
+
+  it.each(disagreeing)(
     "refuses to start with status 1, naming %s, when each setting is inside its own rule and the two disagree",
     async (_name, env, line) => {
       expect(await refusedOverSettings(env)).toEqual([line]);
