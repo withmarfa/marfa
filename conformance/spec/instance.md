@@ -350,15 +350,15 @@ While the database cannot read the table of keys, the server MUST NOT answer an 
 
 **Tests:** `compliance/health.test.ts › is given to no caller, the operator key included, while the database cannot look the key up`.
 
-## Upgrading
-
-Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
-
 ### `instance/health-unknown-key`
 
 When a request that carries a credential the instance does not hold sends `GET /health`, the server MUST answer it as it answers a request that carries no credential.
 
 **Tests:** `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`, `compliance/health.test.ts › is given to the operator key and to no other caller`.
+
+## Upgrading
+
+Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
 
 ### `instance/upgrade-refuses-retired-tables`
 
