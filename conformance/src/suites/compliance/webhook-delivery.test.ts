@@ -1,8 +1,10 @@
+import { createServer, type Server } from "node:http";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { TestContext, WebhookDelivery } from "../../client/types.js";
 import {
   createTestContext,
+  getOperatorClient,
   trackEdge,
   trackEdgeType,
   trackItem,
@@ -11,7 +13,12 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createTask } from "../../generators/items.js";
-import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
+import { waitFor } from "../../utils/wait.js";
+import {
+  expectSignedBy,
+  startReceiver,
+  type Receiver,
+} from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -94,6 +101,113 @@ async function link(
   return edge.data.edge.id;
 }
 
+interface Attempt {
+  at: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+}
+
+interface Answer {
+  status: number;
+  headers?: Record<string, string>;
+}
+
+/**
+ * A receiver whose answer depends on the path and on how many attempts that
+ * path has had, which the fixed-status receiver cannot do.
+ */
+interface ScriptedReceiver {
+  url: string;
+  hookUrl: (label: string) => string;
+  attempts: (label: string) => Attempt[];
+  close: () => Promise<void>;
+}
+
+async function startScriptedReceiver(
+  answer: (label: string, attempt: number) => Answer,
+): Promise<ScriptedReceiver> {
+  const byLabel = new Map<string, Attempt[]>();
+  const server: Server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      const label = (req.url ?? "").replace(/^\/hook\//, "");
+      const seen = byLabel.get(label) ?? [];
+      seen.push({ at: Date.now(), headers: req.headers, body });
+      byLabel.set(label, seen);
+      const { status, headers } = answer(label, seen.length);
+      res.writeHead(status, headers);
+      res.end("ok");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address !== "object" || address === null) {
+    throw new Error("the receiver did not bind to a port");
+  }
+  const url = `http://127.0.0.1:${String(address.port)}/hook`;
+  return {
+    url,
+    hookUrl: (label) => `${url}/${label}`,
+    attempts: (label) => byLabel.get(label) ?? [],
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+/** A subscription to `item.created` on a hook of the receiver's. */
+async function subscribe(
+  hook: ScriptedReceiver,
+  label: string,
+  owner: MarfaClient = client,
+): Promise<{ id: string; secret: string }> {
+  const created = await owner.createWebhook({
+    url: hook.hookUrl(label),
+    events: ["item.created"],
+  });
+  expect(created.status, JSON.stringify(created.error)).toBe(201);
+  trackWebhook(ctx, created.data.id, owner);
+  return { id: created.data.id, secret: created.data.secret };
+}
+
+/** The newest delivery row of a subscription, once `settled` says it is. */
+async function deliveryOf(
+  webhookId: string,
+  settled: (row: WebhookDelivery) => boolean,
+  owner: MarfaClient = client,
+): Promise<WebhookDelivery> {
+  return waitFor(`the delivery of ${webhookId} to settle`, async () => {
+    const rows = await owner.listWebhookDeliveries(webhookId);
+    expect(rows.ok).toBe(true);
+    const row = rows.data.data[0];
+    return row !== undefined && settled(row) ? row : undefined;
+  });
+}
+
+/**
+ * Run the attempt job until `done`, so a retry whose wait has passed is
+ * attempted now rather than at the job's own 30 second cadence. A run
+ * before the wait ends attempts nothing; a run while the job's own cadence
+ * holds it answers 409 and is run again.
+ */
+async function runRetriesUntil(done: () => boolean, what: string) {
+  const operator = getOperatorClient();
+  await waitFor(
+    what,
+    async () => {
+      if (done()) return true;
+      await operator.runHousekeeping("webhook-poll");
+      await new Promise((r) => setTimeout(r, 200));
+      return done() ? true : undefined;
+    },
+    60_000,
+  );
+}
+
+const signedAt = (attempt: Attempt): number =>
+  Number(/^t=(\d+),/.exec(String(attempt.headers["x-marfa-signature"]))?.[1]);
+
 async function purge(itemId: string): Promise<void> {
   expect((await client.deleteItem(itemId)).ok).toBe(true);
   const purged = await client.purgeItem(itemId);
@@ -158,5 +272,180 @@ describe("outbound webhook delivery", () => {
     const rows = await owner.client.listWebhookDeliveries(narrow.data.id);
     expect(rows.ok).toBe(true);
     expect(rows.data.data).toHaveLength(1);
+  });
+  it("leaves a delivery pending after a 500 and retries it with the same ids", async () => {
+    const hook = await startScriptedReceiver((_, n) => ({
+      status: n === 1 ? 500 : 200,
+    }));
+    try {
+      const sub = await subscribe(hook, "retried");
+      const note = await makeNote("retried");
+      await waitFor("the first attempt", async () =>
+        hook.attempts("retried").length >= 1 ? true : undefined,
+      );
+
+      const failed = await deliveryOf(sub.id, (r) => r.attempt === 1);
+      expect(failed).toMatchObject({
+        status: "pending",
+        succeeded: false,
+        status_code: 500,
+        error: "HTTP 500",
+        attempt: 1,
+      });
+
+      await runRetriesUntil(
+        () => hook.attempts("retried").length >= 2,
+        "the retry",
+      );
+      const [first, second] = hook.attempts("retried");
+      for (const attempt of [first, second]) {
+        expectSignedBy({ ...attempt, path: "" }, sub.secret);
+        expect(attempt.body).toContain(note);
+      }
+      const a = JSON.parse(first!.body) as {
+        event_id: string;
+        delivery_id: string;
+        delivered_at: string;
+      };
+      const b = JSON.parse(second!.body) as typeof a;
+      expect(b.delivery_id).toBe(a.delivery_id);
+      expect(b.delivery_id).toBe(failed.id);
+      expect(b.event_id).toBe(a.event_id);
+      expect(Number.isNaN(Date.parse(b.delivered_at))).toBe(false);
+      expect(b.delivered_at).not.toBe(a.delivered_at);
+      expect(signedAt(second!)).toBeGreaterThan(signedAt(first!));
+
+      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      expect(settled).toMatchObject({
+        id: failed.id,
+        succeeded: true,
+        status_code: 200,
+        attempt: 2,
+      });
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("waits for the Retry-After a receiver names, and never less than the ordinary wait", async () => {
+    const hook = await startScriptedReceiver((_, n) => {
+      if (n === 1) return { status: 503, headers: { "Retry-After": "4" } };
+      if (n === 2) return { status: 503, headers: { "Retry-After": "1" } };
+      return { status: 200 };
+    });
+    try {
+      const sub = await subscribe(hook, "retry-after");
+      await makeNote("retry-after");
+      await runRetriesUntil(
+        () => hook.attempts("retry-after").length >= 3,
+        "the third attempt",
+      );
+      const [first, second, third] = hook.attempts("retry-after") as [
+        Attempt,
+        Attempt,
+        Attempt,
+      ];
+      // The receiver stamps an arrival after the server chose the wait, so a
+      // wait honored in full shows as at least its length between arrivals.
+      expect(
+        second.at - first.at,
+        "a hint above the ordinary wait",
+      ).toBeGreaterThanOrEqual(4000);
+      expect(
+        third.at - second.at,
+        "a hint below the ordinary wait",
+      ).toBeGreaterThanOrEqual(5000);
+      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      expect(settled.attempt).toBe(3);
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("retries a 408 and a 429, and gives up at once on any other 4xx answer", async () => {
+    const permanent = [400, 404, 410, 422];
+    const hook = await startScriptedReceiver((label, n) => {
+      if (label === "408" || label === "429") {
+        return { status: n === 1 ? Number(label) : 200 };
+      }
+      return { status: Number(label) };
+    });
+    try {
+      const subs = new Map<string, { id: string }>();
+      for (const label of ["408", "429", ...permanent.map(String)]) {
+        subs.set(label, await subscribe(hook, label));
+      }
+      await makeNote("statuses");
+
+      for (const [label, sub] of subs) {
+        const row = await deliveryOf(sub.id, (r) => r.attempt === 1);
+        const retried = label === "408" || label === "429";
+        expect(row, label).toMatchObject({
+          status: retried ? "pending" : "dead_letter",
+          status_code: Number(label),
+          error: `HTTP ${label}`,
+          attempt: 1,
+        });
+      }
+
+      // The retried two are attempted again, and the run that does so would
+      // have picked up any other row still pending.
+      await runRetriesUntil(
+        () =>
+          hook.attempts("408").length >= 2 && hook.attempts("429").length >= 2,
+        "the retries of the 408 and the 429",
+      );
+      for (const label of ["408", "429"]) {
+        const row = await deliveryOf(
+          subs.get(label)!.id,
+          (r) => r.status === "success",
+        );
+        expect(row, label).toMatchObject({ status_code: 200, attempt: 2 });
+      }
+      for (const label of permanent.map(String)) {
+        expect(hook.attempts(label), label).toHaveLength(1);
+      }
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("gives up on a redirect without following it", async () => {
+    const statuses = [301, 302, 303, 307, 308];
+    const target = "redirect-target";
+    const hook = await startScriptedReceiver((label) => {
+      const status = Number(/^redirect-(\d+)$/.exec(label)?.[1]);
+      return statuses.includes(status)
+        ? { status, headers: { Location: `${hook.hookUrl(target)}` } }
+        : { status: 200 };
+    });
+    try {
+      const subs = new Map<number, { id: string }>();
+      for (const status of statuses) {
+        subs.set(status, await subscribe(hook, `redirect-${String(status)}`));
+      }
+      await makeNote("redirects");
+
+      for (const [status, sub] of subs) {
+        const row = await deliveryOf(sub.id, (r) => r.attempt === 1);
+        expect(row, String(status)).toMatchObject({
+          status: "dead_letter",
+          status_code: status,
+          error:
+            "The receiver answered with a redirect, which is not followed.",
+          attempt: 1,
+        });
+        expect(hook.attempts(`redirect-${String(status)}`)).toHaveLength(1);
+      }
+      expect(hook.attempts(target), "a redirect was followed").toHaveLength(0);
+
+      // The witness: the target is a place the receiver records a visit to.
+      expect(
+        (await fetch(hook.hookUrl(target), { method: "POST" })).status,
+      ).toBe(200);
+      expect(hook.attempts(target)).toHaveLength(1);
+    } finally {
+      await hook.close();
+    }
   });
 });
