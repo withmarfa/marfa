@@ -28,11 +28,11 @@ When the server answers a new endpoint, the server MUST give its `path` as `/inb
 
 ### `inbound-webhooks/endpoint-path-redacted`
 
-When the server lists endpoints, the server MUST give each `path` as `/inbound/****` and its last four characters.
+When the server answers an endpoint, other than in the answer to the `POST /connectors/{id}/endpoints` that made it, the server MUST give its `path` as `/inbound/****` and its last four characters.
 
-**Reason:** the address is the credential, so only the answer that creates it shows it in full.
+**Reason:** the address is the credential.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`, `› retires an endpoint, after which its address is not served`.
 
 ### `inbound-webhooks/endpoint-header-lowercased`
 
@@ -89,6 +89,12 @@ When the connector's own key or the operator key sends `GET /connectors/{id}/end
 If a registration holds ten live endpoints and the server would otherwise take a `POST /connectors/{id}/endpoints` for another, then the server MUST answer `409 conflict`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › holds a registration to ten live endpoints, and a retired one frees a place`.
+
+### `inbound-webhooks/order-body-before-endpoint-limit`
+
+If a registration holds ten live endpoints and `POST /connectors/{id}/endpoints` carries a body the operation refuses, then the server MUST answer that `400`.
+
+**Tests:** `compliance/connector-check-order.test.ts › answers a body the door refuses 400 before the limit of ten live endpoints' 409`.
 
 ### `inbound-webhooks/endpoint-limit-frees`
 
@@ -278,9 +284,9 @@ When a request posts to the address of a retired endpoint, the server MUST answe
 
 ### `inbound-webhooks/address-key-revoked`
 
-While the key of an endpoint's registration is revoked, the server MUST answer a request to the endpoint's address with `404 not_found`.
+While the key of an endpoint's registration is revoked or past its `expires_at`, the server MUST answer a request to the endpoint's address with `404 not_found`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › stops answering once the registration's key is revoked`.
+**Tests:** `compliance/inbound-webhooks.test.ts › stops answering once the registration's key is revoked`, `› answers 404 at an address whose key has expired, as at a revoked key's`.
 
 ## Size and time
 
@@ -654,6 +660,12 @@ If a `POST /connectors/{id}/deliveries/handled` the server would otherwise take 
 
 **Tests:** `compliance/inbound-webhooks.test.ts › keeps the first mark, and marks nothing when an id is not the connector's`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
+### `inbound-webhooks/order-body-before-unheld`
+
+If `POST /connectors/{id}/deliveries/handled` names a delivery the registration does not hold and carries a body the operation refuses, then the server MUST answer that `400`.
+
+**Tests:** `compliance/connector-check-order.test.ts › answers a handled mark the door refuses 400 before a delivery the registration does not hold's 404`.
+
 ### `inbound-webhooks/handled-unheld-keeps`
 
 If the server answers `404 delivery_not_found` to `POST /connectors/{id}/deliveries/handled`, then the server MUST NOT mark any delivery it named.
@@ -939,6 +951,14 @@ While the limiter is on, if a request is past an endpoint's window and its regis
 If a request declares a `Content-Length` over the limit and its registration already holds `MARFA_INBOUND_BACKLOG_DELIVERIES` unhandled deliveries, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a full backlog 503 before a declared length over the limit`.
+
+### `inbound-webhooks/order-length-before-capacity`
+
+If a request declares a `Content-Length` over the limit while its registration's unhandled deliveries hold `MARFA_INBOUND_BACKLOG_BYTES` or the instance's retained capacity is full, then the server MUST answer `413 request_too_large`.
+
+**Reason:** before it reads a body the server checks only the count of unhandled deliveries; their bytes and the retained capacity are checked as the body is stored.
+
+**Tests:** `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the backlog's bytes and the retained capacity's 503`.
 
 ### `inbound-webhooks/order-length-before-timeout`
 

@@ -100,9 +100,9 @@ When a key that already has a registration sends `POST /connectors`, the server 
 
 ### `connectors/register-repeat-updated-at`
 
-When a key that already has a registration sends `POST /connectors`, the server MUST move the registration's `updated_at` later.
+When a key that already has a registration sends `POST /connectors`, the server MUST set the registration's `updated_at` to the time on its own clock at the write.
 
-**Tests:** `compliance/connectors.test.ts › registers once per key, updating on repeat`.
+**Tests:** `compliance/connectors.test.ts › registers once per key, updating on repeat`, `compliance/connectors.test.ts › stamps a repeat registration's updated_at with the server's clock at the write`.
 
 ### `connectors/register-concurrent`
 
@@ -404,9 +404,9 @@ If a run names no `outcome`, then the server MUST answer `400 missing_required_f
 
 ### `connectors/run-time-missing`
 
-If a run names no `started_at` or no `finished_at`, then the server MUST answer `400 missing_required_field`.
+If a run names no `started_at` or no `finished_at`, then the server MUST answer `400 missing_required_field` naming the missing field in `details.field`.
 
-**Tests:** `compliance/declared-refusals.test.ts › is refused 400 missing_required_field, naming the field`.
+**Tests:** `compliance/connectors.test.ts › names a missing started_at or finished_at as missing_required_field`.
 
 ### `connectors/run-time-invalid`
 
@@ -546,9 +546,9 @@ When the server takes or renews a hold, the server MUST give `ttl_ms` as the hol
 
 ### `connectors/hold-renew`
 
-When the process that holds a live hold sends `POST /connectors/{id}/hold`, the server MUST move `expires_at` later and answer `renewed` `true`.
+When the process that holds a live hold sends `POST /connectors/{id}/hold`, the server MUST set `expires_at` to the time on its own clock at the renewal plus the hold's window, and answer `renewed` `true`.
 
-**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› tells a process whose hold lapsed that it did not renew it`.
+**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› tells a process whose hold lapsed that it did not renew it`, `compliance/connector-state.test.ts › stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
 
 ### `connectors/hold-first-not-renewed`
 
@@ -698,9 +698,9 @@ When the connector's own key sends `PUT /connectors/{id}/state` with a `process`
 
 ### `connectors/state-updated-at`
 
-When the server replaces a state document, the server MUST give its `updated_at` a time later than that of the previous write.
+When the server replaces a state document, the server MUST set its `updated_at` to the time on its own clock at the write.
 
-**Tests:** `compliance/connector-state.test.ts › reads an empty state, and replaces it whole`.
+**Tests:** `compliance/connector-state.test.ts › stamps a replaced state's updated_at with the server's clock at the write`.
 
 ### `connectors/state-keys-as-sent`
 
@@ -896,9 +896,9 @@ When `POST /connectors/{id}/agreements` names a row in `clear`, the server MUST 
 
 ### `connectors/agreements-skip-absent`
 
-If an id in `set` or `clear` names no stored row, then the server MUST name it in `skipped`, in the order named, and not refuse the batch.
+If an id in `set` or `clear` names no stored row, then the server MUST name it in `skipped`, the ids from `set` before those from `clear`, each in the order named, and not refuse the batch.
 
-**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› refuses a batch over its caps and writes nothing`.
+**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› refuses a batch over its caps and writes nothing`, `› lists skipped set ids before skipped clear ids, whatever order the body names them`.
 
 ### `connectors/agreements-skip-unreadable`
 
@@ -1218,6 +1218,12 @@ If the operator key sends `POST /connectors` with a body the operation would ref
 
 **Tests:** `compliance/connector-check-order.test.ts › answers the operator key 403 before a registration body it would be refused for`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
 
+### `connectors/order-app-before-body`
+
+If an app's access token sends `POST /connectors` with a body the operation would refuse, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/connector-session-token.test.ts › refuses an app's access token 403 before it reads the registration body`.
+
 ### `connectors/order-body-before-registration`
 
 If a request to an operation under `/connectors/{id}` has a body field or a query parameter that is missing or does not fit the type, format, length, count or values the operation declares for it, then the server MUST answer `400`, whether the id names no registration or the registration of another key.
@@ -1225,6 +1231,14 @@ If a request to an operation under `/connectors/{id}` has a body field or a quer
 **Reason:** the declared fields are checked before the server looks for the registration, so `validation_error` and `missing_required_field` come before `connector_not_found` and `forbidden` for them.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a request the door refuses 400 before the registration's 404 and the key's 403`.
+
+### `connectors/order-key-before-handler-checks`
+
+If a key the operation refuses `403` sends to an existing registration a run that finishes before it starts or names a time outside the years 0000 to 9999, a state over 512 KiB, a batch that names a row twice or holds a record over 16 KiB, or a top-level body field the operation does not declare, then the server MUST answer `403 forbidden`.
+
+**Reason:** these checks need the registration and the key's standing first, unlike the declared shape in `connectors/order-body-before-registration`.
+
+**Tests:** `compliance/connector-check-order.test.ts › answers another key's 403 before the checks its body meets once the key is the connector's own`.
 
 ### `connectors/order-registration-before-key`
 
