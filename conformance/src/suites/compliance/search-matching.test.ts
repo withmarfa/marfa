@@ -13,7 +13,7 @@ import {
 
 /**
  * How a query is read, which words and fields it matches, and how the hits
- * are ordered and excerpted: `search-and-filters.md` 42 to 49 and 87. The device
+ * are ordered and excerpted: `search-and-filters/search-stem` to `search-and-filters/excerpt-markup`. The device
  * holds itself to the same cases in `device/search-live.test.ts`.
  */
 

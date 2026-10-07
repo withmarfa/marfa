@@ -124,7 +124,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 ## Search, read locally
 
-55. **A local search indexes, reads and ranks as the server's search does** (`search-and-filters.md` 42 to 49 and 87): the same fields, the same stemming, a prefix on the last word alone, a quoted query as a phrase, the same excerpt, and the same order where the device holds the rows the server ranks, since BM25 is relative to the rows of the index it ranks in and a device holding a slice orders by that slice, and the index is made again for every held row when the copy takes a changed catalog. The index is a table of the store, so a store made before this index took the server's shape is refused `wrong_schema` naming `items_fts` like any store another build shaped (41), and its unsent writes are reported there for the build that made it to drain or discard before a new copy is hydrated. A hydration builds the new index from the rows the server sends. A query that finds a row online and loses it offline reads as a lost row. The index holds nothing a person made, but the store beside it holds writes the server has not taken, which is why an old store is refused and not made again in place: no build keeps a path from another build's store before the first public release. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`, `› excerpts a match as the server does, from the column that holds it`, `› escapes the row's text in an excerpt as the server does`, `› holds a changed type's searchable fields against rows it already holds`.
+55. **A local search indexes, reads and ranks as the server's search does** (123 to 145): the same fields, the same stemming, a prefix on the last word alone, a quoted query as a phrase, the same excerpt, and the same order where the device holds the rows the server ranks, since BM25 is relative to the rows of the index it ranks in and a device holding a slice orders by that slice, and the index is made again for every held row when the copy takes a changed catalog. The index is a table of the store, so a store made before this index took the server's shape is refused `wrong_schema` naming `items_fts` like any store another build shaped (41), and its unsent writes are reported there for the build that made it to drain or discard before a new copy is hydrated. A hydration builds the new index from the rows the server sends. A query that finds a row online and loses it offline reads as a lost row. The index holds nothing a person made, but the store beside it holds writes the server has not taken, which is why an old store is refused and not made again in place: no build keeps a path from another build's store before the first public release. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`, `› excerpts a match as the server does, from the column that holds it`, `› escapes the row's text in an excerpt as the server does`, `› holds a changed type's searchable fields against rows it already holds`.
 
 ## Saving before a first sync
 
@@ -539,6 +539,54 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 **Reason:** the docs site may move a page, and the command sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (42).
 
 **Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`.
+
+## How a local search matches
+
+123. A device MUST reduce every word of the indexed text and of a query to its stem, so that `run` followed by another word matches `running` and `runs` and not `runner`. A device that matched whole words only would lose a row the server finds (`search-and-filters/search-stem`). `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+124. WHEN a query is not wholly inside double quotes, a device MUST match only the rows in which every whitespace-separated word of it matches, in any order and in any column. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+125. WHEN a query is not wholly inside double quotes, a device MUST match its last word as the start of a word. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+126. WHEN a query is not wholly inside double quotes, a device MUST match every word of it but the last as a whole stem. A prefix on every word would match `marshland` for `marsh landscape`, which the server does not. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+127. WHEN a query begins and ends with a double quote and holds at least one character between them, a device MUST match the text between them as a phrase, with its words adjacent and in order. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+128. WHEN a query is a phrase, a device MUST match the last word of the phrase as a whole stem and not as a prefix. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+129. WHEN a double quote in a query is not the first and the last character of a phrase, a device MUST read it as text. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+130. WHEN a query has whitespace or byte-order marks around it, a device MUST ignore them. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+131. A device MUST read an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word of a query as words to match, and never as search syntax. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+132. WHEN a query holds only spaces, a device MUST match nothing. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+133. WHILE a row is not in the bin, a device MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+134. WHEN a query is a phrase, a device MUST match it against the string properties of a row beyond the four core ones joined in the order of their names, and against its tags joined in byte order. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+135. A device MUST NOT match a property that its type declares as a string with `searchable: false`, so the properties a person marked private stay unmatched. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+136. A device MUST NOT match a property that the row's type does not declare. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+137. A device MUST match each row it holds by what the types of its current catalog mark searchable, so a changed catalog that the device takes changes what its rows match. What a row gives the index is decided when it is written, so without this a row would keep answering by the fields its type had. `device/search-live.test.ts › holds a changed type's searchable fields against rows it already holds`.
+
+138. A device MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores by that slice, and its order equals the server's only where the rows they hold are the same. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+139. A device MUST order hits of equal rank by item identifier, ascending. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+140. WHEN a hit's text matches the query, a device MUST write an excerpt of at most 32 words. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+141. A device MUST draw the excerpt of a hit from the column that matches it best. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+142. A device MUST wrap each matched word of an excerpt in `<mark>` and `</mark>`. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+143. WHEN an excerpt cuts the text, a device MUST write `...` where it is cut. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+144. A device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`. An app shows the excerpt as HTML, and a row's text is never markup for that app to render. `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
+
+145. A device MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</mark>`, each pair opened before it closes. `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
 
 ## What the real server cannot be made to produce
 

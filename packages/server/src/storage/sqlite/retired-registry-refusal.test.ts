@@ -91,7 +91,7 @@ describe("a retired registry table is refused on open", () => {
 
   it("names the way forward, and says the restore it names can refuse", async () => {
     // An archive is read only by the build that wrote it until the first
-    // public release (`search-and-filters.md` 27), so a message that sent
+    // public release (`search-and-filters/restore-version`), so a message that sent
     // an owner to restore one into this build without saying so would
     // promise what the contract does not.
     const path = scratch();

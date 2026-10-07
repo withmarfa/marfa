@@ -2579,7 +2579,7 @@ describe("a local read narrows by the listing grammar", () => {
 describe("a local list narrows on the item's own time", () => {
   /**
    * Both bounds are exclusive, which is one rule across the whole API
-   * (`search-and-filters.md` 6). A device that read either of them
+   * (`search-and-filters/own-time-exclusive`). A device that read either of them
    * inclusively would answer a bounded list differently from the server it
    * copies, and the row that tells the two apart is the one sitting exactly
    * on the instant.

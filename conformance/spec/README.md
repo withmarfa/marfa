@@ -23,8 +23,8 @@ The contract has two halves.
 - `connectors.md`: a process outside the server that registers under its key, heartbeats, reports its runs, holds its registration, and keeps its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's webhook endpoints, the operation a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
-- `search-and-filters.md`: search, export, occurrences, the lookup by link, natural key or id, and the query grammar every listing shares.
-- `occurrences.md`: how a recurring event unfolds across zones and clock changes, what an occurrence window includes, and what a write may store as a rule.
+- `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, export and restore.
+- `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
 - `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.
 - `instance.md`: what an instance says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the server sends.
