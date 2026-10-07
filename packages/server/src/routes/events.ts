@@ -1012,7 +1012,7 @@ export function eventRoutes(
             // While a replay reads, the id it reads on to at least; the ids
             // of the held frames given up to it that it has not yet passed;
             // and the rows it has passed but could not read, whose live copy
-            // is their one carrier (`events.md` 3).
+            // is their one carrier (`events/unreadable-row-live-copy`).
             let replayReach: bigint | null = null;
             const givenUp = new Set<bigint>();
             const unreadable = new Set<bigint>();
@@ -1181,18 +1181,17 @@ export function eventRoutes(
                   return false;
                 }
 
-                // What is safe to discard is an id this replay actually
-                // sent, so that is what is recorded rather than the
-                // cursor, which advances past every row this loop walks,
-                // rows a filter withheld included. A row the log holds but
-                // cannot serve, one whose payload does not decode, is not
-                // recorded either: its live copy is the one carrier that
-                // event has left, and it goes out after the replay, behind
-                // the ids replayed above it, which `events.md` 3 names as the
-                // one exception to the order. Recorded into a set
-                // that belongs to the stream rather than to this function,
-                // because the drain it feeds runs whether or not there was
-                // a replay to feed it.
+                // What is safe to discard is an id this replay actually sent,
+                // so that is what is recorded rather than the cursor, which
+                // advances past every row this loop walks, rows a filter
+                // withheld included. A row the log holds but cannot serve, one
+                // whose payload does not decode, is not recorded either: its
+                // live copy is the one carrier that event has left, and it goes
+                // out after the replay, behind the ids replayed above it, which
+                // `events/unreadable-row-live-copy` names as the one exception
+                // to the order. Recorded into a set that belongs to the stream
+                // rather than to this function, because the drain it feeds runs
+                // whether or not there was a replay to feed it.
                 //
                 // Insertion order, for eviction. Replayed ids arrive
                 // ascending, so the front is always the oldest.

@@ -63,9 +63,10 @@ export interface EdgeEvent extends FanoutControl {
   edge: Edge;
   /**
    * The source item's type when the event was published, which is what decides
-   * who may be told about it (`events.md` 19). Carried rather than looked up
-   * by a subscriber, because a purge announces the edges it took after the
-   * source row has gone, and a subscriber cannot look up a type nobody holds.
+   * who may be told about it (`events/edge-frame-published-type`). Carried
+   * rather than looked up by a subscriber, because a purge announces the edges
+   * it took after the source row has gone, and a subscriber cannot look up a
+   * type nobody holds.
    *
    * Every door that publishes looks it up (`edge-events-every-door.test.ts`
    * holds them to it). Optional because the source row may be absent from

@@ -44,11 +44,11 @@ export interface CollectResult {
  * **An absence is settled by a later frame, never by a quiet window**, which
  * cannot tell "nothing more is coming" from "not yet". Write a sentinel row
  * after the one under test and wait for the sentinel's own event here: the
- * stream delivers item and edge frames in id order (`events.md` 3), so a
- * sentinel of either kind arriving is proof that everything published
- * before it has arrived or was withheld. Where the rule under test is
- * whether edge frames arrive at all, an item written after the edge is the
- * sentinel, since a sentinel edge could not arrive on a server that fails it.
+ * stream delivers item and edge frames in id order (`events/ids-ascending`), so
+ * a sentinel of either kind arriving is proof that everything published before
+ * it has arrived or was withheld. Where the rule under test is whether edge
+ * frames arrive at all, an item written after the edge is the sentinel, since a
+ * sentinel edge could not arrive on a server that fails it.
  *
  * The deadline belongs to the test runner, not to this helper. A hand-rolled
  * `Date.now()` bound re-emits a timeout as a logic failure: the assertion

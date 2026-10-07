@@ -2,14 +2,13 @@
  * A live stream delivers frames in the order the log numbered them, item
  * and edge frames alike.
  *
- * An edge frame waits on a source read before it is written and an item
- * frame does not, so two delivery paths that do not wait on each other let
- * a frame with a higher id reach the client before one with a lower id
- * published just before it. A client that keeps the last id it received as
- * its cursor, which is what `events.md` 3 tells it to do, then resumes past
- * the lower one, and nothing ever replays it. A purge is the ordinary way
- * to produce the shape: it announces every edge of the row first and the
- * row last.
+ * An edge frame waits on a source read before it is written and an item frame
+ * does not, so two delivery paths that do not wait on each other let a frame
+ * with a higher id reach the client before one with a lower id published just
+ * before it. A client that keeps the last id it received as its cursor, which
+ * is what `events/resume-exactly-once` tells it to do, then resumes past the
+ * lower one, and nothing ever replays it. A purge is the ordinary way to
+ * produce the shape: it announces every edge of the row first and the row last.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, readSseWriting, request } from "../test-utils.js";

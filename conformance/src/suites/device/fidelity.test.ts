@@ -2591,7 +2591,7 @@ describe("the scripted answers match the server's", () => {
 
   it("matches the marker that ends a replay whose rows were withheld", async (context) => {
     // A type filter withholds here in place of a credential, which the
-    // server's marker treats the same (`events.md` 2).
+    // server's marker treats the same (`events/stream-live-cursor`).
     const marker = `fidelity-live-${ctx.runId}`;
     await note({ title: marker, body: marker });
     const frames = await withStream(

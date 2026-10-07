@@ -1,6 +1,6 @@
 # Inbound webhooks
 
-A connector's webhook endpoint is an address a sender such as GitHub posts to without a credential. The server stores each delivery as it arrived and answers at once; it never reads, verifies or acts on one, and it holds no sender's secret. The connector that owns the endpoint reads its deliveries with its own key, checks that each came from its sender, and marks it handled. The webhooks the instance sends are outbound ones, `events.md` 12 to 17.
+A connector's webhook endpoint is an address a sender such as GitHub posts to without a credential. The server stores each delivery as it arrived and answers at once; it never reads, verifies or acts on one, and it holds no sender's secret. The connector that owns the endpoint reads its deliveries with its own key, checks that each came from its sender, and marks it handled. The webhooks the instance sends are outbound ones, the `events/webhook-*` and `events/delivery-*` rules.
 
 ## Endpoints
 

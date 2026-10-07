@@ -442,7 +442,7 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
 When the server is stopped, the server MUST end each event stream it has open with a terminal `stream_incomplete` frame.
 
-**Reason:** a stream never ends of its own accord, so the server's close would wait on it until the bound ran out and the stop would end as a failure, and a client cut off with no closing frame cannot tell a stop from a fault. `events.md` 11 holds the frame.
+**Reason:** a stream never ends of its own accord, so the server's close would wait on it until the bound ran out and the stop would end as a failure, and a client cut off with no closing frame cannot tell a stop from a fault. `events/incomplete-cursor` holds the frame.
 
 **Tests:** `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`, `› names the last event the stream sent as the cursor of its closing frame`.
 
