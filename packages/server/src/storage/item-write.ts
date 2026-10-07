@@ -52,7 +52,7 @@ import {
   mayWriteEdge,
   requireDeclaredTypeMatches,
 } from "../middleware/auth.js";
-import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
+import { MAX_TAGS_PER_ITEM, distinctTags } from "../tag-limits.js";
 import {
   announceInlineEdges,
   applyInlineEdges,
@@ -816,8 +816,10 @@ async function changeRow(
 async function put(
   storage: Storage,
   writer: ItemWriter,
-  write: ItemPut,
+  sent: ItemPut,
 ): Promise<ItemWriteResult> {
+  const write: ItemPut =
+    sent.tags === undefined ? sent : { ...sent, tags: distinctTags(sent.tags) };
   const key = credentialOf(writer);
   if (write.door === "item") assertCreatableState(write.type, write.state);
   assertTypeWrite(writer, write.type);
@@ -825,7 +827,7 @@ async function put(
   const enforcement = await enforcementFor(storage, writer);
   const notAllowed = sourceAllowlistRefusal(enforcement, write.type, source);
   if (notAllowed) throw notAllowed;
-  assertTagCount(write.tags);
+  assertTagCount(sent.tags);
   assertEdgeSet(writer, write.edges);
 
   let existing: Item | null = null;

@@ -4,6 +4,7 @@ import {
   MAX_PAGE_LIMIT,
   MIN_PAGE_LIMIT,
 } from "../../page-limits.js";
+import { distinctTags } from "../../tag-limits.js";
 import {
   eq,
   and,
@@ -805,7 +806,7 @@ export class SqliteItemStore implements ItemStore {
         .insert(metadata)
         .values({
           item_id: id,
-          tags: JSON.stringify(input.tags ?? []),
+          tags: JSON.stringify(distinctTags(input.tags ?? [])),
         })
         .run();
 
