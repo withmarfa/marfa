@@ -34,6 +34,7 @@ describe("collectBlobHashes", () => {
     expect(collect({ upper: `${A}Fig` })).toEqual([A]);
     expect(collect({ word: `x${A}` })).toEqual([A]);
     expect(collect({ encoded: `/blobs/sha256%3A${hexB}` })).toEqual([B]);
+    expect(collect({ lower: `/blobs/sha256%3a${hexB}` })).toEqual([B]);
     expect(collect({ bare: `![chart](/blobs/${hexA})` })).toEqual([A]);
     expect(collect({ whole: hexB })).toEqual([B]);
   });
