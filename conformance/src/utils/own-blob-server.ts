@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { expect } from "vitest";
 import { MarfaClient } from "../client/api.js";
 import type { FreshServer } from "./fresh-server.js";
+import { waitFor } from "./wait.js";
 
 /**
  * The settings of a server of a fixture's own that keeps bytes on its disk
@@ -98,5 +99,80 @@ export function bytesOf(words: string, size: number): Uint8Array {
 export async function pastInstant(iso: string): Promise<void> {
   while (new Date().toISOString() <= iso) {
     await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
+/** Resolves once the clock reads a millisecond other than this one's, so two
+ *  rows written one after the other carry different creation times. */
+export async function nextMillisecond(): Promise<void> {
+  const now = Date.now();
+  while (Date.now() === now) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+/**
+ * Waits until nothing is left for replication on its own clock: no run in
+ * progress, and the next one an interval away rather than woken. What a
+ * fixture then asks of the job is the first work it does.
+ */
+export async function replicationIdle(operator: MarfaClient): Promise<void> {
+  await waitFor("replication to go idle", async () => {
+    const jobs = (await operator.listHousekeeping()).data.data;
+    const job = jobs.find((row) => row.name === "blob-replicate");
+    return job !== undefined &&
+      job.running_since === null &&
+      Date.parse(job.next_run_at) > Date.now() + 60_000
+      ? true
+      : undefined;
+  });
+}
+
+/**
+ * Uploads each of `contents` in order, waits until the server has copied every
+ * one to its object store on its own, then drops the object store's copies
+ * through the operator door, which wakes nothing. What is left is a backlog
+ * of exactly these blobs for the next run of `blob-replicate`.
+ */
+export async function leaveBacklog(
+  operator: MarfaClient,
+  working: MarfaClient,
+  contents: readonly Uint8Array[],
+): Promise<string[]> {
+  const stores = (await operator.listBlobStores()).data.data;
+  const s3 = stores.find((store) => store.kind === "s3")!;
+  const hashes: string[] = [];
+  for (const content of contents) {
+    await nextMillisecond();
+    const upload = await working.uploadBlob(content, "text/plain");
+    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+    hashes.push(upload.data.hash);
+  }
+  for (const hash of hashes) {
+    await waitFor(`the object store's copy of ${hash}`, async () =>
+      (await operator.listBlobLocations(hash)).data.data.length === 2
+        ? true
+        : undefined,
+    );
+  }
+  await replicationIdle(operator);
+  for (const hash of hashes) {
+    const dropped = await operator.deleteBlobLocation(hash, s3.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+  }
+  return hashes;
+}
+
+/** Waits until every blob has its object store's copy back. */
+export async function whenCopied(
+  operator: MarfaClient,
+  hashes: readonly string[],
+): Promise<void> {
+  for (const hash of hashes) {
+    await waitFor(`the object store's copy of ${hash}`, async () =>
+      (await operator.listBlobLocations(hash)).data.data.length === 2
+        ? true
+        : undefined,
+    );
   }
 }
