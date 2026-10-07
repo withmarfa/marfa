@@ -290,136 +290,144 @@ describe("an integrity run that is bounded by bytes", () => {
 });
 
 describe("a replication run over a copy that does not hash to its name", () => {
-  it("records no copy for bytes that do not hash to the blob's name", async () => {
-    const { server, operator, working } = await boot(
-      "blob-store-replicate-verifies",
-      {},
-    );
-    const content = bytesOf("bytes the disk will lose", 120);
-    const upload = await working.uploadBlob(content, "text/plain");
-    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
-    const hash = upload.data.hash;
-    await whenCopied(operator, [hash]);
-    await replicationIdle(operator);
-    const stores = (await operator.listBlobStores()).data.data;
-    const s3 = stores.find((store) => store.kind === "s3")!;
-    const disk = stores.find((store) => store.kind === "disk")!;
-    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+  it(
+    "records no copy for bytes that do not hash to the blob's name",
+    async () => {
+      const { server, operator, working } = await boot(
+        "blob-store-replicate-verifies",
+        {},
+      );
+      const content = bytesOf("bytes the disk will lose", 120);
+      const upload = await working.uploadBlob(content, "text/plain");
+      expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+      const hash = upload.data.hash;
+      await whenCopied(operator, [hash]);
+      await replicationIdle(operator);
+      const stores = (await operator.listBlobStores()).data.data;
+      const s3 = stores.find((store) => store.kind === "s3")!;
+      const disk = stores.find((store) => store.kind === "disk")!;
+      expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
 
-    // The disk file, at its own length, now holds other bytes: the object
-    // store would be handed a copy that is not the blob.
-    writeFileSync(diskPath(server, hash), new Uint8Array(120).fill(0x41));
-    const refused = await runJob(operator, "blob-replicate");
-    expect(refused.result.copied).toBe(0);
-    expect(refused.result.bytes).toBe(0);
-    expect(
-      (await operator.listBlobLocations(hash)).data.data.map(
-        (row) => row.store_id,
-      ),
-    ).toEqual([disk.id]);
+      // The disk file, at its own length, now holds other bytes: the object
+      // store would be handed a copy that is not the blob.
+      writeFileSync(diskPath(server, hash), new Uint8Array(120).fill(0x41));
+      const refused = await runJob(operator, "blob-replicate");
+      expect(refused.result.copied).toBe(0);
+      expect(refused.result.bytes).toBe(0);
+      expect(
+        (await operator.listBlobLocations(hash)).data.data.map(
+          (row) => row.store_id,
+        ),
+      ).toEqual([disk.id]);
 
-    // The witness: the same run with the right bytes on the disk records
-    // the object store's copy.
-    writeFileSync(diskPath(server, hash), content);
-    const placed = await runJob(operator, "blob-replicate");
-    expect(placed.result).toEqual({ copied: 1, bytes: 120, remaining: 0 });
-    expect(
-      (await operator.listBlobLocations(hash)).data.data
-        .map((row) => row.store_id)
-        .sort(),
-    ).toEqual([disk.id, s3.id].sort());
-  }, FRESH_SERVER_TIMEOUT_MS);
+      // The witness: the same run with the right bytes on the disk records
+      // the object store's copy.
+      writeFileSync(diskPath(server, hash), content);
+      const placed = await runJob(operator, "blob-replicate");
+      expect(placed.result).toEqual({ copied: 1, bytes: 120, remaining: 0 });
+      expect(
+        (await operator.listBlobLocations(hash)).data.data
+          .map((row) => row.store_id)
+          .sort(),
+      ).toEqual([disk.id, s3.id].sort());
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("an integrity run over the object store's copies", () => {
-  it("strikes an object-store copy that is missing or not as long as the blob", async () => {
-    const { operator, working } = await boot("blob-store-integrity-s3", {});
-    const s3 = (await operator.listBlobStores()).data.data.find(
-      (store) => store.kind === "s3",
-    )!;
-    const prefix = s3.locator.slice(`s3://${process.env.S3_BUCKET!}/`.length);
-    const objects = new S3Client({
-      region: process.env.S3_REGION!,
-      endpoint: process.env.S3_ENDPOINT!,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
-      },
-    });
-    const keyOf = (hash: string) =>
-      `${prefix}/${hash.slice("sha256:".length)}`;
-    const size = 100;
-    const blobs = {
-      missing: bytesOf("an object that goes missing", size),
-      shorter: bytesOf("an object replaced by fewer bytes", size),
-      longer: bytesOf("an object replaced by more bytes", size),
-      sameLength: bytesOf("an object replaced by other bytes", size),
-      intact: bytesOf("an object left alone", size),
-    };
-    const hashes = {} as Record<keyof typeof blobs, string>;
-    for (const [name, content] of Object.entries(blobs)) {
-      const upload = await working.uploadBlob(content, "text/plain");
-      expect(upload.status, JSON.stringify(upload.error)).toBe(201);
-      hashes[name as keyof typeof blobs] = upload.data.hash;
-    }
-    await whenCopied(operator, Object.values(hashes));
-    await replicationIdle(operator);
+  it(
+    "strikes an object-store copy that is missing or not as long as the blob",
+    async () => {
+      const { operator, working } = await boot("blob-store-integrity-s3", {});
+      const s3 = (await operator.listBlobStores()).data.data.find(
+        (store) => store.kind === "s3",
+      )!;
+      const prefix = s3.locator.slice(`s3://${process.env.S3_BUCKET!}/`.length);
+      const objects = new S3Client({
+        region: process.env.S3_REGION!,
+        endpoint: process.env.S3_ENDPOINT!,
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+          secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+        },
+      });
+      const keyOf = (hash: string) =>
+        `${prefix}/${hash.slice("sha256:".length)}`;
+      const size = 100;
+      const blobs = {
+        missing: bytesOf("an object that goes missing", size),
+        shorter: bytesOf("an object replaced by fewer bytes", size),
+        longer: bytesOf("an object replaced by more bytes", size),
+        sameLength: bytesOf("an object replaced by other bytes", size),
+        intact: bytesOf("an object left alone", size),
+      };
+      const hashes = {} as Record<keyof typeof blobs, string>;
+      for (const [name, content] of Object.entries(blobs)) {
+        const upload = await working.uploadBlob(content, "text/plain");
+        expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+        hashes[name as keyof typeof blobs] = upload.data.hash;
+      }
+      await whenCopied(operator, Object.values(hashes));
+      await replicationIdle(operator);
 
-    // The object store's copies, changed where the server cannot see.
-    await objects.send(
-      new DeleteObjectCommand({
-        Bucket: process.env.S3_BUCKET!,
-        Key: keyOf(hashes.missing),
-      }),
-    );
-    for (const [name, bytes] of [
-      ["shorter", new Uint8Array(size - 1).fill(0x41)],
-      ["longer", new Uint8Array(size + 1).fill(0x41)],
-      ["sameLength", new Uint8Array(size).fill(0x41)],
-    ] as const) {
+      // The object store's copies, changed where the server cannot see.
       await objects.send(
-        new PutObjectCommand({
+        new DeleteObjectCommand({
           Bucket: process.env.S3_BUCKET!,
-          Key: keyOf(hashes[name]),
-          Body: bytes,
+          Key: keyOf(hashes.missing),
         }),
       );
-    }
+      for (const [name, bytes] of [
+        ["shorter", new Uint8Array(size - 1).fill(0x41)],
+        ["longer", new Uint8Array(size + 1).fill(0x41)],
+        ["sameLength", new Uint8Array(size).fill(0x41)],
+      ] as const) {
+        await objects.send(
+          new PutObjectCommand({
+            Bucket: process.env.S3_BUCKET!,
+            Key: keyOf(hashes[name]),
+            Body: bytes,
+          }),
+        );
+      }
 
-    // One run reads every copy: ten, which is below the default batch.
-    const run = await runJob(operator, "blob-integrity");
-    expect(run.result).toEqual({
-      verified: 7,
-      struck: 3,
-      bytes: 10 * size,
-    });
-
-    const struck = async (hash: string) =>
-      (
-        await working.listAudit({
-          action: "blob.copy_struck",
-          resource_id: hash,
-        })
-      ).data.data;
-    for (const name of ["missing", "shorter", "longer"] as const) {
-      const rows = await struck(hashes[name]);
-      expect(rows, name).toHaveLength(1);
-      expect(rows[0]?.details, name).toMatchObject({
-        kind: "s3",
-        store_id: s3.id,
+      // One run reads every copy: ten, which is below the default batch.
+      const run = await runJob(operator, "blob-integrity");
+      expect(run.result).toEqual({
+        verified: 7,
+        struck: 3,
+        bytes: 10 * size,
       });
-    }
 
-    // The witnesses: an intact copy is stamped, and so is one replaced by
-    // other bytes of the same length, which the store was never asked to
-    // hash.
-    for (const name of ["intact", "sameLength"] as const) {
-      expect(await struck(hashes[name]), name).toHaveLength(0);
-      const copy = (await operator.listBlobLocations(hashes[name])).data.data
-        .filter((row) => row.store_id === s3.id)
-        .at(0);
-      expect(copy?.verified_at, name).not.toBeNull();
-    }
-  }, FRESH_SERVER_TIMEOUT_MS);
+      const struck = async (hash: string) =>
+        (
+          await working.listAudit({
+            action: "blob.copy_struck",
+            resource_id: hash,
+          })
+        ).data.data;
+      for (const name of ["missing", "shorter", "longer"] as const) {
+        const rows = await struck(hashes[name]);
+        expect(rows, name).toHaveLength(1);
+        expect(rows[0]?.details, name).toMatchObject({
+          kind: "s3",
+          store_id: s3.id,
+        });
+      }
+
+      // The witnesses: an intact copy is stamped, and so is one replaced by
+      // other bytes of the same length, which the store was never asked to
+      // hash.
+      for (const name of ["intact", "sameLength"] as const) {
+        expect(await struck(hashes[name]), name).toHaveLength(0);
+        const copy = (await operator.listBlobLocations(hashes[name])).data.data
+          .filter((row) => row.store_id === s3.id)
+          .at(0);
+        expect(copy?.verified_at, name).not.toBeNull();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });

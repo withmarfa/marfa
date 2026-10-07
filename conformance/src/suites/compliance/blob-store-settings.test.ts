@@ -179,12 +179,18 @@ describe("an orphan report that holds blobs from more than one run", () => {
       );
       // The earlier run's reports come first and keep their first time, and
       // the times never go back.
-      expect(report.slice(0, 3).map((row) => row.hash).sort()).toEqual(
-        earlier.map(hashOf).sort(),
-      );
-      expect(report.slice(3).map((row) => row.hash).sort()).toEqual(
-        later.map(hashOf).sort(),
-      );
+      expect(
+        report
+          .slice(0, 3)
+          .map((row) => row.hash)
+          .sort(),
+      ).toEqual(earlier.map(hashOf).sort());
+      expect(
+        report
+          .slice(3)
+          .map((row) => row.hash)
+          .sort(),
+      ).toEqual(later.map(hashOf).sort());
       expect(report[2]!.reported_at < report[3]!.reported_at).toBe(true);
       const times = report.map((row) => row.reported_at);
       expect(times).toEqual([...times].sort());
