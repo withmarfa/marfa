@@ -1000,7 +1000,13 @@ describe("every command holds the server to the contract", () => {
   it("refuses a docs address that is not http or https with invalid, sending nothing", async () => {
     server = await ScriptedServer.start();
     const host = server.url.replace("http://", "");
-    for (const address of ["not a url", `ftp://${host}`, host]) {
+    for (const address of [
+      "not a url",
+      `ftp://${host}`,
+      host,
+      `${server.url}/?q=1`,
+      `${server.url}#top`,
+    ]) {
       const outcome = await docs(address, ["get-started/files"]);
       expect(outcome.code, `${address}: ${outcome.stderr}`).toBe(1);
       expect(outcome.stdout).toBe("");

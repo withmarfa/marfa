@@ -143,7 +143,7 @@ impl Site {
         });
         if parsed.is_none() {
             return Err(CliError::Invalid(format!(
-                "{SITE_VARIABLE} is {address:?}, which is not an http or https address"
+                "{SITE_VARIABLE} is {address:?}, which is not an http or https address with a host and no query or fragment"
             )));
         }
         // The platform trust store, as the rest of the binary uses.
@@ -774,7 +774,14 @@ mod tests {
 
     #[test]
     fn the_address_must_be_http_or_https() {
-        for address in ["docs.marfa.so", "ftp://docs.marfa.so", "https://", "x?y=1"] {
+        for address in [
+            "docs.marfa.so",
+            "ftp://docs.marfa.so",
+            "https://",
+            "x?y=1",
+            "https://docs.marfa.so?q=1",
+            "https://docs.marfa.so/#top",
+        ] {
             assert!(
                 matches!(Site::at(address), Err(CliError::Invalid(_))),
                 "{address}"
