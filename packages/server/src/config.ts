@@ -1133,7 +1133,7 @@ const settingsShape = {
   ),
   AUDIT_RETENTION_DAYS: count(
     90,
-    "How long the server keeps audit entries and webhook delivery history. `PUT /config` overrides it.",
+    "How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age. `PUT /config` overrides it.",
     { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   AUDIT_CLEANUP_INTERVAL_MS: count(
@@ -1153,7 +1153,7 @@ const settingsShape = {
   ),
   MARFA_EVENT_LOG_RETENTION_HOURS: count(
     168,
-    "The least time an event stays in the event log, which bounds how far back a stream can replay. `PUT /config` overrides it.",
+    "The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age. `PUT /config` overrides it.",
     { min: 0, max: MAX_RETENTION_HOURS, unit: "hours" },
   ),
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(
@@ -1187,7 +1187,7 @@ const settingsShape = {
   ),
   TRASH_RETENTION_DAYS: count(
     60,
-    "How long an item stays in the trash before the server deletes it. At 0 the job that purges the trash is off. `PUT /config` overrides it.",
+    "How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age. `PUT /config` overrides it.",
     { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   TRASH_PURGE_INTERVAL_MS: count(
