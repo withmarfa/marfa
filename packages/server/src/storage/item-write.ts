@@ -861,9 +861,9 @@ async function put(
         }
         break;
       case "bulk_upsert":
-        // The id fallback offline-first clients rely on: a live row they
-        // may read is updated in place.
-        if (byId && byId.state !== "trashed" && mayRead(writer, byId.type)) {
+        // The id fallback offline-first clients rely on: a row they may read
+        // is updated in place, or acknowledged where it is in the bin.
+        if (byId && mayRead(writer, byId.type)) {
           existing = byId;
           matchedBy = "id";
         }
@@ -889,7 +889,12 @@ async function put(
       checkResolvedRowWrite(key, existing);
       rememberItemSubject(existing, "write");
     }
-    if (!write.retype) requireDeclaredTypeMatches(write.type, existing);
+    if (!write.retype) {
+      if (matchedBy === "id" && write.type !== existing.type) {
+        throw idReused(existing, write.type);
+      }
+      requireDeclaredTypeMatches(write.type, existing);
+    }
     return {
       outcome: "unchanged",
       item: existing,

@@ -154,7 +154,7 @@ When a create applied as a natural-key upsert names no `tags`, the server MUST l
 
 ### `items/natural-key-concurrent`
 
-When two creates naming one natural key that no item holds arrive together, the server MUST create one item and apply every other create as the natural-key upsert onto it.
+When two `POST /items` naming one natural key that no item holds arrive together, the server MUST create one item and apply every other as the natural-key upsert onto it.
 
 **Tests:** `correctness/dedup.test.ts › lands concurrent creates of one natural key on one row`.
 
@@ -166,7 +166,7 @@ If the natural key of `POST /items` resolves an item of a type other than the on
 
 ### `items/natural-key-new`
 
-When a create names a `source_id` no item holds under its source, or names no `source_id`, the server MUST create a new item.
+When a create names a `source_id` no item holds under its source, or names neither a `source_id` nor an `id` an item holds, the server MUST create a new item.
 
 **Tests:** `correctness/dedup.test.ts › same source but different source_id is not a duplicate`, `› items without source/source_id are never duplicates`.
 
@@ -180,7 +180,7 @@ If `POST /items` names a natural key that resolves an item and an `id` that is n
 
 ### `items/natural-key-unreadable`
 
-If a create's natural key resolves an item of a type the key may not read, then the server MUST answer `403 type_not_permitted` naming nothing of that item, before any other answer about it.
+If the natural key of `POST /items`, or of a `POST /items/bulk` entry under `mode: upsert`, resolves an item of a type the key may not read, then the server MUST refuse it `type_not_permitted` naming nothing of that item, before any other answer about it.
 
 **Reason:** a key that shares a source with another can reach a row of a type it holds nothing on, and learns only that its natural key is taken.
 
@@ -188,7 +188,7 @@ If a create's natural key resolves an item of a type the key may not read, then 
 
 ### `items/natural-key-trashed`
 
-When the natural key or the `id` of `POST /items` resolves an item in the bin that the key may read, the server MUST answer `200` with that item, still in the bin, and `acknowledged: true`.
+When the natural key or the `id` of `POST /items` resolves an item in the bin, of the type the create declares, that the key may read, the server MUST answer `200` with that item, still in the bin, and `acknowledged: true`.
 
 **Reason:** a connector re-syncing a row the person trashed must neither bring it back nor fail.
 
@@ -218,7 +218,7 @@ When a write names an `occurred_at` date-time with no zone, the server MUST read
 
 If a write names an `occurred_at` that is not a timestamp, then the server MUST refuse it `validation_error` with `details.field` `occurred_at`.
 
-**Tests:** `compliance/occurred-at.test.ts › refuses an occurred_at that is not a timestamp, naming the field`.
+**Tests:** `compliance/occurred-at.test.ts › refuses an occurred_at that is not a timestamp, naming the field`, `› names the field when a bulk page or a bulk action sends an occurred_at that is not a timestamp`.
 
 ### `items/occurred-at-range`
 
@@ -384,7 +384,7 @@ When a create names an empty `tags` list, the server MUST store the item with `t
 
 ### `items/tags-count`
 
-If a write names more than 100 tags, or would leave an item more than 100 tags and more than it held, on a create or any tag operation, then the server MUST answer `400 validation_error`.
+If a write names more than 100 tags, or would leave an item more than 100 tags and more than it held, on a create or any tag operation, then the server MUST refuse it `validation_error`.
 
 **Tests:** `compliance/item-limits.test.ts › refuses a create carrying more than 100 tags, and takes one of 100`, `› refuses a tag write that would leave an item more than 100 tags, on each tag operation`, `compliance/bulk-limits.test.ts › refuses an update_tags action adding more than 100 tags`.
 
@@ -862,7 +862,7 @@ When `GET /items/{id}` names an archived item the key may read, the server MUST 
 
 ### `items/write-in-bin`
 
-If `PATCH /items/{id}`, `DELETE /items/{id}`, or an operation that writes an item's tags, metadata or extensions names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors.md` 12).
+If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors.md` 12).
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
@@ -1150,11 +1150,11 @@ When the server reports a `POST /items/bulk` entry `skipped` for an item of a ty
 
 ### `items/bulk-trashed`
 
-When a `POST /items/bulk` entry under `mode: upsert` names a natural key that resolves an item in the bin, of a type the key may write and the entry declares, the server MUST report it `skipped` with `reason: "trashed"` and the item's `id`.
+When a `POST /items/bulk` entry under `mode: upsert` names a natural key or an `id` that resolves an item in the bin, of a type the key may write and the entry declares, the server MUST report it `skipped` with `reason: "trashed"` and the item's `id`.
 
 **Reason:** a connector re-syncing a page that holds a row the person trashed must neither revive it nor fail the page.
 
-**Tests:** `compliance/bulk.test.ts › reads a natural key over trashed rows, as the single create does`.
+**Tests:** `compliance/bulk.test.ts › reads a natural key over trashed rows, as the single create does`, `› acknowledges an upsert entry naming the id of an item in the bin, and refuses one of another type`.
 
 ### `items/bulk-trashed-unwritable`
 
@@ -1164,19 +1164,19 @@ If a `POST /items/bulk` entry under `mode: upsert` names a natural key that reso
 
 ### `items/bulk-trashed-other-type`
 
-If a `POST /items/bulk` entry under `mode: upsert` names a natural key that resolves an item in the bin of another type than the entry declares, then the server MUST refuse the entry `type_mismatch` with `details.actual_type` naming the item's type.
+If a `POST /items/bulk` entry under `mode: upsert` and without `retype: true` names a natural key that resolves an item in the bin of another type than the entry declares, then the server MUST refuse the entry `type_mismatch` with `details.actual_type` naming the item's type.
 
 **Tests:** `compliance/claimed-sources.test.ts › gates a bulk entry resolving a trashed row on the row's type, and names no id`.
 
 ### `items/bulk-id-other-type`
 
-If a `POST /items/bulk` entry under `mode: upsert` names an `id` that an item of another type holds, then the server MUST refuse the entry `id_reused`.
+If a `POST /items/bulk` entry under `mode: upsert` and without `retype: true` names an `id` that an item of another type the key may read holds, live or in the bin, then the server MUST refuse the entry `id_reused`.
 
-**Tests:** `compliance/bulk.test.ts › tells a reused id from a mistaken declaration, as the single-item doors do`.
+**Tests:** `compliance/bulk.test.ts › tells a reused id from a mistaken declaration, as the single-item doors do`, `› acknowledges an upsert entry naming the id of an item in the bin, and refuses one of another type`.
 
 ### `items/bulk-natural-key-other-type`
 
-If a `POST /items/bulk` entry under `mode: upsert` names a natural key that resolves a live item of another type, then the server MUST refuse the entry `type_mismatch`.
+If a `POST /items/bulk` entry under `mode: upsert` and without `retype: true` names a natural key that resolves a live item of another type, then the server MUST refuse the entry `type_mismatch`.
 
 **Tests:** `compliance/bulk.test.ts › tells a reused id from a mistaken declaration, as the single-item doors do`.
 
@@ -1492,7 +1492,13 @@ When a job reports an item in its `errors`, the server MUST go on to the job's n
 
 ### `items/job-chunk-fault`
 
-If a fault ends a job's write partway through a chunk of items, then the server MUST report the chunk's unwritten items in the job's `errors` with the fault's own cause, and go on to the next chunk.
+If a fault ends a job's write partway through a chunk of items, then the server MUST report the chunk's unwritten items in the job's `errors` with the fault's own cause.
+
+**Tests:** waiting on #1444.
+
+### `items/job-chunk-continues`
+
+When a fault ends a job's write partway through a chunk of items, the server MUST go on to the job's next chunk.
 
 **Tests:** waiting on #1444.
 

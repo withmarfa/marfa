@@ -62,6 +62,37 @@ describe("occurred_at compliance", () => {
     trackItem(ctx, accepted.data.item.id);
   });
 
+  it("names the field when a bulk page or a bulk action sends an occurred_at that is not a timestamp", async () => {
+    const page = await client.bulkItems({
+      items: [createNote({ source: ctx.source, occurred_at: "last tuesday" })],
+    });
+    expect(page.status).toBe(400);
+    expect(page.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(page.error?.error.details).toMatchObject({
+      code: "validation_error",
+      details: { field: "occurred_at" },
+    });
+
+    const action = await client.bulkAction({
+      action: "update_occurred_at",
+      occurred_at: "last tuesday",
+      filter: { source: ctx.source },
+      dry_run: true,
+    });
+    expect(action.status).toBe(400);
+    expect(action.error?.error.code).toBe("validation_error");
+    expect(action.error?.error.details).toMatchObject({ field: "occurred_at" });
+
+    // The witness: the same action with a timestamp is taken.
+    const taken = await client.bulkAction({
+      action: "update_occurred_at",
+      occurred_at: daysAgo(1),
+      filter: { source: ctx.source },
+      dry_run: true,
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
   it("reads a zone-less occurred_at as UTC", async () => {
     const created = await client.createItem(
       createNote({ source: ctx.source, occurred_at: "2026-04-01T07:00:00" }),
