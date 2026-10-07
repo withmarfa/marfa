@@ -383,6 +383,66 @@ describe("validation edge cases", () => {
     }
   });
 
+  it("refuses an empty or blank type, source, tags or filter in a bulk-action filter", async () => {
+    const tag = `bulk-blank-${ctx.runId}`;
+    const made = await client.createItem(
+      createNote({ source: ctx.source, tags: [tag] }),
+    );
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const dryRun = (filter: Record<string, unknown>) =>
+      client.bulkAction({
+        action: "update_tier",
+        tier: "library",
+        dry_run: true,
+        filter,
+      } as never);
+    const matched = (r: { data: unknown }) => (r.data as { ids: string[] }).ids;
+
+    // The witnesses: a filter naming nothing reads every row this key can
+    // write, so the refusals below are of what would have been read, and each
+    // field with a real value is taken.
+    const everything = await dryRun({});
+    expect(everything.status, JSON.stringify(everything.error)).toBe(200);
+    expect(matched(everything)).toContain(made.data.item.id);
+    for (const filter of [
+      { type: "core.note" },
+      { source: ctx.source },
+      { tags: [tag] },
+      { filter: 'properties.title eq "Test Note"' },
+    ]) {
+      const taken = await dryRun(filter);
+      expect(taken.status, JSON.stringify(filter)).toBe(200);
+      expect(matched(taken), JSON.stringify(filter)).toContain(
+        made.data.item.id,
+      );
+    }
+
+    // What narrows nothing: no value, blanks, and a list with no real entry.
+    const nothing: Record<string, unknown[]> = {
+      type: ["", " "],
+      source: ["", " "],
+      tags: [[], [""], [" "], ["", " "]],
+      filter: ["", " "],
+    };
+    for (const [field, values] of Object.entries(nothing)) {
+      for (const value of values) {
+        const where = `${field}=${JSON.stringify(value)}`;
+        const refused = await dryRun({ [field]: value });
+        expect(refused.status, where).toBe(400);
+        expect(refused.error?.error.code, where).toBe("validation_error");
+        expect(
+          (
+            refused.error?.error.details as
+              { empty_parameters?: string[] } | undefined
+          )?.empty_parameters,
+          where,
+        ).toEqual([`filter.${field}`]);
+      }
+    }
+  });
+
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
