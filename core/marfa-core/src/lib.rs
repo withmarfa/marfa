@@ -345,7 +345,19 @@ impl Core {
             let added = store::pin(&conn, id)?;
             (added, read_view::Context::capture(&conn)?)
         };
+        let mut trashed = false;
+        let own_create = |conn: &Connection| -> Result<bool> {
+            Ok(store::waiting_writes_for_item(conn, id)?
+                .iter()
+                .any(|row| row.kind == WriteKind::CreateItem)
+                && store::item_held(conn, id)?)
+        };
         let held = hydrate::read_with_edges(&context.http(http), id).and_then(|read| {
+            // A read by id answers a row in the bin as one that is gone, and
+            // the slice may hold such a row.
+            if read.is_none() && !own_create(&*self.conn()?)? {
+                trashed = context.http(http).trashed_item(id)?.is_some();
+            }
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
@@ -355,17 +367,12 @@ impl Core {
                     hydrate::hold_row(&tx, &catalog, row, edges)?;
                     true
                 }
+                None if own_create(&tx)? => true,
                 None => {
-                    if store::waiting_writes_for_item(&tx, id)?
-                        .iter()
-                        .any(|row| row.kind == WriteKind::CreateItem)
-                        && store::item_held(&tx, id)?
-                    {
-                        true
-                    } else {
+                    if !trashed {
                         store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
-                        false
                     }
+                    false
                 }
             };
             tx.commit()?;
@@ -379,8 +386,7 @@ impl Core {
         }
         match held.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))? {
             true => Ok(!added),
-            // A read by id answers a row in the bin as one that is gone.
-            false if context.http(http).trashed_item(id)?.is_some() => Err(CoreError::NotFound {
+            false if trashed => Err(CoreError::NotFound {
                 code: "trashed".into(),
                 message: format!("{id} is in the bin; restore it to pin it"),
             }),
@@ -421,7 +427,7 @@ impl Core {
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
-    /// it has its first stream (`device.md` 40).
+    /// it has its first stream (`device/follow-applies`).
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -824,7 +830,7 @@ impl Core {
 
     /// Destroys a row in the bin on the server at once, and takes it, its
     /// edges and its pin out of the copy once the server accepts it
-    /// (`device.md` 75 to 82). Never queued. Sent at `version`, the version
+    /// (`device/purge-not-held` to `device/purge-unanswered`). Never queued. Sent at `version`, the version
     /// the caller was shown, or else the version the copy holds; refused,
     /// before anything is sent, `NotFound` with `not_held` for a row the copy
     /// does not hold where no version is named, `Validation` with
@@ -975,7 +981,7 @@ impl Core {
     }
 
     /// A page of the server's bin, newest change first, read online and held
-    /// nowhere in the copy (`device.md` 83 and 84). Refused with what was met
+    /// nowhere in the copy (`device/bin-read`, `device/bin-unheld` and `device/bin-offline`). Refused with what was met
     /// where the server cannot be read, and `NoServer` for a copy with none.
     pub fn bin(&self, r#type: Option<&str>, cursor: Option<&str>, limit: u32) -> Result<BinPage> {
         let page = self
@@ -1194,7 +1200,9 @@ impl Core {
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::hold_beneath_item(&tx, id)?;
+        let before = store::tag_count(&tx, id)?;
         apply(&tx)?;
+        validation::tag_count(before, store::tag_count(&tx, id)?)?;
         let queued = store::enqueue(
             &tx,
             &store::NewWrite {

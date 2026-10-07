@@ -276,7 +276,7 @@ fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
     let holds = match unsent {
         Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
         Some(count) => format!(
-            "It holds {count} {} the server has not taken, waiting, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
+            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
             if count == 1 { "write" } else { "writes" }
         ),
         None => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),

@@ -538,12 +538,16 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
-/// The three writes an attachment is, in the order they go out.
+/// The three writes an attachment is, in the order they go out, and the
+/// text that embeds the file in the item's body.
 #[napi(object)]
 pub struct Attached {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
     pub edge: QueuedWrite,
+    /// `![[title]]`; absent where the file's title cannot name it alone
+    /// among the item's attachments.
+    pub embed: Option<String>,
 }
 
 /// What became of one write a drain answered, sent or not.
@@ -1390,6 +1394,7 @@ impl Task for Attach {
             upload: queued(env, attached.upload)?,
             item: queued(env, attached.item)?,
             edge: queued(env, attached.edge)?,
+            embed: attached.embed,
         })
     }
 }

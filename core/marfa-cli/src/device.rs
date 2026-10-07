@@ -834,15 +834,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}{}",
-                    report.applied,
-                    report.skipped,
-                    report.cursor,
-                    if report.reached_head {
-                        ""
-                    } else {
-                        " (stopped on silence)"
-                    }
+                    "applied {} event(s), skipped {}; cursor {}",
+                    report.applied, report.skipped, report.cursor,
                 )
             })
         }
@@ -971,7 +964,17 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         tier: args.tier.map(Into::into),
                     };
                     let attached = core.attach(&args.id, &args.file, &attachment)?;
-                    output::queued(&[attached.upload, attached.item, attached.edge], json)
+                    if json {
+                        return output::report(&attached, json, String::new).map(|()| Exit::Done);
+                    }
+                    output::queued(
+                        &[attached.upload, attached.item, attached.edge],
+                        json,
+                    )?;
+                    if let Some(embed) = &attached.embed {
+                        println!("embed it in the item's body with {embed}");
+                    }
+                    Ok(())
                 }
                 ItemsCommand::Links { id } => {
                     let links = core.body_links(&id)?;
