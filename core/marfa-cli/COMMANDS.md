@@ -41,9 +41,8 @@ Exit codes:
   5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
 
 A device drain prints its complete report on stdout: 0 for a completed pass (including refused
-writes),
-3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass.
-A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text
+writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A
+report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text
 count.
 
 With --json a refusal is one JSON object on stderr:

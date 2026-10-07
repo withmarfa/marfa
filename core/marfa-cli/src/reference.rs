@@ -70,15 +70,9 @@ fn visible(command: &Command) -> impl Iterator<Item = &Command> {
         .filter(|sub| !sub.is_hide_set() && sub.get_name() != "help")
 }
 
-/// The same width and no styling for this command and every one beneath it.
-/// Without them, `wrap_help` would wrap the text to the width of the terminal
-/// that ran the test.
+/// Without a set width, `wrap_help` wraps to the terminal that ran the test.
 fn fixed(command: Command) -> Command {
-    command
-        .term_width(WIDTH)
-        .max_term_width(WIDTH)
-        .color(clap::ColorChoice::Never)
-        .mut_subcommands(fixed)
+    command.term_width(WIDTH).mut_subcommands(fixed)
 }
 
 #[cfg(test)]
