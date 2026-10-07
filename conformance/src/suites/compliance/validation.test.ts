@@ -296,6 +296,22 @@ describe("validation edge cases", () => {
     expect(refused.error?.error.code).toBe("validation_error");
   });
 
+  it("refuses an empty q and a q holding a NUL as validation_error, and names a q that is absent as missing", async () => {
+    // The witness: a word is taken, so each refusal below is the query's.
+    const taken = await client.rawRequest<unknown>("/search?q=note");
+    expect(taken.status).toBe(200);
+
+    const absent = await client.rawRequest<unknown>("/search");
+    expect(absent.status).toBe(400);
+    expect(absent.error?.error.code).toBe("missing_required_field");
+
+    for (const q of ["", "%00", "note%00"]) {
+      const refused = await client.rawRequest<unknown>(`/search?q=${q}`);
+      expect(refused.status, `q=${q}`).toBe(400);
+      expect(refused.error?.error.code, `q=${q}`).toBe("validation_error");
+    }
+  });
+
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
