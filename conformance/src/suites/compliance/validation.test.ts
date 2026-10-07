@@ -356,17 +356,30 @@ describe("validation edge cases", () => {
       };
     };
 
+    // What narrows nothing: no value, blanks, and a list of blank entries.
+    const nothing: Record<string, string[]> = {
+      type: ["", "%20", ",", ",%20,"],
+      source: ["", "%20"],
+      tags: ["", "%20", ",", ",%20,"],
+      filter: ["", "%20"],
+    };
+
     for (const { path, key, value } of doors) {
       const where = `${path} ${key}`;
       // The witness: the same request with a value is answered.
       expect((await ask(path, `${key}=${value}`)).status, where).toBe(200);
 
-      const refused = await ask(path, `${key}=`);
-      expect(refused.status, where).toBe(400);
-      expect(refused.body?.error.code, where).toBe("validation_error");
-      expect(refused.body?.error.details?.empty_parameters, where).toEqual([
-        key,
-      ]);
+      for (const empty of nothing[key] ?? []) {
+        const refused = await ask(path, `${key}=${empty}`);
+        expect(refused.status, `${where}=${empty}`).toBe(400);
+        expect(refused.body?.error.code, `${where}=${empty}`).toBe(
+          "validation_error",
+        );
+        expect(
+          refused.body?.error.details?.empty_parameters,
+          `${where}=${empty}`,
+        ).toEqual([key]);
+      }
     }
   });
 
