@@ -908,7 +908,7 @@ const settingsShape = {
   MARFA_BLOB_REPLICATE_INTERVAL_MS: count(
     60_000,
     "How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_BLOB_REPLICATE_BATCH: count(
     100,
@@ -922,7 +922,7 @@ const settingsShape = {
   MARFA_BLOB_INTEGRITY_INTERVAL_MS: count(
     3_600_000,
     "How often the `blob-integrity` job checks the copies it holds. The job has no off switch.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_BLOB_INTEGRITY_BATCH: count(
     500,
@@ -936,12 +936,12 @@ const settingsShape = {
   MARFA_BLOB_CLEANUP_INTERVAL_MS: count(
     86_400_000,
     "How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.",
-    { min: 0, unit: "ms" },
+    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_BLOB_CLEANUP_GRACE_MS: count(
     86_400_000,
     "How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.",
-    { min: 0, unit: "ms" },
+    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
   ),
 
   MARFA_ENRICHMENT_ENABLED: on(
@@ -958,7 +958,7 @@ const settingsShape = {
   MARFA_ENRICHMENT_INTERVAL_MS: count(
     30_000,
     "How often the enrichment sweep runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_ENRICHMENT_BATCH_SIZE: count(
     8,
@@ -1030,6 +1030,7 @@ const settingsShape = {
     "The requests one credential may make in each window.",
   ),
   RATE_LIMIT_WINDOW_MS: count(60_000, "The length of a rate-limit window.", {
+    max: MAX_RETENTION_MS,
     unit: "ms",
   }),
   RATE_LIMIT_KEYS_REQUESTS: count(
@@ -1044,7 +1045,7 @@ const settingsShape = {
   MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(
     3_600_000,
     "How often the `rate-limit-cleanup` job drops expired rate-limit windows.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
 
   MARFA_CONNECTOR_HOLD_MS: count(
@@ -1118,7 +1119,7 @@ const settingsShape = {
   AUDIT_CLEANUP_INTERVAL_MS: count(
     86_400_000,
     "How often the `audit-cleanup` job runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_REVOKED_GRANT_RETENTION_DAYS: count(
     90,
@@ -1138,27 +1139,27 @@ const settingsShape = {
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(
     3_600_000,
     "How often the `event-log-cleanup` job runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   VERSION_THINNING_INTERVAL_MS: count(
     3_600_000,
     "How often the `version-thinning` job runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   VERSION_RECENT_DAYS: count(
     30,
     "The window in which the version policy keeps every version of an item.",
-    { min: 0, unit: "days" },
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   VERSION_DAILY_SNAPSHOT_DAYS: count(
     90,
     "The window in which the version policy keeps one version a day. It must be at least `VERSION_RECENT_DAYS`.",
-    { min: 0, unit: "days" },
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   VERSION_WEEKLY_SNAPSHOT_DAYS: count(
     365,
     "The window in which the version policy keeps one version a week. It must be at least `VERSION_DAILY_SNAPSHOT_DAYS`.",
-    { min: 0, unit: "days" },
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   VERSION_MAX_VERSIONS: count(
     500,
@@ -1172,12 +1173,12 @@ const settingsShape = {
   TRASH_PURGE_INTERVAL_MS: count(
     86_400_000,
     "How often the `trash-purge` job runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   AUTH_SESSION_CLEANUP_INTERVAL_MS: count(
     3_600_000,
     "How often the `auth-session-cleanup` job drops expired sign-in sessions.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_DCR_CLIENT_RETENTION_DAYS: count(
     30,
@@ -1187,7 +1188,7 @@ const settingsShape = {
   MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(
     86_400_000,
     "How often the job that removes dynamically registered clients with no grants runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_BULK_ACTION_JOB_RETENTION_MS: count(
     7 * 24 * 3_600_000,
@@ -1197,7 +1198,7 @@ const settingsShape = {
   MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: count(
     3_600_000,
     "How often the sweep that removes finished bulk-action jobs runs.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(
     500,
@@ -1238,7 +1239,7 @@ const settingsShape = {
   MARFA_HEARTBEAT_INTERVAL_MS: count(
     60_000,
     "How often the server requests `MARFA_HEARTBEAT_URL`.",
-    { unit: "ms" },
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_PLACEMENT_REGION: optionalText(
     "Free text naming the region the server runs in, reported at `/health` as `placement.region`.",
