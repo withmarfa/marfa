@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   chmod,
+  copyFile,
   lstat,
   mkdtemp,
   realpath,
@@ -12,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 import { startControlSocket } from "./socket.js";
 
 const roots: string[] = [];
@@ -109,29 +110,58 @@ describe("private control socket", () => {
 it.skipIf(process.env.GITHUB_ACTIONS !== "true")(
   "another OS account cannot reach the witnessed private listener",
   async () => {
-    const socketPath = await path();
-    const server = await startControlSocket(
-      socketPath,
-      () => new Response("private"),
+    // Both the executable and socket ancestors must be traversable by nobody.
+    // macOS runner homes and per-user temporary directories are not.
+    const root = await mkdtemp(
+      join(await realpath("/tmp"), "marfa-user-probe-"),
     );
+    roots.push(root);
+    await chmod(root, 0o755);
+    const executable = join(root, "node");
+    await copyFile(process.execPath, executable);
+    await chmod(executable, 0o755);
+    const publicPath = join(root, "open.sock");
+    const socketPath = join(root, "private", "control.sock");
+    const witness = createServer((_request, response) =>
+      response.end("witness"),
+    );
+    await new Promise<void>((resolve, reject) => {
+      witness.once("error", reject);
+      witness.listen(publicPath, () => resolve());
+    });
+    const probe = async (target: string) => {
+      const { stdout } = await promisify(execFile)(
+        "sudo",
+        [
+          "-n",
+          "-u",
+          "nobody",
+          executable,
+          "-e",
+          `const http=require('node:http');const req=http.get({socketPath:process.argv[1],path:'/'});req.on('response',res=>res.pipe(process.stdout));req.on('error',error=>process.stdout.write(error.code));req.setTimeout(3000,()=>req.destroy(new Error('timeout')));`,
+          target,
+        ],
+        { cwd: root, timeout: 10_000 },
+      );
+      return stdout;
+    };
+    let server: Awaited<ReturnType<typeof startControlSocket>> | undefined;
     try {
-      await chmod(join(socketPath, "../.."), 0o755);
-      expect(await get(socketPath)).toBe("private");
-      const { stdout } = await promisify(execFile)("sudo", [
-        "-n",
-        "-u",
-        "nobody",
-        process.execPath,
-        "-e",
-        `const http=require('node:http');const req=http.get({socketPath:process.argv[1],path:'/'});req.on('response',()=>process.exit(1));req.on('error',error=>{process.stdout.write(error.code);process.exit(error.code==='EACCES'?0:2)});`,
+      await chmod(publicPath, 0o666);
+      expect(await probe(publicPath)).toBe("witness");
+      server = await startControlSocket(
         socketPath,
-      ]);
-      expect(stdout).toBe("EACCES");
+        () => new Response("private"),
+      );
+      expect(await get(socketPath)).toBe("private");
+      expect(await probe(socketPath)).toBe("EACCES");
+      expect(await probe(publicPath)).toBe("witness");
     } finally {
-      await new Promise<void>((done) =>
-        server.close(() => {
-          done();
-        }),
+      await Promise.all(
+        [witness, ...(server ? [server] : [])].map(
+          (listener) =>
+            new Promise<void>((done) => listener.close(() => done())),
+        ),
       );
     }
   },
