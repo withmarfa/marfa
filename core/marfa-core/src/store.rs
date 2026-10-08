@@ -1016,11 +1016,21 @@ pub fn untaken_creates_for_item(
     conn: &Connection,
     item_id: &str,
 ) -> Result<Vec<String>, CoreError> {
-    Ok(waiting_writes_for_item(conn, item_id)?
-        .into_iter()
-        .filter(|row| row.kind == WriteKind::CreateItem)
-        .map(|row| row.id)
-        .collect())
+    // A create refused onto a row no read has found yet still decides where a
+    // later write to its row goes, or whether it goes at all.
+    let landing = pending_landings(conn)?;
+    Ok(read_writes(
+        conn,
+        "WHERE item_id = ?1 AND kind = ?2",
+        [item_id, WriteKind::CreateItem.as_str()],
+    )?
+    .into_iter()
+    .filter(|row| {
+        matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead))
+            || landing.contains(&row.id)
+    })
+    .map(|row| row.id)
+    .collect())
 }
 
 pub fn now_iso() -> String {
@@ -2316,6 +2326,19 @@ pub fn record_verdict(
         )));
     }
     Ok(())
+}
+
+/// The refused creates whose move onto the row their natural key names waits
+/// for a read that finds the row.
+pub fn pending_landings(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT substr(key, length('receipt_pending/') + 1) FROM meta
+          WHERE key LIKE 'receipt_pending/%' AND value LIKE 'land:%'",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(ids)
 }
 
 pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {

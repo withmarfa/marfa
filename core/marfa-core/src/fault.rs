@@ -1,7 +1,7 @@
 //! Faults a debug build injects where `MARFA_TEST_FAULT` names them, so the
-//! device suite can stand a crash, or another process's change, at the moment
-//! it matters, which no fixture can time from outside. A release build has
-//! none.
+//! device suite can stand a crash, a store that fails, or another process's
+//! change at the moment it matters, which no fixture can time from outside.
+//! A release build has none.
 
 /// The argument of the named fault, empty where it takes none.
 #[cfg(debug_assertions)]

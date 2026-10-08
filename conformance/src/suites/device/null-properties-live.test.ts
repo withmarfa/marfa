@@ -13,7 +13,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * What a null in a write does on the copy, held to what the server does with
- * it (`queue-and-verdicts.md` 2 and 59), before the drain and after.
+ * it (`queue-and-verdicts/update-sends-nulls` and `queue-and-verdicts/create-null-optional`), before the drain and after.
  */
 
 let client: MarfaClient;

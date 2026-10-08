@@ -136,7 +136,7 @@ export function wireType(
     bodyField?: string;
     fields?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
-     *  sibling (`queue-and-verdicts.md` 11), so a scripted type without one
+     *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
      *  describes a server that cannot keep both copies. */
     mergePolicy?: { fields: Record<string, string>; default: string };
   } = {},
@@ -810,7 +810,7 @@ export function heldLog(
  */
 export interface ConflictSnapshotBody {
   /** The row: a create names a natural key and not an id, and learns from
-   *  this which row refused it (`queue-and-verdicts.md` 39). */
+   *  this which row refused it (`queue-and-verdicts/landed-refused`). */
   id: string;
   version: number;
   properties: Record<string, unknown>;
@@ -897,7 +897,7 @@ export const answers = {
       ...withMetadata(item),
       conflict_resolution: {
         // The fields that collided, which a device reports as what the
-        // server resolved (`queue-and-verdicts.md` 10, 34). Derived from
+        // server resolved (`queue-and-verdicts/success-merged` and `queue-and-verdicts/whole-values-sent`). Derived from
         // the strategy rather than passed separately: the server answers
         // both and they name the same fields, so two arguments would let a
         // fixture script a resolution whose two halves disagreed.

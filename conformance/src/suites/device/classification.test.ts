@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { describe, it, expect, afterEach } from "vitest";
 import {
   answers,
@@ -28,7 +29,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The five, as the contract names them (`queue-and-verdicts.md` 26). */
+/** The five, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
@@ -441,9 +442,121 @@ describe("an environmental failure retries and is never counted", () => {
       "a write that waited out an outage was not taken when the server returned, so the outage cost the write",
     ).toBe("accepted");
   });
+
+  it("passes on at most 300 seconds of the wait a write was asked for", async () => {
+    harness = await hydratedHarness("class-retry-after-cap", { rows: held() });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          {
+            kind: "json",
+            status: 429,
+            body: { error: { code: "rate_limited" } },
+            headers: { "Retry-After": "86400" },
+          },
+        ],
+      },
+      1,
+    );
+    expect(
+      reports[0]?.retry_after_seconds,
+      "the device passed on a wait of a day, so a caller that honors it is parked by one answer",
+    ).toBe(300);
+  });
+});
+
+describe("a failure of the environment past the network itself", () => {
+  it.each([408, 425])("retries a %i without counting it", async (status) => {
+    harness = await hydratedHarness(`class-${String(status)}`, {
+      rows: held(),
+    });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          refusal(status, "try_again", "ask again later"),
+          answers.updated(wireItem({ id: HELD.id, version: 4 })),
+        ],
+      },
+      2,
+    );
+    expect(
+      [
+        reports[0]?.verdicts[0]?.verdict,
+        reports[0]?.verdicts[0]?.refusals,
+        reports[0]?.undelivered,
+      ],
+      `a ${String(status)} was given a verdict or counted against the write, and it says nothing of the write`,
+    ).toEqual([null, 0, 1]);
+    expect(reports[1]?.verdicts[0]?.verdict).toBe("accepted");
+  });
+
+  it("retries a write the server never answers, without counting it", async () => {
+    harness = await hydratedHarness("class-stalled", { rows: held() });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          { kind: "stall" },
+          answers.updated(wireItem({ id: HELD.id, version: 4 })),
+        ],
+      },
+      2,
+    );
+    expect(
+      [
+        reports[0]?.verdicts[0]?.verdict,
+        reports[0]?.verdicts[0]?.refusals,
+        reports[0]?.undelivered,
+      ],
+      "a write whose answer never came was given a verdict or counted against",
+    ).toEqual([null, 0, 1]);
+    expect(reports[0]?.unavailable).not.toBeNull();
+    expect(
+      reports[1]?.verdicts[0]?.verdict,
+      "the write that met a silent server was not sent again once the server answered",
+    ).toBe("accepted");
+  });
 });
 
 describe("a contract failure does not retry", () => {
+  it.each([
+    [405, "method_not_allowed"],
+    [410, "gone"],
+    [413, "payload_too_large"],
+    [409, "edge_exists"],
+    [422, "unprocessable"],
+  ])(
+    "refuses on the first answer a %i %s that names the contract",
+    async (status, code) => {
+      harness = await hydratedHarness(`class-refused-${String(status)}`, {
+        rows: held(),
+      });
+      const reports = await drainAgainst(
+        harness,
+        {
+          update: [refusal(status, code, "refused for good")],
+          read: serverRow(),
+        },
+        2,
+      );
+      expect(
+        [
+          reports[0]?.verdicts[0]?.verdict,
+          reports[0]?.verdicts[0]?.reason,
+          reports[0]?.verdicts[0]?.refusals,
+        ],
+        `a ${String(status)} ${code} naming the contract was retried or counted rather than refused, so the device would loop on a refusal that never changes`,
+      ).toEqual(["refused", code, 0]);
+      expect(
+        harness.server.requests.filter((request) => request.method === "PATCH"),
+        "a refused write was sent again",
+      ).toHaveLength(1);
+      expect(reports[1]?.verdicts).toEqual([]);
+    },
+  );
+
   it("refuses a contract failure on the first answer", async () => {
     harness = await hydratedHarness("class-contract", { rows: held() });
     const [first] = await drainAgainst(harness, {
@@ -526,6 +639,179 @@ describe("the class that is neither retries and is counted", () => {
       create?.verdict,
       "the write behind one the copy could not take was not sent",
     ).toBe("accepted");
+  });
+
+  /**
+   * The store failing, or filling, between an answer and its verdict cannot
+   * be timed from outside, so a debug build injects it (`fault.rs` in the
+   * core) for the write the fault names.
+   */
+  async function storeFaulted(label: string, fault: string) {
+    harness = await hydratedHarness(label, { rows: held() });
+    const { server, device } = harness;
+    const edit = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    const next = await device.create({
+      type: "core.note",
+      properties: { title: "next", body: "held" },
+    });
+    if (!edit.ok || !next.ok) throw new Error("the writes were not queued");
+    const createdRows = new Map<string, Record<string, unknown>>();
+    const edited = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "edited", body: "held" },
+    });
+    scriptWrites(server, {
+      update: [answers.updated(edited)],
+      read: [
+        (request) => {
+          const id = request.pathname.split("/").at(-1) ?? "";
+          return {
+            kind: "json",
+            status: 200,
+            body: withMetadata(createdRows.get(id) ?? edited),
+          };
+        },
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          const row = wireItem({ id: sent.id });
+          createdRows.set(sent.id, row);
+          return answers.created(row);
+        },
+      ],
+    });
+    process.env.MARFA_TEST_FAULT = `${fault}=${edit.value.id}`;
+    try {
+      return {
+        server,
+        device,
+        edit: edit.value.id,
+        next: next.value.id,
+        drained: await device.drain(),
+      };
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+  }
+
+  it("counts a write whose answer the store failed to record, and goes on to the next", async () => {
+    const { device, edit, next, drained } = await storeFaulted(
+      "class-store-fails",
+      "store-fails-at-answer",
+    );
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    const of = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [of(edit)?.verdict, of(edit)?.refusals],
+      "a write whose answer the store could not record was not counted, so it is retried forever",
+    ).toEqual([null, 1]);
+    expect(of(edit)?.reason).toContain("could not take the answer");
+    expect(
+      of(next)?.verdict,
+      "the write behind one the store could not record was not sent",
+    ).toBe("accepted");
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    expect(queue.value.find((row) => row.id === edit)?.refusals).toBe(1);
+  });
+
+  it("reports a write the store failed to record at the ceiling dead, with no reason", async () => {
+    const { device, edit } = await storeFaulted(
+      "class-store-fails-dead",
+      "store-fails-at-answer",
+    );
+    process.env.MARFA_TEST_FAULT = `store-fails-at-answer=${edit}`;
+    let last: DrainReport | undefined;
+    try {
+      for (let pass = 1; pass < 5; pass += 1) {
+        const drained = await device.drain();
+        expect(drained.ok, JSON.stringify(drained)).toBe(true);
+        if (drained.ok) last = drained.value;
+      }
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+    const entry = last?.verdicts.find((verdict) => verdict.id === edit);
+    expect(
+      [entry?.verdict, entry?.refusals],
+      "the fifth answer the store could not record did not make the write dead",
+    ).toEqual(["dead", 5]);
+    expect(
+      entry?.reason,
+      "the drain reported a dead write with a reason the queue does not hold",
+    ).toBeNull();
+  });
+
+  it("ends the drain storage_full when the store fills as it takes an answer, counting nothing", async () => {
+    const { server, device, edit, drained } = await storeFaulted(
+      "class-store-full",
+      "store-full-at-answer",
+    );
+    expect(drained.ok, JSON.stringify(drained)).toBe(false);
+    if (drained.ok) return;
+    expect(drained.refusal.code).toBe("storage_full");
+    expect(
+      server.requests.filter((request) => request.method === "POST"),
+      "a write behind the one a full store could not record was sent",
+    ).toEqual([]);
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    const row = queue.value.find((entry) => entry.id === edit);
+    expect(
+      [row?.verdict, row?.refusals],
+      "a full store spent the write's count, or gave it a verdict, though nothing was recorded",
+    ).toEqual([null, 0]);
+    // The witness: with room again, the same write goes under its key.
+    const again = await device.drain();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(again.value.verdicts.map((entry) => entry.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+  });
+
+  it("counts a write whose request cannot be made, and makes it dead at the ceiling", async () => {
+    harness = await hydratedHarness("class-unmade", { rows: held() });
+    const { device, server } = harness;
+    const path = `${device.store}.unmade`;
+    writeFileSync(path, "bytes");
+    // A MIME type no header can carry, so the request is never made.
+    const queued = await device.putBlob(path, "text/plain\ninvalid");
+    if (!queued.ok) throw new Error(JSON.stringify(queued));
+    const reports: DrainReport[] = [];
+    for (let pass = 0; pass < 5; pass += 1) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (drained.ok) reports.push(drained.value);
+    }
+    expect(
+      reports.map((report) => [
+        report.unmade,
+        report.verdicts[0]?.verdict,
+        report.verdicts[0]?.refusals,
+      ]),
+      "a request that could not be made was not counted, so it would be tried forever",
+    ).toEqual([
+      [1, null, 1],
+      [1, null, 2],
+      [1, null, 3],
+      [1, null, 4],
+      [1, "dead", 5],
+    ]);
+    expect(
+      server.requests.filter((request) => request.pathname === "/blobs"),
+      "the request went to the server, so nothing here is about one that could not be made",
+    ).toEqual([]);
   });
 
   it("retries an answer it cannot read, and counts it", async () => {
@@ -666,6 +952,41 @@ describe("the three refusals that park a write", () => {
       "a conflict the server declined to resolve was retried or refused, and this device cannot settle it itself: it reports and stops",
     ).toBe("blocked");
     expect(first?.verdicts[0]?.reason).toBe("conflict_unresolved");
+  });
+
+  it("sends nothing in a later drain for a write blocked conflict_unresolved or key_spent", async () => {
+    for (const [reason, refused] of [
+      ["conflict_unresolved", refusal(409, "version_conflict", "moved")],
+      [
+        "key_spent",
+        refusal(422, "idempotency_key_reused", "answered for another body"),
+      ],
+    ] as const) {
+      const own = await hydratedHarness(`class-passed-over-${reason}`, {
+        rows: held(),
+      });
+      try {
+        const reports = await drainAgainst(own, { update: [refused] }, 3);
+        expect(
+          [reports[0]?.verdicts[0]?.verdict, reports[0]?.verdicts[0]?.reason],
+          "the write was not blocked, so the drains after say nothing of a blocked write",
+        ).toEqual(["blocked", reason]);
+        expect(
+          reports.slice(1).map((report) => [report.answered, report.verdicts]),
+          `a later drain settled a write blocked ${reason} again`,
+        ).toEqual([
+          [0, []],
+          [0, []],
+        ]);
+        expect(
+          own.server.requests.filter((request) => request.method === "PATCH"),
+          `a write blocked ${reason} was sent again by a later drain, to be refused the same way`,
+        ).toHaveLength(1);
+        expect((await queueOf(own))[0]?.reason).toBe(reason);
+      } finally {
+        await own.stop();
+      }
+    }
   });
 });
 
@@ -1030,6 +1351,137 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (dead === undefined) return;
     const byId = await device.release({ id: dead.id });
     expect(byId.ok && byId.value).toBe(1);
+    const revived = (await queueOf(harness)).find((row) => row.id === dead.id);
+    expect(
+      [revived?.verdict, revived?.refusals],
+      "a released dead write kept its verdict or the refusals that killed it, so it would die again at once",
+    ).toEqual([null, 0]);
+    expect(revived?.idempotency_key).not.toBe(dead.idempotency_key);
+    const sends = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "PATCH" &&
+          request.pathname === `/items/${DEAD.id}`,
+      ).length;
+    const before = sends();
+    expect((await device.drain()).ok).toBe(true);
+    expect(sends(), "the released dead write was not sent again").toBe(
+      before + 1,
+    );
+  });
+
+  it("keeps a create blocked for its source, and the writes queued on it before the drain", async () => {
+    harness = await hydratedHarness("class-unclaimed-kept", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const local = created.value.item_id ?? "";
+    const tagged = await device.addTag(local, "waiting");
+    if (!tagged.ok) throw new Error(JSON.stringify(tagged));
+    scriptWrites(server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await device.queue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue));
+    const of = (id: string) => queue.value.find((row) => row.id === id);
+    expect([
+      of(created.value.id)?.verdict,
+      of(created.value.id)?.reason,
+    ]).toEqual(["blocked", "credential_refused"]);
+    expect(
+      [of(tagged.value.id)?.verdict, of(tagged.value.id)?.reason],
+      "the tag queued on the create before the drain was refused with it, so a claim granted later sends nothing",
+    ).toEqual(["blocked", "awaiting_dependency"]);
+    const shown = await device.get(local);
+    expect(
+      shown.ok && shown.value.properties.title,
+      "the row the create shows was forgotten",
+    ).toBe("mine");
+  });
+
+  it("holds a write behind a create blocked with another for a source its key does not claim", async () => {
+    const KEYED = { id: "01a00000-0000-7000-8000-00000000000b", version: 2 };
+    harness = await hydratedHarness("class-unclaimed-follower", {
+      rows: {
+        "core.note": [
+          ...held()["core.note"],
+          {
+            item: {
+              id: KEYED.id,
+              version: KEYED.version,
+              source: "notes",
+              source_id: "kept.md",
+              properties: { title: "kept", body: "kept" },
+            },
+          },
+        ],
+      },
+    });
+    const { device, server } = harness;
+    const first = await device.create({
+      type: "core.note",
+      properties: { title: "first", body: "first" },
+      source: "notes",
+      sourceId: "first.md",
+    });
+    // Carries the natural key of the row the copy holds, so it is a write to
+    // that row, and the edit queued after it follows it.
+    const keyed = await device.create({
+      type: "core.note",
+      properties: { title: "again", body: "kept" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    const edited = await device.update(KEYED.id, {
+      properties: { title: "edited" },
+      version: KEYED.version,
+    });
+    if (!first.ok || !keyed.ok || !edited.ok)
+      throw new Error(JSON.stringify([first, keyed, edited]));
+    expect(
+      edited.value.follows,
+      "the edit does not follow the create carrying its row's natural key, so nothing here is about that order",
+    ).toBe(keyed.value.id);
+    scriptWrites(server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await device.queue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue));
+    const of = (id: string) => queue.value.find((row) => row.id === id);
+    expect([of(keyed.value.id)?.verdict, of(keyed.value.id)?.reason]).toEqual([
+      "blocked",
+      "credential_refused",
+    ]);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+      "an edit went out ahead of the create it follows, which a refused claim parked unsent",
+    ).toEqual([]);
+    expect([of(edited.value.id)?.verdict, of(edited.value.id)?.reason]).toEqual(
+      ["blocked", "awaiting_dependency"],
+    );
   });
 
   it("blocks a create naming a source its key does not claim, and sends it once the key does", async () => {
@@ -1636,16 +2088,20 @@ describe("withdrawing a write that can never be sent", () => {
     const kept = await device.forget();
     expect(kept.ok && kept.value, JSON.stringify(kept)).toBe(0);
     expect(await queueOf(harness)).toHaveLength(2);
+    // A tag carries nothing a person wrote.
+    const tagged = await device.addTag(setup.local, "mine");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
 
     expect((await device.withdraw(setup.create.id)).ok).toBe(true);
     // The edit held for the create carries what a person wrote, so it stays
-    // refused until it is discarded (`queue-and-verdicts.md` 47).
+    // refused until it is discarded (`queue-and-verdicts/clear-keeps-content`);
+    // the tag held for it goes with the clearing.
     const cleared = await device.forget();
     expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
     expect(
       cleared.ok && cleared.value,
-      "clearing took the edit refused for a withdrawn create, and the words it carried with it",
-    ).toBe(0);
+      "clearing took the edit refused for a withdrawn create, and the words it carried with it, or kept the tag that carried nothing",
+    ).toBe(1);
     expect(
       (await queueOf(harness)).map((row) => [row.id, row.verdict]),
     ).toEqual([[setup.edit.id, "refused"]]);

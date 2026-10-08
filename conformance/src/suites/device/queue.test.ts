@@ -193,6 +193,9 @@ describe("the queue keeps its order", () => {
     });
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
+    expect(queued.value.idempotency_key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
 
     // A second device over the same store file, which is what a restart is:
     // the process that queued the write is gone and the store is not.
@@ -210,6 +213,32 @@ describe("the queue keeps its order", () => {
 });
 
 describe("every write names the version it read", () => {
+  it("sends a null an update carries as its caller gave it", async () => {
+    harness = await hydratedHarness("queue-null-sent", { rows: held() });
+    const queued = await harness.device.update(HELD.id, {
+      properties: { title: "kept", notes: null },
+      version: HELD.version,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const answered = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "kept", body: "held" },
+    });
+    scriptWrites(harness.server, {
+      update: [answers.updated(answered)],
+      read: [answers.updated(answered)],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const sent = harness.server.requests.filter(
+      (request) => request.method === "PATCH",
+    );
+    expect(
+      JSON.parse(sent[0]?.body ?? "{}").properties,
+      "the null the caller gave was dropped or changed before it was sent, so the server never judged it",
+    ).toEqual({ title: "kept", notes: null });
+  });
+
   it("refuses an update queued with no version", async () => {
     harness = await hydratedHarness("queue-version", { rows: held() });
     const refused = await harness.device.update(HELD.id, {
@@ -305,6 +334,135 @@ describe("every write names the version it read", () => {
       "a create nobody gave a version to carried one anyway, which is a version the device minted",
     ).toBe(false);
   });
+
+  it("refuses an update on a version the copy does not hold, queueing nothing", async () => {
+    harness = await hydratedHarness("queue-version-held", { rows: held() });
+    for (const [version, asRead] of [
+      [HELD.version + 1, false],
+      [HELD.version - 1, false],
+      [0, true],
+      [HELD.version + 1, true],
+    ] as const) {
+      const refused = await harness.device.update(HELD.id, {
+        properties: { title: "not read" },
+        version,
+        ...(asRead ? { asRead } : {}),
+      });
+      expect(
+        refused.ok ? "queued" : refused.refusal.code,
+        `an update on version ${String(version)}${asRead ? " said to be read" : ""} was not refused as invalid, though the copy holds version ${String(HELD.version)}`,
+      ).toBe("invalid");
+    }
+    expect(
+      await queueOf(harness.device),
+      "a refused update was queued anyway",
+    ).toEqual([]);
+    const shown = await harness.device.get(HELD.id);
+    expect(
+      shown.ok && shown.value.properties.title,
+      "a refused update changed the copy",
+    ).toBe("held");
+
+    // The witness: the same update on the version the copy holds queues.
+    const queued = await harness.device.update(HELD.id, {
+      properties: { title: "read" },
+      version: HELD.version,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    expect((await queueOf(harness.device)).length).toBe(1);
+  });
+
+  it("refuses unsent a delete whose version no answer confirmed", async () => {
+    harness = await hydratedHarness("queue-delete-unconfirmed", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    // Two creates of this device's own, each deleted before any drain, so
+    // each delete carries the version 0 an unanswered create holds.
+    const repeated = await device.create({
+      type: "core.note",
+      properties: { title: "taken long ago", body: "taken long ago" },
+    });
+    const fresh = await device.create({
+      type: "core.note",
+      properties: { title: "fresh", body: "fresh" },
+    });
+    expect(repeated.ok && fresh.ok).toBe(true);
+    if (!repeated.ok || !fresh.ok) return;
+    const repeatedId = repeated.value.item_id ?? "r";
+    const freshId = fresh.value.item_id ?? "f";
+    const deletes = [
+      await device.deleteItem(repeatedId),
+      await device.deleteItem(freshId),
+    ];
+    for (const deleted of deletes) {
+      expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+    }
+    if (!deletes[0]?.ok || !deletes[1]?.ok) return;
+    expect(
+      deletes.map((deleted) => deleted.ok && deleted.value.base_version),
+    ).toEqual([0, 0]);
+
+    // The server took the first create long ago and another device has
+    // edited the row since, so it answers the create as a repeat, with the
+    // row as it stands. The second is new to it.
+    const door = new FolderDoor([]);
+    door.create({
+      id: repeatedId,
+      type: "core.note",
+      properties: { title: "taken long ago", body: "taken long ago" },
+    });
+    door.update(repeatedId, {
+      properties: { title: "edited elsewhere" },
+      version: 1,
+    });
+    scriptWrites(server, {
+      create: [
+        (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
+    });
+    server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
+      door.trash(request.pathname.split("/").at(-1) ?? "");
+      return writeAnswers.ok();
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+
+    const verdictOf = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [
+        verdictOf(repeated.value.id)?.verdict,
+        verdictOf(repeated.value.id)?.replayed,
+      ],
+      "the first create was not answered as a repeat, so nothing below is about a delete no answer confirmed",
+    ).toEqual(["accepted", true]);
+    expect(
+      verdictOf(deletes[0].value.id)?.verdict,
+      "a delete whose only version was the placeholder of an unanswered create was sent, though no answer confirmed the content it was made against",
+    ).toBe("refused");
+    expect(verdictOf(deletes[0].value.id)?.reason).toContain(
+      "no confirmed server version",
+    );
+    const deleted = server.requests
+      .filter((request) => request.method === "DELETE")
+      .map((request) => request.pathname);
+    expect(
+      deleted,
+      "the unconfirmed delete went to the server, which would put a row another device had edited in the bin",
+    ).not.toContain(`/items/${repeatedId}`);
+    // The witness: the delete of the create the server answered for the
+    // first time went, on the version that create made.
+    expect(verdictOf(deletes[1].value.id)?.verdict).toBe("accepted");
+    expect(deleted).toEqual([`/items/${freshId}`]);
+    expect(
+      server.requests
+        .find((request) => request.method === "DELETE")
+        ?.query.get("version"),
+    ).toBe("1");
+  });
 });
 
 describe("a write is answered once", () => {
@@ -317,6 +475,10 @@ describe("a write is answered once", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     const id = queued.value.item_id ?? "a";
+    expect(
+      queued.value.idempotency_key,
+      "the write was queued with no key, so the comparison below would hold however the attempts went",
+    ).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
     // The first attempt meets a 5xx, which retries and is not counted; the
     // second is answered from the server's record.
@@ -352,6 +514,52 @@ describe("a write is answered once", () => {
 });
 
 describe("a write waits for what it depends on", () => {
+  it("names in follows the write ahead that was refused, and none that was accepted", async () => {
+    harness = await hydratedHarness("queue-follows-verdicts", { rows: held() });
+    const { device, server } = harness;
+    const atFour = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "first", body: "held" },
+    });
+    let refusing = false;
+    scriptWrites(server, {
+      update: [
+        () =>
+          refusing
+            ? answers.validation("validation_error", "The edit is invalid")
+            : answers.updated(atFour),
+      ],
+      read: [answers.updated(atFour)],
+    });
+    const first = await device.update(HELD.id, {
+      properties: { title: "first" },
+      version: HELD.version,
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    expect((await device.drain()).ok).toBe(true);
+    const second = await device.update(HELD.id, {
+      properties: { title: "second" },
+      version: HELD.version + 1,
+    });
+    if (!second.ok) throw new Error(JSON.stringify(second));
+    expect(
+      second.value.follows,
+      "a write followed one the server had already taken, which holds nothing",
+    ).toBeNull();
+    refusing = true;
+    expect((await device.drain()).ok).toBe(true);
+    const third = await device.update(HELD.id, {
+      properties: { title: "third" },
+      version: HELD.version + 1,
+    });
+    if (!third.ok) throw new Error(JSON.stringify(third));
+    expect(
+      third.value.follows,
+      "a write did not follow the refused one ahead of it, which a release could send again",
+    ).toBe(second.value.id);
+  });
+
   it("holds a write whose create has not been answered", async () => {
     harness = await hydratedHarness("queue-depends", { rows: held() });
     const created = await harness.device.create({
@@ -398,6 +606,52 @@ describe("a write waits for what it depends on", () => {
       waiting?.reason,
       "the held write does not say what it is waiting for, so a caller sees a stalled queue and no reason",
     ).toBe("awaiting_dependency");
+  });
+
+  it("waits for the creates of both ends of an edge it creates", async () => {
+    harness = await hydratedHarness("queue-edge-depends", { rows: held() });
+    const { device, server } = harness;
+    const source = await device.create({
+      type: "core.note",
+      properties: { title: "source", body: "source" },
+    });
+    const target = await device.create({
+      type: "core.note",
+      properties: { title: "target", body: "target" },
+    });
+    expect(source.ok && target.ok).toBe(true);
+    if (!source.ok || !target.ok) return;
+    const between = await device.createEdge({
+      source: source.value.item_id ?? "s",
+      target: target.value.item_id ?? "t",
+      type: "references",
+    });
+    const toNew = await device.createEdge({
+      source: HELD.id,
+      target: target.value.item_id ?? "t",
+      type: "references",
+    });
+    expect(between.ok && toNew.ok, JSON.stringify([between, toNew])).toBe(true);
+    if (!between.ok || !toNew.ok) return;
+    expect(
+      between.value.depends_on,
+      "an edge between two rows this device created does not wait for both creates, so it can go to a server holding neither end",
+    ).toEqual([source.value.id, target.value.id]);
+    expect(
+      toNew.value.depends_on,
+      "an edge to a row this device created does not wait for that create",
+    ).toEqual([target.value.id]);
+
+    // The witness that the dependency holds it: neither edge goes while the
+    // creates have no answer.
+    scriptWrites(server, { create: [{ kind: "drop" }] });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.held).toBe(2);
+    expect(
+      server.requests.filter((request) => request.pathname === "/edges"),
+    ).toEqual([]);
   });
 });
 
@@ -1463,6 +1717,62 @@ describe("what a drain sends and reports", () => {
       "the queue and the drain's own report disagree about what became of the same writes",
     ).toEqual(drained.value.verdicts.map((verdict) => verdict.verdict));
   });
+
+  it("names the edge in the verdict of an edge write", async () => {
+    const EDGE = "01a00000-0000-7000-8000-0000000000e9";
+    const TARGET = "01a00000-0000-7000-8000-00000000000b";
+    harness = await hydratedHarness("queue-edge-verdict", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: HELD.id,
+              version: HELD.version,
+              edges: {
+                references: {
+                  data: [edgeRow(EDGE, HELD.id, TARGET, 1, { weight: 1 })],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: TARGET, version: 1 } },
+        ],
+      },
+    });
+    const { device, server } = harness;
+    const edited = await device.updateEdge(EDGE, {
+      properties: { weight: 2 },
+      version: 1,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    if (!edited.ok) return;
+    const answered = writeAnswers.edge(
+      {
+        id: EDGE,
+        source_id: HELD.id,
+        target_id: TARGET,
+        version: 2,
+        properties: { weight: 2 },
+      },
+      200,
+    );
+    server.answer("PATCH", `/edges/${EDGE}`, answered);
+    server.copyAnswer("GET", `/edges/${EDGE}`, answered);
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.map((verdict) => [
+        verdict.id,
+        verdict.kind,
+        verdict.item_id,
+        verdict.edge_id,
+        verdict.verdict,
+      ]),
+      "the verdict of an edge write does not name the edge it was about, or its source",
+    ).toEqual([[edited.value.id, "update_edge", HELD.id, EDGE, "accepted"]]);
+  });
 });
 
 describe("a refused write's content is kept", () => {
@@ -1517,14 +1827,81 @@ describe("a refused write's content is kept", () => {
       properties: { title: "the words a person wrote" },
     });
 
+    const shownBefore = await harness.device.get(HELD.id);
     const discarded = await harness.device.discard(edited.value.id);
     expect(discarded.ok).toBe(true);
     if (discarded.ok) expect(discarded.value).toBe(true);
     expect(await queueOf(harness.device)).toEqual([]);
+    expect(
+      await harness.device.get(HELD.id),
+      "the discard changed the copy, which the refusal had already put back",
+    ).toEqual(shownBefore);
+  });
+
+  it("keeps a refused write a write still waiting depends on through a discard", async () => {
+    harness = await hydratedHarness("queue-discard-waited", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    const unrelated = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    if (!created.ok || !unrelated.ok) throw new Error("not queued");
+    const tagged = await device.addTag(created.value.item_id ?? "", "waiting");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    if (!tagged.ok) return;
+    // The create is refused and read back; the pass then ends at the edit,
+    // before it comes to the tag that waits on the create.
+    const edited = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "edited", body: "held" },
+    });
+    let reachable = false;
+    scriptWrites(server, {
+      create: [answers.validation("validation_error", "The create is invalid")],
+      read: [
+        (request) =>
+          request.pathname === `/items/${HELD.id}`
+            ? answers.updated(edited)
+            : refusal(404, "item_not_found", "Item not found"),
+      ],
+      update: [() => (reachable ? answers.updated(edited) : answers.dropped())],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const queue = await queueOf(device);
+    const of = (id: string) => queue.find((row) => row.id === id);
+    expect(of(created.value.id)?.verdict).toBe("refused");
+    expect(
+      of(tagged.value.id)?.verdict,
+      "the tag was settled in the pass, so nothing here waits on the refused create",
+    ).toBeNull();
+    const kept = await device.discard(created.value.id);
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (kept.ok)
+      expect(
+        kept.value,
+        "a discard took a refused write a write still waiting depends on, which would then wait on nothing",
+      ).toBe(false);
+    expect(
+      (await queueOf(device)).find((row) => row.id === created.value.id),
+    ).toBeDefined();
+    // The witness: once the tag is refused for it, the create goes.
+    reachable = true;
+    expect((await device.drain()).ok).toBe(true);
+    const settled = await queueOf(device);
+    expect(settled.find((row) => row.id === tagged.value.id)?.verdict).toBe(
+      "refused",
+    );
+    const discarded = await device.discard(created.value.id);
+    expect(discarded.ok && discarded.value).toBe(true);
   });
 });
 
-/** The kinds a queue holds (`queue-and-verdicts.md` 32). */
+/** The kinds a queue holds (`queue-and-verdicts/kinds-closed`). */
 const WRITE_KINDS = [
   "create_item",
   "update_item",
@@ -2578,8 +2955,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     if (!holding.ok) return;
     expect(holding.value.version).toBe(THEIRS.version);
     expect(holding.value.properties.title).toBe("theirs");
-    // The queue keeps the reason the drain reported (`queue-and-verdicts.md`
-    // 12), which is what a caller reads after the pass.
+    // The queue keeps the reason the drain reported (`queue-and-verdicts/refused-contract`), which is what a caller reads after the pass.
     const kept = (await queueOf(device)).find(
       (row) => row.id === created.value.id,
     );
@@ -2681,6 +3057,271 @@ describe("an answer the device applies keeps what it has not had answered", () =
         await own.stop();
       }
     }
+  });
+
+  it("goes on with the queue while a refused create's natural-key target cannot be read", async () => {
+    const GONE = "01a00000-0000-7000-8000-0000000000ca";
+    harness = await hydratedHarness("queue-landed-absent-goes-on", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "gone.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const tagged = await device.addTag(local, "kept");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    if (!tagged.ok) return;
+    const unrelated = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(unrelated.ok, JSON.stringify(unrelated)).toBe(true);
+    if (!unrelated.ok) return;
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: GONE,
+            version: 2,
+            properties: { title: "gone" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "gone.md",
+            type: "core.note",
+          },
+          0,
+        ),
+      ],
+      // The row the key named has gone from the server since, into the bin
+      // or past what the key reads.
+      read: [
+        (request) =>
+          request.pathname === `/items/${HELD.id}`
+            ? answers.updated(
+                wireItem({
+                  id: HELD.id,
+                  version: HELD.version + 1,
+                  properties: { title: "edited", body: "held" },
+                }),
+              )
+            : refusal(404, "item_not_found", "Item not found"),
+      ],
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "edited", body: "held" },
+          }),
+        ),
+      ],
+    });
+    const patches = () =>
+      server.requests.filter((request) => request.method === "PATCH").length;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    }
+    expect(
+      patches(),
+      "a write that waits for nothing never went, because the read of a row the server no longer holds ended every drain",
+    ).toBe(1);
+    const queue = await queueOf(device);
+    const of = (id: string) => queue.find((row) => row.id === id);
+    expect(of(unrelated.value.id)?.verdict).toBe("accepted");
+    // The refused create keeps what it carried, and the tag waiting on it
+    // waits still, rather than going to a row nobody can read.
+    expect([
+      of(created.value.id)?.verdict,
+      of(created.value.id)?.reason,
+    ]).toEqual(["refused", "ancestor_unavailable"]);
+    expect([of(tagged.value.id)?.verdict, of(tagged.value.id)?.reason]).toEqual(
+      ["blocked", "awaiting_dependency"],
+    );
+    expect((await device.get(local)).ok).toBe(true);
+    expect(
+      server.requests.filter((request) => request.pathname.endsWith("/tags")),
+    ).toEqual([]);
+    // And in a later drain, still unable to read that row, a write queued
+    // since goes too.
+    const later = await device.update(HELD.id, {
+      properties: { title: "again" },
+      version: HELD.version + 1,
+    });
+    expect(later.ok, JSON.stringify(later)).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      patches(),
+      "a write queued after the first drain did not go in a later one",
+    ).toBe(2);
+  });
+
+  it("holds the row a read returns after a create refused ancestor_unavailable, not the row the envelope named", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000cc";
+    harness = await hydratedHarness("queue-landed-ancestor-read", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "read-again.md",
+      version: 0,
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: THEIRS,
+            version: 2,
+            properties: { title: "the envelope's", body: "theirs" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "read-again.md",
+            type: "core.note",
+          },
+          0,
+        ),
+      ],
+      // Another write landed between the refusal and the read.
+      read: [
+        answers.updated(
+          wireItem({
+            id: THEIRS,
+            version: 3,
+            properties: { title: "the read's", body: "theirs" },
+            source: "notes",
+            source_id: "read-again.md",
+          }),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+    const landed = await device.get(THEIRS);
+    expect(
+      landed.ok ? [landed.value.version, landed.value.properties.title] : [],
+      "the copy took the row the refusal named rather than the row a read of it returned",
+    ).toEqual([3, "the read's"]);
+  });
+
+  it("holds a write made to a refused create's row until a read finds the row its natural key names", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000cb";
+    harness = await hydratedHarness("queue-landed-absent-later-write", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "hidden.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const theirs = {
+      id: THEIRS,
+      version: 2,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "hidden.md",
+      type: "core.note",
+    };
+    let readable = false;
+    scriptWrites(server, {
+      create: [answers.ancestorUnavailable(theirs, 0)],
+      read: [
+        () =>
+          readable
+            ? answers.updated(
+                wireItem({
+                  id: THEIRS,
+                  version: 2,
+                  properties: theirs.properties,
+                  source: "notes",
+                  source_id: "hidden.md",
+                }),
+              )
+            : refusal(404, "item_not_found", "Item not found"),
+      ],
+      tags: [{ kind: "json", status: 200, body: {} }],
+      edges: [edgeCreateDoor(server)],
+    });
+    const first = await device.drain();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    // Made after the refusal, against the row the copy still shows under the
+    // id it minted.
+    const tagged = await device.addTag(local, "later");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    const edited = await device.update(local, {
+      properties: { title: "later" },
+      version: 0,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    const linked = await device.createEdge({
+      source: HELD.id,
+      target: local,
+      type: "references",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    if (!tagged.ok || !edited.ok || !linked.ok) return;
+    const second = await device.drain();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+      "a write to the row a refused create made went to an id the server never held",
+    ).toEqual(["POST /items"]);
+    let queue = await queueOf(device);
+    const of = (id: string) => queue.find((row) => row.id === id);
+    for (const write of [tagged.value.id, edited.value.id, linked.value.id]) {
+      expect([
+        of(write)?.verdict,
+        of(write)?.reason,
+        of(write)?.depends_on,
+      ]).toEqual(["blocked", "awaiting_dependency", [created.value.id]]);
+    }
+    const listed = await device.text(["queue"]);
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    if (!listed.ok) return;
+    const heldLine = listed.value
+      .split("\n")
+      .find((text) => text.startsWith("update_item"));
+    expect(heldLine, listed.value).toContain(`waiting on ${created.value.id}`);
+    readable = true;
+    const third = await device.drain();
+    expect(third.ok, JSON.stringify(third)).toBe(true);
+    queue = await queueOf(device);
+    expect(
+      [
+        of(tagged.value.id)?.verdict,
+        of(edited.value.id)?.verdict,
+        of(linked.value.id)?.verdict,
+      ],
+      "once the row was found, the tag or the edge did not go to it, or the edit made against the row this device created did",
+    ).toEqual(["accepted", "refused", "accepted"]);
+    expect(
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`, "POST /edges"]);
+    const edge = server.requests.find(
+      (request) => request.method === "POST" && request.pathname === "/edges",
+    );
+    expect(JSON.parse(edge?.body ?? "{}").target_id).toBe(THEIRS);
   });
 
   it("reads the row a create landed on again after a failure that clears on its own", async () => {
@@ -2875,11 +3516,23 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ["accepted", null],
       ["refused", "trashed"],
     ]);
+    expect(
+      drained.value.verdicts.at(-1)?.refusal?.trashed,
+      "a create refused for a row in the bin did not say the row is in the bin",
+    ).toBe(true);
     const queued = await queueOf(device);
     expect(
       queued.map((row) => [row.verdict, row.reason]).at(-1),
       "the queue keeps a different reason than the drain reported",
     ).toEqual(["refused", "trashed"]);
+    expect(
+      server.requests.some(
+        (request) =>
+          request.method === "GET" &&
+          request.pathname === `/items/${onto.value.item_id ?? ""}`,
+      ),
+      "the row was let go without the read that finds the server holds no such row",
+    ).toBe(true);
     const held = await device.get(onto.value.item_id ?? "");
     expect(
       held.ok,
@@ -2996,8 +3649,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
   it("holds a write still waiting behind a landed create on the row it landed on", async () => {
     // The tag waited on the create and follows it onto the row another
     // device made; its own answer has not come, so a read of that row shows
-    // it laid over the row as the server holds it (`queue-and-verdicts.md`
-    // 35), rather than the tag seeming gone until it lands.
+    // it laid over the row as the server holds it (`queue-and-verdicts/landed-waiting-laid-over`), rather than the tag seeming gone until it lands.
     const THEIRS = "01a00000-0000-7000-8000-0000000000c6";
     harness = await hydratedHarness("queue-landed-waiting-tag", {
       rows: held(),
@@ -3062,6 +3714,64 @@ describe("an answer the device applies keeps what it has not had answered", () =
       holding.ok && holding.value.tags,
       "a tag still waiting was not laid over the row the create landed on",
     ).toContain("kept");
+  });
+
+  it("moves the copy onto the row a create was answered with only at the read after it, though a catch-up brought that row first", async () => {
+    const LANDED = "01a00000-0000-7000-8000-0000000000f5";
+    harness = await startHarness("queue-landed-after-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: held() });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The hydration's head read answers once more, then `stream` does.
+    let stream: Answer = copyHeadRead("10");
+    server.copyAnswer("GET", "/events", () => stream);
+    expect((await device.catchUp()).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "caught.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const local = created.value.item_id ?? "";
+    const tagged = await device.addTag(local, "mine");
+    if (!tagged.ok) throw new Error(JSON.stringify(tagged));
+    const landed = wireItem({
+      id: LANDED,
+      version: 1,
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      source_id: "caught.md",
+    });
+    let readable = false;
+    scriptWrites(server, {
+      create: [answers.upserted(landed)],
+      read: [() => (readable ? answers.updated(landed) : answers.dropped())],
+      tags: [{ kind: "json", status: 200, body: {} }],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const { edges: _edges, ...row } = landed;
+    stream = copyReplay("11", [copyItemEvent("11", "item.created", row)]);
+    expect((await device.catchUp()).ok).toBe(true);
+    // The witness: the catch-up brought the row the create landed on.
+    expect((await device.get(LANDED)).ok).toBe(true);
+    expect(
+      (await device.get(local)).ok,
+      "a catch-up stood in for the read the create's answer waits on, and the copy moved without it",
+    ).toBe(true);
+    expect(
+      (await queueOf(device)).find((write) => write.id === tagged.value.id)
+        ?.item_id,
+    ).toBe(local);
+    readable = true;
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.get(local)).ok).toBe(false);
+    expect(
+      server.requests
+        .filter((request) => request.method === "POST")
+        .map((request) => request.pathname),
+      "the tag waiting on the create did not follow it onto the row it landed on",
+    ).toEqual(["/items", `/items/${LANDED}/tags`]);
   });
 
   it("sends a create carrying a natural key without the id it minted, and holds the row the answer names", async () => {
@@ -3768,6 +4478,10 @@ describe("an upload is a queued write", () => {
       drained.value.verdicts[0]?.verdict,
       `the upload was not answered: ${JSON.stringify(drained.value)}`,
     ).toBe("accepted");
+    expect(
+      drained.value.verdicts[0]?.refusals,
+      "the hash an upload's door answers was read as an answer the device cannot read",
+    ).toBe(0);
     const sent = server.requests.find(
       (request) => request.method === "POST" && request.pathname === "/blobs",
     );
@@ -4151,6 +4865,10 @@ describe("an upload is a queued write", () => {
       [fileItem?.verdict, link?.verdict],
       "what waits on an upload that can never be sent was left waiting rather than refused in the same drain",
     ).toEqual(["refused", "refused"]);
+    expect(
+      drained.value.unsent,
+      "the upload refused for its bytes, and what waited on it, were not counted as settled without being sent",
+    ).toBe(3);
     // The witness: an upload whose bytes are held goes out in the same
     // drain, so the refusal is the missing bytes and not the door.
     expect(present?.verdict).toBe("accepted");
@@ -4193,6 +4911,10 @@ describe("an upload is a queued write", () => {
       expect(drained.value.verdicts[0]?.reason).toContain(
         "could not be opened",
       );
+      expect(
+        drained.value.undelivered,
+        "an upload whose bytes could not be opened for now was not counted as undelivered",
+      ).toBe(1);
       expect(
         drained.value.verdicts[0]?.refusals,
         "bytes that could not be opened for now were counted as a refusal the server gave",
@@ -4750,7 +5472,7 @@ describe("an edit behind an edit of the same row", () => {
     const { device, server } = harness;
     // The first drain meets a refused credential, which blocks the whole
     // queue. The next fails the first edit of the row, which ends the pass
-    // before the edge's goes out (`queue-and-verdicts.md` 17), and the one
+    // before the edge's goes out (`queue-and-verdicts/environmental-ends-pass`), and the one
     // after takes whatever it is sent, as the server decides.
     const door = newDoor();
     let itemEdits = 0;
@@ -5477,6 +6199,53 @@ describe("an edit behind an edit of the same row", () => {
     });
   });
 
+  it("drops from a moved edit a property it carries at the value it read", async () => {
+    harness = await hydratedHarness("edit-drops-unchanged", { rows: rows() });
+    const { device } = harness;
+    await edit(device, HELD.id, { body: "first" }, HELD.version);
+    // The second carries the title at the value it read, which is no change.
+    await edit(
+      device,
+      HELD.id,
+      { title: "held", body: "second" },
+      HELD.version,
+    );
+    const door = scriptDoor(harness);
+    // Before anything is sent, another device retitles the row, which the
+    // first edit does not touch, so it is merged over that and answered a
+    // version past the one after its base.
+    elsewhere(door, HELD.id, { title: "elsewhere" });
+    const report = await drained(device);
+
+    expect(
+      sentOn(harness, `/items/${HELD.id}`),
+      "the second edit did not move onto the answer to the first, so nothing below is about what a move carries",
+    ).toEqual([HELD.version, HELD.version + 2]);
+    const second = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" &&
+          request.pathname === `/items/${HELD.id}`,
+      )
+      .map(
+        (request) =>
+          (JSON.parse(request.body) as { properties: Record<string, unknown> })
+            .properties,
+      )[1];
+    expect(
+      second,
+      "a moved edit still carried the title it read, which on the answer's version asserts it over the other device's retitle",
+    ).toEqual({ body: "second" });
+    expect(verdictsOf(report, "update_item", HELD.id)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    expect(door.rows.get(HELD.id)?.properties).toEqual({
+      title: "elsewhere",
+      body: "second",
+    });
+  });
+
   it("sends an edit on the answer to one the server answered merged, where the collision left what it carries alone", async () => {
     harness = await hydratedHarness("edit-behind-merged", { rows: rows() });
     const { device } = harness;
@@ -5845,6 +6614,138 @@ describe("an edit behind an edit of the same row", () => {
     ).toEqual([3, { weight: 2, color: "red" }]);
   });
 
+  it("keeps the later edge a catch-up brought where the read after an edge answer returns an older one", async () => {
+    harness = await startHarness("edge-read-older-than-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("12", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          edgeRow(EDGE, HELD.id, QUIET.id, 2, { weight: 2 }),
+        ),
+        edgeEvent(
+          "12",
+          "edge.updated",
+          edgeRow(EDGE, HELD.id, QUIET.id, 3, { weight: 2, color: "red" }),
+        ),
+      ]),
+    );
+    const atTwo = writeAnswers.edge(
+      {
+        id: EDGE,
+        source_id: HELD.id,
+        target_id: QUIET.id,
+        version: 2,
+        properties: { weight: 2 },
+      },
+      200,
+    );
+    // A read that lags the stream answers the edge as it was at 2.
+    server.copyAnswer("GET", `/edges/${EDGE}`, atTwo);
+    let sends = 0;
+    server.answer("PATCH", /^\/edges\/[^/]+$/, () => {
+      sends += 1;
+      return sends === 1 ? answers.dropped() : atTwo;
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await editEdge(device, { weight: 2 }, 1);
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const edges = await device.edgesFrom(HELD.id);
+    const stored = edges.ok
+      ? edges.value.find((row) => row.id === EDGE)
+      : undefined;
+    expect(
+      [stored?.version, stored?.properties],
+      "the copy took an edge read at 2 over the edge at 3 the stream had brought",
+    ).toEqual([3, { weight: 2, color: "red" }]);
+  });
+
+  it("holds the edge a fresh read returns where it differs from the edge the answer carried", async () => {
+    harness = await startHarness("edge-fresh-read");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const edge = (version: number, properties: Record<string, unknown>) =>
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version,
+          properties,
+        },
+        200,
+      );
+    server.answer("PATCH", `/edges/${EDGE}`, edge(2, { weight: 2 }));
+    // Another device wrote between the answer and the read.
+    server.copyAnswer(
+      "GET",
+      `/edges/${EDGE}`,
+      edge(3, { weight: 2, color: "red" }),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await editEdge(device, { weight: 2 }, 1);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const edges = await device.edgesFrom(HELD.id);
+    const stored = edges.ok
+      ? edges.value.find((row) => row.id === EDGE)
+      : undefined;
+    expect(
+      [stored?.version, stored?.properties],
+      "the copy took the edge the answer carried over the edge the read after it returned",
+    ).toEqual([3, { weight: 2, color: "red" }]);
+  });
+
+  it("keeps the later row a catch-up brought where the read after an answer returns an older one", async () => {
+    harness = await startHarness("read-older-than-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const atFour = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "first" },
+    });
+    const { edges: _four, ...four } = atFour;
+    const { edges: _five, ...five } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 2,
+      properties: { title: "elsewhere", body: "first" },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("12", [
+        copyItemEvent("11", "item.updated", four),
+        copyItemEvent("12", "item.updated", five),
+      ]),
+    );
+    // A read that lags the stream answers the row as it was at 4.
+    server.copyAnswer("GET", `/items/${HELD.id}`, answers.updated(atFour));
+    let sends = 0;
+    server.answer("PATCH", /^\/items\/[^/]+$/, () => {
+      sends += 1;
+      return sends === 1 ? answers.dropped() : answers.updated(atFour);
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await edit(device, HELD.id, { body: "first" }, HELD.version);
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const read = await device.get(HELD.id);
+    expect(
+      read.ok ? [read.value.version, read.value.properties.title] : [],
+      "the copy took a row read at 4 over the row at 5 the stream had brought",
+    ).toEqual([HELD.version + 2, "elsewhere"]);
+  });
+
   it("never changes the body of an edit that went out unanswered when a write ahead of it lands", async () => {
     harness = await hydratedHarness("sent-body-kept", { rows: rows() });
     const { device, server } = harness;
@@ -6032,6 +6933,42 @@ describe("an edit behind an edit of the same row", () => {
     expect(copies(door)).toEqual(["first", "second"]);
   });
 
+  it("sends an edit made after a catch-up that shares no property with a conflicted one ahead of it on its own base", async () => {
+    harness = await startHarness("edit-after-catch-up-apart-from-conflict");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const { edges: _edges, ...theirs } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "theirs" },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [copyItemEvent("11", "item.updated", theirs)]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await edit(device, HELD.id, { body: "first" }, HELD.version);
+    expect((await device.catchUp()).ok).toBe(true);
+    // Made on the version the catch-up brought, and carrying nothing the
+    // first edit carries, so everything it carries it read from the server.
+    await edit(device, HELD.id, { title: "second" }, HELD.version + 1);
+    const door = scriptDoor(harness);
+    elsewhere(door, HELD.id, { body: "theirs" });
+    const report = await drained(device);
+
+    expect(verdictsOf(report, "update_item", HELD.id)[0]).toBe("conflicted");
+    expect(
+      sentOn(harness, `/items/${HELD.id}`),
+      "an edit that shares nothing with the conflicted one ahead of it was moved back onto that one's base",
+    ).toEqual([HELD.version, HELD.version + 1]);
+    expect(
+      door.rows.get(HELD.id)?.properties.title,
+      "the title the person set did not land",
+    ).toBe("second");
+    expect(copies(door)).toEqual(["first"]);
+  });
+
   it("holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer", async () => {
     harness = await hydratedHarness("row-writes-behind-unanswered", {
       rows: rows(),
@@ -6046,7 +6983,7 @@ describe("an edit behind an edit of the same row", () => {
     }
     if (!first.ok || !deleted.ok) return;
     // The first write goes out and its answer is lost, which ends the pass
-    // before the delete goes (`queue-and-verdicts.md` 17).
+    // before the delete goes (`queue-and-verdicts/environmental-ends-pass`).
     scriptWrites(server, { tags: [answers.dropped()] });
     server.answer("DELETE", /^\/items\/[^/]+$/, answers.dropped());
     expect((await device.drain()).ok).toBe(true);
@@ -7005,5 +7942,194 @@ describe("a create the slice does not hold", () => {
     stream = copyReplay("12", [copyItemEvent("12", "item.created", theirs)]);
     expect((await device.catchUp()).ok).toBe(true);
     expect((await device.get(other)).ok).toBe(false);
+  });
+
+  it("pins a create of a type the slice does not take when it is queued", async () => {
+    harness = await feedSlice("queue-create-outside-type");
+    const { device } = harness;
+    const created = await device.create({
+      type: "core.event",
+      tier: "feed",
+      properties: { title: "another type" },
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "a create of a type outside the slice was not pinned, so its own event would let it go",
+    ).toContain(created.value.item_id);
+    // The witness: a create the slice takes is not pinned.
+    const inside = await device.create({
+      type: "core.note",
+      tier: "feed",
+      properties: { title: "inside", body: "inside" },
+    });
+    if (!inside.ok) throw new Error(JSON.stringify(inside));
+    const after = await device.status();
+    expect(after.ok && after.value.pinned).not.toContain(inside.value.item_id);
+  });
+
+  /** Answers every create under the id it names, or one it mints, and every
+   *  read of a row it made. */
+  function keyedCreateDoor(server: ScriptedServer) {
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    let minted = 0;
+    server.copyAnswer("GET", /^\/items\/[^/]+$/, (request) => {
+      const row = rows.get(request.pathname.split("/").at(-1) ?? "");
+      return row === undefined
+        ? refusal(404, "item_not_found", "No such item")
+        : answers.updated(row);
+    });
+    return (request: { body: string }) => {
+      const sent = JSON.parse(request.body);
+      minted += 1;
+      const row = wireItem({
+        id:
+          sent.id ??
+          `01a00000-0000-7000-8000-0000000001${String(minted).padStart(2, "0")}`,
+        tier: sent.tier ?? "library",
+        properties: sent.properties,
+        source: sent.source,
+        source_id: sent.source_id,
+      });
+      rows.set(String(row.id), row);
+      return answers.created(row);
+    };
+  }
+
+  const sentTiers = (server: ScriptedServer) =>
+    server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => {
+        const body = JSON.parse(request.body) as { tier?: string };
+        return "tier" in body ? body.tier : "none";
+      });
+
+  it("sends no tier with a create whose natural key names a row the copy holds, and shows it at that row's tier", async () => {
+    const KEPT = "01a00000-0000-7000-8000-0000000000f6";
+    harness = await startHarness("queue-keyed-create-no-tier");
+    const { device, server } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: KEPT,
+              tier: "feed",
+              source: "notes",
+              source_id: "kept.md",
+              properties: { title: "kept", body: "kept" },
+            },
+          },
+        ],
+      },
+    });
+    expect((await device.hydrate(["core.note"], "all")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "re-saved", body: "kept" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const shown = await device.get(created.value.item_id ?? "");
+    expect(shown.ok && shown.value.tier).toBe("feed");
+    const door = keyedCreateDoor(server);
+    scriptWrites(server, { create: [door] });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      sentTiers(server),
+      "a create carrying the natural key of a row the copy holds named a tier, which would move that row",
+    ).toEqual(["none"]);
+  });
+
+  it("sends a create naming no tier whose natural key names its own create still waiting at that create's tier", async () => {
+    harness = await feedSlice("queue-keyed-create-own-tier");
+    const { device, server } = harness;
+    const first = await device.create({
+      type: "core.note",
+      tier: "library",
+      properties: { title: "first", body: "first" },
+      source: "notes",
+      sourceId: "twice.md",
+    });
+    const again = await device.create({
+      type: "core.note",
+      properties: { title: "again", body: "again" },
+      source: "notes",
+      sourceId: "twice.md",
+    });
+    if (!first.ok || !again.ok) throw new Error(JSON.stringify([first, again]));
+    const shown = await device.get(again.value.item_id ?? "");
+    expect(
+      shown.ok && shown.value.tier,
+      "the second create was not shown at the tier of the create it follows",
+    ).toBe("library");
+    const door = keyedCreateDoor(server);
+    scriptWrites(server, { create: [door, door] });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      sentTiers(server),
+      "a create naming no tier whose key names a create still waiting went at another tier, so were the first refused it would make the row at the key's default",
+    ).toEqual(["library", "library"]);
+  });
+
+  it("moves the pin of a create the slice does not hold onto the row a refusal names its natural key under", async () => {
+    harness = await feedSlice("queue-landed-pin");
+    const { device, server } = harness;
+    const THEIRS = "01a00000-0000-7000-8000-0000000000f3";
+    const created = await device.create({
+      type: "core.note",
+      tier: "library",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "pinned.md",
+      version: 0,
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const before = await device.status();
+    expect(
+      before.ok && before.value.pinned,
+      "the create outside the slice was not pinned, so nothing below is about its pin",
+    ).toContain(local);
+    const theirs = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "pinned.md",
+      type: "core.note",
+    };
+    scriptWrites(server, {
+      create: [answers.ancestorUnavailable(theirs, 0)],
+      read: [
+        answers.updated(
+          wireItem({
+            id: THEIRS,
+            version: 1,
+            tier: "library",
+            properties: theirs.properties,
+            source: "notes",
+            source_id: "pinned.md",
+          }),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "the pin stayed on the id the device minted, so the row the create landed on is let go at its next event",
+    ).toEqual(expect.arrayContaining([THEIRS]));
+    expect(status.ok && status.value.pinned).not.toContain(local);
+    const held = await device.get(THEIRS);
+    expect(held.ok && held.value.tier).toBe("library");
   });
 });

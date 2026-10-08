@@ -13,7 +13,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * The bin through a working copy (`device/bin-read`, `device/bin-unheld`, `device/bin-offline` and `device/pin-trashed`,
- * `queue-and-verdicts.md` 56), against a real server and the real binary.
+ * `queue-and-verdicts/restore-by-id`), against a real server and the real binary.
  * Each device command is a process of its own, so every step here is also a
  * device started again.
  */

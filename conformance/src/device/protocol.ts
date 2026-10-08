@@ -181,7 +181,7 @@ export interface Attached {
 /** One queued write, as the queue reports it.
  *
  *  A `verdict` of `null` is a write the server has not answered. It is not a
- *  seventh verdict (`queue-and-verdicts.md` 7); it is the absence of one. */
+ *  seventh verdict (`queue-and-verdicts/verdicts-six`); it is the absence of one. */
 export interface QueuedWrite {
   id: string;
   kind: string;
@@ -197,26 +197,24 @@ export interface QueuedWrite {
   /** The writes this one cannot go without, by queue id: the create of a
    *  row it names while the server has not taken it, the creates of both of
    *  an edge's endpoints, the edge's own create, the upload a file item
-   *  names. A refusal of one refuses this one (`queue-and-verdicts.md` 4,
-   *  12, 16). */
+   *  names. A refusal of one refuses this one (`queue-and-verdicts/depends-on-create` and `queue-and-verdicts/dependency-refused`). */
   depends_on: string[];
   /** The write ahead of this one to the same row or edge, where one was
    *  still to be written when this one was queued. This one is held while
    *  that one has gone out without an answer or is held behind one that
-   *  has, and goes on any answer to it (`queue-and-verdicts.md` 42); a row
+   *  has, and goes on any answer to it (`queue-and-verdicts/held-behind-ahead` and `queue-and-verdicts/answer-frees-follower`); a row
    *  held with nothing it depends on still waiting is held by this. */
   follows: string | null;
   verdict: string | null;
   reason: string | null;
   /** The server's answer, kept whole, because a device reports a verdict and
-   *  never acts on one (`queue-and-verdicts.md` 15). */
+   *  never acts on one (`queue-and-verdicts/refused-envelope-kept`). */
   answer: string | null;
   /** The terminal or credential refusal, read into its parts
-   *  (`queue-and-verdicts.md` 48). */
+   *  (`queue-and-verdicts/refusal-parts`). */
   refusal: WriteRefusal | null;
   /** The body the write carries, as it goes or went to the server, so a
-   *  refused write's content can be read back (`queue-and-verdicts.md`
-   *  47). */
+   *  refused write's content can be read back (`queue-and-verdicts/queue-shows-body`). */
   body: unknown;
   conflicted_copy_id: string | null;
   refusals: number;
@@ -225,7 +223,7 @@ export interface QueuedWrite {
 }
 
 /** A refused write's refusal, read from the server's envelope once
- *  (`queue-and-verdicts.md` 48). */
+ *  (`queue-and-verdicts/refusal-parts`). */
 export interface WriteRefusal {
   /** The server's code verbatim, or the drain's sentence for a write it
    *  refused unsent. */
@@ -251,21 +249,21 @@ export interface Edge {
   version: number;
 }
 
-/** What a drain did (`queue-and-verdicts.md` 6). */
+/** What a drain did (`queue-and-verdicts/report-sent-write`). */
 export interface DrainReport {
   /** Writes the server answered this pass, whatever it answered
-   *  (`queue-and-verdicts.md` 6). */
+   *  (`queue-and-verdicts/count-answered`). */
   answered: number;
   /** Rows it did not send because a write they depend on, or the write
    *  ahead of them to the same row or edge, has no answer yet
-   *  (`queue-and-verdicts.md` 4, 42). */
+   *  (`queue-and-verdicts/count-held`). */
   held: number;
   /** Writes it could not deliver, each waiting for the next drain
-   *  (`queue-and-verdicts.md` 17). */
+   *  (`queue-and-verdicts/count-undelivered`). */
   undelivered: number;
   /** Writes it gave a verdict without sending: refused for a write they
    *  waited on or for bytes no longer held, or settled by another write's
-   *  answer (`queue-and-verdicts.md` 6). */
+   *  answer (`queue-and-verdicts/count-unsent`). */
   unsent: number;
   /** Writes whose request could not be made, each counted and waiting. */
   unmade: number;
@@ -273,11 +271,11 @@ export interface DrainReport {
   unavailable: string | null;
   verdicts: DrainVerdict[];
   /** Why the drain stopped before the queue was empty. A refused credential
-   *  ends a pass early here (`queue-and-verdicts.md` 20); an answer on
+   *  ends a pass early here (`queue-and-verdicts/credential-stops-drain`); an answer on
    *  another contract ends one as a refusal instead (`device/contract-drain-ends`). */
   stopped: string | null;
   /** The sources the server said the credential's key does not claim, where
-   *  a create naming one was refused for it (`queue-and-verdicts.md` 40). */
+   *  a create naming one was refused for it (`queue-and-verdicts/unclaimed-reported`). */
   unclaimed_sources: string[];
   /** The longest `Retry-After` the server asked for this pass. */
   retry_after_seconds: number | null;
@@ -294,7 +292,7 @@ export interface DrainVerdict {
   conflicted_copy_id: string | null;
   refusals: number;
   /** The server answered from its idempotency record rather than writing
-   *  (`queue-and-verdicts.md` 3). */
+   *  (`queue-and-verdicts/replayed-reported`). */
   replayed: boolean;
   /** The fields the server resolved, on `merged` or `conflicted`. */
   merged_fields: string[];
@@ -335,7 +333,7 @@ export interface Draft {
   occurredAt?: string;
   id?: string;
   /** Optional on a create, and carried when given
-   *  (`queue-and-verdicts.md` 2). */
+   *  (`queue-and-verdicts/create-version-sent`). */
   version?: number;
 }
 
@@ -345,14 +343,14 @@ export interface Edit {
   /** Required. An update queued without one is refused before it is sent. */
   version?: number;
   /** The version is one read before the version the copy holds, and the
-   *  server merges the edit against it (`queue-and-verdicts.md` 43). */
+   *  server merges the edit against it (`queue-and-verdicts/as-read-sent-on-read`). */
   asRead?: boolean;
   /** The type to move the row to; sent as a retype. */
   type?: string;
   /** The tier to move the row to. */
   tier?: "library" | "feed";
   /** The properties are the row's whole properties, so one left out is
-   *  cleared (`queue-and-verdicts.md` 45). */
+   *  cleared (`queue-and-verdicts/whole-sent-replace`). */
   replace?: boolean;
 }
 

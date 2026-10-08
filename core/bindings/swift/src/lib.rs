@@ -2750,7 +2750,7 @@ mod tests {
         }
     }
 
-    /// The scenario is the contract's (`queue-and-verdicts.md` 40) and the
+    /// The scenario is the contract's (`queue-and-verdicts/unclaimed-source-blocks`) and the
     /// device fixtures drive it through the core; what is this binding's own
     /// is how the report crosses.
     #[test]

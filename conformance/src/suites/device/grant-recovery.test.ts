@@ -303,7 +303,12 @@ describe("a grant refusal waits for the credential", () => {
           version: 3,
         }),
       );
-      expect(value(await device.drain()).verdicts[0]?.verdict).toBe("refused");
+      const refused = value(await device.drain()).verdicts[0];
+      expect(refused?.verdict).toBe("refused");
+      expect(
+        refused?.refusal?.grant,
+        "a grant the refusal names in another shape was read as one",
+      ).toBeNull();
       expect(value(await device.drain()).verdicts).toEqual([]);
       expect(
         server.requests.filter((request) => request.method === "PATCH"),
@@ -313,4 +318,58 @@ describe("a grant refusal waits for the credential", () => {
       });
     },
   );
+
+  it("sends an unrelated write behind a grant-blocked one in the same drain", async () => {
+    harness = await hydratedHarness("grant-goes-on", {
+      rows: { "core.note": [{ item: originalOptions }] },
+    });
+    const { device, server } = harness;
+    const made = new Map<string, ReturnType<typeof wireItem>>();
+    scriptWrites(server, {
+      update: [
+        refusal(403, "type_not_permitted", "No write access to core.note", {
+          grant: { kind: "type", name: "core.note", level: "write" },
+        }),
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          const row = wireItem({ id: sent.id, version: 1 });
+          made.set(sent.id, row);
+          return answers.created(row);
+        },
+      ],
+      read: [
+        (request) => {
+          const row = made.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? answers.updated(original)
+            : answers.updated(row);
+        },
+      ],
+    });
+    const blocked = value(
+      await device.update(ID, { properties: { body: "waits" }, version: 3 }),
+    );
+    const behind = value(
+      await device.create({
+        type: "core.note",
+        properties: { title: "unrelated", body: "unrelated" },
+      }),
+    );
+    const report = value(await device.drain());
+    expect(
+      report.verdicts.map((row) => [row.id, row.verdict, row.reason]),
+      "a write blocked for a missing grant stopped the drain, so a write that needs no such grant waited behind it",
+    ).toEqual([
+      [blocked.id, "blocked", "credential_refused"],
+      [behind.id, "accepted", null],
+    ]);
+    expect(report.stopped).toBeNull();
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+    ).toHaveLength(1);
+  });
 });

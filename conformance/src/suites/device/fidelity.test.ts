@@ -313,7 +313,7 @@ describe("the scripted answers match the server's", () => {
 
   it("matches a create onto a natural key a row holds: named by id, and not", async () => {
     // What a device meets when a create it queued carries a key another
-    // device's create already landed under (`queue-and-verdicts.md` 38).
+    // device's create already landed under (`queue-and-verdicts/keyed-create-no-id`).
     const sourceId = `fidelity-${ctx.runId}.md`;
     const first = await client.createItem({
       type: "core.note",
@@ -1314,7 +1314,7 @@ describe("the scripted answers match the server's", () => {
         shape: ["error.message"],
         // The server's diagnostics for a validation refusal, naming the
         // field that failed. Not mirrored because a device classifies a
-        // refusal by its code (`queue-and-verdicts.md` 12) and reports the
+        // refusal by its code (`queue-and-verdicts/refused-contract`) and reports the
         // envelope whole (15), so nothing in the device reads inside it; a
         // scripted `details` on the shared refusal builder would put it on
         // every refusal, and the server puts it on this one.

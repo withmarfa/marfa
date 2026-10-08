@@ -260,7 +260,7 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Read-View`, 
 
 If a write cannot get the store's write lock within the instance's busy budget, then the server MUST answer `503 write_contention`.
 
-**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`.
 
@@ -344,7 +344,7 @@ An instance keeps a reserve of free space on the volume that holds its disk stor
 
 If a write meets a volume with no room left for it, then the server MUST answer `507 insufficient_storage`.
 
-**Reason:** a `500` names no cause, so a full disk reads as a fault in the server. A device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17) and keeps the write queued, which is what a write that only freed space can land needs. A `503` would read as a busy instance that a retry a moment later clears, and only someone freeing space does.
+**Reason:** a `500` names no cause, so a full disk reads as a fault in the server. A device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`) and keeps the write queued, which is what a write that only freed space can land needs. A `503` would read as a busy instance that a retry a moment later clears, and only someone freeing space does.
 
 **Tests:** waiting on #1444.
 

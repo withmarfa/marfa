@@ -1,7 +1,9 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { Cli } from "../cli/harness.js";
-import { answers, wireItem } from "../../device/marfa-answers.js";
+import { keychainEnv } from "../../utils/keychain.js";
+import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
 import { newStore } from "../../device/cli-adapter.js";
 import {
   hydratedHarness,
@@ -183,6 +185,55 @@ describe("CLI outcomes preserve the result", () => {
     ).toEqual(["accepted", null]);
   });
 
+  it("exits 3 for a pass the server could not finish that left nothing undelivered", async () => {
+    const h = await prepared();
+    const edited = wireItem({
+      id,
+      version: 4,
+      properties: { title: "edit", body: "held" },
+    });
+    scriptWrites(h.server, {
+      update: [answers.updated(edited)],
+      read: [{ kind: "drop" }],
+    });
+    const result = await h.cli.run([
+      "--json",
+      "device",
+      "--db",
+      h.device.store,
+      "drain",
+    ]);
+    expect(result.code, JSON.stringify(result)).toBe(3);
+    const report = JSON.parse(result.stdout);
+    expect([report.answered, report.undelivered]).toEqual([1, 0]);
+    expect(report.unavailable).toBeTruthy();
+  });
+
+  it("exits 3 for a write left undelivered by a pass the server finished", async () => {
+    harness = await hydratedHarness("cli-outcomes-undelivered", { rows: {} });
+    const cli = new Cli(requireBinary(), harness.server.url, KEY);
+    const path = `${harness.device.store}.locked`;
+    writeFileSync(path, "held and locked for now\n");
+    const queued = await harness.device.putBlob(path, "text/plain");
+    if (!queued.ok) throw new Error(JSON.stringify(queued));
+    const heldAt = `${harness.device.store}.blobs/${(queued.value.blob ?? "").slice("sha256:".length)}`;
+    chmodSync(heldAt, 0o000);
+    try {
+      const result = await cli.run([
+        "--json",
+        "device",
+        "--db",
+        harness.device.store,
+        "drain",
+      ]);
+      expect(result.code, JSON.stringify(result)).toBe(3);
+      const report = JSON.parse(result.stdout);
+      expect([report.undelivered, report.unavailable]).toEqual([1, null]);
+    } finally {
+      chmodSync(heldAt, 0o644);
+    }
+  });
+
   it("reports completed refusals separately and keeps exit zero", async () => {
     const h = await prepared();
     scriptWrites(h.server, {
@@ -200,5 +251,126 @@ describe("CLI outcomes preserve the result", () => {
     const result = await h.cli.run(["device", "--db", h.device.store, "drain"]);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain("refused 1 write(s)");
+  });
+});
+
+/**
+ * A drain under a token the binary renews when the server refuses it `401`.
+ * The token is kept in the run's own keychain file, which exists only where
+ * there are keychain files.
+ */
+describe.runIf(process.platform === "darwin")("a renewal a drain meets", () => {
+  async function renewing(tokenAnswer: ReturnType<typeof refusal>) {
+    const h = await prepared();
+    const later = await h.device.create({
+      type: "core.note",
+      properties: { title: "later", body: "preserve this" },
+    });
+    expect(later.ok).toBe(true);
+    const before = await h.device.queue();
+    if (!before.ok) throw new Error("queue refused");
+    const edited = wireItem({
+      id,
+      version: 4,
+      properties: { title: "edit", body: "held" },
+    });
+    scriptWrites(h.server, {
+      update: [answers.updated(edited)],
+      read: [answers.updated(edited)],
+      create: [answers.unauthorized()],
+    });
+    h.server.answer("POST", "/token", tokenAnswer);
+    const keychain = keychainEnv().MARFA_KEYCHAIN!;
+    execFileSync("security", [
+      "add-generic-password",
+      "-A",
+      "-s",
+      "marfa",
+      "-a",
+      h.server.url,
+      "-w",
+      JSON.stringify({
+        kind: "token",
+        access_token: "marfa_at_fixture",
+        refresh_token: "marfa_rt_fixture",
+        expires_at: null,
+        client_id: "fixture",
+        scope: "*:read",
+        token_endpoint: `${h.server.url}/token`,
+        revocation_endpoint: null,
+      }),
+      keychain,
+    ]);
+    try {
+      const result = await h.cli
+        .as(undefined)
+        .run(["--json", "device", "--db", h.device.store, "drain"]);
+      expect(
+        h.server.requests.filter((request) => request.pathname === "/token"),
+        "the binary did not try to renew the token the server refused",
+      ).toHaveLength(1);
+      return { h, before: before.value, result };
+    } finally {
+      try {
+        execFileSync(
+          "security",
+          [
+            "delete-generic-password",
+            "-s",
+            "marfa",
+            "-a",
+            h.server.url,
+            keychain,
+          ],
+          { stdio: "ignore" },
+        );
+      } catch {
+        // A renewal the server refused has already let the token go.
+      }
+    }
+  }
+
+  it("ends the drain on a renewal that ends locally, keeping the answers before it and the write it met", async () => {
+    const { h, before, result } = await renewing(
+      answers.validation("invalid_grant", "fixture ended"),
+    );
+    expect(result.code, JSON.stringify(result)).toBe(5);
+    expect(result.stdout).toBe("");
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.error.code).toBe("signed_out");
+    expect(envelope.error.server).toBeNull();
+    const after = await h.device.queue();
+    if (!after.ok) throw new Error("queue refused");
+    expect(after.value[0]?.verdict).toBe("accepted");
+    expect(after.value[0]?.answered_at).toBeTruthy();
+    expect(
+      after.value[1],
+      "the write the renewal met was given a verdict, counted or changed",
+    ).toEqual(before[1]);
+    expect([after.value[1]?.verdict, after.value[1]?.refusals]).toEqual([
+      null,
+      0,
+    ]);
+    const first = await h.device.get(id);
+    expect(first.ok && first.value.version).toBe(4);
+  });
+
+  it("takes a renewal the network stopped as an environmental failure, counting nothing", async () => {
+    const { h, before, result } = await renewing(
+      refusal(503, "unavailable", "The token endpoint is down"),
+    );
+    expect(result.code, JSON.stringify(result)).toBe(3);
+    expect(result.stderr).toBe("");
+    const report = JSON.parse(result.stdout);
+    expect(report.unavailable).toBeTruthy();
+    expect(report.stopped).toBeNull();
+    expect([report.answered, report.undelivered]).toEqual([1, 1]);
+    const after = await h.device.queue();
+    if (!after.ok) throw new Error("queue refused");
+    expect(after.value[0]?.verdict).toBe("accepted");
+    expect(
+      after.value[1],
+      "the write a renewal the network stopped met was given a verdict, counted or changed",
+    ).toEqual(before[1]);
   });
 });

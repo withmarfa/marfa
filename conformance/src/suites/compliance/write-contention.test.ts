@@ -121,7 +121,7 @@ describe("contention on the write lock", () => {
       // The point of the line. A `500` says the instance is broken
       // about the one failure that clears itself, and a device retries a
       // `5xx` without counting it against the write
-      // (`queue-and-verdicts.md` 17) — so a `500` would be retryable by
+      // (`queue-and-verdicts/environmental-uncounted`), so a `500` would be retryable by
       // accident while naming the wrong reason.
       expect(refused.status).toBe(503);
       expect(refused.error?.error.code).toBe("write_contention");

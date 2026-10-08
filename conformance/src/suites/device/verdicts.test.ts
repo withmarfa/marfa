@@ -328,6 +328,49 @@ describe("the server took the write", () => {
     ).toBe(true);
   });
 
+  it.each(["an upsert under another id", "a repeat acknowledged in its body"])(
+    "accepted: takes %s as accepted",
+    async (shape) => {
+      harness = await hydratedHarness("verdicts-upsert-alone", {
+        rows: held(),
+      });
+      const keyed = shape === "an upsert under another id";
+      const created = await harness.device.create({
+        type: "core.note",
+        properties: { title: "made", body: "made" },
+        ...(keyed ? { source: "folder", sourceId: "alone.md" } : {}),
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+      const id = keyed
+        ? "01a00000-0000-7000-8000-0000000000cd"
+        : (created.value.item_id ?? "");
+      const row = wireItem({ id, version: keyed ? 5 : 1 });
+      scriptWrites(harness.server, {
+        create: [
+          {
+            kind: "json",
+            status: 200,
+            body: {
+              ...(bodyOf(answers.created(row)) as Record<string, unknown>),
+              ...(keyed ? {} : { acknowledged: true }),
+            },
+          },
+        ],
+        read: [answers.updated(row)],
+      });
+      const drained = await harness.device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        [
+          drained.value.verdicts[0]?.verdict,
+          drained.value.verdicts[0]?.replayed,
+        ],
+        `${shape} was not taken as accepted`,
+      ).toEqual(["accepted", !keyed]);
+    },
+  );
+
   it("merged: adopts the row a resolution returned", async () => {
     harness = await hydratedHarness("verdicts-merged", { rows: held() });
     const report = await updateAndDrain(
@@ -368,6 +411,40 @@ describe("the server took the write", () => {
       read.value.properties.body,
       "the copy kept the body it sent rather than the merged one, so the other writer's change is lost on this device and present on every other",
     ).toBe("theirs, kept");
+  });
+
+  it("holds the row a fresh read returns where it differs from the row the answer carried", async () => {
+    harness = await hydratedHarness("verdicts-fresh-read", { rows: held() });
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 4,
+            properties: { title: "the answer's", body: "held" },
+          }),
+        ),
+      ],
+      // Another device wrote between the answer and the read.
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "the read's", body: "held" },
+          }),
+        ),
+      ],
+    );
+    expect(report.verdicts[0]?.verdict).toBe("accepted");
+    const read = await harness.device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(
+      [read.value.version, read.value.properties.title],
+      "the copy took the row the answer carried over the row the read after it returned",
+    ).toEqual([5, "the read's"]);
   });
 
   it("conflicted: names the sibling the server wrote", async () => {
@@ -488,6 +565,126 @@ function bodyOf(answer: ReturnType<typeof answers.created>): unknown {
   if (answer.kind !== "json") throw new Error("a json answer has a body");
   return answer.body;
 }
+
+describe("a write the server took is settled once", () => {
+  it("sends nothing again for a write answered accepted, merged or conflicted", async () => {
+    const row = wireItem({ id: HELD.id, version: 4 });
+    for (const [expected, update] of [
+      ["accepted", [answers.updated(row)]],
+      ["merged", [answers.resolved(row, { title: "last_writer_wins" })]],
+      [
+        "conflicted",
+        [
+          answers.resolved(
+            row,
+            { body: "keep_both_copies" },
+            "01a00000-0000-7000-8000-0000000000bb",
+          ),
+        ],
+      ],
+    ] as Array<[string, ScriptedWrites["update"]]>) {
+      const own = await hydratedHarness(`verdicts-once-${expected}`, {
+        rows: held(),
+      });
+      try {
+        const first = await updateAndDrain(own, update, [answers.updated(row)]);
+        expect(first.verdicts[0]?.verdict).toBe(expected);
+        const again = await own.device.drain();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(
+          again.value.verdicts,
+          `a write answered ${expected} was settled again by a later drain`,
+        ).toEqual([]);
+        expect(
+          own.server.requests.filter((request) => request.method === "PATCH"),
+          `a write answered ${expected} was sent again`,
+        ).toHaveLength(1);
+      } finally {
+        await own.stop();
+      }
+    }
+  });
+
+  it("keeps an accepted write accepted, counts nothing and reads it again at the next drain when the read after it fails", async () => {
+    harness = await hydratedHarness("verdicts-read-fails", { rows: held() });
+    const { device, server } = harness;
+    const edited = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    const landed = wireItem({
+      id: HELD.id,
+      version: 4,
+      properties: { title: "edited", body: "held" },
+    });
+    const made = new Map<string, ReturnType<typeof wireItem>>();
+    scriptWrites(server, {
+      update: [answers.updated(landed)],
+      read: [
+        { kind: "drop" },
+        (request) => {
+          const id = request.pathname.split("/").at(-1) ?? "";
+          const row = id === HELD.id ? landed : made.get(id);
+          return row === undefined
+            ? refusal(404, "item_not_found", "no such item")
+            : answers.updated(row);
+        },
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          const row = wireItem({ id: sent.id });
+          made.set(sent.id, row);
+          return answers.created(row);
+        },
+      ],
+    });
+    const first = await device.drain();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect(
+      first.value.verdicts.map((verdict) => [
+        verdict.verdict,
+        verdict.refusals,
+      ]),
+      "a write the server took lost its verdict, or was counted against, because the read after it failed",
+    ).toEqual([["accepted", 0]]);
+    expect(first.value.unavailable).toMatch(/could not be reached/);
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.map((row) => row.verdict)).toEqual([
+      "accepted",
+    ]);
+
+    // A write queued now goes only once the read owed has been made.
+    const behind = await device.create({
+      type: "core.note",
+      properties: { title: "behind", body: "behind" },
+    });
+    expect(behind.ok, JSON.stringify(behind)).toBe(true);
+    const sentBefore = server.requests.length;
+    const second = await device.drain();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    const after = server.requests
+      .slice(sentBefore)
+      .map((request) => `${request.method} ${request.pathname}`)
+      .filter((sent) => sent !== "GET /");
+    expect(
+      after.indexOf(`GET /items/${HELD.id}`),
+      "the next drain sent a write before it made the read the accepted write was owed",
+    ).toBeLessThan(after.indexOf("POST /items"));
+    expect(after.indexOf(`GET /items/${HELD.id}`)).toBeGreaterThanOrEqual(0);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+      "the accepted write was sent again when its read was retried",
+    ).toHaveLength(1);
+    const read = await device.get(HELD.id);
+    expect(
+      read.ok && [read.value.version, read.value.properties.title],
+    ).toEqual([4, "edited"]);
+  });
+});
 
 describe("a conflicted copy names its original", () => {
   const SIBLING = "01a00000-0000-7000-8000-0000000000bb";
@@ -668,6 +865,18 @@ describe("the server did not take the write", () => {
       report.verdicts[0]?.reason,
       "the verdict does not carry the server's own code, so a caller is told the write failed and not what the server said",
     ).toBe("type_forbidden");
+    const queued = await harness.device.queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      JSON.parse(queued.value[0]?.answer ?? "null"),
+      "the queue does not keep the server's refusal whole",
+    ).toEqual({
+      error: {
+        code: "type_forbidden",
+        message: "this key may not write core.note",
+      },
+    });
 
     // Not sent again, and the copy is put back to what the server holds.
     const sentBefore = harness.server.requests.filter(
@@ -781,6 +990,41 @@ describe("the server did not take the write", () => {
     expect(await harness.device.queue()).toMatchObject({ ok: true, value: [] });
   });
 
+  const goneReads = [
+    ["404 item_not_found", refusal(404, "item_not_found", "Item not found")],
+    [
+      "403 type_not_permitted",
+      refusal(403, "type_not_permitted", "this key may not read core.note"),
+    ],
+  ] as const;
+  it.each(goneReads)(
+    "refused: lets the row go where the read-back is answered %s",
+    async (_status, read) => {
+      harness = await hydratedHarness("verdicts-refused-read-gone", {
+        rows: held(),
+      });
+      const created = await harness.device.create({
+        type: "core.note",
+        properties: { title: "never lands", body: "never lands" },
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+      const id = created.value.item_id ?? "";
+      // The witness: the row was shown before the drain.
+      expect((await harness.device.get(id)).ok).toBe(true);
+      scriptWrites(harness.server, {
+        create: [refusal(400, "invalid_properties", "body is required")],
+        read: [read],
+      });
+      const drained = await harness.device.drain();
+      expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+      const gone = await harness.device.get(id);
+      expect(
+        gone.ok ? "held" : gone.refusal.code,
+        "a read-back saying the server holds no row the key reads left the refused create's row in the copy",
+      ).toBe("not_held");
+    },
+  );
+
   it("refused: keeps the row the copy holds where the read-back answers an older one", async () => {
     // The copy holds the row as a later write stamped it, which a follow on
     // the same core can bring between the read-back and its write. The
@@ -844,7 +1088,8 @@ describe("the server did not take the write", () => {
     scriptWrites(harness.server, {
       update: [
         refusal(400, "invalid_properties", "Invalid properties", {
-          errors: [{ field: "title", message: "Too long" }],
+          // The second entry names no property, so it is no field's.
+          errors: [{ field: "title", message: "Too long" }, { message: "Bad" }],
         }),
         refusal(403, "type_not_permitted", "this key may not write core.note", {
           grant: { kind: "type", name: "core.note", level: "write" },
@@ -880,9 +1125,13 @@ describe("the server did not take the write", () => {
     expect(queue.ok).toBe(true);
     if (!queue.ok) return;
     expect(
-      queue.value.map((row) => row.refusal?.code),
+      queue.value.map((row) => row.refusal),
       "the queue does not read the refusal it holds the way the drain reported it",
-    ).toEqual(["invalid_properties", "type_not_permitted"]);
+    ).toEqual(drained.value.verdicts.map((verdict) => verdict.refusal));
+    expect(queue.value.map((row) => row.refusal?.code)).toEqual([
+      "invalid_properties",
+      "type_not_permitted",
+    ]);
   });
 
   it("refused: says when the row a write named is in the bin", async () => {
@@ -1071,6 +1320,17 @@ describe("a verdict is reported, not acted on", () => {
       byId.get(edit.value.id)?.reason,
       "the dependant's reason does not name the write that was refused, so a caller is told this row failed and not why",
     ).toContain("create_item");
+    expect(
+      byId.get(edit.value.id)?.refusal,
+      "a refusal the drain made carries parts only a server's envelope can",
+    ).toEqual({
+      reason: byId.get(edit.value.id)?.reason,
+      code: null,
+      message: null,
+      fields: [],
+      trashed: false,
+      grant: null,
+    });
     expect(
       harness.server.requests.some((request) => request.method === "PATCH"),
       "the dependant went to the server although its create was refused",

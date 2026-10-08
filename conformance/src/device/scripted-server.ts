@@ -71,7 +71,7 @@ export type Answer =
   /**
    * The request is accepted and never answered.
    *
-   * A read that timed out, which `queue-and-verdicts.md` 17 names among the
+   * A read that timed out, which `queue-and-verdicts/environmental-uncounted` names among the
    * environmental failures and which nothing else here produces: a drop is a
    * connection that died and a 5xx is an answer, and a device may
    * reasonably treat those two differently from a server that simply never

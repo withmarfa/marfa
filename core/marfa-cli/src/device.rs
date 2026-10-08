@@ -959,7 +959,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         tier: args.tier.map(Into::into),
                     };
                     let added = core.add_file(&args.file, &attachment, &args.tags)?;
-                    output::queued(&[added.upload, added.item], json)
+                    output::queued(&[added.upload, added.item], &Default::default(), json)
                 }
                 ItemsCommand::Attach(args) => {
                     let attachment = Attachment {
@@ -974,6 +974,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                     output::queued(
                         &[attached.upload, attached.item, attached.edge],
+                        &Default::default(),
                         json,
                     )?;
                     if let Some(embed) = &attached.embed {
@@ -1170,7 +1171,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             };
             output::queued_one(&queued, json)
         }
-        DeviceCommand::Queue => output::queued(&store.open(None)?.queue()?, json),
+        DeviceCommand::Queue => {
+            let core = store.open(None)?;
+            output::queued(&core.queue()?, &core.pending_landings()?, json)
+        }
         DeviceCommand::Forget => {
             let cleared = store.open(None)?.forget_answered()?;
             output::report(&cleared, json, || {

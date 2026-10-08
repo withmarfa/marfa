@@ -115,7 +115,7 @@ impl Folder {
         {
             return Ok(false);
         }
-        if super::fault::named("purge-before-placement").as_deref() == Some(item_id) {
+        if crate::fault::named("purge-before-placement").as_deref() == Some(item_id) {
             store::purge_item(&*self.core.conn()?, item_id)?;
         }
         let placed = self.queue_placement(item_id, path);
@@ -138,7 +138,7 @@ impl Folder {
         if state::bound_beside(&*self.core.conn()?, item_id, leaving)? {
             return Ok(0);
         }
-        if super::fault::named("end-placement-fails").is_some() {
+        if crate::fault::named("end-placement-fails").is_some() {
             return Err(CoreError::Store(
                 "injected failure to end a placement".into(),
             ));

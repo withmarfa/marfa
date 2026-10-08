@@ -79,7 +79,7 @@ pub(crate) fn land(
             keep_attributes(target, &beside);
         }
         fill(&mut file, &beside)?;
-        if super::fault::named("sync-failure").is_some_and(|name| {
+        if crate::fault::named("sync-failure").is_some_and(|name| {
             target
                 .file_name()
                 .is_some_and(|file| file.to_string_lossy() == name)
@@ -197,7 +197,7 @@ pub(crate) fn crash_if_asked(target: &Path) {
 }
 
 pub(crate) fn crash_if_named(target: &Path, fault: &str) {
-    if super::fault::named(fault).is_some_and(|name| {
+    if crate::fault::named(fault).is_some_and(|name| {
         target
             .file_name()
             .is_some_and(|file| file.to_string_lossy() == name)
@@ -211,7 +211,7 @@ pub(crate) fn crash_if_named(target: &Path, fault: &str) {
 pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
     #[cfg(unix)]
     if fault == "create-before-rename"
-        && super::fault::named("symlink-before-rename").is_some_and(|name| {
+        && crate::fault::named("symlink-before-rename").is_some_and(|name| {
             target
                 .file_name()
                 .is_some_and(|file| file.to_string_lossy() == name)
@@ -219,7 +219,7 @@ pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
     {
         return std::os::unix::fs::symlink("absent-fixture-target", target);
     }
-    if super::fault::named(fault).is_some_and(|name| {
+    if crate::fault::named(fault).is_some_and(|name| {
         target
             .file_name()
             .is_some_and(|file| file.to_string_lossy() == name)
@@ -284,7 +284,7 @@ fn running(_pid: i32) -> bool {
 
 /// A person's save made between the folder's decision and its last look.
 fn save_meanwhile(target: &Path) {
-    if super::fault::named("save-before-last-look").is_some()
+    if crate::fault::named("save-before-last-look").is_some()
         && target
             .extension()
             .is_some_and(|extension| extension == "md")

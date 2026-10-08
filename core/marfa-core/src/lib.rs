@@ -6,6 +6,7 @@ mod catch_up;
 pub mod contract;
 mod drain;
 mod error;
+mod fault;
 mod filter;
 pub mod folder;
 mod folder_settings;
@@ -630,6 +631,13 @@ impl Core {
         store::queued_writes(&conn)
     }
 
+    /// The refused creates whose move onto the row their natural key names
+    /// waits for a read that finds it. Each still holds the writes that depend
+    /// on it, whatever its verdict says.
+    pub fn pending_landings(&self) -> Result<std::collections::HashSet<String>> {
+        store::pending_landings(&*self.conn()?)
+    }
+
     /// One pass: every sendable row is attempted once, until the server
     /// cannot be reached. A drain called while another runs on this store
     /// waits for it to end, then sends only what is still unanswered.
@@ -667,7 +675,8 @@ impl Core {
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
-    /// blocked or dead.
+    /// blocked, dead or refused without being sent, and for one refused
+    /// because what it waited for was withdrawn.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -940,7 +949,7 @@ impl Core {
     /// A row the copy does not hold, such as one read from the bin, is
     /// restored by id: queued, shown nowhere until the server answers, and
     /// held once the answer's read or its `item.restored` event brings it
-    /// where the slice takes it (`queue-and-verdicts.md` 56 to 58).
+    /// where the slice takes it (`queue-and-verdicts/restore-by-id`, `queue-and-verdicts/restore-not-entered` and `queue-and-verdicts/restore-once`).
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;

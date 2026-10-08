@@ -27,8 +27,8 @@ function innerStatus(code: string | undefined): number {
  * and reporting it beside the entry is the whole point of a
  * non-atomic page. A `5xx` is not that. `write_contention` says the
  * server could not write *this time* and the next attempt would land,
- * and folding it into a `200` tells a device — which retries a `5xx`
- * without counting it (`queue-and-verdicts.md` 17) — that there is
+ * and folding it into a `200` tells a device, which retries a `5xx`
+ * without counting it (`queue-and-verdicts/environmental-uncounted`), that there is
  * nothing to retry. Nothing was written and the page says it
  * succeeded.
  *

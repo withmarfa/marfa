@@ -170,7 +170,7 @@ function saveAtomically(
 }
 
 /**
- * Runs a command with a fault a debug build injects (`folder/fault.rs` in the
+ * Runs a command with a fault a debug build injects (`fault.rs` in the
  * core): a crash, or another process's change, at the one moment a fixture
  * cannot time from outside.
  */

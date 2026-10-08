@@ -96,7 +96,13 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
+/// `landing` names the refused creates whose row no read has found yet, which
+/// still hold the writes that depend on them.
+pub fn queued(
+    writes: &[QueuedWrite],
+    landing: &std::collections::HashSet<String>,
+    json: bool,
+) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
@@ -131,16 +137,17 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             .depends_on
             .iter()
             .filter(|id| {
-                !matches!(
-                    verdicts.get(id.as_str()),
-                    Some(Some(
-                        marfa_core::Verdict::Accepted
-                            | marfa_core::Verdict::Merged
-                            | marfa_core::Verdict::Conflicted
-                            | marfa_core::Verdict::Refused
-                            | marfa_core::Verdict::Dead
-                    ))
-                )
+                landing.contains(id.as_str())
+                    || !matches!(
+                        verdicts.get(id.as_str()),
+                        Some(Some(
+                            marfa_core::Verdict::Accepted
+                                | marfa_core::Verdict::Merged
+                                | marfa_core::Verdict::Conflicted
+                                | marfa_core::Verdict::Refused
+                                | marfa_core::Verdict::Dead
+                        ))
+                    )
             })
             .collect();
         let held = match pending.len() {

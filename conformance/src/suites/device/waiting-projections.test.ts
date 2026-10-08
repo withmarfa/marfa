@@ -142,6 +142,11 @@ it("shows an unsent dependent edit as soon as its dead create is released", asyn
   expect(
     server.requests.filter((request) => request.method === "PATCH"),
   ).toHaveLength(0);
+  const releasedQueue = await device.queue();
+  expect(
+    releasedQueue.ok && releasedQueue.value.map((row) => row.verdict),
+    "the edit refused for its dead create was not released with it",
+  ).toEqual([null, null]);
 });
 
 it("keeps a dead create visible through hydration", async () => {
