@@ -1,3 +1,4 @@
+import { controlRequest } from "../../utils/control-request.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -29,8 +30,12 @@ import {
   type ServerExit,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { parseEnvFile } from "../../utils/target.js";
-import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
+import { parseEnvFile, TEST_OWNER } from "../../utils/target.js";
+import {
+  bootServer,
+  bootUnclaimedServer,
+  stopServer,
+} from "../../../scripts/marfa-server.js";
 
 /**
  * What an instance does when it starts and when it stops: the instance
@@ -698,7 +703,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
   }
 
   it(
-    "refuses the working key, the operator key and an app's access token with 401 unauthorized, and accepts all three again under the original salt",
+    "refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt",
     async () => {
       const doors = [
         {
@@ -707,7 +712,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
           credential: () => server.workingKey,
         },
         {
-          who: "operator key",
+          who: "management key",
           path: "/keys",
           credential: () => server.managementKey,
         },
@@ -744,14 +749,13 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
   );
 
   it(
-    "offers no bootstrap secret and no unauthenticated way to mint a key when started under another API_KEY_SALT",
+    "keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT",
     async () => {
       const announcements = (): number =>
         readFileSync(join(server.stateDir, "server.log"), "utf8").split(
-          "This instance holds no credential yet",
+          "Claim this Marfa at /setup with setup code:",
         ).length - 1;
-      // The witness: the first start announced its secret, as an instance
-      // that holds no key does, and a start on the database it left does not.
+      // The initial unclaimed boot announced setup proof; the claimed restart does not.
       expect(announcements()).toBe(1);
 
       await server.restart({ env: { API_KEY_SALT: OTHER_SALT } });
@@ -762,7 +766,112 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
       });
 
       expect(announcements()).toBe(1);
+      expect(
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed,
+      ).toBe(true);
+      expect(
+        (
+          await controlRequest(server.controlSocket, "/_control/setup/code", {
+            method: "POST",
+            body: {},
+          })
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await controlRequest(server.controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
+      ).toBe(409);
       expect(minted).toEqual({ status: 401, code: "unauthorized" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a completed claim after credential rows disappear", () => {
+  it.each(["keys", "owner", "both"] as const)(
+    "does not reopen setup after deleting %s rows",
+    async (missing) => {
+      const server = await bootFreshServer(`lifecycle-missing-${missing}`);
+      try {
+        const before = await controlRequest(
+          server.controlSocket,
+          "/_control/setup/status",
+        );
+        expect(before.body.claimed).toBe(true);
+        const announcements = () =>
+          readFileSync(join(server.stateDir, "server.log"), "utf8").split(
+            "Claim this Marfa at /setup with setup code:",
+          ).length - 1;
+        expect(announcements()).toBe(1);
+        await stopServer({ state: server.stateDir });
+        withInstanceDatabase(server.sqlitePath, (db) => {
+          db.exec("PRAGMA foreign_keys = OFF");
+          if (missing !== "owner") db.exec("DELETE FROM api_keys");
+          if (missing !== "keys")
+            db.exec(
+              "DELETE FROM auth_session; DELETE FROM auth_account; DELETE FROM auth_user",
+            );
+        });
+        const restarted = await bootUnclaimedServer({ state: server.stateDir });
+        const status = await controlRequest(
+          restarted.controlSocket,
+          "/_control/setup/status",
+        );
+        expect(status.body).toEqual(before.body);
+        expect(announcements()).toBe(1);
+        expect(
+          (
+            await controlRequest(
+              restarted.controlSocket,
+              "/_control/setup/code",
+              { method: "POST", body: {} },
+            )
+          ).status,
+        ).toBe(409);
+        expect(
+          (
+            await controlRequest(
+              restarted.controlSocket,
+              "/_control/setup/claim",
+              { method: "POST", body: TEST_OWNER },
+            )
+          ).status,
+        ).toBe(409);
+        const publicClaim = await fetch(`${restarted.url}/setup/claim`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(TEST_OWNER),
+        });
+        expect(publicClaim.status).toBe(409);
+        expect(
+          (await controlRequest(restarted.controlSocket, "/owner")).status,
+        ).toBe(missing === "keys" ? 200 : 404);
+        const recovery = await controlRequest(
+          restarted.controlSocket,
+          "/_control/owner/recover",
+          { method: "POST", body: { password: "recovered existing password" } },
+        );
+        expect(recovery.status).toBe(missing === "keys" ? 200 : 404);
+        if (missing !== "keys")
+          expect(recovery.body).toMatchObject({
+            error: { code: "owner_not_found" },
+          });
+        expect(
+          (
+            await controlRequest(
+              restarted.controlSocket,
+              "/_control/setup/status",
+            )
+          ).body,
+        ).toEqual(before.body);
+      } finally {
+        await server.stop();
+      }
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -1068,36 +1177,64 @@ describe("starting on a database that holds some of the server's tables and no r
     return root.instance_id;
   }
 
+  async function startUnprovisioned(change: (db: Database) => void) {
+    await stopServer({ state: server.stateDir });
+    withInstanceDatabase(server.sqlitePath, change);
+    const started = await bootUnclaimedServer({ state: server.stateDir });
+    server.apiUrl = started.url;
+    server.controlSocket = started.controlSocket;
+  }
+
   it(
-    "creates the tables it lacks and starts, as it would on a new file",
+    "creates the tables it lacks and remains unclaimed until a real claim",
     async () => {
       const noteIds = await writeNotes(server, "lifecycle-unfinished", 3);
-      const operatorBefore = server.managementKey;
       const instanceBefore = await rootInstanceId();
-
-      await server.restart({
-        whileStopped: () => {
-          withInstanceDatabase(server.sqlitePath, (db) => {
-            emptyThenDrop(db, DROPPED);
-            // The witness that the file lacks what the server will make.
-            for (const table of DROPPED) {
-              expect(tablesIn(db)).not.toContain(table);
-            }
-          });
-        },
-      });
-
-      const client = new MarfaClient({
-        baseUrl: server.apiUrl,
-        apiKey: server.workingKey,
+      await startUnprovisioned((db) => {
+        emptyThenDrop(db, DROPPED);
+        for (const table of DROPPED) expect(tablesIn(db)).not.toContain(table);
       });
       expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
-      // As on a new file: no key, no item, a name of its own, a first key
-      // to mint.
-      expect(server.managementKey).not.toBe(operatorBefore);
+      expect(
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed,
+      ).toBe(false);
+      expect(
+        (await controlRequest(server.controlSocket, "/owner")).status,
+      ).toBe(404);
       expect(await rootInstanceId()).not.toBe(instanceBefore);
+      withInstanceDatabase(server.sqlitePath, (db) => {
+        for (const table of DROPPED) expect(tablesIn(db)).toContain(table);
+        expect(
+          db.prepare("SELECT count(*) AS count FROM api_keys").get()?.count,
+        ).toBe(0);
+        expect(
+          db.prepare("SELECT count(*) AS count FROM items").get()?.count,
+        ).toBe(0);
+      });
+      expect(
+        (
+          await controlRequest(server.controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
+      ).toBe(201);
+      const minted = await controlRequest(server.controlSocket, "/keys", {
+        method: "POST",
+        body: {
+          label: "unfinished-schema",
+          source: "lifecycle-unfinished",
+          permissions: ["audit.read"],
+          type_permissions: { "*": "write" },
+        },
+      });
+      expect(minted.status).toBe(201);
+      const client = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: minted.body.key as string,
+      });
       expect((await client.getItem(noteIds[0] ?? "")).status).toBe(404);
-      // The tables it made work.
       const written = await client.createItem({
         type: NOTE,
         source: "lifecycle-unfinished",
@@ -1105,12 +1242,9 @@ describe("starting on a database that holds some of the server's tables and no r
       });
       expect(written.status).toBe(201);
       expect((await client.getItem(written.data.item.id)).status).toBe(200);
-      const audit = await client.listAudit({ limit: 5 });
+      const audit = await client.listAudit({ action: "owner.claimed" });
       expect(audit.status).toBe(200);
-      expect(audit.data.data.length).toBeGreaterThan(0);
-      withInstanceDatabase(server.sqlitePath, (db) => {
-        for (const table of DROPPED) expect(tablesIn(db)).toContain(table);
-      });
+      expect(audit.data.data).toHaveLength(1);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -1118,17 +1252,16 @@ describe("starting on a database that holds some of the server's tables and no r
   it(
     "does not count a row in a table it does not create, and leaves that table as it was",
     async () => {
-      await server.restart({
-        whileStopped: () => {
-          withInstanceDatabase(server.sqlitePath, (db) => {
-            emptyThenDrop(db, DROPPED);
-            db.exec("CREATE TABLE _litestream_seq (id INTEGER PRIMARY KEY)");
-            db.exec("INSERT INTO _litestream_seq (id) VALUES (7), (8)");
-          });
-        },
+      await startUnprovisioned((db) => {
+        emptyThenDrop(db, DROPPED);
+        db.exec("CREATE TABLE _litestream_seq (id INTEGER PRIMARY KEY)");
+        db.exec("INSERT INTO _litestream_seq (id) VALUES (7), (8)");
       });
-
       expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
+      expect(
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed,
+      ).toBe(false);
       withInstanceDatabase(server.sqlitePath, (db) => {
         expect(tablesIn(db)).toContain("audit_log");
         expect(

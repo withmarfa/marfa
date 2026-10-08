@@ -259,7 +259,7 @@ describe("the write probe", () => {
 });
 
 describe("the error text of GET /health", () => {
-  it("is given to the operator key and to no other caller", async () => {
+  it("is given to a key with instance.read and withheld without that permission", async () => {
     expect((await until(isOk)).httpStatus).toBe(200);
     const appToken = await approvedAppToken(server!);
     const strangers: [string, string | undefined][] = [
@@ -277,7 +277,7 @@ describe("the error text of GET /health", () => {
 
     renameTable("settings", "settings_away");
     try {
-      // The operator key is told what the database said, which is the witness
+      // The management key is told what the database said, which is the witness
       // that there is text to leave out.
       const told = await until(
         (answer) => answer.httpStatus === 503,
@@ -303,9 +303,9 @@ describe("the error text of GET /health", () => {
     }
   }, 120_000);
 
-  it("is given to no caller, the operator key included, while the database cannot look the key up", async () => {
+  it("is withheld from bearer credentials while the database cannot look keys up", async () => {
     const callers: [string, string | undefined][] = [
-      ["the operator key", server!.managementKey],
+      ["the management key", server!.managementKey],
       ["a working key", server!.workingKey],
       ["a key the instance does not hold", "marfa_a-key-no-instance-holds"],
       ["no credential", undefined],
@@ -314,7 +314,7 @@ describe("the error text of GET /health", () => {
 
     renameTable("settings", "settings_away");
     try {
-      // The write refusal, with the key table readable: the operator key is
+      // The write refusal, with the key table readable: the management key is
       // told, so there is text to leave out below.
       const told = await until(
         (answer) => answer.httpStatus === 503,
@@ -345,7 +345,7 @@ describe("the error text of GET /health", () => {
         renameTable("api_keys_away", "api_keys");
       }
 
-      // With the key table back the operator key is told again, so what was
+      // With the key table back the management key is told again, so what was
       // withheld was withheld for the lookup and not for the key.
       const toldAgain = await health(server!.managementKey);
       expect(toldAgain.body.components.database_write?.error).toEqual(
