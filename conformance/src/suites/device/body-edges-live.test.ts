@@ -27,7 +27,7 @@ import {
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-// `device/body-edges` to `device/attach-title`: a body written through a working copy, against the
+// The links and embeds in a body written through a working copy, against the
 // run's server.
 
 let client: MarfaClient;
@@ -499,6 +499,28 @@ describe("embeds", () => {
       expect(unattached.refusal.code).toBe("invalid");
       expect(unattached.refusal.raw).toContain("not attached");
     }
+  });
+
+  it("keeps a title its caller gives, and answers no embed text where that title is shared", async () => {
+    const dir = scratch();
+    const name = `given-${ctx.runId}.png`;
+    writeFileSync(join(dir, name), `given ${ctx.runId}`);
+    const host = await note(device, named("Given title host"));
+    const first = value(await device.attach(host.id, join(dir, name)));
+    const given = value(
+      await device.attach(host.id, join(dir, name), { title: name }),
+    );
+    for (const file of [first, given]) trackItem(ctx, file.item.item_id!);
+    // The witness: an attach whose title names its file alone answers one.
+    expect(first.embed).toBe(`![[${name}]]`);
+    expect(
+      value(await device.get(given.item.item_id!)).properties.title,
+      "the title the caller gave was changed",
+    ).toBe(name);
+    expect(
+      given.embed,
+      "the attach answered embed text that names two attachments",
+    ).toBeNull();
   });
 });
 

@@ -2904,6 +2904,20 @@ When a file is attached to an item under no title its caller gave, a device MUST
 
 **Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
 
+### `device/attach-title-given`
+
+When a file is attached to an item under a title its caller gives, a device MUST title the file item with that title.
+
+**Tests:** `device/body-edges-live.test.ts › keeps a title its caller gives, and answers no embed text where that title is shared`.
+
+### `device/attach-embed-shared`
+
+If a file is attached to an item under a title another of the item's attachments answers to, then a device MUST answer the attach with no embed text.
+
+**Reason:** an embed of a shared title would name both attachments.
+
+**Tests:** `device/body-edges-live.test.ts › keeps a title its caller gives, and answers no embed text where that title is shared`.
+
 ## Ids a caller names
 
 ### `device/id-format`
