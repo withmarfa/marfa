@@ -13,14 +13,9 @@
  * where "returns some types" is not: a breakdown that quietly dropped a filter
  * or applied a different one still returns plausible-looking types.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -95,17 +90,18 @@ describe("GET /items/stats?by=type", () => {
     // a type must not learn it is in use — the same reasoning as the tag
     // vocabulary on GET /metadata/tags.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `marfa_k1_stats_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `stats-${suffix}`,
-        source: `stats-${suffix}`,
-        type_permissions: { [SEEN]: "read" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-    );
+    let raw = `marfa_k1_stats_${suffix}`;
+    raw = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: `stats-${suffix}`,
+      source: `stats-${suffix}`,
+      type_permissions: { [SEEN]: "read" },
+      default_tier: "library",
+    });
 
     const byType = await stats(raw, "?by=type");
     // Both halves: the granted type survives and the withheld one does not.

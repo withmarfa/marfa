@@ -8,8 +8,10 @@
  * what makes the later frame's absence the credential's doing rather than
  * a stream that had gone quiet.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AppEnv } from "../middleware/auth.js";
+import type { SseReadOptions, TestContext } from "../test-utils.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -18,9 +20,7 @@ import {
   request,
   seedOauthBearer,
 } from "../test-utils.js";
-import type { SseReadOptions, TestContext } from "../test-utils.js";
 import { eventRoutes } from "./events.js";
-import type { AppEnv } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -181,9 +181,7 @@ describe("a stream ends when its credential stops standing", () => {
   });
 
   it("ends at the next frame when a sign-in's token passes its expiry", async () => {
-    const { token, clientId } = await seedOauthBearer(ctx.storage, [
-      "core.task:read",
-    ]);
+    const { token, clientId } = await seedOauthBearer(ctx, ["core.task:read"]);
     const res = await open(token);
     const hidden = "ZZafter-token-expiryZZ";
     const text = await acrossAChange(
@@ -200,9 +198,7 @@ describe("a stream ends when its credential stops standing", () => {
   });
 
   it("ends at the next frame when the app is disconnected", async () => {
-    const { token, grantId } = await seedOauthBearer(ctx.storage, [
-      "core.task:read",
-    ]);
+    const { token, grantId } = await seedOauthBearer(ctx, ["core.task:read"]);
     const res = await open(token);
     const hidden = "ZZafter-disconnectZZ";
     const text = await acrossAChange(

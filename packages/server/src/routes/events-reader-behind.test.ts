@@ -1,3 +1,4 @@
+import { hashApiKey } from "../middleware/auth.js";
 /**
  * A reader that stops reading costs the server a bounded amount.
  *
@@ -11,23 +12,25 @@
  * not reading it is exactly a reader that stopped and nothing between the
  * two buffers for it.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AppEnv } from "../middleware/auth.js";
+import {
+  __listenerCountForTests,
+  __resetEventLogForTests,
+  initEventLog,
+} from "../pubsub.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
+  mintWorkingKey,
   readSse,
   request,
   settle,
   storedViewerKey,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import {
-  __listenerCountForTests,
-  initEventLog,
-  __resetEventLogForTests,
-} from "../pubsub.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
-import type { AppEnv } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -230,19 +233,18 @@ describe("a replay to a slow reader", () => {
       },
     });
     expect(res.status).toBe(200);
-    const viewer = await ctx.storage.keys.create(
-      {
-        label: "paced-narrowed",
-        source: `paced-narrowed-${String(Date.now())}`,
-        type_permissions: { "core.task": "read", "core.note": "read" },
-        extension_permissions: {},
-        edge_permissions: {},
-        metadata_permissions: {},
-        permissions: [],
-
-      },
-      "paced-narrowed-hash",
-    );
+    const raw = await mintWorkingKey(ctx, {
+      label: "paced-narrowed",
+      source: `paced-narrowed-${String(Date.now())}`,
+      type_permissions: { "core.task": "read", "core.note": "read" },
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      permissions: [],
+    });
+    const viewer = (await ctx.storage.keys.validate(
+      hashApiKey(raw, TEST_API_KEY_SALT),
+    ))!;
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
       c.set("apiKey", viewer);

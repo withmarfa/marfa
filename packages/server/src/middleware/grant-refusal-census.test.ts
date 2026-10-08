@@ -9,18 +9,18 @@
  * reads the source: every module that references one of those codes is named here
  * with why, and the grant checks are driven to show what they carry.
  */
+import type { ApiKey } from "@withmarfa/shared";
+import { MarfaError } from "@withmarfa/shared";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MarfaError } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import {
   checkEdgePermission,
   checkExtensionPermission,
   checkTypeAccess,
 } from "./auth.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 const root = join(import.meta.dirname, "..");
 
@@ -65,7 +65,7 @@ function key(overrides: Partial<ApiKey>): ApiKey {
     metadata_permissions: {},
     profile_permissions: {},
     permissions: [],
-    is_operator: false,
+
     ...overrides,
   } as ApiKey;
 }

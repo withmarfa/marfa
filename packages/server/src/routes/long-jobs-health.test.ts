@@ -1,19 +1,19 @@
+import { Hono } from "hono";
 import { createHash, randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
-import { Hono } from "hono";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import type { AppEnv } from "../middleware/auth.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { GrantInactivityRetirer } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import type { AppEnv } from "../middleware/auth.js";
-import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { healthRoutes } from "./health.js";
+import { createTestContext, request } from "../test-utils.js";
 import { storageProbes } from "./health-probes.js";
+import { healthRoutes } from "./health.js";
 
 /**
  * `GET /health` while the server does each of its long jobs, over an
@@ -310,7 +310,8 @@ describe("GET /health while a long job runs", () => {
           target.app.request("/restore", {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${target.operatorKey}`,
+              cookie: target.owner.cookie,
+              origin: new URL(target.config.authBaseUrl).origin,
               "Content-Type": "application/gzip",
             },
             body: archive,

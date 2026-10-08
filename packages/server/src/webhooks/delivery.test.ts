@@ -1,7 +1,17 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { itemWrites } from "../storage/item-writes.js";
-import { createHmac } from "node:crypto";
 import type { Edge, Item } from "@withmarfa/shared";
+import { createHmac } from "node:crypto";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import {
+  __resetEventLogForTests,
+  initEventLog,
+  publish,
+  publishEdge,
+  storedFrame,
+  type PubsubEvent,
+} from "../pubsub.js";
+import type { StoredWebhook, WebhookOwner } from "../storage/interface.js";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -10,22 +20,12 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import type { StoredWebhook, WebhookOwner } from "../storage/interface.js";
 import {
-  initEventLog,
-  __resetEventLogForTests,
-  publish,
-  publishEdge,
-  storedFrame,
-  type PubsubEvent,
-} from "../pubsub.js";
-import {
-  DELIVERY_CANCELED,
-  WebhookScheduler,
-  WebhookPoller,
   buildSignatureHeader,
+  DELIVERY_CANCELED,
   parseRetryAfter,
+  WebhookPoller,
+  WebhookScheduler,
 } from "./delivery.js";
 import {
   DELIVERY_FAILURE,
@@ -548,7 +548,7 @@ describe("what a delivery carries", () => {
   });
 
   it("sends a signed-in app no extension namespace, whatever types it reads", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, [
+    const { token } = await seedOauthBearer(ctx, [
       "content:read",
       "webhooks.manage",
     ]);

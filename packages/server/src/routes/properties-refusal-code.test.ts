@@ -25,20 +25,19 @@
  * validated only on a move, and a same-type entry went to the store unjudged.
  * It is a row in the table now, driven by the same payload as the rest.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
-  runBulkActionAsync,
+  mintWorkingKey,
   request,
-  TEST_API_KEY_SALT,
+  runBulkActionAsync,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
 const ITEM_SOURCE = "properties-refusal";
-const RUNTIME_KEY = "marfa_k1_test_properties_refusal";
+let RUNTIME_KEY = "marfa_k1_test_properties_refusal";
 
 /** `core.note` declares `body` as a required string, so a number is a
  *  properties-versus-type refusal at every door and nothing else. */
@@ -47,14 +46,16 @@ const GOOD = { body: "well formed" };
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  await ctx.storage.keys.create(
-    {
-      label: "properties-refusal",
-      source: ITEM_SOURCE,
-      type_permissions: { "*": "write" },
-    },
-    hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
-  );
+  RUNTIME_KEY = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: "properties-refusal",
+    source: ITEM_SOURCE,
+    type_permissions: { "*": "write" },
+  });
 });
 
 afterAll(async () => {

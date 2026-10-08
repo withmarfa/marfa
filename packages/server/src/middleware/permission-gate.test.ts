@@ -19,19 +19,19 @@
  * and refuses everybody, or one that reads a missing carrier and admits
  * everybody.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Hono } from "hono";
-import type { Context } from "hono";
 import type { ApiKey } from "@withmarfa/shared";
 import { MarfaError } from "@withmarfa/shared";
-import { authMiddleware, requirePermission, type AppEnv } from "./auth.js";
+import type { Context } from "hono";
+import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { authMiddleware, requirePermission, type AppEnv } from "./auth.js";
 
 // ---------------------------------------------------------------------------
 // The gate
@@ -42,7 +42,7 @@ function fakeKey(over: Partial<ApiKey> = {}): ApiKey {
     label: "test",
     source: "test",
     default_tier: "library",
-    is_operator: false,
+
     type_permissions: {},
     extension_permissions: {},
     edge_permissions: {},
@@ -212,7 +212,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   it("carries scopes, client id and user id for an OAuth bearer", async () => {
     const seeded = await seedOauthBearer(
-      ctx.storage,
+      ctx,
       ["openid", "keys.mint", "core.note:read"],
       {},
     );
@@ -244,7 +244,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     // is the wrong repair `scopes.ts` warns against, and it would be
     // invisible here without this check because the gate would still pass.
     const seeded = await seedOauthBearer(
-      ctx.storage,
+      ctx,
       ["openid", "keys.mint", "core.note:read"],
       {},
     );
@@ -309,17 +309,13 @@ describe("a real door reads what a real grant carries", () => {
   it("admits a bearer whose grant names the permission the door asks for", async () => {
     // The unit tests above pass a hand-built context, so nothing in them
     // proves the middleware, the gate and the route agree in one request.
-    const { token } = await seedOauthBearer(ctx.storage, ["keys.mint"], {});
+    const { token } = await seedOauthBearer(ctx, ["keys.mint"], {});
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
   });
 
   it("refuses a bearer whose grant does not", async () => {
-    const { token } = await seedOauthBearer(
-      ctx.storage,
-      ["core.note:read"],
-      {},
-    );
+    const { token } = await seedOauthBearer(ctx, ["core.note:read"], {});
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(403);
   });

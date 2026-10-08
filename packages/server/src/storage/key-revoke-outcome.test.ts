@@ -10,11 +10,11 @@
  * Runs against real storage, so the outcome is held to the contract rather
  * than assumed.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -39,7 +39,6 @@ describe("keys.revoke", () => {
         source: `affected-rows-${suffix}`,
         type_permissions: {},
         // An operator key, whose empty maps the row constraint requires.
-        is_operator: true,
       },
       hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
     );

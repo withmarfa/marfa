@@ -1,21 +1,21 @@
+import { PERMISSIONS, generateId, getTypeSchema } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createGzip } from "node:zlib";
-import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { purgeBlob } from "../housekeeping/blob-delete.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import type { TestContext } from "../test-utils.js";
 import {
-  createTestContext,
-  request,
   collectEdgeEvents,
   collectItemEvents,
+  createTestContext,
+  mintWorkingKey,
+  request,
   settle,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { PERMISSIONS, generateId, getTypeSchema } from "@withmarfa/shared";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import { purgeBlob } from "../housekeeping/blob-delete.js";
 
 let ctx: TestContext;
 
@@ -132,12 +132,13 @@ function noteLine(
   });
 }
 
-/** The archive posted with the operator key. */
+/** The archive posted with the management key. */
 async function postArchive(archive: Buffer): Promise<Response> {
   return ctx.app.request("/restore", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,
@@ -187,7 +188,8 @@ describe("POST /restore", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -383,7 +385,7 @@ describe("POST /restore", () => {
     expect(await ctx.blobs.disk.has(carried.hash)).toBeNull();
     expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
     const absent = await request(ctx.app, "GET", `/blobs/${named.hash}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(absent.status).toBe(404);
 
@@ -410,7 +412,8 @@ describe("POST /restore", () => {
     const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -500,7 +503,8 @@ describe("POST /restore", () => {
     const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(0),
@@ -515,7 +519,8 @@ describe("POST /restore", () => {
       ctx.app.request("/restore", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body,
@@ -552,21 +557,19 @@ describe("POST /restore", () => {
     expect(after.status).toBe(200);
   });
 
-  it("requires the operator key", async () => {
-    // A working credential rather than the operator key, because this door
-    // is exactly what an operator key opens.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "restore-member",
-        source: `restore-member-${rawKey.slice(-6)}`,
-        permissions: [...PERMISSIONS],
-        type_permissions: { "*": "write" },
-        is_operator: false,
-      },
-      keyHash,
-    );
+  it("requires direct authority even from a fully permitted key", async () => {
+    // Every app permission together still cannot authorize full archive restore.
+    let rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "restore-member",
+      source: `restore-member-${rawKey.slice(-6)}`,
+      permissions: [...PERMISSIONS],
+      type_permissions: { "*": "write" },
+    });
 
     const archive = await buildArchive(
       {
@@ -624,7 +627,8 @@ describe("POST /restore", () => {
     const restoreRes = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archiveData,
@@ -704,7 +708,7 @@ describe("POST /restore against the orphan sweep", () => {
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await disk.has(blob.hash)).not.toBeNull();
     const served = await ctx.app.request(`/blobs/${blob.hash}`, {
-      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+      headers: { Authorization: `Bearer ${ctx.managementKey}` },
     });
     expect(served.status).toBe(200);
   });
@@ -771,7 +775,7 @@ describe("POST /restore refused after its blobs are stored", () => {
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
     const served = await ctx.app.request(`/blobs/${blob.hash}`, {
-      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+      headers: { Authorization: `Bearer ${ctx.managementKey}` },
     });
     expect(served.status).toBe(200);
   });
@@ -903,7 +907,8 @@ describe("POST /restore — the edges it writes", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(archive),
@@ -1006,7 +1011,8 @@ describe("POST /restore — the edges it writes", () => {
       res = await ctx.app.request(`/restore`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: new Uint8Array(archive),
@@ -1109,7 +1115,8 @@ describe("POST /restore — the items it writes", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(archive),
@@ -1235,7 +1242,8 @@ describe("POST /restore — the items it writes", () => {
       res = await ctx.app.request(`/restore`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: new Uint8Array(archive),
@@ -1317,7 +1325,8 @@ describe("POST /restore — the items it writes", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(archive),
@@ -1369,7 +1378,8 @@ describe("POST /restore — the items it writes", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(archive),

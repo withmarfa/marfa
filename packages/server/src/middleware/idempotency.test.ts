@@ -12,16 +12,16 @@
  * write at all, which is observable as the absence of an event and an
  * unchanged version, so that is what every case here asserts.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import type { TestContext } from "../test-utils.js";
-import { Hono } from "hono";
-import { idempotencyMiddleware } from "./idempotency.js";
-import { createErrorHandler } from "./error-handler.js";
-import type { AppEnv } from "./auth.js";
-import type { IdempotencyClaim, Storage } from "../storage/interface.js";
 import type { ApiKey } from "@withmarfa/shared";
+import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import type { IdempotencyClaim, Storage } from "../storage/interface.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
+import type { AppEnv } from "./auth.js";
+import { createErrorHandler } from "./error-handler.js";
+import { idempotencyMiddleware } from "./idempotency.js";
 
 let ctx: TestContext;
 
@@ -844,7 +844,7 @@ describe("a claim the store did not grant", () => {
         label: "fixture",
         source: credential.source,
         default_tier: "library",
-        is_operator: false,
+
         permissions: [],
         type_permissions: {},
         extension_permissions: {},

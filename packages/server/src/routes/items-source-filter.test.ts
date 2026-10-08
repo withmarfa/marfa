@@ -13,16 +13,11 @@
  * whole result set would pass every test above and still be wrong, so an
  * unlisted type is pinned visible throughout.
  */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { writeInstanceConfig } from "../storage/instance-config.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { writeInstanceConfig } from "../storage/instance-config.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 let trustedKey: string;
@@ -32,27 +27,27 @@ let untrustedKey: string;
  * A write naming no source is stamped with its credential's own, so "an item
  * from an untrusted source" is an item written by a second credential.
  */
-async function mintWorkingKey(source: string): Promise<string> {
+async function mintSourceKey(source: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `marfa_k1_src_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `source-filter-${source}`,
-      source,
-      permissions: [...PERMISSIONS],
-      type_permissions: { "*": "write" },
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  let raw = `marfa_k1_src_${suffix}`;
+  raw = await mintWorkingKey(ctx, {
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `source-filter-${source}`,
+    source,
+    permissions: [...PERMISSIONS],
+    type_permissions: { "*": "write" },
+    default_tier: "library",
+  });
   return raw;
 }
 
 beforeAll(async () => {
   ctx = await createTestContext({});
-  trustedKey = await mintWorkingKey("trusted");
-  untrustedKey = await mintWorkingKey("untrusted");
+  trustedKey = await mintSourceKey("trusted");
+  untrustedKey = await mintSourceKey("untrusted");
 
   for (const key of [trustedKey, untrustedKey]) {
     const created = await request(ctx.app, "POST", "/items", {

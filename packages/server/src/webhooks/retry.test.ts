@@ -1,27 +1,27 @@
-import { readFileSync } from "node:fs";
-import { buildPublishedOpenAPISpec } from "../openapi-published.js";
-import { createServer } from "node:http";
 import { once } from "node:events";
-import { createWebhookHttpClient } from "./outbound-http.js";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import { buildPublishedOpenAPISpec } from "../openapi-published.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import { writeInstanceConfig } from "../storage/instance-config.js";
+import type { PendingWebhookDelivery } from "../storage/interface.js";
 import {
   createTestContext,
   mintWorkingKey,
+  request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
-  request,
   type TestContext,
 } from "../test-utils.js";
-import type { PendingWebhookDelivery } from "../storage/interface.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { writeInstanceConfig } from "../storage/instance-config.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import {
-  WebhookScheduler,
-  WebhookPoller,
   deliverWebhookAttempt,
   RETRY_DELAYS,
+  WebhookPoller,
+  WebhookScheduler,
 } from "./delivery.js";
+import { createWebhookHttpClient } from "./outbound-http.js";
 let ctx: TestContext;
 beforeEach(async () => {
   ctx = await createTestContext({ webhookAllowPrivateAddresses: true });
@@ -325,7 +325,7 @@ describe("failed delivery reopening and claim fencing", () => {
   });
   it("belongs to the OAuth grant and refuses its revoked owner", async () => {
     const scopes = ["content:read", "webhooks.manage"];
-    const grant = await seedOauthBearer(ctx.storage, scopes);
+    const grant = await seedOauthBearer(ctx, scopes);
     const provider = ctx.storage.oauthProvider!;
     const row = await provider.validateAccessToken(
       hashApiKey(grant.token.slice("marfa_at_".length), TEST_API_KEY_SALT),
@@ -337,7 +337,7 @@ describe("failed delivery reopening and claim fencing", () => {
       scopes,
     });
     const { hook, delivery, path } = await seed(grant.token);
-    const stranger = await seedOauthBearer(ctx.storage, scopes);
+    const stranger = await seedOauthBearer(ctx, scopes);
     expect(
       (await request(ctx.app, "POST", path, { key: stranger.token })).status,
     ).toBe(404);

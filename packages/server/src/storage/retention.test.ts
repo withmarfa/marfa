@@ -1,25 +1,25 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { itemWrites } from "./item-writes.js";
-import { writeItem } from "./item-write.js";
 import type { ApiKey } from "@withmarfa/shared";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   sweepRevokedGrantsBefore,
   sweepTrashBefore,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { writeInstanceConfig } from "./instance-config.js";
+import { writeItem } from "./item-write.js";
+import { itemWrites } from "./item-writes.js";
+import type { RetentionOverride } from "./retention.js";
 import {
-  TrashPurger,
-  RevokedGrantPurger,
-  RevokedKeyReaper,
   AuthSessionCleaner,
   DcrClientCleaner,
+  RevokedGrantPurger,
+  RevokedKeyReaper,
   runSweepAtRetention,
+  TrashPurger,
 } from "./retention.js";
-import type { RetentionOverride } from "./retention.js";
-import { TEST_API_KEY_SALT } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { writeInstanceConfig } from "./instance-config.js";
 
 let ctx: TestContext;
 
@@ -621,7 +621,6 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
         label: "old revoked",
         source: "probe:old",
         type_permissions: {},
-        is_operator: true,
       },
       hashApiKey(`marfa_k1_oldRevoked`, TEST_API_KEY_SALT),
     );
@@ -630,7 +629,6 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
         label: "young revoked",
         source: "probe:young",
         type_permissions: {},
-        is_operator: true,
       },
       hashApiKey(`marfa_k1_youngRevoked`, TEST_API_KEY_SALT),
     );
@@ -639,7 +637,6 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
         label: "live",
         source: "probe:live",
         type_permissions: {},
-        is_operator: true,
       },
       hashApiKey(`marfa_k1_live`, TEST_API_KEY_SALT),
     );
@@ -710,7 +707,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
   it("is a purge no credential can ask for, though the sweep can", async () => {
     const id = await seedRevokedGrant(OLD);
     const keys = await ctx.storage.keys.list();
-    const key = keys.find((k) => !k.is_operator);
+    const key = keys.find((k) => k.permissions.includes("items.purge"));
     expect(key).toBeDefined();
 
     await expect(

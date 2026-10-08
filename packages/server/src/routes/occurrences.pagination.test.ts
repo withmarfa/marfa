@@ -420,7 +420,6 @@ function appOver(
   app.use("*", async (c, next) => {
     c.set("apiKey", {
       id: "key-under-test",
-      is_operator: true,
       // The maps are the whole of this key's reach, so they carry it.
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },

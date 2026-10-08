@@ -3,7 +3,7 @@
  * on the blobs its namespace names, each to a credential that may read it, and
  * each only under the proof rule an item's reference is held to
  * (`blobs/proof-item`). Every refusal here has a witness: the bytes are held
- * (the operator key reads them), and the same reader is served once the row
+ * (the management key reads them), and the same reader is served once the row
  * that lends them is in place.
  */
 import { createHash } from "node:crypto";
@@ -11,6 +11,7 @@ import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   closeTestContexts,
   createTestContext,
@@ -18,7 +19,6 @@ import {
   request,
   seedOauthBearer,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 let destination: TestContext;
@@ -162,7 +162,7 @@ describe("an edge lends read on the blobs its properties name", () => {
 
     // The witness: the bytes are held and the readers are not turned away by
     // anything but the missing reference.
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
     for (const key of [owner, aboutReader]) {
       expect(await read(ctx, key, hash)).toBe(404);
     }
@@ -180,7 +180,7 @@ describe("an edge lends read on the blobs its properties name", () => {
       200,
     );
     expect(await read(ctx, aboutReader, hash)).toBe(404);
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
   });
 
   it("serves a credential through a trashed source, and stops when the source is purged", async () => {
@@ -208,7 +208,7 @@ describe("an edge lends read on the blobs its properties name", () => {
       200,
     );
     expect(await read(ctx, aboutReader, hash)).toBe(404);
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
   });
 
   it("lends only the digests a writer proved, and never upgrades one it did not", async () => {
@@ -316,11 +316,11 @@ describe("a signed-in app", () => {
     await setExtension(ctx, owner, source, "app.cover", {
       cover: extensionDigest,
     });
-    const { token: withEdgeScope } = await seedOauthBearer(ctx.storage, [
+    const { token: withEdgeScope } = await seedOauthBearer(ctx, [
       "core.note:read",
       "edge.about:read",
     ]);
-    const { token: withoutEdgeScope } = await seedOauthBearer(ctx.storage, [
+    const { token: withoutEdgeScope } = await seedOauthBearer(ctx, [
       "core.note:read",
     ]);
 
@@ -442,7 +442,7 @@ describe("an extension lends read on the blobs its namespace names", () => {
       extension_permissions: { [namespace]: "read" },
     });
 
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
     expect(await read(ctx, namespaceReader, hash)).toBe(404);
 
     await setExtension(ctx, owner, item, namespace, { cover: hash });
@@ -470,7 +470,7 @@ describe("an extension lends read on the blobs its namespace names", () => {
       200,
     );
     expect(await read(ctx, namespaceReader, hash)).toBe(404);
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
   });
 
   it("lends through a namespace beside a namespace that lends nothing, and stops at the purge", async () => {
@@ -515,7 +515,7 @@ describe("an extension lends read on the blobs its namespace names", () => {
       200,
     );
     expect(await read(ctx, second, hash)).toBe(404);
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
   });
 
   it("lends only a digest its writer proved", async () => {
@@ -575,7 +575,7 @@ describe("an earlier version still lends nothing", () => {
       200,
     );
     expect(await read(ctx, owner, hash)).toBe(404);
-    expect(await read(ctx, ctx.operatorKey, hash)).toBe(200);
+    expect(await read(ctx, ctx.managementKey, hash)).toBe(200);
   });
 });
 
@@ -721,7 +721,8 @@ describe("an export archive and its restore carry the lending", () => {
     const restored = await destination.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
+        cookie: destination.owner.cookie,
+        origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -756,7 +757,9 @@ describe("an export archive and its restore carry the lending", () => {
     expect(await read(destination, full, viaDeadExtension)).toBe(404);
     // The archive carried neither dead digest's bytes at all.
     for (const hash of [viaDeadEdge, viaDeadExtension]) {
-      expect(await read(destination, destination.operatorKey, hash)).toBe(404);
+      expect(await read(destination, destination.managementKey, hash)).toBe(
+        404,
+      );
     }
   });
   it("lends nothing through lending lists that are malformed or name digests the row does not hold", async () => {
@@ -823,7 +826,8 @@ describe("an export archive and its restore carry the lending", () => {
       const restored = await hand.app.request("/restore", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${hand.operatorKey}`,
+          cookie: hand.owner.cookie,
+          origin: new URL(hand.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: await pack(entries),
@@ -832,10 +836,10 @@ describe("an export archive and its restore carry the lending", () => {
       const full = await mintWorkingKey(hand);
       // The witness: the bytes came across, and the well formed lists in the
       // test above lend these same digests to the same kind of key.
-      expect(await read(hand, hand.operatorKey, edgeDigest)).toBe(200);
+      expect(await read(hand, hand.managementKey, edgeDigest)).toBe(200);
       expect(await read(hand, full, edgeDigest)).toBe(404);
       expect(await read(hand, full, extensionDigest)).toBe(404);
-      expect(await read(hand, hand.operatorKey, elsewhere)).toBe(404);
+      expect(await read(hand, hand.managementKey, elsewhere)).toBe(404);
     } finally {
       await hand.cleanup();
     }
@@ -876,7 +880,8 @@ describe("an export archive and its restore carry the lending", () => {
         failing.app.request("/restore", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${failing.operatorKey}`,
+            cookie: failing.owner.cookie,
+            origin: new URL(failing.config.authBaseUrl).origin,
             "Content-Type": "application/gzip",
           },
           body: archive,

@@ -13,9 +13,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -34,7 +34,7 @@ const READING = [
   "GET /blobs/:hash/locations",
 ];
 
-/** Doors only the operator key opens, refusing a working key outright. */
+/** Doors only the management key opens, refusing a working key outright. */
 const OPERATOR_ONLY = [
   "GET /blobs/orphans",
   "GET /blobs/stores",
@@ -106,7 +106,7 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "routes/export.ts": "hands the layer to the archive export below",
   "routes/export-archive.ts":
     "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
-  "routes/restore-archive.ts": "the restore, operator key only, writes bytes",
+  "routes/restore-archive.ts": "the restore, management key only, writes bytes",
   "routes/health.ts": "a probe of the disk store under a fixed name",
 };
 
@@ -237,14 +237,14 @@ describe("every blob door is held to the credential's reach", () => {
     const upload = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        Authorization: `Bearer ${ctx.managementKey}`,
         "Content-Type": "text/html",
       },
       body: bytes,
     });
     expect(upload.status).toBe(201);
     const minted = await request(ctx.app, "GET", `/blobs/${hash}/url`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const link = new URL(((await minted.json()) as { url: string }).url);
 
@@ -256,7 +256,7 @@ describe("every blob door is held to the credential's reach", () => {
       if (door === "GET /blobs/:hash/fetch") path += link.search;
       for (const verb of ["GET", "HEAD"]) {
         const res = await request(ctx.app, verb, path, {
-          key: ctx.operatorKey,
+          key: ctx.managementKey,
         });
         const type = res.headers.get("Content-Type") ?? "";
         if (res.status >= 300 || type.startsWith("application/json")) continue;

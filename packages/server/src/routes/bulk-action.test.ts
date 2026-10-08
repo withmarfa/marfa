@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
   runBulkActionAsync,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -201,20 +201,19 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(getRes.status).toBe(404);
   });
 
-  it("purge action refuses a credential that is not the operator (hard 403)", async () => {
-    // Not the operator key, which is what makes this a test rather than a
-    // tautology. The wide type map is there so the refusal cannot be
-    // mistaken for a narrow one.
-    const rawKey = `marfa_k1_purge_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "purge-bounded",
-        source: `purge-bounded-${rawKey.slice(-6)}`,
-        type_permissions: { "*": "write" },
-      },
-      keyHash,
-    );
+  it("purge action requires items.purge (hard 403)", async () => {
+    // A wide type map cannot substitute for the explicit purge permission.
+    let rawKey = `marfa_k1_purge_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "purge-bounded",
+      permissions: [],
+      source: `purge-bounded-${rawKey.slice(-6)}`,
+      type_permissions: { "*": "write" },
+    });
 
     const { initialStatus } = await runBulkActionAsync(
       ctx,
@@ -580,15 +579,17 @@ describe("GET and POST /items/bulk-actions/jobs/:id", () => {
     // Two ordinary credentials, because that is the only shape the 403
     // branch has left: an operator key reaches every job, and no permission
     // a sibling can hold opens another credential's job to it.
-    const ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
-    await ctx.storage.keys.create(
-      {
-        label: "job-owner",
-        source: `job-owner-${ownerKey.slice(-6)}`,
-        type_permissions: { "*": "write" },
-      },
-      hashApiKey(ownerKey, "test-salt"),
-    );
+    let ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
+    ownerKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "job-owner",
+      source: `job-owner-${ownerKey.slice(-6)}`,
+      type_permissions: { "*": "write" },
+    });
 
     const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
       key: ownerKey,
@@ -601,16 +602,17 @@ describe("GET and POST /items/bulk-actions/jobs/:id", () => {
     expect(postRes.status).toBe(202);
     const queued = (await postRes.json()) as { id: string };
 
-    const rawKey = `marfa_k1_foreign_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "foreign-sibling",
-        source: `foreign-${rawKey.slice(-6)}`,
-        type_permissions: { "*": "read" },
-      },
-      keyHash,
-    );
+    let rawKey = `marfa_k1_foreign_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "foreign-sibling",
+      source: `foreign-${rawKey.slice(-6)}`,
+      type_permissions: { "*": "read" },
+    });
 
     const getRes = await request(
       ctx.app,

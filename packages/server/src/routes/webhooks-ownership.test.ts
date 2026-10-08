@@ -8,6 +8,7 @@
  * a URL a delivery could be sent to and a secret that signs something.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -16,7 +17,6 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -121,7 +121,7 @@ describe("a subscription another credential registered", () => {
   });
 
   it("is the same credential to every token of the sign-in that registered it, and to no other sign-in", async () => {
-    const seeded = await seedOauthBearer(ctx.storage, [
+    const seeded = await seedOauthBearer(ctx, [
       "content:read",
       "webhooks.manage",
     ]);
@@ -159,7 +159,7 @@ describe("a subscription another credential registered", () => {
     );
     expect(viaRefresh.status).toBe(200);
 
-    const other = await seedOauthBearer(ctx.storage, [
+    const other = await seedOauthBearer(ctx, [
       "content:read",
       "webhooks.manage",
     ]);

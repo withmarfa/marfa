@@ -14,14 +14,13 @@
  *  - `versions` is opt-in.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
-  TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { HYDRATE_PER_TYPE_CAP } from "./_edges-hydrate.js";
 
 let ctx: TestContext;
@@ -39,21 +38,21 @@ async function mintKey(
   } = {},
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_detail_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label,
-      source: `${label}-${suffix}`,
-      // No permission is named because no door here asks for one: the
-      // item read, the edge writes and the neighbor hydration are all decided
-      // by the two maps below.
-      default_tier: "library",
-      type_permissions: opts.type_permissions ?? { "*": "write" },
-      edge_permissions: opts.edge_permissions ?? { "*": "write" },
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  let raw = `marfa_k1_detail_${suffix}`;
+  raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label,
+    source: `${label}-${suffix}`,
+    // No permission is named because no door here asks for one: the
+    // item read, the edge writes and the neighbor hydration are all decided
+    // by the two maps below.
+    default_tier: "library",
+    type_permissions: opts.type_permissions ?? { "*": "write" },
+    edge_permissions: opts.edge_permissions ?? { "*": "write" },
+  });
   return raw;
 }
 

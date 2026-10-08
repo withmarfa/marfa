@@ -5,9 +5,9 @@ import { setImmediate } from "node:timers";
 import { createGunzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import { createTestContext, request } from "../test-utils.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 let ctx: TestContext;
 beforeEach(async () => {
@@ -107,7 +107,8 @@ function restore(target: TestContext, archive: Buffer) {
   return target.app.request("/restore", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${target.operatorKey}`,
+      cookie: target.owner.cookie,
+      origin: new URL(target.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,

@@ -6,17 +6,17 @@
  * witness beside it: the same bytes, named by a writer that sent them,
  * carry the size.
  */
+import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { initEventLog } from "../pubsub.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   mintWorkingKey,
   request,
   runBulkActionAsync,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 let seq = 0;
@@ -453,7 +453,8 @@ describe("an archive restore", () => {
       const restored = await target.app.request("/restore", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${target.operatorKey}`,
+          cookie: target.owner.cookie,
+          origin: new URL(target.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: archive,

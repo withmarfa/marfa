@@ -12,15 +12,15 @@
  * all, which is the fail-closed direction and still wrong. Each case names a
  * type that must survive as well as one that must not.
  */
-import { describe, it, expect, afterAll } from "vitest";
+import type { ApiKey, TypePermission } from "@withmarfa/shared";
 import {
   GLOBAL_TYPE_WILDCARD,
+  matchesTypeFilter,
   registerTypeSchema,
   resolveTypePermission,
   unregisterTypeSchema,
 } from "@withmarfa/shared";
-import type { ApiKey, TypePermission } from "@withmarfa/shared";
-import { matchesTypeFilter } from "@withmarfa/shared";
+import { afterAll, describe, expect, it } from "vitest";
 import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
 const SECRET = "user.secret";
@@ -33,7 +33,7 @@ function memberKey(type_permissions: Record<string, TypePermission>): ApiKey {
     label: "test",
     source: "test",
     default_tier: "library",
-    is_operator: false,
+
     type_permissions,
     extension_permissions: {},
     edge_permissions: {},

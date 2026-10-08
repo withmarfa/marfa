@@ -23,14 +23,9 @@
  * assertion that only checks the withheld type is absent passes on a surface
  * returning nothing at all.
  */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 const KEPT = "user.kept_note";
 const WITHHELD = "user.withheld_note";
@@ -78,17 +73,18 @@ afterAll(async () => {
  */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `marfa_k1_excl_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `excl-${suffix}`,
-      source: `excl-${suffix}`,
-      type_permissions,
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  let raw = `marfa_k1_excl_${suffix}`;
+  raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `excl-${suffix}`,
+    source: `excl-${suffix}`,
+    type_permissions,
+    default_tier: "library",
+  });
   return raw;
 }
 

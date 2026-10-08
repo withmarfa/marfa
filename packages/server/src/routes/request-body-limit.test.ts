@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createGzip } from "node:zlib";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext } from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../test-utils.js";
 
 // Global request-body cap is small here so an oversized JSON write is cheap
 // to construct, and so a blob well over it is cheap too: a blob upload has
@@ -143,7 +143,8 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,

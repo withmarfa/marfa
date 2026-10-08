@@ -12,14 +12,14 @@
  * which is many-to-many with `["*"]` on both ends: the one core edge type
  * for which the missing validation would make no observable difference.
  */
-import { createGzip } from "node:zlib";
-import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
-import { describe, expect, it, afterAll, afterEach } from "vitest";
+import { Readable } from "node:stream";
+import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { createTestContext } from "../test-utils.js";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { createTestContext } from "../test-utils.js";
 
 const contexts: TestContext[] = [];
 
@@ -123,7 +123,8 @@ async function restoreInto(
   return ctx.app.request(`/restore`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,

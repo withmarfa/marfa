@@ -1,16 +1,16 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
 import type { Edge, Item } from "@withmarfa/shared";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
 import { IDEMPOTENT_WRITE_DOORS } from "../middleware/idempotency.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import { writeItem } from "../storage/item-write.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { writeItem } from "../storage/item-write.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 let ctx: TestContext;
 let sequence = 0;
@@ -225,11 +225,11 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
 async function changeGrants(
   id: string,
   body: Record<string, unknown>,
-  credential = ctx.workingKey,
 ): Promise<void> {
-  const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-    key: credential,
-    body,
+  const res = await ctx.ownerRequest(`/keys/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
   expect(res.status, await res.clone().text()).toBe(200);
 }
@@ -379,7 +379,7 @@ it("retains a conflict's current and ancestor without handing either to a narrow
 });
 
 it("applies a narrower OAuth grant to the same durable receipt identity", async () => {
-  const oauth = await seedOauthBearer(ctx.storage, ["core.note:write"]);
+  const oauth = await seedOauthBearer(ctx, ["core.note:write"]);
   const item = await note();
   const body = {
     version: item.version,
@@ -545,7 +545,7 @@ it("a queued job refusal does not introduce an internally matched item id", asyn
 it("an undisclosed subject source is omitted from a replay refusal", async () => {
   const key = await actor();
   const source = `replay-subject-${String(sequence++)}`;
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   const made = await request(ctx.app, "POST", "/items", {
     key: key.key,
     body: {
@@ -575,7 +575,7 @@ it("an undisclosed subject source is omitted from a replay refusal", async () =>
   const original = await first.text();
   expect(original).not.toContain(source);
   const stored = await receipt(key.id, headers["Idempotency-Key"]);
-  await changeGrants(key.id, { sources: [] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [] });
   const mark = await ctx.storage.eventLog.getMaxId();
   const denied = await ask();
   expect(denied.status).toBe(403);
@@ -585,7 +585,7 @@ it("an undisclosed subject source is omitted from a replay refusal", async () =>
   expect(refusal).not.toContain(source);
   expect(await receipt(key.id, headers["Idempotency-Key"])).toEqual(stored);
   expect(await ctx.storage.eventLog.getMaxId()).toBe(mark);
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   const restored = await ask();
   expect(restored.status).toBe(400);
   expect(restored.headers.get("Idempotency-Replayed")).toBe("true");
@@ -595,7 +595,7 @@ it("an undisclosed subject source is omitted from a replay refusal", async () =>
 it("a disclosed subject source is not named after current row-read loss", async () => {
   const key = await actor();
   const source = `replay-visible-subject-${String(sequence++)}`;
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   const made = await request(ctx.app, "POST", "/items", {
     key: key.key,
     body: {
@@ -625,11 +625,10 @@ it("a disclosed subject source is not named after current row-read loss", async 
     source,
     identifierDisclosed: true,
   });
-  await changeGrants(
-    key.id,
-    { sources: [], type_permissions: { "core.task": "read" } },
-    ctx.operatorKey,
-  );
+  await changeGrants(key.id, {
+    sources: [],
+    type_permissions: { "core.task": "read" },
+  });
   const mark = await ctx.storage.eventLog.getMaxId();
   const hidden = await ask();
   expect(hidden.status).toBe(404);
@@ -645,7 +644,7 @@ it("a disclosed subject source is not named after current row-read loss", async 
     error: { details: Record<string, unknown> };
   };
   expect(refusal.error.details).toEqual({ source });
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   expect(await (await ask()).text()).toBe(original);
 });
 
@@ -828,7 +827,7 @@ it("captures concurrent credentials independently", async () => {
 it("reauthorizes a named source claim independently of readable item data", async () => {
   const key = await actor();
   const source = `claimed-${String(sequence++)}`;
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   const body = {
     type: "core.note",
     source,
@@ -840,9 +839,9 @@ it("reauthorizes a named source claim independently of readable item data", asyn
   const first = await ask();
   expect(first.status).toBe(201);
   const original = await first.text();
-  await changeGrants(key.id, { sources: [] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [] });
   expect((await ask()).status).toBe(403);
-  await changeGrants(key.id, { sources: [source] }, ctx.operatorKey);
+  await changeGrants(key.id, { sources: [source] });
   expect(await (await ask()).text()).toBe(original);
 });
 

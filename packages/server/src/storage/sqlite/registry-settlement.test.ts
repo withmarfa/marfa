@@ -1,28 +1,28 @@
-import { runAuditedTransaction } from "../audited-transaction.js";
-import { sql } from "drizzle-orm";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { join } from "node:path";
 import { createClient, type InStatement } from "@libsql/client";
 import {
   getTypeSchema,
   registerTypeSchema,
-  validateProperties,
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
+  validateProperties,
 } from "@withmarfa/shared";
+import { sql } from "drizzle-orm";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { __resetEventLogForTests, initEventLog } from "../../pubsub.js";
 import {
   createTestContext,
-  request,
   readSse,
   readSseWriting,
+  request,
   type TestContext,
 } from "../../test-utils.js";
+import { runAuditedTransaction } from "../audited-transaction.js";
 import { afterCommit } from "../commit-hooks.js";
-import { initEventLog, __resetEventLogForTests } from "../../pubsub.js";
-import * as registryContext from "./registry-context.js";
-import { createSqliteStorage } from "./index.js";
-import { sqliteRequestContext } from "./request-context.js";
 import { setPlatformDrift } from "../platform-drift.js";
+import { createSqliteStorage } from "./index.js";
+import * as registryContext from "./registry-context.js";
+import { sqliteRequestContext } from "./request-context.js";
 
 const fault = vi.hoisted(() => ({
   mode: "none",
@@ -345,7 +345,7 @@ it.each([false, true])(
     ).toBe(true);
     const remove = () =>
       request(ctx.app, "DELETE", `/platform-types/${retired.id}`, {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       });
     if (rollback)
       await expect(

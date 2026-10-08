@@ -16,13 +16,13 @@
  * How a sign-in's granted scopes reach this same map is not the subject
  * here; `oauth-scope-enforcement.test.ts` covers that projection.
  */
-import { describe, it, expect } from "vitest";
+import type { ApiKey, TypePermission } from "@withmarfa/shared";
 import {
   GLOBAL_TYPE_WILDCARD,
   matchesTypeFilter,
   resolveTypePermission,
 } from "@withmarfa/shared";
-import type { ApiKey, TypePermission } from "@withmarfa/shared";
+import { describe, expect, it } from "vitest";
 import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
 // An ordinary working key: the permission map is the only thing that decides,
@@ -33,7 +33,7 @@ function workingKey(type_permissions: Record<string, TypePermission>): ApiKey {
     label: "test",
     source: "test",
     default_tier: "library",
-    is_operator: false,
+
     type_permissions,
     extension_permissions: {},
     edge_permissions: {},

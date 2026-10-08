@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { __listenerCountForTests, emitWake, initEventLog } from "../pubsub.js";
+import { deriveKey, SECRET_INFO } from "../crypto/derive-key.js";
 import { authMiddleware, hashApiKey, type AppEnv } from "../middleware/auth.js";
 import { createErrorHandler } from "../middleware/error-handler.js";
+import { __listenerCountForTests, emitWake, initEventLog } from "../pubsub.js";
 import {
   createTestContext,
   readSse,
@@ -11,7 +12,6 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
-import { deriveKey, SECRET_INFO } from "../crypto/derive-key.js";
 
 let ctx: TestContext;
 let instanceId: string;
@@ -580,7 +580,7 @@ describe("copy stream snapshot decisions", () => {
   });
   it("keeps the same fence across a real OAuth refresh without consulting the provider adapter", async () => {
     const scopes = ["content:read", "offline_access"];
-    const seeded = await seedOauthBearer(ctx.storage, scopes);
+    const seeded = await seedOauthBearer(ctx, scopes);
     const row = await ctx.storage.oauthProvider!.validateAccessToken(
       hashApiKey(seeded.token.slice("marfa_at_".length), "test-salt"),
     );

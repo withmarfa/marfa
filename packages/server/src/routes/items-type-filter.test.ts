@@ -13,14 +13,9 @@
  *  - The parameter is caller-supplied, so it must be validated against the
  *    pattern grammar before it reaches a predicate at all.
  */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 // Two identifiers that differ only where `LIKE` would treat `_` as a
 // wildcard, plus a child of the underscored one so the subtree half of the
@@ -74,17 +69,18 @@ async function mintScopedKey(
   patterns: Record<string, "read" | "write">,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `marfa_k1_scoped_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `scoped-${suffix}`,
-      source: `scoped-${suffix}`,
-      type_permissions: patterns,
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  let raw = `marfa_k1_scoped_${suffix}`;
+  raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `scoped-${suffix}`,
+    source: `scoped-${suffix}`,
+    type_permissions: patterns,
+    default_tier: "library",
+  });
   return raw;
 }
 

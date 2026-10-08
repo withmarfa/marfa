@@ -1,28 +1,28 @@
-import { fork, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
-import { setFlagsFromString } from "node:v8";
-import { runInNewContext } from "node:vm";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { setImmediate } from "node:timers";
-import { createGzip } from "node:zlib";
-import * as tar from "tar-stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   generateId,
   getEdgeTypeSchema,
   getTypeSchema,
 } from "@withmarfa/shared";
-import { createTestContext, readSse, request } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { fork, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { setImmediate } from "node:timers";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
+import { createGzip } from "node:zlib";
+import * as tar from "tar-stream";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { finishPendingCopyDeletions } from "../housekeeping/blob-delete.js";
 import {
+  __resetEventLogForTests,
   initEventLog,
   subscribeAll,
-  __resetEventLogForTests,
 } from "../pubsub.js";
 import { setBusyBudgetMs } from "../storage/sqlite/connection.js";
-import { finishPendingCopyDeletions } from "../housekeeping/blob-delete.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, readSse, request } from "../test-utils.js";
 import { MAX_ARCHIVE_TEXT_BYTES } from "./restore-archive-read.js";
 
 let ctx: TestContext;
@@ -189,7 +189,8 @@ function restore(archive: Buffer): Promise<Response> {
     ctx.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -588,7 +589,8 @@ describe("POST /restore all or nothing", () => {
         small.app.request("/restore", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${small.operatorKey}`,
+            cookie: small.owner.cookie,
+            origin: new URL(small.config.authBaseUrl).origin,
             "Content-Type": "application/gzip",
           },
           body: archive,
@@ -989,7 +991,8 @@ describe("POST /restore killed partway", () => {
       const answer = fetch(`${first.url}/restore`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -1043,7 +1046,8 @@ describe("POST /restore killed partway", () => {
       const restored = await fetch(`${second.url}/restore`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: archive,

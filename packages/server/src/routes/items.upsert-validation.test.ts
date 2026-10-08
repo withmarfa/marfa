@@ -8,30 +8,27 @@
  * by its natural key, which the validation tests over `POST /items` and
  * `PATCH /items/:id` do not reach.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
 const ITEM_SOURCE = "upsert-validation";
-const RUNTIME_KEY = "marfa_k1_test_upsert_validation";
+let RUNTIME_KEY = "marfa_k1_test_upsert_validation";
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  await ctx.storage.keys.create(
-    {
-      label: "upsert-validation",
-      source: ITEM_SOURCE,
-      type_permissions: { "*": "write" },
-    },
-    hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
-  );
+  RUNTIME_KEY = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: "upsert-validation",
+    source: ITEM_SOURCE,
+    type_permissions: { "*": "write" },
+  });
 });
 
 afterAll(async () => {

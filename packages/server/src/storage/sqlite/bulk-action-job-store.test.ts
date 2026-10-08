@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSqliteStorage } from "./index.js";
-import type { BulkActionJobStore, Storage } from "../interface.js";
+import { afterEach, describe, expect, it } from "vitest";
 import { jobLease } from "../../bulk-actions/checkpoint.js";
 import { BulkActionWorker } from "../../bulk-actions/worker.js";
+import type { BulkActionJobStore, Storage } from "../interface.js";
+import { createSqliteStorage } from "./index.js";
 
 const T0 = Date.now();
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
@@ -103,7 +103,6 @@ describe("SqliteBulkActionJobStore terminal states", () => {
         extension_permissions: {},
         edge_permissions: {},
         default_tier: "library",
-        is_operator: false,
       },
       "worker-key-hash",
     );

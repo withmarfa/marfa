@@ -9,18 +9,18 @@
  * could have carried), and metadata was parsed and discarded.
  */
 
-import { itemWrites } from "../storage/item-writes.js";
 import { createHash } from "node:crypto";
-import { createGunzip, createGzip } from "node:zlib";
 import { Readable } from "node:stream";
-import { describe, expect, it, afterAll } from "vitest";
+import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
+import { afterAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   closeTestContexts,
   createTestContext,
   request,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
   const entries = new Map<string, Buffer>();
@@ -159,7 +159,8 @@ describe("export → restore round trip", () => {
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
+        cookie: destination.owner.cookie,
+        origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -256,7 +257,8 @@ describe("export → restore round trip", () => {
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
+        cookie: destination.owner.cookie,
+        origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: Buffer.from(await exportRes.arrayBuffer()),
@@ -309,7 +311,8 @@ describe("export → restore round trip", () => {
       source.app.request(`/restore`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${source.operatorKey}`,
+          cookie: source.owner.cookie,
+          origin: new URL(source.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -373,7 +376,8 @@ describe("export → restore round trip", () => {
     const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -509,7 +513,8 @@ describe("an archive's blobs", () => {
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
+        cookie: destination.owner.cookie,
+        origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,

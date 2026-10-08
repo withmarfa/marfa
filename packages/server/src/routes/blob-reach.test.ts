@@ -7,9 +7,13 @@
  * a key, nothing lends them before the door under test writes the digest,
  * and a reader that may read every type is refused them until it has.
  */
-import { itemWrites } from "../storage/item-writes.js";
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
+import { collectBlobHashes } from "../storage/blob-utils.js";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -17,11 +21,7 @@ import {
   runBulkActionAsync,
   seedOauthBearer,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
 import { blobPrincipal } from "./_blob-reach.js";
-import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let seq = 0;
@@ -30,7 +30,14 @@ let reader: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  reader = await mintWorkingKey(ctx, { type_permissions: { "*": "read" } });
+  reader = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    type_permissions: { "*": "read" },
+  });
 });
 
 afterAll(async () => {
@@ -331,9 +338,7 @@ describe("a door that writes an item's properties credits its caller's proof", (
   });
 
   it("a signed-in app, through its granted scopes", async () => {
-    const { token: app } = await seedOauthBearer(ctx.storage, [
-      "core.note:write",
-    ]);
+    const { token: app } = await seedOauthBearer(ctx, ["core.note:write"]);
     const { hash } = await sent(app, "sent by an app");
     expect(await read(reader, hash)).toBe(404);
     await note(app, { body: `![x](${hash})` });
@@ -357,10 +362,10 @@ describe("a signed-in app and the blob doors", () => {
       201,
     );
     await note(owner, { body: `see ![it](/blobs/${asNote.hash})` });
-    const { token: noteReader } = await seedOauthBearer(ctx.storage, [
+    const { token: noteReader } = await seedOauthBearer(ctx, [
       "core.note:read",
     ]);
-    const { token: noteWriter } = await seedOauthBearer(ctx.storage, [
+    const { token: noteWriter } = await seedOauthBearer(ctx, [
       "core.note:write",
     ]);
     expect(await read(reader, asFile.hash)).toBe(200);
@@ -601,7 +606,8 @@ describe("what proves holding the bytes", () => {
     const restored = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -709,7 +715,7 @@ describe("what proves holding the bytes", () => {
       label: "l",
       sources: [],
       default_tier: "library" as const,
-      is_operator: false,
+
       type_permissions: {},
       extension_permissions: {},
       edge_permissions: {},

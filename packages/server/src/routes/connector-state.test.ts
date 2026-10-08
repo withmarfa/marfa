@@ -1,11 +1,13 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { itemWrites } from "../storage/item-writes.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { LiveFrame } from "../pubsub.js";
 import {
   __resetEventLogForTests,
   initEventLog,
   subscribeAll,
 } from "../pubsub.js";
-import type { LiveFrame } from "../pubsub.js";
+import type { Connector } from "../storage/interface.js";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
@@ -13,8 +15,6 @@ import {
   settle,
   sweepTrashBefore,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import type { Connector } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -492,7 +492,7 @@ describe("who reaches these doors", () => {
 
   it("refuses an app's session token on every state door and hides the registration", async () => {
     const { key, connector: mine } = await connector();
-    const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
+    const { token } = await seedOauthBearer(ctx, ["openid"]);
     expect(
       (await request(ctx.app, "GET", `/connectors/${mine.id}`, { key: token }))
         .status,

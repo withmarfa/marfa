@@ -1,8 +1,7 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -32,17 +31,17 @@ beforeAll(async () => {
   // the "noter" one.
   const suffix = Math.random().toString(36).slice(2, 10);
   scopedKey = `marfa_k1_ext_scoped_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: SCOPED_LABEL,
-      source: `ext-scoped-${suffix}`,
-      type_permissions: { "*": "write" },
-      extension_permissions: { friends: "read", [SCOPED_LABEL]: "write" },
-      default_tier: "feed",
-      is_operator: false,
-    },
-    hashApiKey(scopedKey, "test-salt"),
-  );
+  scopedKey = await mintWorkingKey(ctx, {
+    permissions: [],
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: SCOPED_LABEL,
+    source: `ext-scoped-${suffix}`,
+    type_permissions: { "*": "write" },
+    extension_permissions: { friends: "read", [SCOPED_LABEL]: "write" },
+    default_tier: "feed",
+  });
 });
 
 afterAll(async () => {
