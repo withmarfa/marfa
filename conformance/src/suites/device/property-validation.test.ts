@@ -27,7 +27,7 @@ const fields = {
   url: { type: "url" },
   object: { type: "object" },
   image: { type: "thumbnail" },
-  annotated: { type: "string", format: "email" },
+  annotated: { type: "string", format: "bcp47" },
 };
 const types = [
   {
@@ -107,7 +107,7 @@ describe("a working copy checks the fields its catalog holds", () => {
         url: " \thttps://example.test\u0000",
         object: {},
         image: "data:image/png;base64,iVBORw0KGgo=",
-        annotated: "not an email",
+        annotated: "not a language tag",
         custom: { anything: true },
       },
     });

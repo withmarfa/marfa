@@ -370,6 +370,40 @@ describe("the server took the write", () => {
     ).toBe("theirs, kept");
   });
 
+  it("holds the row a fresh read returns where it differs from the row the answer carried", async () => {
+    harness = await hydratedHarness("verdicts-fresh-read", { rows: held() });
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 4,
+            properties: { title: "the answer's", body: "held" },
+          }),
+        ),
+      ],
+      // Another device wrote between the answer and the read.
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "the read's", body: "held" },
+          }),
+        ),
+      ],
+    );
+    expect(report.verdicts[0]?.verdict).toBe("accepted");
+    const read = await harness.device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(
+      [read.value.version, read.value.properties.title],
+      "the copy took the row the answer carried over the row the read after it returned",
+    ).toEqual([5, "the read's"]);
+  });
+
   it("conflicted: names the sibling the server wrote", async () => {
     harness = await hydratedHarness("verdicts-conflicted", { rows: held() });
     const sibling = "01a00000-0000-7000-8000-0000000000bb";
@@ -488,6 +522,126 @@ function bodyOf(answer: ReturnType<typeof answers.created>): unknown {
   if (answer.kind !== "json") throw new Error("a json answer has a body");
   return answer.body;
 }
+
+describe("a write the server took is settled once", () => {
+  it("sends nothing again for a write answered accepted, merged or conflicted", async () => {
+    const row = wireItem({ id: HELD.id, version: 4 });
+    for (const [expected, update] of [
+      ["accepted", [answers.updated(row)]],
+      ["merged", [answers.resolved(row, { title: "last_writer_wins" })]],
+      [
+        "conflicted",
+        [
+          answers.resolved(
+            row,
+            { body: "keep_both_copies" },
+            "01a00000-0000-7000-8000-0000000000bb",
+          ),
+        ],
+      ],
+    ] as Array<[string, ScriptedWrites["update"]]>) {
+      const own = await hydratedHarness(`verdicts-once-${expected}`, {
+        rows: held(),
+      });
+      try {
+        const first = await updateAndDrain(own, update, [answers.updated(row)]);
+        expect(first.verdicts[0]?.verdict).toBe(expected);
+        const again = await own.device.drain();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(
+          again.value.verdicts,
+          `a write answered ${expected} was settled again by a later drain`,
+        ).toEqual([]);
+        expect(
+          own.server.requests.filter((request) => request.method === "PATCH"),
+          `a write answered ${expected} was sent again`,
+        ).toHaveLength(1);
+      } finally {
+        await own.stop();
+      }
+    }
+  });
+
+  it("keeps an accepted write accepted, counts nothing and reads it again at the next drain when the read after it fails", async () => {
+    harness = await hydratedHarness("verdicts-read-fails", { rows: held() });
+    const { device, server } = harness;
+    const edited = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    const landed = wireItem({
+      id: HELD.id,
+      version: 4,
+      properties: { title: "edited", body: "held" },
+    });
+    const made = new Map<string, ReturnType<typeof wireItem>>();
+    scriptWrites(server, {
+      update: [answers.updated(landed)],
+      read: [
+        { kind: "drop" },
+        (request) => {
+          const id = request.pathname.split("/").at(-1) ?? "";
+          const row = id === HELD.id ? landed : made.get(id);
+          return row === undefined
+            ? refusal(404, "item_not_found", "no such item")
+            : answers.updated(row);
+        },
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          const row = wireItem({ id: sent.id });
+          made.set(sent.id, row);
+          return answers.created(row);
+        },
+      ],
+    });
+    const first = await device.drain();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect(
+      first.value.verdicts.map((verdict) => [
+        verdict.verdict,
+        verdict.refusals,
+      ]),
+      "a write the server took lost its verdict, or was counted against, because the read after it failed",
+    ).toEqual([["accepted", 0]]);
+    expect(first.value.unavailable).toMatch(/could not be reached/);
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.map((row) => row.verdict)).toEqual([
+      "accepted",
+    ]);
+
+    // A write queued now goes only once the read owed has been made.
+    const behind = await device.create({
+      type: "core.note",
+      properties: { title: "behind", body: "behind" },
+    });
+    expect(behind.ok, JSON.stringify(behind)).toBe(true);
+    const sentBefore = server.requests.length;
+    const second = await device.drain();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    const after = server.requests
+      .slice(sentBefore)
+      .map((request) => `${request.method} ${request.pathname}`)
+      .filter((sent) => sent !== "GET /");
+    expect(
+      after.indexOf(`GET /items/${HELD.id}`),
+      "the next drain sent a write before it made the read the accepted write was owed",
+    ).toBeLessThan(after.indexOf("POST /items"));
+    expect(after.indexOf(`GET /items/${HELD.id}`)).toBeGreaterThanOrEqual(0);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+      "the accepted write was sent again when its read was retried",
+    ).toHaveLength(1);
+    const read = await device.get(HELD.id);
+    expect(
+      read.ok && [read.value.version, read.value.properties.title],
+    ).toEqual([4, "edited"]);
+  });
+});
 
 describe("a conflicted copy names its original", () => {
   const SIBLING = "01a00000-0000-7000-8000-0000000000bb";

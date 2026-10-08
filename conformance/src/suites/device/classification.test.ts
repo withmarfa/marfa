@@ -28,7 +28,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The five, as the contract names them (`queue-and-verdicts.md` 26). */
+/** The five, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
@@ -443,7 +443,97 @@ describe("an environmental failure retries and is never counted", () => {
   });
 });
 
+describe("a failure of the environment past the network itself", () => {
+  it.each([408, 425])("retries a %i without counting it", async (status) => {
+    harness = await hydratedHarness(`class-${String(status)}`, {
+      rows: held(),
+    });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          refusal(status, "try_again", "ask again later"),
+          answers.updated(wireItem({ id: HELD.id, version: 4 })),
+        ],
+      },
+      2,
+    );
+    expect(
+      [
+        reports[0]?.verdicts[0]?.verdict,
+        reports[0]?.verdicts[0]?.refusals,
+        reports[0]?.undelivered,
+      ],
+      `a ${String(status)} was given a verdict or counted against the write, and it says nothing of the write`,
+    ).toEqual([null, 0, 1]);
+    expect(reports[1]?.verdicts[0]?.verdict).toBe("accepted");
+  });
+
+  it("retries a write the server never answers, without counting it", async () => {
+    harness = await hydratedHarness("class-stalled", { rows: held() });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          { kind: "stall" },
+          answers.updated(wireItem({ id: HELD.id, version: 4 })),
+        ],
+      },
+      2,
+    );
+    expect(
+      [
+        reports[0]?.verdicts[0]?.verdict,
+        reports[0]?.verdicts[0]?.refusals,
+        reports[0]?.undelivered,
+      ],
+      "a write whose answer never came was given a verdict or counted against",
+    ).toEqual([null, 0, 1]);
+    expect(reports[0]?.unavailable).not.toBeNull();
+    expect(
+      reports[1]?.verdicts[0]?.verdict,
+      "the write that met a silent server was not sent again once the server answered",
+    ).toBe("accepted");
+  });
+});
+
 describe("a contract failure does not retry", () => {
+  it.each([
+    [405, "method_not_allowed"],
+    [410, "gone"],
+    [413, "payload_too_large"],
+    [409, "edge_exists"],
+    [422, "unprocessable"],
+  ])(
+    "refuses on the first answer a %i %s that names the contract",
+    async (status, code) => {
+      harness = await hydratedHarness(`class-refused-${String(status)}`, {
+        rows: held(),
+      });
+      const reports = await drainAgainst(
+        harness,
+        {
+          update: [refusal(status, code, "refused for good")],
+          read: serverRow(),
+        },
+        2,
+      );
+      expect(
+        [
+          reports[0]?.verdicts[0]?.verdict,
+          reports[0]?.verdicts[0]?.reason,
+          reports[0]?.verdicts[0]?.refusals,
+        ],
+        `a ${String(status)} ${code} naming the contract was retried or counted rather than refused, so the device would loop on a refusal that never changes`,
+      ).toEqual(["refused", code, 0]);
+      expect(
+        harness.server.requests.filter((request) => request.method === "PATCH"),
+        "a refused write was sent again",
+      ).toHaveLength(1);
+      expect(reports[1]?.verdicts).toEqual([]);
+    },
+  );
+
   it("refuses a contract failure on the first answer", async () => {
     harness = await hydratedHarness("class-contract", { rows: held() });
     const [first] = await drainAgainst(harness, {
@@ -666,6 +756,41 @@ describe("the three refusals that park a write", () => {
       "a conflict the server declined to resolve was retried or refused, and this device cannot settle it itself: it reports and stops",
     ).toBe("blocked");
     expect(first?.verdicts[0]?.reason).toBe("conflict_unresolved");
+  });
+
+  it("sends nothing in a later drain for a write blocked conflict_unresolved or key_spent", async () => {
+    for (const [reason, refused] of [
+      ["conflict_unresolved", refusal(409, "version_conflict", "moved")],
+      [
+        "key_spent",
+        refusal(422, "idempotency_key_reused", "answered for another body"),
+      ],
+    ] as const) {
+      const own = await hydratedHarness(`class-passed-over-${reason}`, {
+        rows: held(),
+      });
+      try {
+        const reports = await drainAgainst(own, { update: [refused] }, 3);
+        expect(
+          [reports[0]?.verdicts[0]?.verdict, reports[0]?.verdicts[0]?.reason],
+          "the write was not blocked, so the drains after say nothing of a blocked write",
+        ).toEqual(["blocked", reason]);
+        expect(
+          reports.slice(1).map((report) => [report.answered, report.verdicts]),
+          `a later drain settled a write blocked ${reason} again`,
+        ).toEqual([
+          [0, []],
+          [0, []],
+        ]);
+        expect(
+          own.server.requests.filter((request) => request.method === "PATCH"),
+          `a write blocked ${reason} was sent again by a later drain, to be refused the same way`,
+        ).toHaveLength(1);
+        expect((await queueOf(own))[0]?.reason).toBe(reason);
+      } finally {
+        await own.stop();
+      }
+    }
   });
 });
 
@@ -1639,7 +1764,7 @@ describe("withdrawing a write that can never be sent", () => {
 
     expect((await device.withdraw(setup.create.id)).ok).toBe(true);
     // The edit held for the create carries what a person wrote, so it stays
-    // refused until it is discarded (`queue-and-verdicts.md` 47).
+    // refused until it is discarded (`queue-and-verdicts/clear-keeps-content`).
     const cleared = await device.forget();
     expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
     expect(
