@@ -50,7 +50,7 @@ it.each(["recovery", "change"] as const)(
     const ctx = await createClaimTestApp();
     let resume: (() => void) | undefined;
     let signingIn: Promise<Response> | undefined;
-    const signIn = (password: string, cookie?: string) =>
+    const signIn = async (password: string, cookie?: string) =>
       ctx.app.request(`${origin}/auth/sign-in/email`, {
         method: "POST",
         headers: {
@@ -128,7 +128,7 @@ it("allows a verified sign-in when its incidental owner cookie ends before persi
   const ctx = await createClaimTestApp();
   let resume: (() => void) | undefined;
   let signingIn: Promise<Response> | undefined;
-  const signIn = (cookie?: string) =>
+  const signIn = async (cookie?: string) =>
     ctx.app.request(`${origin}/auth/sign-in/email`, {
       method: "POST",
       headers: {
