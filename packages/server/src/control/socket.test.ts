@@ -127,7 +127,9 @@ it.skipIf(process.env.GITHUB_ACTIONS !== "true")(
     );
     await new Promise<void>((resolve, reject) => {
       witness.once("error", reject);
-      witness.listen(publicPath, () => resolve());
+      witness.listen(publicPath, () => {
+        resolve();
+      });
     });
     const probe = async (target: string) => {
       const { stdout } = await promisify(execFile)(
@@ -160,7 +162,11 @@ it.skipIf(process.env.GITHUB_ACTIONS !== "true")(
       await Promise.all(
         [witness, ...(server ? [server] : [])].map(
           (listener) =>
-            new Promise<void>((done) => listener.close(() => done())),
+            new Promise<void>((done) =>
+              listener.close(() => {
+                done();
+              }),
+            ),
         ),
       );
     }
