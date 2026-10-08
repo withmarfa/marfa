@@ -5,6 +5,7 @@ The container recipe here runs the server with its database streamed off-site an
 ## What runs in the container
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
+- **The `marfa` command**, included at `/usr/local/bin/marfa`, for private setup, key administration and owner recovery. The image defaults to `/data/control/marfa.sock`.
 - **Litestream** (`litestream.yml`), a sidecar in the same container. `entrypoint.sh` restores the database from the bucket when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
 - **The blob folder is the server's own housekeeping.** Litestream carries the database only. The `blob-replicate` housekeeping job (listed at `GET /housekeeping`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
 
@@ -34,12 +35,60 @@ From the repository root:
 
 ```bash
 docker build -f deploy/Dockerfile --build-arg VERSION_SHA=$(git rev-parse HEAD) -t marfa-server .
-docker run --rm -p 8600:8600 -v marfa-data:/data --env-file <your env> marfa-server
+docker run --name marfa -d -p 8600:8600 -v marfa-data:/data --env-file <your-env-file> marfa-server
 ```
 
 `ci.yml` builds this image and boots it through its entrypoint on every pull request that can affect it, and on every push to `main` (`scripts/check-image.sh`): it becomes healthy, reports the commit it was built from, stops with status `0` inside ten seconds, and on a database another build wrote stays up and unhealthy. That run uses no bucket, so the Litestream half is the restore drill's.
 
 Without `S3_BUCKET` the container runs the server alone and says so in its log: nothing is streamed and no object store is attached. That is a local trial, not a deployment.
+
+## Claiming the instance
+
+Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password, then sign in at `/auth/sign-in`. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
+
+The image includes the command. To create a single-use browser setup link from the running container:
+
+```bash
+docker exec marfa marfa --socket /data/control/marfa.sock setup open --no-browser
+```
+
+Open the printed link in your browser. To finish setup in the terminal instead:
+
+```bash
+docker exec -it marfa marfa --socket /data/control/marfa.sock setup claim --email owner@example.com
+```
+
+The password prompt is hidden. For automation, use `docker exec -i` with `setup claim --stdin` and supply a JSON object containing `email`, `password` and optional `name` through standard input. Never put passwords or setup codes in command-line arguments. `setup code` replaces the setup code and invalidates earlier setup sessions; a process restart also replaces it while the instance is unclaimed.
+
+After signing in, open `/auth/owner/manage` for key, app, connector and maintenance controls. `/auth/owner/restore` is the owner's archive restore form. Key creation, key changes and archive restore require a password sign-in within the last five minutes. The private socket provides the same machine authority without an API key. Ordinary keys and OAuth tokens use explicit [permissions](../GLOSSARY.md#permissions); even a credential with all twelve permissions cannot claim machine authority or recover the owner.
+
+## Recovering the owner
+
+Run this under the same operating-system account as the server:
+
+```bash
+docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover
+```
+
+Enter the replacement password at the hidden prompt, or use `owner recover --stdin` with a JSON object containing `password`. Recovery changes the existing owner's password and revokes browser sessions. Ordinary keys and approved app access remain in force.
+
+If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets:
+
+```bash
+docker stop marfa
+docker run -d --name marfa-recovery -v marfa-data:/data \
+  --env-file <your-env-file> marfa-server control-only
+docker exec -it marfa-recovery marfa --socket /data/control/marfa.sock owner recover
+docker stop marfa-recovery
+docker rm marfa-recovery
+docker start marfa
+```
+
+This recovery process opens no public listener and runs no background jobs. Its HTTP health check is expected to fail. Outside a container, set `MARFA_CONTROL_ONLY=true` for the normal server entry point and use the same database, secrets and socket path.
+
+The server creates the socket directory with mode `0700` and the socket with mode `0600`. The directory must belong to the server account; unsafe ownership, permissions, symlinks or access ACLs prevent startup. Linux requires `getfacl`, supplied by the image's `acl` package. Use an absolute normalized socket path without symlink components, no longer than 103 bytes. `--socket` rejects ordinary URL or credential selection and never falls back to HTTP.
+
+A clean shutdown removes its socket. After a crash, an existing socket is refused to prevent taking over another process's listener. Stop every server using that path, verify that none remains, remove the stale socket file, and restart. Do not remove a live socket. Keep the same account and volume ownership when starting recovery.
 
 ## Watching the instance
 
@@ -52,7 +101,7 @@ The image's health check reads `GET /health`, which answers without a credential
 | `disk`           | Measures the room on the volume of the database and of the blobs. | Less than 1 MiB is available.                                       | Less than 64 MiB is available, or the room could not be read.   |
 | `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses.                                             | It gives no answer within two seconds.                          |
 
-A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. The operator key gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
+A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. A credential with `instance.read`, or direct owner or local authority, gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
 
 ## Stopping the instance
 
@@ -70,9 +119,9 @@ Until the first public release, nothing upgrades a database in place. A build wh
 
 To carry your data into a new build:
 
-1. With the running build, take an export: `GET /export?format=archive`, with the operator key.
+1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export.
 2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the last replica onto an empty volume, and that replica is the old build's database, which the new build refuses, so give the new instance a new bucket.
-3. Restore the archive: `POST /restore`, with the operator key.
+3. Claim the new instance, sign in as its owner, and restore the archive at `/auth/owner/restore`. Alternatively, send `POST /restore` through its private socket.
 
 Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `search-and-filters/restore-version` in `conformance/spec/search-and-filters.md` states that promise.
 
@@ -133,7 +182,7 @@ litestream restore -config deploy/litestream.yml -o restored.db -timestamp 2026-
 
 How fine a point can be named depends on its age. Litestream keeps every one-second sync for five minutes, then compacts them into longer segments (thirty seconds, five minutes, an hour), so a moment in the last five minutes is restorable to the second and an older one to the segment that contains it, back as far as the day of snapshots kept. The drill restores to a moment a few seconds old and asserts the item count it wrote before that moment.
 
-Then boot a server on the restored file with the same bucket and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the instance's keys, so no new bootstrap is minted.
+Then boot a server on the restored file with the same bucket and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
 
 ## What a point-in-time restore can and cannot promise
 

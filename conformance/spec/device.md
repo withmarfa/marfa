@@ -1494,7 +1494,13 @@ When `setup claim --stdin` runs, the command MUST read the email, password and s
 
 ### `device/claim-invalid-stdin`
 
-If `setup claim --stdin` reads blank or malformed JSON, then the command MUST refuse it `invalid` and MUST NOT send a claim.
+If `setup claim --stdin` reads blank or malformed JSON, then the command MUST refuse it `invalid`.
+
+**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
+
+### `device/claim-invalid-not-sent`
+
+If `setup claim --stdin` reads blank or malformed JSON, then the command MUST NOT send a claim.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
 
