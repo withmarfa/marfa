@@ -66,7 +66,7 @@ const WRITES: Record<string, string> = {
   SettingsStore: "set claim release",
   EdgeStore: "createRaw updateProperties delete deleteBySource deleteByTarget",
   AuthSessionStore: "deleteExpired",
-  RateLimitStore: "incrementWindow incrementWindows cleanup",
+  RateLimitStore: "incrementWindow incrementWindows cleanup clearSignIn",
   BulkActionJobStore:
     "create claimNext beginChunk checkpointChunk completeOwned failOwned cancel recoverStale gcExpired",
   EnrichmentStore: "upsert delete",
@@ -116,6 +116,8 @@ it("classifies every declared method and every production mutation caller", () =
     if (
       path.startsWith("storage/sqlite/") ||
       path.endsWith(".test.ts") ||
+      path.endsWith(".fixture.ts") ||
+      path === "auth/claim-test-app.ts" ||
       path.startsWith("test-")
     )
       continue;

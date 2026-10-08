@@ -1,14 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createBlobLayer } from "../storage/blob-layer.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
-import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
-import { createApp } from "../app.js";
-import { ensureInstanceId } from "../storage/instance-id.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -39,79 +30,6 @@ describe("authentication", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-  });
-});
-
-describe("bootstrap mode", () => {
-  it("mints the first key on the printed secret and no other credential", async () => {
-    const freshTmpDir = mkdtempSync(join(tmpdir(), "marfa-boot-"));
-    const storage = await createSqliteStorage(join(freshTmpDir, "boot.db"));
-    const instanceId = await ensureInstanceId(storage.settings);
-    const blobs = await createBlobLayer(storage, {
-      blobPath: join(freshTmpDir, "blobs"),
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-    });
-    const app = createApp(
-      storage,
-      blobs,
-      new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
-      {
-        port: 0,
-        sqlitePath: "",
-        blobPath: "",
-        maxRequestBytes: 1_048_576,
-        s3Bucket: "",
-        s3Region: "us-east-1",
-        s3Endpoint: "",
-        s3AccessKeyId: "",
-        s3SecretAccessKey: "",
-        apiKeySalt: "test-salt",
-        corsOrigins: [],
-        rateLimitEnabled: false,
-        enableHsts: false,
-        auditRetentionDays: 90,
-        auditCleanupIntervalMs: 86_400_000,
-        eventLogRetentionHours: 168,
-        versionThinningIntervalMs: 3_600_000,
-        versionRecentDays: 30,
-        versionDailySnapshotDays: 90,
-        versionWeeklySnapshotDays: 365,
-        versionMaxVersions: 500,
-        trashRetentionDays: 60,
-        trashPurgeIntervalMs: 86_400_000,
-        authSessionCleanupIntervalMs: 3_600_000,
-        errorWebhookUrl: "",
-        trustedProxyCidrs: [],
-        authBaseUrl: "http://localhost:0",
-        authSecret: "test-auth-secret",
-        rateLimitDefaultLimit: 1000,
-        rateLimitWindowMs: 60_000,
-      },
-      instanceId,
-    );
-
-    // The one unauthenticated write in the product is bound to the host: the
-    // first mint presents the one-time secret the server printed to its boot
-    // log. This test builds the app directly and never runs that boot path,
-    // so it obtains the secret the way boot does.
-    const bootstrapSecret = await ensureBootstrapSecret(storage);
-    const res = await request(app, "POST", "/keys", {
-      key: bootstrapSecret,
-      body: { label: "operator-key", source: "operator-key" },
-    });
-    expect(res.status).toBe(201);
-    const data = (await res.json()) as Record<string, unknown>;
-    // The instance tier is a flag on the row rather than a rank,
-    // so the seed credential is named by `is_operator`.
-    expect(data.is_operator).toBe(true);
-    expect(data).toHaveProperty("key");
-
-    await storage.close();
-    rmSync(freshTmpDir, { recursive: true, force: true });
   });
 });
 
