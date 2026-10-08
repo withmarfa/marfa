@@ -85,6 +85,7 @@ interface Args {
 export interface BootOptions {
   state: string;
   port?: number;
+  controlOnly?: boolean;
   /**
    * The `NODE_ENV` the server starts under, for a boot meant to be refused
    * over a rule that holds only in one. Left out, the server starts as it
@@ -308,6 +309,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     ...process.env,
     PORT: String(port),
     MARFA_CONTROL_SOCKET: controlSocket,
+    ...(args.controlOnly !== undefined && {
+      MARFA_CONTROL_ONLY: String(args.controlOnly),
+    }),
     MARFA_AUTH_SECRET:
       process.env.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
     SQLITE_PATH: p.db,
@@ -403,6 +407,32 @@ export async function bootUnclaimedServer(
   const started = await startServer(args);
   await waitForHealth(started.url, paths(args.state), started.ended);
   return { url: started.url, controlSocket: started.controlSocket };
+}
+
+/** Starts only the private listener, without provisioning an owner. */
+export async function bootControlServer(
+  args: BootOptions,
+): Promise<{ controlSocket: string }> {
+  const started = await startServer({ ...args, controlOnly: true });
+  const deadline = Date.now() + HEALTH_BUDGET_MS;
+  while (Date.now() < deadline) {
+    if (started.ended()) {
+      throw new Error(
+        `Control-only server ended: ${logTail(paths(args.state).log)}`,
+      );
+    }
+    try {
+      const response = await controlRequest(started.controlSocket, "/health");
+      if (response.status === 200)
+        return { controlSocket: started.controlSocket };
+    } catch {
+      // The private listener has not started yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
+  }
+  throw new Error(
+    `Control-only server did not start: ${logTail(paths(args.state).log)}`,
+  );
 }
 
 export async function bootServer(args: BootOptions): Promise<void> {

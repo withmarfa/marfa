@@ -213,3 +213,9 @@ When the private local command recovers the owner's password, the server MUST pr
 When a credential with `instance.read` requests `GET /metrics`, the server MUST return its instance-wide counters using the schema published for that operation.
 
 **Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
+
+### `instance-claim/control-only-recovery`
+
+Where control-only mode is enabled, when another process holds the configured public HTTP port, the server MUST allow local password recovery through its private control connection.
+
+**Tests:** `compliance/instance-lifecycle.test.ts › recovers the existing owner in control-only mode while the public port is taken`.

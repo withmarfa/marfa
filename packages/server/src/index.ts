@@ -144,11 +144,10 @@ async function main() {
       },
     );
     publicServer.once("error", (error) => {
-      log(
-        "error",
-        "Public listener failed; private control remains available",
-        { error: formatErrorSummary(error) },
-      );
+      log("error", "Public listener failed", {
+        error: formatErrorSummary(error),
+      });
+      shutdown(1);
     });
     // Drain both listeners before storage is closed.
     server = {
@@ -164,7 +163,7 @@ async function main() {
   }
 
   let shuttingDown = false;
-  const shutdown = (): void => {
+  const shutdown = (failureCode: 0 | 1 = 0): void => {
     // A second signal must not restart the sequence. The platform sends
     // SIGTERM and then, shortly after, SIGKILL; some supervisors send SIGTERM
     // twice. Re-entering would re-run every `stop()` and race two exits.
@@ -182,12 +181,16 @@ async function main() {
         globalThis as { __marfaOtelShutdown?: () => Promise<void> }
       ).__marfaOtelShutdown,
     }).then((exitCode) => {
-      process.exit(exitCode);
+      process.exit(failureCode || exitCode);
     });
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => {
+    shutdown();
+  });
+  process.on("SIGINT", () => {
+    shutdown();
+  });
 }
 
 main().catch((err: unknown) => {

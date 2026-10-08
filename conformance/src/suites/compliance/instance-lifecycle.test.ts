@@ -33,6 +33,7 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { parseEnvFile, TEST_OWNER } from "../../utils/target.js";
 import {
   bootServer,
+  bootControlServer,
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
@@ -389,7 +390,9 @@ describe("starting on an image a crash leaves", () => {
           cpSync(server.stateDir, image, {
             recursive: true,
             // What the running process owns rather than what it holds.
-            filter: (source) => !/server\.(pid|log|exit)$/.test(source),
+            filter: (source) =>
+              !/server\.(pid|log|exit)$/.test(source) &&
+              !/\/control-directory$/.test(source),
           });
         },
       });
@@ -564,6 +567,7 @@ describe("copying the data directory one file after another while the instance w
           // its own order.
           filter: (source) =>
             !/server\.(pid|log|exit)$/.test(source) &&
+            !/\/control-directory$/.test(source) &&
             !/marfa\.db(-wal|-shm)?$/.test(source) &&
             !/\/blobs$/.test(source),
         });
@@ -1099,6 +1103,14 @@ describe("starting on a database another build wrote", () => {
         try {
           expect(refused).toMatchObject({ code: 1, signal: null });
           expect(listened(refused)).toBe(false);
+          expect(refused.output).toContain("Shutting down...");
+          const controlDirectory = readFileSync(
+            join(refused.stateDir, "control-directory"),
+            "utf8",
+          ).trim();
+          expect(existsSync(join(controlDirectory, "control.sock"))).toBe(
+            false,
+          );
         } finally {
           await refused.stop();
         }
@@ -1109,6 +1121,54 @@ describe("starting on a database another build wrote", () => {
     FRESH_SERVER_TIMEOUT_MS,
   );
 });
+
+it(
+  "recovers the existing owner in control-only mode while the public port is taken",
+  async () => {
+    const server = await bootFreshServer("lifecycle-control-recovery");
+    const owner = await controlRequest(server.controlSocket, "/owner");
+    expect(owner.status).toBe(200);
+    await stopServer({ state: server.stateDir });
+    const held = await holdPort();
+    try {
+      const local = await bootControlServer({
+        state: server.stateDir,
+        port: held.port,
+      });
+      const recovered = await controlRequest(
+        local.controlSocket,
+        "/_control/owner/recover",
+        {
+          method: "POST",
+          body: { password: "new control-only recovery password" },
+        },
+      );
+      expect(recovered.status).toBe(200);
+      expect(
+        (await controlRequest(local.controlSocket, "/owner")).body,
+      ).toEqual(owner.body);
+      const signIn = (password: string) =>
+        controlRequest(local.controlSocket, "/auth/sign-in/email", {
+          method: "POST",
+          body: { email: TEST_OWNER.email, password },
+        });
+      expect((await signIn(TEST_OWNER.password)).status).toBe(401);
+      expect((await signIn("new control-only recovery password")).status).toBe(
+        200,
+      );
+      const audits = await controlRequest(
+        local.controlSocket,
+        "/audit?action=owner.password.recovered",
+      );
+      expect(audits.status).toBe(200);
+      expect(audits.body.data).toHaveLength(1);
+    } finally {
+      held.server.close();
+      await server.stop();
+    }
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);
 
 /** A port something of this process's is listening on. */
 function holdPort(): Promise<{ port: number; server: Server }> {
