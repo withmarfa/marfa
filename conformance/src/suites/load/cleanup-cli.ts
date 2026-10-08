@@ -10,7 +10,7 @@
  * configured" and "delete everything on the default server" must not be the
  * same command.
  *
- * This is the one filter-based delete in the repository, and it is an operator
+ * This is the one filter-based delete in the repository, and it is a manual
  * command rather than anything a test run reaches. Nothing imports it.
  */
 
@@ -74,9 +74,8 @@ async function cleanupLoadData(
 
 console.log(`Trashing every item tagged env:test on ${apiUrl}...`);
 
-// `MARFA_API_KEY` is the bootstrap key, which the data plane refuses
-// outright; a key it mints carries the whole dataset, which is what this
-// has to sweep.
+// A short-lived descendant gives cleanup its own source while retaining
+// the supplied credential's content reach and minting ceiling.
 const provisioner = new MarfaClient({ baseUrl: apiUrl, apiKey });
 const runId = newRunId();
 const minted = await provisioner.createKey({

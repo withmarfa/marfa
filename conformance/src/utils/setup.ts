@@ -20,8 +20,8 @@ export function requireApiUrl(): string {
 }
 
 /**
- * The key the suite provisions with: the one the bootstrap mint returns, which
- * mints the per-file keys that hold the dataset.
+ * The ordinary provisioning key issued through the private local connection
+ * after the real owner claim. It mints per-file keys within its own reach.
  */
 export function requireApiKey(): string {
   const key = process.env.MARFA_API_KEY;
@@ -82,8 +82,8 @@ export function newRunId(): string {
  * from every other file's inside the one dataset. The key is tracked so
  * `cleanup` revokes it.
  *
- * The per-file key names no permission maps, and the provisioning key's mint is
- * not held to the widening rule, so it takes the whole dataset.
+ * The per-file key names no permission maps, so it inherits the provisioning
+ * key's dataset reach. Its source identifies this file's writes.
  */
 export async function createTestContext(
   suite: string,
@@ -486,7 +486,7 @@ export async function cleanup(ctx: TestContext): Promise<void> {
   }
   outcomes.push(mergeOutcomes("Type", typeLevels));
   // Before the keys go: a registration stands after its key is revoked
-  // (`connectors/revoked-registration-stays`), and only the operator can remove another key's.
+  // (`connectors/revoked-registration-stays`); removing another key's needs connectors.manage.
   outcomes.push(await removeTrackedRegistrations(ctx));
   outcomes.push(
     await deleteAll(ctx.trackedKeys, (id) => provisioner.revokeKey(id), "Key"),
@@ -516,8 +516,8 @@ export async function removeTrackedRegistrations(
   if (ctx.trackedKeys.length === 0 || !process.env.MARFA_MANAGEMENT_KEY) {
     return { kind, failed: 0, total: 0 };
   }
-  const operator = getManagementClient();
-  const listed = await operator.listConnectors();
+  const management = getManagementClient();
+  const listed = await management.listConnectors();
   if (!listed.ok) {
     console.warn(
       `${kind} cleanup could not list registrations (status ${String(listed.status)}).`,
@@ -527,7 +527,7 @@ export async function removeTrackedRegistrations(
   const mine = listed.data.data
     .filter((row) => ctx.trackedKeys.includes(row.key_id))
     .map((row) => row.id);
-  return deleteAll(mine, (id) => operator.deleteConnector(id), kind);
+  return deleteAll(mine, (id) => management.deleteConnector(id), kind);
 }
 
 /**
