@@ -31,7 +31,10 @@ vi.mock("better-auth", async (importOriginal) => {
               expect(transactionControl.getStore()).toBeUndefined();
               await probe.availableWriter();
               probe.verifies++;
-              return crypto.verifyPassword(input);
+              const verify = options.emailAndPassword?.password?.verify;
+              if (!verify)
+                throw new Error("The configured password verifier is required");
+              return verify(input);
             },
           },
         },

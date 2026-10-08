@@ -15,6 +15,7 @@ interface CredentialRequest {
   phase?: CredentialPersistencePhase;
   registrationScopes?: string[];
   email?: string;
+  verifiedPasswordHash?: string;
   /** Scopes a device initiation names beyond the client's stored ceiling. The
    *  plugin's exact-membership check reads them as held for this request only;
    *  nothing is written until a signed-in person approves. */
@@ -267,6 +268,28 @@ export function withCredentialAudit<
           runAuditedTransaction(
             storage,
             async () => {
+              if (
+                operation === "create" &&
+                args.model === "session" &&
+                request?.path === "/sign-in/email"
+              ) {
+                // Password work happens before this writer. A change or recovery
+                // that committed meanwhile must prevent this session's creation.
+                const userId = args.data?.userId;
+                const account = (await adapter.findOne({
+                  model: "account",
+                  where: [
+                    { field: "userId", value: userId },
+                    { field: "accountId", value: userId },
+                    { field: "providerId", value: "credential" },
+                  ],
+                })) as { password?: unknown } | null;
+                if (
+                  !request.verifiedPasswordHash ||
+                  account?.password !== request.verifiedPasswordHash
+                )
+                  return null;
+              }
               if (operation === "delete")
                 previous = await adapter.findOne(args);
               const matched =

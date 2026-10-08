@@ -11,6 +11,7 @@ import {
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry } from "../storage/interface.js";
 import { betterAuth } from "better-auth";
+import { hashPassword, verifyPassword } from "better-auth/crypto";
 import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
@@ -358,6 +359,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       : {}),
     emailAndPassword: {
       enabled: true,
+      password: {
+        hash: hashPassword,
+        verify: async (input) => {
+          const verified = await verifyPassword(input);
+          const request = credentialRequest.getStore();
+          if (request?.path === "/sign-in/email")
+            request.verifiedPasswordHash = verified ? input.hash : undefined;
+          return verified;
+        },
+      },
       // Auto-sign-in keeps the consent flow seamless when an account
       // approves an OAuth client on first visit.
       autoSignIn: true,
