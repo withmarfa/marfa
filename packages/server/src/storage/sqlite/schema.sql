@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`source` text NOT NULL,
 	`sources` text DEFAULT '[]' NOT NULL,
 	`default_tier` text DEFAULT 'library' NOT NULL,
-	`is_operator` integer DEFAULT false NOT NULL,
 	`permissions` text DEFAULT '[]' NOT NULL,
 	`type_permissions` text DEFAULT '{"*":"write"}' NOT NULL,
 	`extension_permissions` text DEFAULT '{}' NOT NULL,
@@ -25,15 +24,7 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`created_at` text NOT NULL,
 	`expires_at` text,
 	`revoked_at` text,
-	`last_used_at` text,
-	CONSTRAINT "api_keys_operator_holds_nothing" CHECK("api_keys"."is_operator" <> 1 OR (
-        "api_keys"."type_permissions" = '{}' AND
-        "api_keys"."edge_permissions" = '{}' AND
-        "api_keys"."metadata_permissions" = '{}' AND
-        "api_keys"."extension_permissions" = '{}' AND
-        "api_keys"."profile_permissions" = '{}' AND
-        "api_keys"."permissions" = '[]' AND
-        "api_keys"."sources" = '[]'))
+	`last_used_at` text
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);

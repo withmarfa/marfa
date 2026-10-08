@@ -1,14 +1,9 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { itemWrites } from "../storage/item-writes.js";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { generateId } from "@withmarfa/shared";
 import type { Metadata } from "@withmarfa/shared";
+import { generateId } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 /** Hydrated item shape on the wire: base Item plus optional include extras. */
 interface HydratedItem {
@@ -155,17 +150,18 @@ describe("POST /items/bulk-get", () => {
     // A key that can read core.note but not core.bookmark. The type map is
     // the whole of what it can read.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_bulkget_narrow_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `bulkget-narrow-${suffix}`,
-        source: `bulkget-narrow-${suffix}`,
-        type_permissions: { "core.note": "read" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(rawKey, TEST_API_KEY_SALT),
-    );
+
+    const rawKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: `bulkget-narrow-${suffix}`,
+      source: `bulkget-narrow-${suffix}`,
+      type_permissions: { "core.note": "read" },
+      default_tier: "library",
+    });
 
     const noteRes = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
@@ -217,10 +213,8 @@ describe("POST /items/bulk-get and the system token", () => {
     });
     expect(note.status).toBe(201);
     const { item: n } = (await note.json()) as { item: { id: string } };
-    // The system row goes in through storage: a reserved namespace is fenced
-    // to the operator key, whose own type permissions are empty, so no
-    // credential writes one. What this door does with the row afterwards is
-    // the same either way.
+    // The fixture models a platform-owned row, which no public credential
+    // can create through the item write API.
     const folder = await itemWrites(ctx.storage).create({
       type: "system.folder",
       properties: { title: `bulk-sys-${marker}` },

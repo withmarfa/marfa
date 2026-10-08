@@ -1,46 +1,25 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
-  chooseCredentials,
   maskInActions,
   parseEnvFile,
-  readBootstrapSecret,
-  redactBootstrapSecret,
+  redactSetupProof,
   renderEnvFile,
 } from "./target.js";
 
-const SECRET = "a".repeat(64);
-const BOOT_LINE = JSON.stringify({
-  level: "warn",
-  message: `This instance holds no credential yet. Mint the first one with \`marfa --url <url> keys bootstrap\` and write this bootstrap secret on its stdin: ${SECRET}. This secret works once and is not shown again after that mint. Nobody can sign in until the instance also has an owner: create one with \`marfa owner create\`, using the operator key.`,
-});
+const credentials = {
+  apiKey: "marfa_k1_working",
+  managementKey: "marfa_k1_management",
+  controlSocket: "/tmp/marfa-control-fixture/control.sock",
+  ownerCookie: "marfa.auth.session_token=fixture",
+};
 
-describe("readBootstrapSecret", () => {
-  it("reads the secret out of the JSON log line the server prints", () => {
-    const log = `{"level":"info","message":"starting"}\n${BOOT_LINE}\n`;
-    expect(readBootstrapSecret(log)).toBe(SECRET);
-  });
-
-  it("answers undefined for a log with no bootstrap line", () => {
-    expect(
-      readBootstrapSecret('{"level":"info","message":"listening"}\n'),
-    ).toBeUndefined();
-  });
-
-  it("does not mistake a shorter hex run for the secret", () => {
-    expect(
-      readBootstrapSecret(`bootstrap secret on its stdin: ${"b".repeat(40)}`),
-    ).toBeUndefined();
-  });
-});
-
-describe("redactBootstrapSecret", () => {
-  it("leaves no secret in a log that held one", () => {
-    const log = `{"level":"info","message":"starting"}\n${BOOT_LINE}\n`;
-    expect(readBootstrapSecret(log)).toBe(SECRET);
-    const redacted = redactBootstrapSecret(log);
-    expect(redacted).not.toContain(SECRET);
-    expect(redacted).toContain("on its stdin: [redacted]");
-    expect(readBootstrapSecret(redacted)).toBeUndefined();
+describe("redactSetupProof", () => {
+  it("removes the setup proof and preserves surrounding diagnostic text", () => {
+    const code = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEEE";
+    const log = `starting\nMarfa setup code: ${code}\nlistening`;
+    expect(redactSetupProof(log)).toBe(
+      "starting\nMarfa setup code: [redacted]\nlistening",
+    );
   });
 });
 
@@ -72,40 +51,38 @@ describe("maskInActions", () => {
   });
 });
 
-describe("chooseCredentials", () => {
-  it("runs as the one key the mint returns", () => {
-    const creds = chooseCredentials({ key: "marfa_k1_only" });
-    expect(creds).toEqual({
-      apiKey: "marfa_k1_only",
-      operatorKey: "marfa_k1_only",
-    });
-  });
-
-  it("refuses a response with no key at all", () => {
-    expect(() => chooseCredentials({ key: "" })).toThrow(/no usable key/);
-  });
-});
-
 describe("env file", () => {
   it("round-trips through the shell-sourceable format", () => {
-    const text = renderEnvFile("http://127.0.0.1:8600", {
-      apiKey: "marfa_k1_working",
-      operatorKey: "marfa_k1_operator",
-    });
+    const text = renderEnvFile("http://127.0.0.1:8600", credentials);
     expect(text).toBe(
-      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_OPERATOR_KEY=marfa_k1_operator\n",
+      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_MANAGEMENT_KEY=marfa_k1_management\nMARFA_CONTROL_SOCKET=/tmp/marfa-control-fixture/control.sock\nMARFA_OWNER_COOKIE=marfa.auth.session_token=fixture\n",
     );
     expect(parseEnvFile(text)).toEqual({
       MARFA_API_URL: "http://127.0.0.1:8600",
       MARFA_API_KEY: "marfa_k1_working",
-      MARFA_OPERATOR_KEY: "marfa_k1_operator",
+      MARFA_MANAGEMENT_KEY: "marfa_k1_management",
+      MARFA_CONTROL_SOCKET: credentials.controlSocket,
+      MARFA_OWNER_COOKIE: credentials.ownerCookie,
     });
+  });
+
+  it("names the protected shared session without exporting the server secret setting", () => {
+    const env = parseEnvFile(
+      renderEnvFile("http://127.0.0.1:8600", {
+        ...credentials,
+        ownerSessionFile: "/state/owner-session.json",
+        authSecret: "fixture-secret",
+      }),
+    );
+    expect(env.MARFA_OWNER_SESSION_FILE).toBe("/state/owner-session.json");
+    expect(env.MARFA_FIXTURE_AUTH_SECRET).toBe("fixture-secret");
+    expect(env.MARFA_AUTH_SECRET).toBeUndefined();
   });
 
   it("names the booted server's disk store when given one", () => {
     const text = renderEnvFile(
       "http://127.0.0.1:8600",
-      { apiKey: "marfa_k1_working", operatorKey: "marfa_k1_operator" },
+      credentials,
       "/state/blobs",
     );
     expect(parseEnvFile(text).MARFA_BLOB_PATH).toBe("/state/blobs");
@@ -114,7 +91,7 @@ describe("env file", () => {
   it("names where a fixture's own server leaves its log when given one", () => {
     const text = renderEnvFile(
       "http://127.0.0.1:8600",
-      { apiKey: "marfa_k1_working", operatorKey: "marfa_k1_operator" },
+      credentials,
       "/state/blobs",
       "/state/fresh-server-logs",
     );

@@ -134,7 +134,7 @@ describe("the server's log", () => {
     const marker = sentinel("marker");
     const read = await fetch(`${server.apiUrl}/connectors/${roomy.id}`, {
       headers: {
-        Authorization: `Bearer ${server.operatorKey}`,
+        Authorization: `Bearer ${server.managementKey}`,
         "X-Request-ID": marker,
       },
     });

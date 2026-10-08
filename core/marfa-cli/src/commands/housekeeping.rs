@@ -8,9 +8,9 @@ use crate::remote::request::Request;
 #[derive(Debug, Subcommand)]
 pub enum HousekeepingCommand {
     /// Every housekeeping job the server runs on itself: its cadence, when
-    /// it is next due, and what its last run did. Operator key only.
+    /// it is next due, and what its last run did. Requires `instance.read`.
     List,
-    /// Run one housekeeping job now and report what it did. Operator key only.
+    /// Run one housekeeping job now and report what it did. Requires `instance.maintain`.
     Run {
         /// The housekeeping job's name, as `housekeeping list` shows it.
         name: String,

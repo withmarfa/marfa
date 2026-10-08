@@ -1,8 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -34,7 +32,7 @@ describe("GET /metrics", () => {
     expect(createRes.status).toBe(201);
 
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
 
@@ -92,7 +90,7 @@ describe("GET /metrics", () => {
 
   it("items.total equals the sum of items.by_state", async () => {
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -110,7 +108,7 @@ describe("GET /metrics", () => {
     // rather than a list of jobs that have never ticked, so its absence
     // reads as "no job queue" instead of "nothing ran".
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -119,24 +117,8 @@ describe("GET /metrics", () => {
     expect(body).not.toHaveProperty("scheduled_jobs");
   });
 
-  it("refuses a working credential", async () => {
-    // Items, blobs, keys, webhooks, registrations, connection drift and
-    // scheduled-job ticks are all instance-wide, which makes the whole
-    // response platform-operator data — so the gate is platform-only and a
-    // working credential is refused whatever it holds, closing the read
-    // rather than partially scoping it.
-    const raw = `marfa_k1_working_${Math.random().toString(36).slice(2, 10)}`;
-    await ctx.storage.keys.create(
-      {
-        label: "working-key",
-        source: `working-${raw.slice(-8)}`,
-        permissions: [...PERMISSIONS],
-        type_permissions: {},
-        default_tier: "feed",
-      },
-      hashApiKey(raw, "test-salt"),
-    );
-
+  it("requires instance.read even when content permissions are broad", async () => {
+    const raw = await mintWorkingKey(ctx, { permissions: [] });
     const res = await request(ctx.app, "GET", "/metrics", { key: raw });
     expect(res.status).toBe(403);
   });

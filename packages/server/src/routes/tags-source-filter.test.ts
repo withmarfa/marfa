@@ -3,16 +3,11 @@
  * facet of does: a tag carried only by rows the lever hides is not listed,
  * and one carried by both kinds counts the approved rows alone.
  */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { writeInstanceConfig } from "../storage/instance-config.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { writeInstanceConfig } from "../storage/instance-config.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 let trustedKey: string;
@@ -22,19 +17,18 @@ const hidden = `hidden-${run}`;
 const shared = `shared-${run}`;
 const open = `open-${run}`;
 
-async function mintWorkingKey(source: string): Promise<string> {
-  const raw = `marfa_k1_tag_${source}_${run}`;
-  await ctx.storage.keys.create(
-    {
-      label: `tags-source-filter-${source}`,
-      source,
-      permissions: [...PERMISSIONS],
-      type_permissions: { "*": "write" },
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+async function mintSourceKey(source: string): Promise<string> {
+  const raw = await mintWorkingKey(ctx, {
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `tags-source-filter-${source}`,
+    source,
+    permissions: [...PERMISSIONS],
+    type_permissions: { "*": "write" },
+    default_tier: "library",
+  });
   return raw;
 }
 
@@ -63,8 +57,8 @@ async function tagCounts(): Promise<Record<string, number>> {
 
 beforeAll(async () => {
   ctx = await createTestContext({});
-  trustedKey = await mintWorkingKey("trusted");
-  untrustedKey = await mintWorkingKey("untrusted");
+  trustedKey = await mintSourceKey("trusted");
+  untrustedKey = await mintSourceKey("untrusted");
   await write(trustedKey, "core.note", [shared]);
   await write(untrustedKey, "core.note", [shared, hidden]);
   await write(untrustedKey, "core.bookmark", [open]);

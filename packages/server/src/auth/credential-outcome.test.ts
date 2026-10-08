@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { InStatement } from "@libsql/client";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import { request } from "../test-utils.js";
+import { createClaimTestApp } from "./claim-test-app.js";
+type TestContext = Awaited<ReturnType<typeof createClaimTestApp>>;
 
 const fault = vi.hoisted(() => ({
   mode: "none",
@@ -67,9 +69,11 @@ for (const door of ["owner", "session"] as const) {
   it.each(["before", "after", "unknown"])(
     `withholds an unconfirmed ${door} response after %s commit acknowledgment`,
     async (mode) => {
-      ctx = await createTestContext();
+      ctx = await createClaimTestApp("http://localhost:0");
       const owner = () =>
-        request(ctx!.app, "POST", "/owner", { key: ctx!.operatorKey, body });
+        request(ctx!.app, "POST", "/owner", {
+          body: { ...body, code: ctx!.setupCode },
+        });
       if (door === "session") expect((await owner()).status).toBe(201);
       const submit =
         door === "owner"
@@ -85,7 +89,7 @@ for (const door of ["owner", "session"] as const) {
         );
       fault.mode = mode;
       fault.action =
-        door === "owner" ? "owner.created" : "auth.sign_in.success";
+        door === "owner" ? "owner.claimed" : "auth.sign_in.success";
       const response = await submit();
       expect(fault.fired).toBe(true);
       expect(fault.inserts).toBe(1);
@@ -106,9 +110,7 @@ for (const door of ["owner", "session"] as const) {
           ).json(),
         ).not.toBeNull();
       }
-      const db = ctx.storage as typeof ctx.storage & {
-        __sqliteAll(sql: string): Promise<unknown[]>;
-      };
+      const db = ctx.storage;
       expect(
         await db.__sqliteAll(
           `SELECT id FROM auth_${door === "owner" ? "user" : "session"}`,

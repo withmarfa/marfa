@@ -1,22 +1,22 @@
 # Housekeeping
 
-The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. One scheduler runs them all. The operator can list the jobs, see when each is next due and what its last run did, and run any job now.
+The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. One scheduler runs them all. Listing uses `instance.read`; running a job uses `instance.maintain`.
 
 ## The housekeeping jobs
 
 ### `housekeeping/list-jobs`
 
-When the operator key sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_ms`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_ms`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
 
 **Reason:** what runs, when it is next due and what its last run did are answered in one place.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`.
+**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/management-grants.test.ts › instance.read grants reports to keys and apps without granting maintenance`.
 
 ### `housekeeping/list-operator-only`
 
-When a credential other than the operator key sends `GET /housekeeping`, the server MUST answer `403 forbidden`.
+When a key or app token lacking `instance.read` sends `GET /housekeeping`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/housekeeping.test.ts › refuses the listing to a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`.
+**Tests:** `compliance/housekeeping.test.ts › refuses the listing to a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`, `compliance/management-grants.test.ts › instance.read grants reports to keys and apps without granting maintenance`.
 
 ### `housekeeping/always-listed`
 
@@ -24,7 +24,7 @@ The server MUST list `trash-purge`, `version-thinning`, `event-log-cleanup`, `au
 
 **Reason:** these jobs have no off switch. A job whose retention `/config` can set still runs when that retention is 0, and keeps everything.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`.
+**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`.
 
 ### `housekeeping/switched-off-not-listed`
 
@@ -36,7 +36,7 @@ Where a setting switches a housekeeping job off, the server MUST leave that job 
 
 The server MUST answer a job's `last_outcome` as `null` until a run of it has finished, and as `ok` or `error` after.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`.
+**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`.
 
 ### `housekeeping/running-since-set`
 
@@ -50,7 +50,7 @@ What the server answers to a run asked for while the same job is running is `err
 
 ### `housekeeping/run-now`
 
-When the operator key sends `POST /housekeeping/{name}/run` naming a job the server runs, the server MUST run that job before it answers, and answer with the run's `name`, `started_at`, `finished_at`, `outcome`, `result` and `error`.
+When a caller authorized by `instance.maintain` or direct owner or local authority sends `POST /housekeeping/{name}/run` naming a job the server runs, the server MUST run that job before it answers, and answer with the run's `name`, `started_at`, `finished_at`, `outcome`, `result` and `error`.
 
 **Tests:** `compliance/housekeeping.test.ts › runs a housekeeping job on demand and the listing records the run`.
 
@@ -76,27 +76,27 @@ When a run finishes, the server MUST hold the job's `next_run_at` later than the
 
 ### `housekeeping/run-unknown-name`
 
-When the operator key asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
+When a caller authorized by `instance.maintain` or direct owner or local authority asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/housekeeping.test.ts › answers 404 for a name the instance does not run, where a listed one runs`.
 
 ### `housekeeping/switched-off-not-run`
 
-Where a setting switches a housekeeping job off, when the operator key asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
+Where a setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/housekeeping.test.ts › leaves a job a setting switches off out of the listing, and answers 404 for it`.
 
 ### `housekeeping/run-malformed-name`
 
-When the operator key asks to run a name that does not match `^[a-z][a-z0-9-]*$`, the server MUST answer `400 validation_error`.
+When a caller authorized by `instance.maintain` or direct owner or local authority asks to run a name that does not match `^[a-z][a-z0-9-]*$`, the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`.
 
 ### `housekeeping/run-operator-only`
 
-When a credential other than the operator key asks to run a housekeeping job, the server MUST answer `403 forbidden`.
+When a key or app token lacking `instance.maintain` asks to run a housekeeping job, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`.
+**Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`, `compliance/management-grants.test.ts › instance.maintain grants maintenance to keys and apps without granting reports`.
 
 ### `housekeeping/runs-concurrent-across-jobs`
 

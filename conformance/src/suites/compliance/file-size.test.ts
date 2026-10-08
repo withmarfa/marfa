@@ -5,7 +5,8 @@ import type { MarfaItem, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
+  getOwnerClient,
   trackItem,
   trackKey,
   trackType,
@@ -249,7 +250,7 @@ describe("a file item carries the size of the bytes it names", () => {
       { name: "edges.ndjson", body: "" },
       { name: "types.ndjson", body: "" },
     ]);
-    const restored = await getOperatorClient().restoreArchive(archive);
+    const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, lentId);
     trackItem(ctx, unlentId);
@@ -257,7 +258,7 @@ describe("a file item carries the size of the bytes it names", () => {
     expect(await sizeOf(lentId)).toBe(lent.length);
     // The instance holds these bytes, and the line did not say they lent.
     expect(
-      (await getOperatorClient().downloadBlob(sha256(unlent))).status,
+      (await getManagementClient().downloadBlob(sha256(unlent))).status,
     ).toBe(200);
     expect(await sizeOf(unlentId)).toBeUndefined();
   });

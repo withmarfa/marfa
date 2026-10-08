@@ -18,12 +18,12 @@ import { join } from "node:path";
 import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
   runBulkActionAsync,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -326,7 +326,8 @@ describe("every item write door holds an event's schedule to one rule", () => {
       ctx.app.request("/restore", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
           "Content-Type": "application/gzip",
         },
         body: archive,

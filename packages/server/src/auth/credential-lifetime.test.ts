@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, expect, it, vi } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import { request } from "../test-utils.js";
+import { createClaimTestApp } from "./claim-test-app.js";
+type TestContext = Awaited<ReturnType<typeof createClaimTestApp>>;
 const probe = vi.hoisted(() => ({
   enabled: false,
   retained: undefined as (() => Promise<unknown>) | undefined,
@@ -65,14 +67,17 @@ afterEach(async () => {
   await ctx?.cleanup();
 });
 it("drains an unawaited configured-handler adapter call and rejects its retained scope after finalization", async () => {
-  ctx = await createTestContext();
+  ctx = await createClaimTestApp("http://localhost:0");
   const body = {
     email: "owner@example.test",
     password: "correct horse battery",
   };
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   let release!: () => void;
   probe.gate = new Promise<void>((resolve) => {
@@ -95,9 +100,7 @@ it("drains an unawaited configured-handler adapter call and rejects its retained
   release();
   const accepted = await pending;
   expect(accepted.status).toBe(200);
-  const db = ctx.storage as typeof ctx.storage & {
-    __sqliteAll(sql: string): Promise<unknown[]>;
-  };
+  const db = ctx.storage;
   expect(await db.__sqliteAll("SELECT name FROM auth_user")).toEqual([
     { name: "Owned" },
   ]);

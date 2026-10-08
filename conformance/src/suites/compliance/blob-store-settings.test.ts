@@ -201,7 +201,7 @@ describe("an orphan report that holds blobs from more than one run", () => {
 
 describe("an app's access token", () => {
   it(
-    "is refused the operator's operations on the stores, the report and the jobs, and the copy stays",
+    "is refused the management operations on the stores, the report and the jobs, and the copy stays",
     async () => {
       const { server, operator, working } = await boot("blob-store-app-token", {
         ...ownObjectStore(),
@@ -220,7 +220,7 @@ describe("an app's access token", () => {
       const stores = (await operator.listBlobStores()).data.data;
       const s3 = stores.find((store) => store.kind === "s3")!;
 
-      // The witness: the operator key reaches each operation the app is
+      // The witness: the management key reaches each operation the app is
       // refused.
       expect((await operator.listBlobStores()).status).toBe(200);
       expect((await operator.listBlobOrphans()).status).toBe(200);
@@ -242,7 +242,7 @@ describe("an app's access token", () => {
         ),
       ).toHaveLength(2);
 
-      // The same drop, from the operator key, is the one the minimum allows.
+      // The same drop, from the management key, is the one the minimum allows.
       const dropped = await operator.deleteBlobLocation(hash, s3.id);
       expect(dropped.status).toBe(200);
     },

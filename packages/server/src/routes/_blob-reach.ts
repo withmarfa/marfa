@@ -9,6 +9,10 @@ import type { ApiKey } from "@withmarfa/shared";
 import type { Context } from "hono";
 import {
   computeTypeFilter,
+  authorityId,
+  isDirectAuthority,
+  holdsPermission,
+  requirePermission,
   getTypeFilter,
   mayWriteReserved,
   requireAuth,
@@ -59,15 +63,15 @@ function requestCredential(c: Context<AppEnv>): {
  * way to read the bytes behind it. Version snapshots keep a blob from the
  * orphan sweep and lend nothing.
  *
- * The operator key holds no type permission and stands outside the model;
- * it reads every blob.
+ * The blobs.manage permission independently grants access to every blob.
  */
 export async function mayReadBlob(
   key: ApiKey,
   storage: Storage,
   hash: string,
+  permissions: readonly string[],
 ): Promise<boolean> {
-  if (key.is_operator) return true;
+  if (permissions.includes("blobs.manage")) return true;
   const { allowed, excluded } = computeTypeFilter(key, "read");
   if (!allowed || allowed.length === 0) return false;
   return storage.blobs.readableThrough(hash, {
@@ -88,11 +92,12 @@ export function blobProof(
   storage: Storage,
   key: ApiKey,
   kind: CredentialKind,
+  permissions: readonly string[],
 ): (hash: string) => Promise<boolean> {
   const principal = blobPrincipal(key, kind);
   return async (hash) =>
     (await storage.blobs.uploadedBy(hash, principal)) ||
-    (await mayReadBlob(key, storage, hash));
+    (await mayReadBlob(key, storage, hash, permissions));
 }
 
 /** `blobProof` for the credential this request carries. */
@@ -100,8 +105,19 @@ export function requestBlobProof(
   c: Context<AppEnv>,
   storage: Storage,
 ): (hash: string) => Promise<boolean> {
-  const { key, kind } = requestCredential(c);
-  return blobProof(storage, key, kind);
+  return async (hash) => {
+    if (isDirectAuthority(c)) return true;
+    // The writer turn refreshes the context's bound credential. Resolve the
+    // proof there too, rather than retain a grant read before the write lock.
+    const { key, kind } = requestCredential(c);
+    const permissions =
+      kind === "oauth"
+        ? (c.get("oauthGrant")?.scopes ?? [])
+        : (key.permissions ?? []);
+    if (permissions.includes("blobs.manage"))
+      requirePermission(c, "blobs.manage");
+    return blobProof(storage, key, kind, permissions)(hash);
+  };
 }
 
 /**
@@ -116,9 +132,13 @@ export async function requireReadableBlob(
   storage: Storage,
   hash: string,
 ): Promise<{ mime_type: string; size_bytes: number }> {
-  const key = requireAuth(c);
-  if (!key.is_operator) getTypeFilter(c);
-  if (!(await mayReadBlob(key, storage, hash))) throw blobNotFound();
+  if (holdsPermission(c, "blobs.manage")) {
+    requirePermission(c, "blobs.manage");
+  } else {
+    const key = requireAuth(c);
+    getTypeFilter(c);
+    if (!(await mayReadBlob(key, storage, hash, []))) throw blobNotFound();
+  }
   const record = await storage.blobs.get(hash);
   if (!record) throw blobNotFound();
   return record;
@@ -129,18 +149,22 @@ export async function requireReadableBlob(
  * reference it: write, through the item doors, on at least one type
  * registered when the request is made, since an item of any type can name a
  * blob in a string. A grant on a pattern naming no registered type writes
- * nothing. The operator key uploads without one. Answers the principal the
- * upload is credited to.
+ * nothing. The blobs.manage permission uploads without one. Answers the
+ * principal the upload is credited to.
  */
 export function requireBlobUpload(c: Context<AppEnv>): string {
+  if (holdsPermission(c, "blobs.manage")) {
+    requirePermission(c, "blobs.manage");
+    if (isDirectAuthority(c)) return authorityId(c);
+    const { key, kind } = requestCredential(c);
+    return blobPrincipal(key, kind);
+  }
   const { key, kind } = requestCredential(c);
-  const writes =
-    key.is_operator ||
-    listTypes().some(
-      (type) =>
-        mayWriteReserved(key, type.id) &&
-        resolveTypePermission(type.id, key.type_permissions) === "write",
-    );
+  const writes = listTypes().some(
+    (type) =>
+      mayWriteReserved(key, type.id) &&
+      resolveTypePermission(type.id, key.type_permissions) === "write",
+  );
   if (!writes) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
@@ -151,18 +175,20 @@ export function requireBlobUpload(c: Context<AppEnv>): string {
 }
 
 /** Asked of every caller of a door that reads a blob, before the request is
- *  read: a credential reaching no type reads no blob, and the operator key
+ *  read: a credential reaching no type reads no blob, and blobs.manage
  *  reads every one. */
 export const readsBlobs = standingRule(
-  "reads some type, or the operator key",
+  "reads some type, or blobs.manage",
   (c) => {
-    if (!requireAuth(c).is_operator) getTypeFilter(c);
+    if (holdsPermission(c, "blobs.manage"))
+      requirePermission(c, "blobs.manage");
+    else getTypeFilter(c);
   },
 );
 
 /** Asked of every caller of the upload door, before the request is read. */
 export const uploadsBlobs = standingRule(
-  "writes some type, or the operator key",
+  "writes some type, or blobs.manage",
   (c) => {
     requireBlobUpload(c);
   },

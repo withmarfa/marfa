@@ -479,10 +479,8 @@ pub(crate) fn is_duplicate(answer: &str) -> bool {
 }
 
 pub(super) fn places(key: &Value) -> bool {
-    matches!(grant(key).as_deref(), Some("write" | OPERATOR))
+    matches!(grant(key).as_deref(), Some("write"))
 }
-
-const OPERATOR: &str = "operator";
 
 pub(crate) fn reads(key: &Value, item_type: &str) -> bool {
     matches!(
@@ -492,9 +490,6 @@ pub(crate) fn reads(key: &Value, item_type: &str) -> bool {
 }
 
 fn grant(key: &Value) -> Option<String> {
-    if key.get("is_operator").and_then(Value::as_bool) == Some(true) {
-        return Some(OPERATOR.into());
-    }
     resolved(key, "edge_permissions", PLACEMENT_EDGE)
 }
 
@@ -826,12 +821,11 @@ mod tests {
 
     #[test]
     fn a_key_places_by_the_grant_the_server_would_resolve() {
-        let key = |grants: Value| json!({ "is_operator": false, "edge_permissions": grants });
+        let key = |grants: Value| json!({ "edge_permissions": grants });
         assert!(places(&key(json!({ "in-folder": "write" }))));
         assert!(places(&key(json!({ "*": "write" }))));
         assert!(!places(&key(json!({ "*": "write", "in-folder": "read" }))));
         assert!(!places(&key(json!({ "references": "write" }))));
-        assert!(!places(&json!({ "is_operator": false })));
-        assert!(places(&json!({ "is_operator": true })));
+        assert!(!places(&json!({})));
     }
 }

@@ -300,7 +300,7 @@ describe("the reference checks see what they are for", () => {
       "",
       "The server MUST answer.",
       "",
-      "**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`, `› no such title in that file`.",
+      "**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `› no such title in that file`.",
       "",
     ].join("\n");
     const cited = citationsInText(chapter).map((c): Citation => ({

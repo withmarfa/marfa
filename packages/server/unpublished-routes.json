@@ -1,7 +1,6 @@
 {
   "GET /health": "liveness, read before any credential exists",
   "GET /openapi.json": "the document itself",
-  "GET /metrics": "server metrics, internal",
   "GET /blobs/{hash}/fetch": "the target of an instance-served blob link, gated by the signature in its query",
   "POST /inbound/{token}": "where a sender posts an inbound webhook delivery, gated by the unguessable address",
   "GET /.well-known/oauth-authorization-server/auth": "RFC 8414 discovery",
@@ -23,5 +22,12 @@
   "GET /auth/static/password-toggle.js": "a script those pages load",
   "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/grants": "lists the apps the owner authorized",
-  "DELETE /auth/grants/{id}": "revokes one"
+  "DELETE /auth/grants/{id}": "revokes one",
+  "GET /setup": "first-party owner setup page",
+  "POST /setup/claim": "same-origin owner setup form submission",
+  "POST /setup/exchange": "single-use browser handoff exchange",
+  "GET /auth/owner/manage": "trusted owner management page",
+  "GET /auth/owner/restore": "trusted owner archive restore page",
+  "GET /auth/owner/password": "owner password form",
+  "POST /auth/owner/password": "same-origin owner password form submission"
 }

@@ -25,19 +25,15 @@
  * catches up to the bundle scopes a request names, so the assertion here is
  * the whole default-on set rather than its intersection with the stale row.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { expandBundlesToScopes } from "@withmarfa/shared";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expandBundlesToScopes } from "@withmarfa/shared";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -84,9 +80,8 @@ async function seedClientWithCeiling(
   return clientId;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const inRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -106,7 +101,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 describe("a stale client ceiling cannot strand the default-on bundle", () => {
   it("a code reaches the redirect URI despite a ceiling minted before the registry moved", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "stale-ceiling@example.com");
+    const cookie = await signInUser(ctx);
 
     const requested = defaultOnRequestScopes();
     expect(requested.length).toBeGreaterThan(2);
@@ -207,7 +202,7 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
 
   it("a client with no ceiling keeps the whole default-on set", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "no-ceiling@example.com");
+    const cookie = await signInUser(ctx);
 
     const requested = defaultOnRequestScopes();
     // The shape a first-party client is written with.

@@ -23,7 +23,12 @@ import {
 } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  isDirectAuthority,
+  holdsPermission,
+  requirePermission,
+} from "../middleware/auth.js";
 import type { Storage, StoredApiKey } from "../storage/interface.js";
 import {
   firstReachBeyondCredential,
@@ -77,23 +82,8 @@ function sessionCouldGiveMaps(
   });
 }
 
-/**
- * Whether `actor` reaches `target`: it is the operator key, the target is the
- * actor itself, or the target is no operator key and holds nothing the actor
- * could not have given it.
- *
- * **An operator key is beyond every other credential although it holds
- * nothing.** Measured by its maps it would sit inside everyone's reach, and
- * revoking it takes the instance tier away, which no permission confers.
- *
- * A signed-in app's principal holds no extension namespace, so a key granting
- * any is beyond every app. A key's own `source` is not measured, because the
- * mint does not clamp it to the caller; its claimed `sources` are.
- */
 export function keyWithinReach(actor: KeyActor, target: ApiKey): boolean {
-  if (actor.key.is_operator) return true;
   if (target.id === actor.key.id) return true;
-  if (target.is_operator) return false;
 
   const heldPermissions =
     actor.grantScopes === null
@@ -152,11 +142,22 @@ function keyNotFound(id: string): MarfaError {
  * written rather than as it was read.
  */
 export function keysInReach(storage: Storage, c: Context<AppEnv>) {
-  const actor = keyActor(c);
+  function managesAll(): boolean {
+    if (isDirectAuthority(c)) return true;
+    if (holdsPermission(c, "keys.manage")) {
+      requirePermission(c, "keys.manage");
+      return true;
+    }
+    requirePermission(c, "keys.mint");
+    return false;
+  }
 
   async function reached(id: string): Promise<KeyInReach> {
     const target = await storage.keys.get(id);
-    if (target === null || !keyWithinReach(actor, target)) {
+    if (
+      target === null ||
+      (!managesAll() && !keyWithinReach(keyActor(c), target))
+    ) {
       throw keyNotFound(id);
     }
     return target as KeyInReach;
@@ -164,8 +165,8 @@ export function keysInReach(storage: Storage, c: Context<AppEnv>) {
 
   return {
     async list(): Promise<StoredApiKey[]> {
-      return (await storage.keys.list()).filter((key) =>
-        keyWithinReach(actor, key),
+      return (await storage.keys.list()).filter(
+        (key) => managesAll() || keyWithinReach(keyActor(c), key),
       );
     },
 
@@ -183,21 +184,13 @@ export function keysInReach(storage: Storage, c: Context<AppEnv>) {
       });
     },
 
-    /**
-     * Revoke `id`, or refuse it as `api_key_not_found`.
-     *
-     * The store reads no revoked row back, so a revoked key's reach cannot be
-     * measured: to every caller but the operator key it answers as an id
-     * nobody holds. The operator key reaches every key, so it alone is told
-     * that the key was already revoked.
-     */
     async revoke(id: string): Promise<void> {
       const outcome = await storage.runInTransaction(async () => {
-        if (!actor.key.is_operator) await reached(id);
+        if (!managesAll()) await reached(id);
         return await storage.keys.revoke(id);
       });
       if (outcome === "revoked") return;
-      if (outcome === "already_revoked" && actor.key.is_operator) {
+      if (outcome === "already_revoked" && managesAll()) {
         throw new MarfaError(
           ErrorCode.API_KEY_NOT_FOUND,
           `Key ${id} was already revoked`,

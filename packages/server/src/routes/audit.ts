@@ -6,7 +6,7 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, standingPermission } from "../middleware/auth.js";
+import { requirePermission, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { pageOf } from "./_schemas.js";
@@ -111,7 +111,7 @@ const listAuditRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it.",
+        "- `forbidden`: you don't hold `audit.read`. `details.required_scope` names it.",
     },
     400: {
       content: {
@@ -129,7 +129,7 @@ export function auditRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listAuditRoute, async (c) => {
-    requireAuth(c);
+    requirePermission(c, "audit.read");
     const {
       action,
       resource_type,

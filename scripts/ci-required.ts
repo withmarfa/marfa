@@ -176,6 +176,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/utils\//,
     ["workspace", "conformance", "cli-scenarios", "restore-drill"],
   ],
+  [
+    /^conformance\/src\/client\/owner-session\.ts$/,
+    ["workspace", "conformance", "cli-scenarios", "restore-drill"],
+  ],
   [/^conformance\/src\//, ["workspace", "conformance", "cli-scenarios"]],
   [
     /^conformance\//,

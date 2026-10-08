@@ -20,7 +20,7 @@ If `GET /events` carries no credential, or a bearer value no credential holds, t
 
 ### `events/stream-reads-no-type`
 
-If a credential whose type map reaches no type, the operator key among them, sends `GET /events`, then the server MUST answer `403 type_not_permitted`.
+If a credential whose type map reaches no type sends `GET /events`, then the server MUST answer `403 type_not_permitted`.
 
 **Reason:** a stream such a credential opened would never carry an event.
 
@@ -1120,7 +1120,7 @@ When `limit` cuts the list of deliveries short, the server MUST answer a `next_c
 
 ## Retries
 
-A delivery is attempted again when its receiver does not take it. The operator key can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
+A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or direct owner or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
 
 ### `events/retry-5xx`
 
@@ -1178,7 +1178,7 @@ When a receiver answers every attempt with a retryable failure, the server MUST 
 
 ### `events/retry-poll-run`
 
-When the operator key runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`.
 
@@ -1476,9 +1476,9 @@ When a cancellation of a bulk-action job changes nothing, the server MUST NOT re
 
 ### `events/audit-housekeeping-run`
 
-When the operator key runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
 
-**Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the operator named`.
+**Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the manager named`.
 
 ### `events/audit-export`
 
@@ -1536,13 +1536,13 @@ When `limit` cuts the audit listing short, the server MUST answer a `next_cursor
 
 The server MUST list audit entries newest first.
 
-**Tests:** `compliance/audit.test.ts › lists newest first, and refuses the operator key, which does not hold audit.read`.
+**Tests:** `compliance/audit.test.ts › lists newest first`.
 
 ### `events/audit-needs-read`
 
-If a credential without `audit.read` sends `GET /audit`, the operator key included, then the server MUST answer `403 forbidden`, before it checks the query.
+If a credential without `audit.read` sends `GET /audit`, then the server MUST answer `403 forbidden`, before it checks the query.
 
-**Tests:** `compliance/audit.test.ts › refuses a key without audit.read`, `› lists newest first, and refuses the operator key, which does not hold audit.read`.
+**Tests:** `compliance/audit.test.ts › refuses a key without audit.read`, `› lists newest first`.
 
 ### `events/audit-undeclared-key`
 

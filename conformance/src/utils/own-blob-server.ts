@@ -39,7 +39,7 @@ export function clientsFor(server: FreshServer): {
   return {
     operator: new MarfaClient({
       baseUrl: server.apiUrl,
-      apiKey: server.operatorKey,
+      apiKey: server.managementKey,
     }),
     working: new MarfaClient({
       baseUrl: server.apiUrl,

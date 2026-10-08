@@ -1,55 +1,64 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ALL_TYPES } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { operatorOnly } from "../middleware/auth.js";
+import { standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
-// A single module-level cache is sufficient: the platform gate refuses
-// working credentials, so every caller that reaches the handler sees
-// the same instance-wide counts.
+// Every admitted caller sees the same instance-wide counts.
 interface CacheEntry {
   response: Record<string, unknown>;
   at: number;
 }
 let metricsCache: CacheEntry | undefined;
 
+const MetricCountSchema = z
+  .object({ total: z.number().describe("Number of records.") })
+  .describe("An instance-wide record count.")
+  .openapi("MetricCount");
+
 const MetricsResponseSchema = z.object({
-  items: z.object({
-    total: z.number(),
-    by_state: z.record(z.string(), z.number()),
-  }),
-  blobs: z.object({
-    count: z.number(),
-    total_bytes: z.number(),
-  }),
-  types: z.object({
-    core: z.number(),
-    registered: z.number(),
-  }),
-  keys: z.object({
-    total: z.number(),
-  }),
-  webhooks: z.object({
-    total: z.number(),
-  }),
-  uptime_seconds: z.number(),
-  cached_at: z.string(),
+  items: z
+    .object({
+      total: z.number().describe("Number of items across all states."),
+      by_state: z
+        .record(z.string(), z.number())
+        .describe("Item counts by state."),
+    })
+    .describe("Instance-wide item counts."),
+  blobs: z
+    .object({
+      count: z.number().describe("Number of stored blobs."),
+      total_bytes: z.number().describe("Total size of stored blobs, in bytes."),
+    })
+    .describe("Stored blob counts and size."),
+  types: z
+    .object({
+      core: z.number().describe("Number of built-in types."),
+      registered: z.number().describe("Number of registered types."),
+    })
+    .describe("Built-in and registered type counts."),
+  keys: MetricCountSchema.describe("Number of unrevoked keys."),
+  webhooks: MetricCountSchema.describe("Number of webhook registrations."),
+  uptime_seconds: z
+    .number()
+    .describe("Seconds since this server process started."),
+  cached_at: z.string().describe("When these counters were collected, in UTC."),
 });
 
 const getMetricsRoute = createRoute({
   operationId: "getServerMetrics",
   method: "get",
   path: "/",
-  tags: ["Admin"],
+  tags: ["Instance"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped.",
+    "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   responses: {
     200: {
       content: {
@@ -73,7 +82,7 @@ const getMetricsRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not the operator key",
+      description: "Caller lacks instance.read",
     },
   },
 });

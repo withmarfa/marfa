@@ -1,24 +1,4 @@
 /**
- * The credential-minting invariant, stated once:
- *
- * No minting path may issue a credential whose authority exceeds, on any
- * axis, the authority of the principal or governing declaration that
- * authorized the mint — permissions at or below the creator's own
- * set; `is_operator` only from an operator caller, and only for another
- * operator key; and content breadth at or below the caller's own grant or
- * the explicitly requested scope set. The operator key the bootstrap mints
- * is the stated exception, because no creator set exists above it to be
- * bounded by.
- *
- * Enforcement lives where each axis is checked — the creator ceiling and
- * the operator rule at `POST /keys`, the consent screen for every OAuth
- * grant, and the provider plugin's registration for a client's scope
- * ceiling, which is the server's allowlist and nothing outside it.
- * `routes/credential-mint-doors.test.ts` is the guard that fails when a new
- * way of asking appears without a stated ceiling.
- */
-
-/**
  * The scopes that carry a session rather than data: `openid` mints the
  * id_token a sign-out needs, `offline_access` the refresh token a client
  * needs to stay signed in without asking again.

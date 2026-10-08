@@ -14,36 +14,27 @@
  * Asserting the 403 alone would pass against a route that refused everything,
  * which is the shape this area has produced twice.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { scopesToTypePermissions } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 let narrowKey: string;
 
 /** Holds `keys.mint` and read on one type. A coherent credential now. */
 async function mintNarrow(): Promise<string> {
-  const raw = `marfa_k1_narrow_${Math.random().toString(36).slice(2, 12)}`;
-  await ctx.storage.keys.create(
-    {
-      label: "narrow",
-      source: "ceiling-test",
-      permissions: ["keys.mint"],
-      type_permissions: { "core.note": "read" },
-      extension_permissions: {},
-      edge_permissions: {},
-      metadata_permissions: {},
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  const raw = await mintWorkingKey(ctx, {
+    profile_permissions: {},
+    label: "narrow",
+    source: "ceiling-test",
+    permissions: ["keys.mint"],
+    type_permissions: { "core.note": "read" },
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    default_tier: "library",
+  });
   return raw;
 }
 
@@ -67,21 +58,17 @@ describe("a creator whose own map carries denials", () => {
   let contentReadKey: string;
 
   beforeAll(async () => {
-    const raw = `marfa_k1_contentread_${Math.random().toString(36).slice(2, 12)}`;
-    await ctx.storage.keys.create(
-      {
-        label: "content-read",
-        source: "ceiling-content-read",
-        permissions: ["keys.mint"],
-        type_permissions: scopesToTypePermissions(["content:read"]),
-        extension_permissions: {},
-        edge_permissions: {},
-        metadata_permissions: {},
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-    );
+    const raw = await mintWorkingKey(ctx, {
+      profile_permissions: {},
+      label: "content-read",
+      source: "ceiling-content-read",
+      permissions: ["keys.mint"],
+      type_permissions: scopesToTypePermissions(["content:read"]),
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      default_tier: "library",
+    });
     contentReadKey = raw;
   });
 

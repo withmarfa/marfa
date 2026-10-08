@@ -17,6 +17,8 @@ import { readFileSync } from "node:fs";
 /** One request as `middleware/logger.ts` writes it. */
 export interface RequestLine {
   method: string;
+  /** Assigned by the server listener, never by request headers. */
+  transport: "http" | "local_socket";
   /** The route template, in the document's spelling: `/items/{id}`. */
   route: string;
   /** The concrete path, which is what resolves a wildcard route. */
@@ -45,6 +47,8 @@ export interface StatusReport {
    * server serves and neither publishes nor says why.
    */
   unexplained: string[];
+  /** Unpublished private control operations, outside the HTTP contract. */
+  local: Map<string, Set<number>>;
   undeclared: UndeclaredStatus[];
   /**
    * `METHOD /path status code` for a refusal code drawn on a declared
@@ -168,6 +172,7 @@ export function parseRequestLines(log: string): RequestLine[] {
     }
     out.push({
       method: line.method.toUpperCase(),
+      transport: line.transport === "local_socket" ? "local_socket" : "http",
       route: line.route,
       path: line.path,
       status: line.status,
@@ -308,6 +313,7 @@ export function reportStatuses(
   const declared = declaredStatuses(document);
   const observed = new Map<string, Map<number, Set<string>>>();
   const unpublished = new Map<string, Set<number>>();
+  const local = new Map<string, Set<number>>();
 
   for (const line of lines) {
     // HEAD is answered by the GET handler unless the document gives it an
@@ -325,6 +331,16 @@ export function reportStatuses(
       !declared.has(byRoute) && line.route.includes("*") && declared.has(byPath)
         ? byPath
         : byRoute;
+    if (
+      !declared.has(operation) &&
+      line.transport === "local_socket" &&
+      line.path.startsWith("/_control/")
+    ) {
+      const statuses = local.get(operation) ?? new Set<number>();
+      statuses.add(line.status);
+      local.set(operation, statuses);
+      continue;
+    }
     if (!declared.has(operation)) {
       const statuses = unpublished.get(operation) ?? new Set<number>();
       statuses.add(line.status);
@@ -405,6 +421,7 @@ export function reportStatuses(
   return {
     observed,
     unpublished,
+    local,
     unexplained,
     undeclared,
     undeclaredCodes,

@@ -43,7 +43,7 @@ beforeAll(async () => {
   server = await bootFreshServer("key-oauth-client");
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    ownerCookie: server.ownerCookie,
   });
   const app = await approvedApp(server);
   appClientId = app.clientId;
@@ -79,9 +79,6 @@ describe("oauth_client_id on a key answer", () => {
       source: "by-operator",
     });
     expect(byOperator.status, JSON.stringify(byOperator.error)).toBe(201);
-    // A key an app made mints a key too, and that one was not minted through
-    // OAuth: the field marks the key an app's token minted, not every key
-    // downstream of an app.
     const byAppKey = await asKey(appMade).createKey({
       label: "by-app-key",
       source: "by-app-key",
@@ -89,7 +86,11 @@ describe("oauth_client_id on a key answer", () => {
     });
     expect(byAppKey.status, JSON.stringify(byAppKey.error)).toBe(201);
 
-    for (const key of [byOperator.data, byAppKey.data]) {
+    expect(byAppKey.data.oauth_client_id).toBe(appClientId);
+    for (const answered of Object.values(await answers(byAppKey.data))) {
+      expect(answered.oauth_client_id).toBe(appClientId);
+    }
+    for (const key of [byOperator.data]) {
       const seen = await answers(key);
       for (const [door, answered] of Object.entries(seen)) {
         expect(

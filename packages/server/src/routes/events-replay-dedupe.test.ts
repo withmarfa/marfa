@@ -157,7 +157,7 @@ describe("GET /events replay dedupe", () => {
       // `?type=` is what makes the replay decode a stored payload at all.
       // Without a filter it never parses, never skips, and the property
       // below has no way to arise — which is also why a suite run only
-      // with an unfiltered operator key cannot tell recording-on-send
+      // with an unfiltered credential cannot tell recording-on-send
       // from recording-on-walk.
       const stream = await request(ctx.app, "GET", "/events?type=core.note", {
         key: ctx.workingKey,

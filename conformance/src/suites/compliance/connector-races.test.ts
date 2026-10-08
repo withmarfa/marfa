@@ -12,7 +12,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 
 /**
@@ -71,13 +71,13 @@ describe("registrations and holds taken together", () => {
       const { client, id } = await registered(`remove-${String(round)}`);
       const answers = await Promise.all([
         client.deleteConnector(id),
-        getOperatorClient().deleteConnector(id),
+        getManagementClient().deleteConnector(id),
       ]);
       expect(answers.map((a) => a.status).sort()).toEqual([200, 404]);
       const lost = answers.find((a) => a.status === 404);
       expect(lost?.error?.error.code).toBe("connector_not_found");
 
-      expect((await getOperatorClient().getConnector(id)).status).toBe(404);
+      expect((await getManagementClient().getConnector(id)).status).toBe(404);
       const audited = await auditor.listAudit({
         resource_id: id,
         action: "connector.delete",

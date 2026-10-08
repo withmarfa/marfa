@@ -69,11 +69,23 @@ export class Cli {
     readonly binary: string,
     readonly url: string,
     readonly key: string | undefined,
+    readonly socketPath?: string,
   ) {}
 
   /** The same binary under another credential, or under none. */
   as(key: string | undefined): Cli {
     return new Cli(this.binary, this.url, key);
+  }
+
+  /** Selects private machine authority with no ordinary credential. */
+  viaSocket(socketPath: string): Cli {
+    return new Cli(this.binary, this.url, undefined, socketPath);
+  }
+
+  private args(args: string[]): string[] {
+    return this.socketPath === undefined
+      ? args
+      : ["--socket", this.socketPath, ...args];
   }
 
   private env(): NodeJS.ProcessEnv {
@@ -82,6 +94,7 @@ export class Cli {
       const value = process.env[name];
       if (value !== undefined) env[name] = value;
     }
+    if (this.socketPath !== undefined) return env;
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
     return { ...env, ...keychainEnv() };
@@ -93,7 +106,7 @@ export class Cli {
     options: { stdin?: string } = {},
   ): Promise<Outcome> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, args, {
+      const child = spawn(this.binary, this.args(args), {
         env: this.env(),
         stdio: [
           options.stdin === undefined ? "ignore" : "pipe",
@@ -185,7 +198,7 @@ export class Cli {
    * binary polling a server that is about to stop.
    */
   hold(args: string[]): ChildProcess {
-    const child = spawn(this.binary, ["--json", ...args], {
+    const child = spawn(this.binary, this.args(["--json", ...args]), {
       env: this.env(),
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -205,7 +218,7 @@ export interface CliContext {
   ctx: TestContext;
   /** The binary under this file's own key, with its own source. */
   cli: Cli;
-  /** The binary under the operator key, for the operator doors. */
+  /** The binary under an ordinary key holding all named management permissions. */
   operator: Cli;
   apiUrl: string;
   apiKey: string;
@@ -219,14 +232,14 @@ export interface CliContext {
 export async function cliContext(file: string): Promise<CliContext> {
   const { ctx, apiUrl, apiKey } = await createTestContext("cli", file);
   const binary = requireBinary();
-  const operatorKey = process.env.MARFA_OPERATOR_KEY;
-  if (operatorKey === undefined || operatorKey === "") {
-    throw new Error("MARFA_OPERATOR_KEY is unset; `pnpm marfa:up` writes it");
+  const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+  if (managementKey === undefined || managementKey === "") {
+    throw new Error("MARFA_MANAGEMENT_KEY is unset; `pnpm marfa:up` writes it");
   }
   return {
     ctx,
     cli: new Cli(binary, apiUrl, apiKey),
-    operator: new Cli(binary, apiUrl, operatorKey),
+    operator: new Cli(binary, apiUrl, managementKey),
     apiUrl,
     apiKey,
   };

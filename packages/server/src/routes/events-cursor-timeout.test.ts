@@ -61,7 +61,7 @@ function withStalledHeadRead(storage: Storage): Storage {
 
 function makeApp(storage: Storage, options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(storage));
+  app.use("*", storedViewerKey(ctx));
   app.route("/events", eventRoutes(storage, options));
   app.onError((err, c) => {
     if (err instanceof MarfaError) {

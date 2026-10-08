@@ -92,6 +92,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       # Prettier reads Markdown as well as code, and the classifier's test
       # reads the whole tree, so a documentation change stops after these. A
@@ -192,6 +195,8 @@ jobs:
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install socket ACL inspection
+        run: sudo apt-get update && sudo apt-get install -y acl
       - name: Check the core workspace
         working-directory: core
         run: |
@@ -215,7 +220,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance != 'false') }}
     name: Conformance
-    timeout-minutes: 60
+    # The serial suite includes real expiry waits and large archive restores.
+    timeout-minutes: 90
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
@@ -225,6 +231,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       # `marfa:up` runs the server through tsx, which resolves
       # @withmarfa/shared through its dist, and the offline lane reads the
@@ -357,6 +366,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
@@ -454,6 +466,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 

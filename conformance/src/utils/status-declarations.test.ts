@@ -257,6 +257,189 @@ describe("the status checker", () => {
     expect(report.unexplained).toEqual(["GET /unlisted"]);
   });
 
+  it("counts a published owner refusal reached through local authority", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "GET",
+          path: "/owner",
+          route: "/owner",
+          status: 404,
+          transport: "local_socket",
+          error_code: "owner_not_found",
+        }),
+      ),
+      {
+        paths: {
+          "/owner": {
+            get: { responses: { "404": { description: "Owner not found" } } },
+          },
+        },
+      },
+    );
+    expect(report.observed.get("GET /owner")?.get(404)).toEqual(
+      new Set(["owner_not_found"]),
+    );
+    expect(report.unanswered).not.toContain("GET /owner 404");
+    expect(report.local.size).toBe(0);
+  });
+
+  it("validates local published statuses and refusal codes against their declarations", () => {
+    const lines = parseRequestLines(
+      [
+        logLine({
+          method: "GET",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 403,
+          error_code: "unexpected_refusal",
+          transport: "local_socket",
+        }),
+        logLine({
+          method: "GET",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 418,
+          transport: "local_socket",
+        }),
+      ].join("\n"),
+    );
+    const report = reportStatuses(
+      lines,
+      documentRefusing({ 403: ["type_not_permitted"] }),
+    );
+    expect(report.undeclared).toEqual([
+      { operation: "GET /items/{id}", status: 418, codes: [], declared: [403] },
+    ]);
+    expect(report.undeclaredCodes).toEqual([
+      "GET /items/{id} 403 unexpected_refusal",
+    ]);
+  });
+
+  it("does not exempt an unexplained local route outside the private control namespace", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "GET",
+          path: "/unlisted",
+          route: "/unlisted",
+          status: 200,
+          transport: "local_socket",
+        }),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.unexplained).toEqual(["GET /unlisted"]);
+  });
+
+  it("separates real startup socket log shapes from public HTTP operations", () => {
+    const local = [
+      logLine({
+        method: "GET",
+        path: "/_control/setup/status",
+        route: "/_control/setup/status",
+        status: 200,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/_control/setup/claim",
+        route: "/_control/setup/claim",
+        status: 201,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/keys",
+        route: "/keys",
+        status: 201,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/_control/setup/claim",
+        route: "/_control/setup/claim",
+        status: 409,
+        error_code: "owner_exists",
+        transport: "local_socket",
+      }),
+    ];
+    const report = reportStatuses(
+      parseRequestLines([...local, OBSERVED_200].join("\n")),
+      {
+        paths: {
+          ...documentDeclaring([200]).paths,
+          "/keys": {
+            post: { responses: { "201": { description: "Key created" } } },
+          },
+        },
+      },
+    );
+    expect(
+      [...report.local].map(([operation, statuses]) => [
+        operation,
+        [...statuses],
+      ]),
+    ).toEqual([
+      ["GET /_control/setup/status", [200]],
+      ["POST /_control/setup/claim", [201, 409]],
+    ]);
+    expect([...report.observed.keys()]).toEqual([
+      "POST /keys",
+      "GET /items/{id}",
+    ]);
+    expect(report.unpublished.size).toBe(0);
+    expect(report.unexplained).toEqual([]);
+    expect(report.lines).toBe(5);
+  });
+
+  it.each([undefined, "http", "unrecognized"])(
+    "does not exempt control paths without explicit local transport (%s)",
+    (transport) => {
+      const report = reportStatuses(
+        parseRequestLines(
+          logLine({
+            method: "POST",
+            path: "/_control/setup/claim",
+            route: "/_control/setup/claim",
+            status: 201,
+            transport,
+          }),
+        ),
+        documentDeclaring([200]),
+      );
+      expect(report.local.size).toBe(0);
+      expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
+    },
+  );
+
+  it("does not exempt an arbitrary unknown path or a published operation's 404", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        [
+          logLine({
+            method: "GET",
+            path: "/unlisted",
+            route: "/unlisted",
+            status: 404,
+          }),
+          logLine({
+            method: "GET",
+            path: "/items/x",
+            route: "/items/{id}",
+            status: 404,
+          }),
+        ].join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.local.size).toBe(0);
+    expect(report.unexplained).toEqual(["GET /unlisted"]);
+    expect(report.undeclared).toMatchObject([
+      { operation: "GET /items/{id}", status: 404 },
+    ]);
+  });
+
   it("holds a HEAD answer to its GET operation's declarations", () => {
     const report = reportStatuses(
       parseRequestLines(
@@ -362,7 +545,7 @@ describe("the status checker", () => {
     const lines = parseRequestLines(
       [
         "Listening on http://127.0.0.1:0",
-        JSON.stringify({ level: "info", message: "bootstrap secret" }),
+        JSON.stringify({ level: "info", message: "setup code" }),
         "{ not json",
         "",
         OBSERVED_200,
@@ -372,6 +555,7 @@ describe("the status checker", () => {
     expect(lines).toEqual([
       {
         method: "GET",
+        transport: "http",
         route: "/items/{id}",
         path: "/items/019d1234-5678-7abc-8def-1234567890ab",
         status: 200,
@@ -550,6 +734,25 @@ describe("the status checker", () => {
       const clean = await run(stateWith([OBSERVED_200, OBSERVED_403]));
       expect(clean.stderr).toBe("");
       expect(clean.status).toBe(0);
+
+      const controlRequest = (transport: "http" | "local_socket") =>
+        logLine({
+          method: "POST",
+          path: "/_control/setup/claim",
+          route: "/_control/setup/claim",
+          status: 201,
+          transport,
+        });
+      const privateRun = await run(
+        stateWith([OBSERVED_200, controlRequest("local_socket")]),
+      );
+      expect(privateRun.stderr).toBe("");
+      expect(privateRun.status).toBe(0);
+      const exposed = await run(
+        stateWith([OBSERVED_200, controlRequest("http")]),
+      );
+      expect(exposed.stderr).toContain("POST /_control/setup/claim");
+      expect(exposed.status).toBe(1);
 
       statuses = [200, 401];
       const undeclared = await run(stateWith([OBSERVED_200, OBSERVED_403]));

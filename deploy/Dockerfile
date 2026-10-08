@@ -13,6 +13,12 @@
 ARG NODE_VERSION=24
 ARG LITESTREAM_VERSION=0.5.17
 
+FROM rust:1-slim-bookworm AS cli-build
+WORKDIR /repo
+COPY core/ ./core/
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN cargo build --manifest-path core/Cargo.toml --locked --release -p marfa-cli
+
 FROM node:${NODE_VERSION}-slim AS build
 WORKDIR /repo
 RUN corepack enable
@@ -34,11 +40,14 @@ ENV PORT=8600
 # holds none.
 ENV SQLITE_PATH=/data/marfa.db
 ENV BLOB_PATH=/data/blobs
+ENV MARFA_CONTROL_SOCKET=/data/control/marfa.sock
 # The commit this image was built from, which the server reads from
 # `version.json` at boot and reports on `GET /`, in `/health` and as the
 # version of every span it exports.
 ARG VERSION_SHA=dev
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends acl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=cli-build /repo/core/target/release/marfa /usr/local/bin/marfa
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --from=build --chown=node:node /out ./
 COPY deploy/litestream.yml /etc/litestream.yml

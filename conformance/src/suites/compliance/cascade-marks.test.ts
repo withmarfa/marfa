@@ -11,7 +11,7 @@ import type {
 } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackFolder,
   trackItem,
   trackKey,
@@ -961,7 +961,7 @@ describe("an archive carries neither what a trash took nor its mark", () => {
     expect(line?.trashed_by_cascade).toBe(true);
     expect((await client.purgeItem(child)).ok).toBe(true);
     expect((await client.purgeItem(parent)).ok).toBe(true);
-    const restored = await getOperatorClient().restoreArchive(archive.data);
+    const restored = await getOwnerClient().restoreArchive(archive.data);
     expect(restored.ok).toBe(true);
 
     const back = await listed(tag, "trashed");

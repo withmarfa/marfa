@@ -278,7 +278,7 @@ describe("an app's session token on the connector doors", () => {
     );
     const operator = new MarfaClient({
       baseUrl: server.apiUrl,
-      apiKey: server.operatorKey,
+      apiKey: server.managementKey,
     });
     expect(
       (await operator.listConnectors()).data.data.map((row) => row.id),
@@ -342,7 +342,7 @@ describe("an app's session token on the connector doors", () => {
     );
     const operator = new MarfaClient({
       baseUrl: server.apiUrl,
-      apiKey: server.operatorKey,
+      apiKey: server.managementKey,
     });
     const rows = (await operator.listConnectors()).data.data;
     expect(rows.map((row) => row.name)).toEqual(["session token"]);

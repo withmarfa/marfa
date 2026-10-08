@@ -1,11 +1,7 @@
 /**
- * The per-account limit on password sign-in, beside Better Auth's own
- * per-address limiter.
- *
- * Better Auth's limiter holds one address to three attempts every ten
- * seconds, which still lets it try about a thousand passwords an hour for
- * as long as it likes. This holds the attempts at one account, in two
- * windows:
+ * Durable password sign-in attempts, limited by account and address.
+ * This replaces the provider's process-local password limiter so recovery
+ * can clear the account's complete sign-in lock in the same transaction.
  *
  * - **Per account and address**, so one visitor guessing at the owner's
  *   account is stopped, and the owner signing in from anywhere else is not.

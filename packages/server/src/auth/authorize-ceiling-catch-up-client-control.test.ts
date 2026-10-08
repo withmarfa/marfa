@@ -17,20 +17,16 @@
  * stored row.** `storedCeiling` goes back through `oauth.getClient`, which is
  * the same read the hook and the plugin both make.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { createHash, randomBytes } from "node:crypto";
-import { expandBundlesToScopes, isValidScope } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
-import {
-  createTestAccount,
-  createTestContext,
-  request,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { expandBundlesToScopes, isValidScope } from "@withmarfa/shared";
+import { createHash, randomBytes } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
-import { buildAllowedScopes } from "./oauth-provider.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
 import { SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
+import { buildAllowedScopes } from "./oauth-provider.js";
 import {
   isLoopbackIpLiteral,
   matchesRegisteredRedirectUri,
@@ -132,9 +128,8 @@ async function authorizeAnonymously(
 }
 
 /** A signed-in person's session cookie. */
-async function signIn(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signIn(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const res = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -187,7 +182,7 @@ describe("the authorize ceiling catch-up writes only for a signed-in person", ()
     expect(carried.searchParams.get("scope")).toBe(union.join(" "));
 
     // Signed in, the same request heals the ceiling on the way to consent.
-    const cookie = await signIn(ctx, "heals@example.com");
+    const cookie = await signIn(ctx);
     const healed = await request(ctx.app, "GET", back, { headers: { cookie } });
     expect(healed.status).toBe(302);
     expect(healed.headers.get("location")).toContain("/auth/authorize?");
@@ -263,7 +258,7 @@ describe("the authorize ceiling catch-up writes only for a signed-in person", ()
 describe("the authorize ceiling catch-up writes only behind a registered redirect URI", () => {
   it("does not widen the stored ceiling for a request naming an unregistered redirect URI", async () => {
     ctx = await createTestContext({});
-    const cookie = await signIn(ctx, "gate-1@example.com");
+    const cookie = await signIn(ctx);
     const union = bundleUnion();
     // The fixture has to be one the catch-up would otherwise act on, or the
     // test passes for the wrong reason. Both halves are asserted rather than
@@ -322,7 +317,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // the registry still self-heals, and the audit trail still says which
     // surface moved the row.
     ctx = await createTestContext({});
-    const cookie = await signIn(ctx, "gate-2@example.com");
+    const cookie = await signIn(ctx);
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
@@ -356,7 +351,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // port, so the port it registered is almost never the port it listens on
     // — and those are precisely the clients whose registrations go stale.
     ctx = await createTestContext({});
-    const cookie = await signIn(ctx, "gate-3@example.com");
+    const cookie = await signIn(ctx);
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
@@ -385,7 +380,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // literals are what a catch-up widens by, and the unknown one is on no
     // allowlist, so it is the thing that must not appear.
     ctx = await createTestContext({});
-    const cookie = await signIn(ctx, "gate-4@example.com");
+    const cookie = await signIn(ctx);
     const union = bundleUnion();
     const unknown = "core.nonexistent.type:read";
     expect(buildAllowedScopes()).not.toContain(unknown);
@@ -443,7 +438,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
   for (const [name, extra] of refusedAboveRedirectCheck) {
     it(`does not widen the stored ceiling for ${name}`, async () => {
       ctx = await createTestContext({});
-      const cookie = await signIn(ctx, "gate-5@example.com");
+      const cookie = await signIn(ctx);
       const union = bundleUnion();
       const clientId = await seedClient(ctx, {
         scopes: [SEEDED_SCOPE],
@@ -473,7 +468,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // `unsupported_response_type` there, and there is no grant in it worth
     // moving a registration row for.
     ctx = await createTestContext({});
-    const cookie = await signIn(ctx, "gate-6@example.com");
+    const cookie = await signIn(ctx);
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],

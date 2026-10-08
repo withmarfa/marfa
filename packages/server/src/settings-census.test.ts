@@ -14,6 +14,12 @@ const REPO = resolve(SRC, "../../..");
  * own, or the fixture such a test starts.
  */
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
+  "control/socket.test.ts":
+    "runs cross-user socket access only on the hosted CI runner",
+  "routes/setup-browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
+  "routes/management-pages.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "enrichment/ocr.real.test.ts":
     "opts into downloading the real OCR model, a test's own switch",
   "enrichment/extract.test.ts":
@@ -74,6 +80,10 @@ const PROCESS_MEMBERS = new Set([
   "chdir",
   "execPath",
   "pid",
+  "getuid",
+  "kill",
+  "send",
+  "disconnect",
   "platform",
   "hrtime",
   "memoryUsage",
@@ -384,6 +394,10 @@ describe("the settings census", () => {
       "// process.env.X\nconst a = 1;",
       'const a = "process.env";',
       "process.stdout.write('x');",
+      "const uid = process.getuid?.();",
+      "process.kill(process.pid, 'SIGKILL');",
+      "process.send?.({ ready: true });",
+      "process.disconnect?.();",
       "function hold(process: string) { return process.length; }",
       "const f = { process: 1 }.process;",
       "type T = typeof process;",

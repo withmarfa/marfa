@@ -1002,7 +1002,6 @@ export const answers = {
       sources: [],
       permissions: [],
       default_tier: "library",
-      is_operator: false,
       type_permissions: typePermissions,
       extension_permissions: {},
       edge_permissions: edgePermissions,

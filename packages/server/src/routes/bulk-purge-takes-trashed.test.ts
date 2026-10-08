@@ -140,9 +140,8 @@ describe("a bulk purge takes only trashed rows", () => {
 
   it("judges a type with its own soft-deleted state by that state", async () => {
     // A `system.*` row ends `revoked`, not `trashed`. The bulk door's
-    // match leaves `system.*` rows out (`exclude_system_types`) unless the
-    // operator key names them, so no job a working credential queues
-    // reaches one; the chunk is run directly.
+    // match leaves `system.*` rows out (`exclude_system_types`), so no job
+    // an ordinary credential queues reaches one; the chunk is run directly.
     // Grants already uninstalled, so the live-grant refusal every purge asks
     // first lets both through to the state the purge is judged by.
     async function connection(): Promise<string> {

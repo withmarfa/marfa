@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
 import { blobHash, itemsArchive } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -8,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor } from "../../utils/own-blob-server.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * What an upload and a restore do when the volume cannot keep the instance's
@@ -29,14 +30,14 @@ import { clientsFor } from "../../utils/own-blob-server.js";
 const HUGE_RESERVE = 2 ** 50;
 
 let server: FreshServer;
-let operator: MarfaClient;
+let management: MarfaClient;
 let working: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("disk-reserve", {
     MARFA_DISK_RESERVE_BYTES: String(HUGE_RESERVE),
   });
-  ({ operator, working } = clientsFor(server));
+  ({ operator: management, working } = clientsFor(server));
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -46,7 +47,16 @@ afterAll(async () => {
 /** The server again on the same state, under no reserve. The keys stay. */
 async function withoutReserve(): Promise<void> {
   await server.restart({ env: { MARFA_DISK_RESERVE_BYTES: "0" } });
-  ({ operator, working } = clientsFor(server));
+  ({ operator: management, working } = clientsFor(server));
+}
+
+function ownerClient(): MarfaClient {
+  return new MarfaClient({
+    baseUrl: server.apiUrl,
+    ownerCookie: server.ownerCookie,
+    ownerCredentials: TEST_OWNER,
+    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+  });
 }
 
 describe("a reserve the volume cannot keep", () => {
@@ -94,15 +104,15 @@ describe("a reserve the volume cannot keep", () => {
       typeof (refused.error?.error.details as { available_bytes?: unknown })
         .available_bytes,
     ).toBe("number");
-    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect((await management.downloadBlob(hash)).status).toBe(404);
   });
 
   it("refuses a restore 507 insufficient_storage, and writes no row, no type and no blob", async () => {
-    const refused = await operator.restoreArchive(archive());
+    const refused = await ownerClient().restoreArchive(archive());
     expect(refused.status).toBe(507);
     expect(refused.error?.error.code).toBe("insufficient_storage");
     expect((await working.getItem(id)).status).toBe(404);
-    expect((await operator.downloadBlob(restoredHash)).status).toBe(404);
+    expect((await management.downloadBlob(restoredHash)).status).toBe(404);
     expect((await working.getType(typeId)).status).toBe(404);
   });
 
@@ -123,13 +133,13 @@ describe("a reserve the volume cannot keep", () => {
     );
     expect(uploaded.status).toBe(201);
     expect(uploaded.data.hash).toBe(hash);
-    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    expect((await management.downloadBlob(hash)).status).toBe(200);
 
-    const done = await operator.restoreArchive(archive());
+    const done = await ownerClient().restoreArchive(archive());
     expect(done.status).toBe(200);
     expect(done.data.imported).toBe(1);
     expect((await working.getItem(id)).status).toBe(200);
-    expect((await operator.downloadBlob(restoredHash)).status).toBe(200);
+    expect((await management.downloadBlob(restoredHash)).status).toBe(200);
     expect((await working.getType(typeId)).status).toBe(200);
   });
 });

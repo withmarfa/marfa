@@ -226,7 +226,7 @@ async function storeKey(
       source: `census-${suffix}`,
       type_permissions: {},
       default_tier: "library",
-      is_operator: false,
+
       ...input,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),

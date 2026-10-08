@@ -44,11 +44,10 @@ const RATE_LIMIT = [
 ];
 
 /**
- * Operations `app.ts` mounts ahead of the rate limiter, which therefore
- * answer no 429 and carry none of its headers. `app.root.test.ts` holds the
- * root to that on the wire.
+ * Operations that bypass the general request limiter. Claim has its own
+ * durable guessing allowance, without the general limiter's headers.
  */
-const AHEAD_OF_THE_LIMITER = new Set(["GET /"]);
+const AHEAD_OF_THE_LIMITER = new Set(["GET /", "POST /owner"]);
 
 /**
  * The body cap's refusal, answered before the limiter and the idempotency
@@ -209,10 +208,9 @@ describe("the published spec declares the headers the server sets", () => {
         }
       }
     }
-    // Every operation behind the limiter answers 429, so a count short of
-    // theirs means the refusal stopped being declared somewhere and the
-    // assertion above passed by having nothing to check there.
-    expect(refusals).toBe(operations.size - AHEAD_OF_THE_LIMITER.size);
+    // Claim also answers 429 through its own code-guessing allowance.
+    expect(operations.get("POST /owner")).toHaveProperty("429");
+    expect(refusals).toBe(operations.size - AHEAD_OF_THE_LIMITER.size + 1);
     expect(wrong.sort()).toEqual([]);
   });
 

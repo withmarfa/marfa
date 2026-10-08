@@ -764,14 +764,13 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
   // `storage.types.create` are this route and the archive-restore replay,
   // and the replay refuses reserved namespaces before it reaches it.
   for (const tier of ["core", "system", "marfa"] as const) {
-    it(`refuses a ${tier}.* registration from the operator key`, async () => {
+    it(`refuses a ${tier}.* registration from an ordinary key`, async () => {
       const res = await request(ctx.app, "POST", "/types", {
         key: ctx.workingKey,
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
-      // The operator key too: an archive carrying such a type is refused
-      // whatever credential restores it, so a registration here could only
-      // make the exports un-restorable.
+      // Archive restore also refuses authored types in reserved namespaces,
+      // so accepting this registration would make its export unrestorable.
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: { message: string } };
       expect(body.error.message).toContain("platform-shipped");

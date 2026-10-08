@@ -11,17 +11,13 @@
  * **Every assertion reads the stored row**, through the same read the plugin
  * makes, because the initiation answers 200 whether or not the row moved.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { randomBytes } from "node:crypto";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { expandBundlesToScopes } from "@withmarfa/shared";
+import { randomBytes } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
-import {
-  createTestAccount,
-  createTestContext,
-  request,
-} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -80,9 +76,8 @@ async function widenings(c: TestContext, clientId: string) {
   return rows.data.filter((row) => row.resource_id === clientId);
 }
 
-async function signIn(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Device Ceiling User");
+async function signIn(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const res = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -182,7 +177,7 @@ describe("a device sign-in widens a client's ceiling only when a person approves
     const init = (await (
       await initiate(c, clientId, `${HELD} ${ticked} ${unticked}`)
     ).json()) as DeviceInit;
-    const cookie = await signIn(c, "device-ceiling-approve@example.com");
+    const cookie = await signIn(c);
 
     const screen = await openConsent(c, init.user_code, cookie);
     // The screen offers what the device asked for, beyond the ceiling.
@@ -234,7 +229,7 @@ describe("a device sign-in widens a client's ceiling only when a person approves
     const c = ctx;
     const clientId = await seedStaleClient(c);
     const [wanted] = publishedBeyondCeiling();
-    const cookie = await signIn(c, "device-ceiling-deny@example.com");
+    const cookie = await signIn(c);
 
     const denied = (await (
       await initiate(c, clientId, `${HELD} ${wanted}`)
@@ -264,7 +259,7 @@ describe("a device sign-in widens a client's ceiling only when a person approves
     const init = (await (
       await initiate(c, clientId, `${HELD} ${unticked}`)
     ).json()) as DeviceInit;
-    const cookie = await signIn(c, "device-ceiling-narrow@example.com");
+    const cookie = await signIn(c);
     await openConsent(c, init.user_code, cookie);
 
     expect(

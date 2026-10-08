@@ -21,14 +21,10 @@
  * a device refresh token rotates and its replay poisons the family, which
  * is what the authorization-code path has always done.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 // Every test here signs a user up and in (two password hashes) and drives at
 // least one full grant end to end before it asserts anything. That is real
@@ -92,9 +88,8 @@ async function seedClient(c: TestContext): Promise<string> {
   return clientId;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -293,7 +288,7 @@ async function callWithAccessToken(
 describe("refresh-token issuance is gated on offline_access", () => {
   it("neither path hands out a refresh token when the grant did not ask to stay signed in", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "parity-none@marfa.so");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx);
 
     // Deliberately no `offline_access`: this is a grant approved for data
@@ -332,7 +327,7 @@ describe("refresh-token issuance is gated on offline_access", () => {
 
   it("both paths hand one out when the grant did ask", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "parity-offline@marfa.so");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx);
     const scope = "openid offline_access core.note:read";
 
@@ -355,7 +350,7 @@ describe("refresh-token issuance is gated on offline_access", () => {
 
   it("a device refresh token rotates, and replaying the rotated-away one kills the family", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "device-rotate@marfa.so");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx);
 
     const granted = await deviceGrant(

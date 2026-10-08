@@ -11,6 +11,7 @@ import { gunzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   cleanup,
+  requireApiKey,
   trackItem,
   trackKey,
   trackWebhook,
@@ -22,8 +23,7 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 
 /**
  * The instance from the terminal: what it says about itself, its keys, its
- * configuration, its audit log, its exports, and the doors an operator
- * holds.
+ * configuration, its audit log, its exports, and its management operations.
  */
 
 let c: CliContext;
@@ -97,6 +97,22 @@ interface Status {
 }
 
 describe("the instance from the terminal", () => {
+  it("reads instance metrics with instance.read and refuses a content-only key", async () => {
+    const metrics = await c.operator.json<{
+      items: { total: number };
+      keys: { total: number };
+      uptime_seconds: number;
+      cached_at: string;
+    }>(["metrics"]);
+    expect(metrics.items.total).toBeGreaterThanOrEqual(0);
+    expect(metrics.keys.total).toBeGreaterThan(0);
+    expect(metrics.uptime_seconds).toBeGreaterThanOrEqual(0);
+    expect(Number.isNaN(Date.parse(metrics.cached_at))).toBe(false);
+    const refused = await c.cli.refused(["metrics"]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+    expect(refused.envelope.error.server?.code).toBe("forbidden");
+  });
+
   it("reports the instance it is pointed at, with and without a credential", async () => {
     const root = (await fetch(`${c.apiUrl}/`).then((r) => r.json())) as {
       instance_id: string;
@@ -241,26 +257,28 @@ describe("the instance from the terminal", () => {
   });
 
   it("empties one key permission map at a time and retains every other family", async () => {
-    const minted = await c.operator.json<{ id: string }>([
-      "keys",
-      "create",
-      "--label",
-      "selective-clear",
-      "--source",
-      unique("cli-selective-clear"),
-      "--permission",
-      "audit.read",
-      "--type-permission",
-      "core.note=write",
-      "--extension-permission",
-      "app.cursor=read",
-      "--edge-permission",
-      "references=read",
-      "--metadata-permission",
-      "types=read",
-      "--profile-permission",
-      "email=read",
-    ]);
+    const minted = await c.cli
+      .as(requireApiKey())
+      .json<{ id: string }>([
+        "keys",
+        "create",
+        "--label",
+        "selective-clear",
+        "--source",
+        unique("cli-selective-clear"),
+        "--permission",
+        "audit.read",
+        "--type-permission",
+        "core.note=write",
+        "--extension-permission",
+        "app.cursor=read",
+        "--edge-permission",
+        "references=read",
+        "--metadata-permission",
+        "types=read",
+        "--profile-permission",
+        "email=read",
+      ]);
     trackKey(c.ctx, minted.id);
 
     const families = [
@@ -302,23 +320,16 @@ describe("the instance from the terminal", () => {
 
   it("mints a key claiming a source, and a create under it names that source until the claim is taken away", async () => {
     const claimed = unique("cli-claimed");
-    // The operator mints it: a working key may grant only what it claims.
-    const minted = await c.operator.json<{
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const minted = await c.cli.viaSocket(socket!).json<{
       id: string;
       key: string;
       sources: string[];
-    }>([
-      "keys",
-      "create",
-      "--label",
-      "claimer",
-      "--source",
-      unique("cli-claimer"),
-      "--type-permission",
-      "core.note=write",
-      "--claim",
-      claimed,
-    ]);
+    }>(["keys", "create", "--label", "claimer", "--source", unique("cli-claimer"), "--type-permission", "core.note=write", "--claim", claimed]);
     trackKey(c.ctx, minted.id);
     expect(minted.sources).toEqual([claimed]);
 
@@ -467,7 +478,7 @@ describe("the instance from the terminal", () => {
     expect(tar.toString("latin1")).toContain(title);
   });
 
-  it("takes an archive back under the operator key and is refused it under a working key", async () => {
+  it("takes an archive back through the private socket and refuses ordinary keys", async () => {
     // The other half of the archive round trip, reachable from the client
     // because the door is published: a published door the reference client
     // cannot call is a hole, which is what the binary's own coverage gate
@@ -496,7 +507,12 @@ describe("the instance from the terminal", () => {
     // Every row in it is already here, so the restore counts duplicates
     // rather than imports. That the counts come back at all is what says
     // the archive reached the door and was read.
-    const report = await c.operator.json<{
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const report = await c.cli.viaSocket(socket!).json<{
       imported: number;
       duplicates: number;
       edges_imported: number;
@@ -504,14 +520,14 @@ describe("the instance from the terminal", () => {
     expect(report.duplicates).toBeGreaterThanOrEqual(1);
     expect(report.imported).toBeGreaterThanOrEqual(0);
 
-    // The witness that the operator key is what carried it: the same
-    // archive under a working key is refused by the door, not by the
-    // client, and the refusal is the door's own.
+    // The same archive is refused under both content and management keys.
     const refused = await c.cli.refused(["restore", archive]);
     expect(refused.envelope.error.server?.status).toBe(403);
+    const managerRefused = await c.operator.refused(["restore", archive]);
+    expect(managerRefused.envelope.error.server?.status).toBe(403);
   });
 
-  it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
+  it("reaches management operations with named permissions and refuses a content key", async () => {
     const drift = await c.operator.json<{
       data: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);

@@ -25,15 +25,14 @@
  * extension layers reach the same row and are a different axis, excluded
  * below by name rather than by omission.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { hashApiKey } from "../middleware/auth.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
   runBulkActionAsync,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -55,15 +54,16 @@ interface Credential {
 
 /** An ordinary credential, holding write on the two types the doors write. */
 async function credentialFor(name: string): Promise<Credential> {
-  const raw = `marfa_k1_doors_${Math.random().toString(36).slice(2, 14)}`;
-  await ctx.storage.keys.create(
-    {
-      label: name,
-      source: name,
-      type_permissions: { "core.note": "write", "core.bookmark": "write" },
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  const raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: name,
+    source: name,
+    type_permissions: { "core.note": "write", "core.bookmark": "write" },
+  });
   return { key: raw };
 }
 

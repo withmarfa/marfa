@@ -1,0 +1,68 @@
+import { Hono } from "hono";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { z } from "zod";
+import type { Storage } from "../storage/interface.js";
+import type { MarfaAuth } from "../auth/instance.js";
+import {
+  claimOwner,
+  getClaimStatus,
+  issueSetupCode,
+  issueSetupTicket,
+  recoverOwnerPassword,
+} from "../auth/instance-claim.js";
+
+const ownerInput = z
+  .object({
+    email: z.string(),
+    password: z.string(),
+    name: z.string().optional(),
+  })
+  .strict();
+const recoveryInput = z.object({ password: z.string() }).strict();
+
+/** Mounted only on the private listener, never the public router. */
+export function controlRoutes(
+  storage: Storage,
+  auth: MarfaAuth,
+  baseURL: string,
+) {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+  app.get("/setup/status", async (c) => c.json(await getClaimStatus(storage)));
+  app.post("/setup/code", async (c) => c.json(await issueSetupCode(storage)));
+  app.post("/setup/ticket", async (c) => {
+    const result = await issueSetupTicket(storage);
+    const url = new URL("/setup", baseURL);
+    url.hash = `handoff=${result.ticket}`;
+    return c.json({ ...result, url: url.toString() });
+  });
+  app.post("/setup/claim", async (c) => {
+    const input = ownerInput.safeParse(await c.req.json().catch(() => null));
+    if (!input.success)
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Provide an email and password, and optionally a name",
+      );
+    return c.json(
+      await claimOwner(storage, auth, {
+        ...input.data,
+        proof: { kind: "local" },
+      }),
+      201,
+    );
+  });
+  app.post("/owner/recover", async (c) => {
+    const input = recoveryInput.safeParse(await c.req.json().catch(() => null));
+    if (!input.success)
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Provide the new password",
+      );
+    await recoverOwnerPassword(storage, auth, input.data);
+    return c.json({ recovered: true });
+  });
+  return app;
+}

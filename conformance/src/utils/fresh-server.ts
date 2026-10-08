@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnvFile, redactBootstrapSecret } from "./target.js";
+import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 
 /**
  * A server of the fixture's own, booted from this checkout into a state
@@ -27,11 +27,11 @@ import { parseEnvFile, redactBootstrapSecret } from "./target.js";
  */
 export interface FreshServer {
   apiUrl: string;
-  /** The key the bootstrap mint answered with. */
-  operatorKey: string;
-  /** A key the operator key minted naming no permissions, maps or claims,
-   *  so it holds every content family and every permission
-   *  (`keys-and-oauth.md` 2). */
+  /** Ordinary key explicitly holding management permissions and no content maps. */
+  managementKey: string;
+  controlSocket: string;
+  ownerCookie: string;
+  /** Ordinary key holding all content maps and the seven content/app permissions. */
   workingKey: string;
   /** The SQLite file this server writes to, so a fixture about the write
    *  lock can hold it from outside the process. */
@@ -58,8 +58,8 @@ export interface FreshServer {
    * does not, so `apiUrl` is the new one when this resolves.
    *
    * A boot that finds an emptied database mints its keys again, so
-   * `operatorKey` is read afresh and `workingKey` is minted again when the
-   * operator key changed.
+   * `managementKey` is read afresh and `workingKey` is minted again when the
+   * management key changed.
    *
    * Takes the callback alone, or `{ signal, whileStopped, env }` to stop the
    * server with a signal other than `SIGTERM` or to boot it again under
@@ -263,13 +263,13 @@ export function runScript(
 
 async function mintWorkingKey(
   apiUrl: string,
-  operatorKey: string,
+  managementKey: string,
   label: string,
 ): Promise<string> {
   const response = await fetch(`${apiUrl}/keys`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${operatorKey}`,
+      Authorization: `Bearer ${managementKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ label: `${label}-working`, source: label }),
@@ -316,7 +316,7 @@ const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
 /** Before `down`, which clears the log with the rest of the state. The run's
  *  server boots from the same checkout, so what this one answered is held to
  *  the same document. */
-function keepStatusLog(state: string): void {
+export function keepStatusLog(state: string): void {
   const destination = process.env.MARFA_STATUS_LOGS;
   const log = join(state, "server.log");
   if (destination !== undefined && destination !== "" && existsSync(log)) {
@@ -381,14 +381,14 @@ export async function bootFreshServer(
 
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
   const apiUrl = env.MARFA_API_URL;
-  const operatorKey = env.MARFA_OPERATOR_KEY;
-  if (!apiUrl || !operatorKey) {
+  const managementKey = env.MARFA_MANAGEMENT_KEY;
+  if (!apiUrl || !managementKey) {
     await stop();
     throw new Error(`the boot into ${state} wrote an incomplete env file`);
   }
   let workingKey: string;
   try {
-    workingKey = await mintWorkingKey(apiUrl, operatorKey, label);
+    workingKey = await mintWorkingKey(apiUrl, env.MARFA_API_KEY!, label);
   } catch (err) {
     await stop();
     throw err;
@@ -411,7 +411,9 @@ export async function bootFreshServer(
   };
   const server: FreshServer = {
     apiUrl,
-    operatorKey,
+    managementKey,
+    controlSocket: env.MARFA_CONTROL_SOCKET!,
+    ownerCookie: env.MARFA_OWNER_COOKIE!,
     workingKey,
     sqlitePath: join(state, "marfa.db"),
     stateDir: state,
@@ -442,17 +444,19 @@ export async function bootFreshServer(
         );
       }
       const after = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
-      if (!after.MARFA_API_URL || !after.MARFA_OPERATOR_KEY) {
+      if (!after.MARFA_API_URL || !after.MARFA_MANAGEMENT_KEY) {
         throw new Error(
           `the second boot into ${state} wrote an incomplete env`,
         );
       }
       server.apiUrl = after.MARFA_API_URL;
-      if (after.MARFA_OPERATOR_KEY !== server.operatorKey) {
-        server.operatorKey = after.MARFA_OPERATOR_KEY;
+      server.controlSocket = after.MARFA_CONTROL_SOCKET!;
+      server.ownerCookie = after.MARFA_OWNER_COOKIE!;
+      if (after.MARFA_MANAGEMENT_KEY !== server.managementKey) {
+        server.managementKey = after.MARFA_MANAGEMENT_KEY;
         server.workingKey = await mintWorkingKey(
           server.apiUrl,
-          server.operatorKey,
+          after.MARFA_API_KEY!,
           label,
         );
       }
@@ -548,9 +552,7 @@ export async function bootRefused(
     const ended = readExit(state, undefined, false);
     return {
       ...ended,
-      output: redactBootstrapSecret(
-        readFileSync(join(state, "server.log"), "utf8"),
-      ),
+      output: redactSetupProof(readFileSync(join(state, "server.log"), "utf8")),
       stateDir: state,
       sqlitePath,
       before,
@@ -595,34 +597,15 @@ export interface DeviceFlow {
 }
 
 /**
- * Starts a device flow the way an app does, over HTTP alone: the operator key
- * creates the owner, a native client registers, and the device-authorization
- * door is asked for a code. Nobody has approved it yet.
- *
- * The app asks for `scopes`, or for every scope the instance supports when
- * none are named.
- *
- * The owner is created here, and an instance has one, so this runs once per
- * fresh server: a second call is refused `409 owner_exists` and throws.
+ * Registers a native app and requests a device code for the claimed owner to approve.
+ * Without explicit scopes it requests content and the seven existing permissions;
+ * tests of management access must name those additional permissions explicitly.
  */
 export async function startDeviceFlow(
   server: FreshServer,
   scopes?: readonly string[],
 ): Promise<DeviceFlow> {
-  const owner = { email: "a@example.com", password: "correct horse battery" };
-  const created = await fetch(`${server.apiUrl}/owner`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${server.operatorKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(owner),
-  });
-  if (created.status !== 201) {
-    throw new Error(
-      `the owner could not be created, so nobody can approve an app: ${String(created.status)}`,
-    );
-  }
+  const owner = TEST_OWNER;
 
   const discovery = (await (
     await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server/auth`)
@@ -655,7 +638,19 @@ export async function startDeviceFlow(
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: registered.client_id,
-        scope: (scopes ?? discovery.scopes_supported).join(" "),
+        scope: (
+          scopes ??
+          discovery.scopes_supported.filter(
+            (scope) =>
+              ![
+                "instance.read",
+                "instance.maintain",
+                "connectors.manage",
+                "blobs.manage",
+                "keys.manage",
+              ].includes(scope),
+          )
+        ).join(" "),
       }),
     })
   ).json()) as {
@@ -744,8 +739,6 @@ export async function startDeviceFlow(
  * credential a fixture can hold that an app holds, so a door that treats an
  * app differently from a key is asserted through it.
  *
- * It creates the owner, as `startDeviceFlow` does, so it runs once per fresh
- * server.
  */
 export async function approvedApp(
   server: FreshServer,

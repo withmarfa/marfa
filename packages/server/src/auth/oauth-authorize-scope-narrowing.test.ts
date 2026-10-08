@@ -62,16 +62,12 @@
  * exactly what that page must never trust. The token response's `scope`
  * field and the server logs are the two honest channels.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { buildAllowedScopes } from "./oauth-provider.js";
+import { createTestContext, request } from "../test-utils.js";
 import { buildDefaultPermissionBundles } from "./default-bundles.js";
+import { buildAllowedScopes } from "./oauth-provider.js";
 
 // Each test signs a user up and in (two password hashes) before it drives a
 // full authorize round trip. That is real work to fit inside the default
@@ -161,9 +157,8 @@ async function storedCeiling(
   return client.scopes;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -284,7 +279,7 @@ async function acceptConsent(
 describe("authorize scope narrowing", () => {
   it("a stale ceiling missing a live scope reaches consent instead of dead-ending", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-stale@example.com");
+    const cookie = await signInUser(ctx);
 
     // The production shape exactly: a ceiling frozen before a type landed,
     // so it covers `core.note:read` but not the newer `core.task:read`.
@@ -316,7 +311,7 @@ describe("authorize scope narrowing", () => {
 
   it("never offers a scope for a type this server no longer carries", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-retired@example.com");
+    const cookie = await signInUser(ctx);
 
     // The snapshot is stale in BOTH directions, and this is the second one:
     // a ceiling minted before a type was deleted still contains its scope.
@@ -365,7 +360,7 @@ describe("authorize scope narrowing", () => {
 
   it("the token response names exactly the narrowed set", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-token@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { verifier, challenge } = pkcePair();
@@ -404,7 +399,7 @@ describe("authorize scope narrowing", () => {
 
   it("still fails when nothing in the request is grantable", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-none@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { challenge } = pkcePair();
@@ -426,7 +421,7 @@ describe("authorize scope narrowing", () => {
 
   it("treats an empty stored ceiling as a real ceiling, not an absent one", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-empty@example.com");
+    const cookie = await signInUser(ctx);
 
     // `client.scopes ?? opts.scopes` is null-coalescing, so `[]` does not
     // fall through to the live allowlist — it is a ceiling permitting
@@ -452,7 +447,7 @@ describe("authorize scope narrowing", () => {
 
   it("refuses rather than silently dropping a session-critical scope", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-session@example.com");
+    const cookie = await signInUser(ctx);
 
     // A ceiling that omits `offline_access` — the shape of a client whose
     // registration simply forgot it.
@@ -479,7 +474,7 @@ describe("authorize scope narrowing", () => {
 
   it("defaults an omitted scope to the live part of the ceiling", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-noscope@example.com");
+    const cookie = await signInUser(ctx);
     // A ceiling holding a scope for a deleted type. The plugin defaults an
     // omitted `scope` to this stored snapshot, which would put the dead
     // literal in front of the user at consent and inside the grant after.
@@ -509,7 +504,7 @@ describe("authorize scope narrowing", () => {
 
   it("leaves an omitted scope alone when the ceiling is fully live", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-noscope-live@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { challenge } = pkcePair();
@@ -540,7 +535,7 @@ describe("authorize scope narrowing", () => {
   // offering them, and no grant on either environment held any of the six.
   it("grants a client a bundle scope for a type registered after it was", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-aged-out@example.com");
+    const cookie = await signInUser(ctx);
 
     // The production shape: a ceiling frozen before the type landed.
     expect(bundleScopes.has("core.task:read")).toBe(true);
@@ -593,7 +588,7 @@ describe("authorize scope narrowing", () => {
   // every no-scope authorize into a request for everything.
   it("widens by what was requested rather than to the whole bundle set", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-minimal@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { challenge } = pkcePair();
@@ -615,7 +610,7 @@ describe("authorize scope narrowing", () => {
   // be a catch-up, it would be the ceiling quietly ceasing to exist.
   it("leaves the ceiling governing a scope no bundle advertises", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-wildcard@example.com");
+    const cookie = await signInUser(ctx);
 
     expect(buildAllowedScopes()).toContain(NON_BUNDLE_SCOPE);
     expect(bundleScopes.has(NON_BUNDLE_SCOPE)).toBe(false);
@@ -643,7 +638,7 @@ describe("authorize scope narrowing", () => {
   // nothing, and the catch-up must not read it as "not configured yet".
   it("does not fill in an empty ceiling", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-empty-ceiling@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, []);
 
     const { challenge } = pkcePair();
@@ -663,7 +658,7 @@ describe("authorize scope narrowing", () => {
   // not — the exact defect, introduced by its own repair.
   it("does not write a ceiling onto a client that has none", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-null-ceiling@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx);
 
     const { challenge } = pkcePair();
@@ -680,7 +675,7 @@ describe("authorize scope narrowing", () => {
 
   it("a client with no stored ceiling tracks the live allowlist", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-null@example.com");
+    const cookie = await signInUser(ctx);
 
     const clientId = await seedClient(ctx);
     expect(await storedCeiling(ctx, clientId)).toBeNull();
@@ -704,7 +699,7 @@ describe("authorize scope narrowing", () => {
 describe("authorize scope narrowing on a form POST", () => {
   it("narrows a form POST exactly as it narrows a GET", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-post-stale@example.com");
+    const cookie = await signInUser(ctx);
 
     // The GET case's ceiling, unchanged: frozen before `core.task:read`
     // existed, and still carrying a scope for a type that has since gone.
@@ -747,7 +742,7 @@ describe("authorize scope narrowing on a form POST", () => {
 
   it("refuses rather than silently dropping a session-critical scope on a form POST", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-post-session@example.com");
+    const cookie = await signInUser(ctx);
 
     // A ceiling that omits `offline_access`. The refusal, not the reading,
     // is what this pins: once the hook can read a POST's scope it can also
@@ -775,7 +770,7 @@ describe("authorize scope narrowing on a form POST", () => {
 
   it("follows the provider onto the body when the query carries parameters too", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-post-both@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     // The provider takes a POST's parameters from the body and ignores the
@@ -819,7 +814,7 @@ describe("authorize scope narrowing on a form POST", () => {
 
   it("leaves a POST whose parameters are only on the query entirely alone", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-post-queryonly@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
     const before = await storedCeiling(ctx, clientId);
 
@@ -856,7 +851,7 @@ describe("authorize scope narrowing on a form POST", () => {
 
   it("carries a narrowed form POST through consent to a token", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "narrow-post-token@example.com");
+    const cookie = await signInUser(ctx);
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { verifier, challenge } = pkcePair();
@@ -899,7 +894,7 @@ describe("authorize scope narrowing on a form POST", () => {
 
 it("requires the native narrowing observation before returning its changed authorization request", async () => {
   ctx = await createTestContext();
-  const cookie = await signInUser(ctx, "narrow-audit@example.test");
+  const cookie = await signInUser(ctx);
   const clientId = await seedClient(ctx, [
     "openid",
     "core.note:read",

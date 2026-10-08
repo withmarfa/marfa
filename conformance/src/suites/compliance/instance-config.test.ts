@@ -215,7 +215,7 @@ describe("the order PUT /config refuses in", () => {
   it("asks for a credential, then config.manage, before it reads the body", async () => {
     const operator = new MarfaClient({
       baseUrl: server!.apiUrl,
-      apiKey: server!.operatorKey,
+      apiKey: server!.managementKey,
     });
     const narrowed = await operator.createKey({
       label: "instance-config-narrowed",
@@ -286,6 +286,12 @@ describe("the order PUT /config refuses in", () => {
     expect((await holder.getConfig()).status).toBe(200);
     expect((await holder.updateConfig({})).status).toBe(200);
 
+    const narrow = await configKey().createKey({
+      label: "config-query-denied",
+      source: "config-query-denied",
+      permissions: ["audit.read"],
+    });
+    expect(narrow.status).toBe(201);
     for (const method of ["GET", "PUT"]) {
       for (const [who, credential] of [
         ["no credential", undefined],
@@ -298,7 +304,7 @@ describe("the order PUT /config refuses in", () => {
         );
       }
 
-      const forbidden = await asked(method, server!.operatorKey);
+      const forbidden = await asked(method, narrow.data.key);
       expect(forbidden.status, method).toBe(403);
       expect(forbidden.error.code, method).toBe("forbidden");
       expect(forbidden.error.details?.required_scope, method).toBe(
@@ -335,7 +341,7 @@ describe("GET /config and PUT /config", () => {
   function operatorClient(): MarfaClient {
     return new MarfaClient({
       baseUrl: server!.apiUrl,
-      apiKey: server!.operatorKey,
+      apiKey: server!.managementKey,
     });
   }
 
@@ -354,8 +360,17 @@ describe("GET /config and PUT /config", () => {
     return answer.data as Record<string, unknown>;
   }
 
-  it("refuses both operations to the operator key, which holds no config.manage, and serves them to a key that does", async () => {
-    const operator = operatorClient();
+  it("refuses both operations without config.manage and serves them when it is granted", async () => {
+    const created = await operatorClient().createKey({
+      label: "config-denied",
+      source: "config-denied",
+      permissions: ["instance.read"],
+    });
+    expect(created.status).toBe(201);
+    const operator = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: created.data.key,
+    });
     for (const [label, answer] of [
       ["GET", await operator.getConfig()],
       ["PUT", await operator.updateConfig({})],

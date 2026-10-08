@@ -71,13 +71,13 @@ afterAll(async () => {
 async function runHeartbeat(): Promise<Response> {
   return fetch(`${server!.apiUrl}/housekeeping/heartbeat/run`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${server!.operatorKey}` },
+    headers: { Authorization: `Bearer ${server!.managementKey}` },
   });
 }
 
 async function listedHeartbeat(): Promise<{ running_since: string | null }> {
   const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
-    headers: { Authorization: `Bearer ${server!.operatorKey}` },
+    headers: { Authorization: `Bearer ${server!.managementKey}` },
   });
   expect(listed.status).toBe(200);
   const body = (await listed.json()) as {
@@ -143,7 +143,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
       `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${server!.operatorKey}` },
+        headers: { Authorization: `Bearer ${server!.managementKey}` },
       },
     );
     expect(other.status).toBe(200);
@@ -154,7 +154,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     const dueBy = Date.now() + 5_000;
     while (!dueRan && Date.now() < dueBy) {
       const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
-        headers: { Authorization: `Bearer ${server!.operatorKey}` },
+        headers: { Authorization: `Bearer ${server!.managementKey}` },
       });
       const rows = (
         (await listed.json()) as {
@@ -180,7 +180,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     );
   });
   it("refuses the listing and a run to an app's access token", async () => {
-    const operator = { Authorization: `Bearer ${server!.operatorKey}` };
+    const operator = { Authorization: `Bearer ${server!.managementKey}` };
     expect(
       (await fetch(`${server!.apiUrl}/housekeeping`, { headers: operator }))
         .status,

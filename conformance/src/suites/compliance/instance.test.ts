@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import {
   expectMatchesSchema,
@@ -117,7 +117,7 @@ describe("the instance", () => {
     ]);
     for (const component of Object.values(body.components)) {
       expect(component.status).toBe("ok");
-      // Error text goes to the operator key alone, so a healthy answer to a
+      // Error text needs instance.read, so a healthy answer to a
       // caller with no credential holds none to begin with.
       expect(component).not.toHaveProperty("error");
     }
@@ -574,15 +574,8 @@ describe("the instance", () => {
     expect(r.error?.error).not.toHaveProperty("status");
   });
 
-  it("reports its instance-wide counters to the operator key, unpublished", async () => {
-    // `GET /metrics` is served and deliberately absent from the document
-    // (`INTERNAL_OPERATION_IDS`), so nothing in the published reference
-    // describes its body and `expectMatchesSchema` has nothing to check it
-    // against. Every other route in this file is held to the document; this
-    // one is held to the keys written out below, which is the only place a
-    // black-box caller's view of the body is pinned. `coverage.md` carries
-    // the unpublished row that records the absence as a decision.
-    const operator = getOperatorClient();
+  it("reports documented instance-wide counters with instance.read", async () => {
+    const operator = getManagementClient();
     const r = await operator.rawRequest<{
       items: { total: number; by_state: Record<string, number> };
       blobs: { count: number; total_bytes: number };
@@ -611,7 +604,9 @@ describe("the instance", () => {
     expect(typeof r.data.uptime_seconds).toBe("number");
     expect(typeof r.data.cached_at).toBe("string");
 
-    // Operator only, which is why no working credential covers it.
+    await expectMatchesSchema("GET", "/metrics", 200, r.data);
+
+    // The ordinary content fixture lacks instance.read.
     const refused = await client.rawRequest("/metrics");
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("forbidden");

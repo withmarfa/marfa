@@ -1,12 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import {
-  TEST_API_KEY_SALT,
-  createTestContext,
-  mintWorkingKey,
-  request,
-} from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 /**
  * Registering a type cannot make existing rows visible — an item's type is
@@ -43,18 +37,18 @@ async function newKey(
   permissions: Record<string, "read" | "write" | "none">,
 ): Promise<{ key: string }> {
   const suffix = Math.random().toString(36).slice(2, 10);
-  const raw = `marfa_k1_test_${suffix}`;
-  await c.storage.keys.create(
-    {
-      label: `${label}-${suffix}`,
-      source: `test-${suffix}`,
-      type_permissions: permissions,
-      metadata_permissions: { types: "write" },
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+
+  const raw = await mintWorkingKey(c, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    profile_permissions: {},
+    label: `${label}-${suffix}`,
+    source: `test-${suffix}`,
+    type_permissions: permissions,
+    metadata_permissions: { types: "write" },
+    default_tier: "library",
+  });
   return { key: raw };
 }
 
@@ -73,18 +67,18 @@ describe("a registration does not retype existing rows", () => {
     // A credential that may read notes, and write the one type it registers.
     const child = childSchema();
     const suffix = Math.random().toString(36).slice(2, 10);
-    const scoped = `marfa_k1_test_scoped_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `notes-only-${suffix}`,
-        source: `test-scoped-${suffix}`,
-        type_permissions: { "core.note.*": "read", [child.id]: "write" },
-        metadata_permissions: { types: "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(scoped, TEST_API_KEY_SALT),
-    );
+
+    const scoped = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      profile_permissions: {},
+      label: `notes-only-${suffix}`,
+      source: `test-scoped-${suffix}`,
+      type_permissions: { "core.note.*": "read", [child.id]: "write" },
+      metadata_permissions: { types: "write" },
+      default_tier: "library",
+    });
 
     // It registers a type that declares a parent it may read. Widening which
     // types a pattern matches must not widen which rows exist under those

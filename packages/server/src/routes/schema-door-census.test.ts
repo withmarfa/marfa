@@ -18,7 +18,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  TEST_CONTENT_PERMISSIONS,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -208,8 +213,8 @@ const CHANGING: Record<string, Driver> = {
 /** Doors that read a registry and change nothing. */
 const READING = ["GET /types", "GET /types/:id", "GET /edge-types"];
 
-/** Doors only the operator key opens, refusing a working key outright. */
-const OPERATOR_ONLY = [
+/** Doors requiring management grants or direct authority. */
+const MANAGEMENT_OR_DIRECT = [
   "GET /platform-types/drift",
   "DELETE /platform-types/:id",
   "POST /restore",
@@ -280,7 +285,7 @@ describe("every registry door is held to the credential's maps", () => {
     const doors = schemaDoors();
     expect(doors.length).toBeGreaterThan(8);
     expect(doors).toEqual(
-      [...Object.keys(CHANGING), ...READING, ...OPERATOR_ONLY].sort(),
+      [...Object.keys(CHANGING), ...READING, ...MANAGEMENT_OR_DIRECT].sort(),
     );
   });
 
@@ -313,12 +318,12 @@ describe("every registry door is held to the credential's maps", () => {
     },
   );
 
-  it("refuses a working key on every operator door", async () => {
+  it("refuses ordinary content grants on management and direct-authority doors", async () => {
     const key = await mintWorkingKey(ctx, {
-      permissions: [...PERMISSIONS],
+      permissions: TEST_CONTENT_PERMISSIONS,
       metadata_permissions: { "*": "write" },
     });
-    for (const door of OPERATOR_ONLY) {
+    for (const door of MANAGEMENT_OR_DIRECT) {
       const [method, path] = door.split(" ") as [string, string];
       const res = await request(
         ctx.app,

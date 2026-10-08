@@ -7,7 +7,7 @@
  *    what used to be "does the rank bypass this map" is "does the map say
  *    yes". What survives from that era is the pair of properties the rank
  *    never decided: the reserved-namespace write gate, which reads
- *    `is_operator`, and the list-read narrowing, which reads the map.
+ *    the reserved namespace fence, and the list-read narrowing, which reads the map.
  *
  * 2. Integration — each door consults the permission its own surface
  *    names. The census at `routes/permission-door-census.test.ts` proves
@@ -56,7 +56,7 @@ function fakeKey(overrides: Partial<ApiKey> = {}): ApiKey {
     id: "key-test",
     label: "test",
     source: "test",
-    is_operator: false,
+
     default_tier: "library",
     type_permissions: {},
     extension_permissions: {},
@@ -97,12 +97,11 @@ async function mintKey(
 // ---------------------------------------------------------------------------
 
 describe("checkTypeAccess", () => {
-  it("gates a system.* write on is_operator, whatever the map says", () => {
+  it("refuses direct system.* writes, whatever the map says", () => {
     // The reserved-namespace fence is the one axis a type grant cannot buy:
     // `*: write` reaches every ordinary type and still stops at `system.*`.
     const key = fakeKey({
       type_permissions: { "*": "write" },
-      is_operator: false,
     });
     expect(() => {
       checkTypeAccess(key, "system.connection", "read");
@@ -146,7 +145,7 @@ describe("computeTypeFilter", () => {
 describe("/keys — keys.mint", () => {
   it("mints for a credential that holds keys.mint", async () => {
     // The pass direction, which the case below cannot stand in for: that one
-    // is refused by the `is_operator` rule and would answer 403 whatever the
+    // is refused by schema validation whatever the
     // permission gate decided.
     const caller = await mintKey(ctx, {
       label: "mint-holder-pass",
@@ -167,7 +166,7 @@ describe("/keys — keys.mint", () => {
     expect(body.key).toBeTruthy();
   });
 
-  it("mints under the caller and cannot claim the operator flag", async () => {
+  it("rejects the removed machine-authority field", async () => {
     const caller = await mintKey(ctx, {
       label: "mint-holder",
       permissions: ["keys.mint"],
@@ -185,7 +184,7 @@ describe("/keys — keys.mint", () => {
       },
     });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
   });
 
   it("refuses a mint from a credential that does not hold keys.mint", async () => {

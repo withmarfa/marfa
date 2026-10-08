@@ -32,6 +32,7 @@ export function renderSignedInPage(params: SignedInPageParams): string {
     <h1 class="title">You're signed in</h1>
     <p class="sub" role="status">You're signed in to Marfa as <b>${escapeHtml(params.email)}</b>. To use your data, open an app and connect it to this server.</p>
     ${next}
+    <p><a href="/auth/owner/manage">Manage Marfa</a></p>
   `;
 
   return renderAuthLayout({

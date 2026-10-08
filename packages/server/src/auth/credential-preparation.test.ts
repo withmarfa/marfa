@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import { request } from "../test-utils.js";
+import { createClaimTestApp } from "./claim-test-app.js";
+type TestContext = Awaited<ReturnType<typeof createClaimTestApp>>;
 const probe = vi.hoisted(() => ({
   hashes: 0,
   verifies: 0,
@@ -29,7 +31,10 @@ vi.mock("better-auth", async (importOriginal) => {
               expect(transactionControl.getStore()).toBeUndefined();
               await probe.availableWriter();
               probe.verifies++;
-              return crypto.verifyPassword(input);
+              const verify = options.emailAndPassword?.password?.verify;
+              if (!verify)
+                throw new Error("The configured password verifier is required");
+              return verify(input);
             },
           },
         },
@@ -42,7 +47,7 @@ afterEach(async () => {
   ctx = undefined;
 });
 it("finishes real password hashing and verification before opening the credential persistence writer", async () => {
-  ctx = await createTestContext();
+  ctx = await createClaimTestApp("http://localhost:0");
   let writes = 0;
   probe.availableWriter = () =>
     ctx!.storage.settings.set("password.preparation", String(++writes));
@@ -51,8 +56,11 @@ it("finishes real password hashing and verification before opening the credentia
     password: "correct horse battery",
   };
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   const signed = await request(ctx.app, "POST", "/auth/sign-in/email", {
     body,

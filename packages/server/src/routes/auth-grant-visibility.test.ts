@@ -24,15 +24,10 @@
  * resolves through the same method. The shape is written onto the row, and
  * what that proves, that the predicate reads the field, is the point.
  */
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import { describe, it, expect, afterEach, vi } from "vitest";
-import {
-  createTestContext,
-  createTestAccount,
-  mintWorkingKey,
-  request,
-} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 // Each case signs a user up and in (two password hashes) and drives at
 // least one full device flow before it asserts anything. That is a lot of
@@ -94,10 +89,8 @@ async function seedClient(c: TestContext): Promise<string> {
  */
 async function signInUser(
   c: TestContext,
-  email: string,
 ): Promise<{ cookie: string; key: string }> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Tester");
+  const { email, password } = c.owner;
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -141,7 +134,7 @@ async function approveDeviceFlow(
 }
 
 /** Move a grant to `state: revoked` without touching its properties, the
- *  shape an operator soft-delete produced before the door refused it. */
+ *  deliberately inconsistent shape that no public operation produces. */
 async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
   const row = await c.storage.items.get(id);
   if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
@@ -197,16 +190,12 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-softdelete@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
     // The baseline. An empty list at the end proves nothing unless the
-    // grant was listed to begin with, and this is also what pins that the
-    // operator key can read this surface at all.
+    // grant was listed to begin with.
     const before = await listedGrants(c, key);
     expect(before.length).toBe(1);
     const originalId = before[0]!.id;
@@ -229,7 +218,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
-    // Exactly one grant, and it is not the one an operator deleted.
+    // Exactly one grant, and it is not the deliberately corrupted row.
     const after = await listedGrants(c, key);
     expect(after.length).toBe(1);
     expect(after[0]!.id).not.toBe(originalId);
@@ -254,10 +243,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie } = await signInUser(
-      c,
-      "grant-visibility-lookup@example.com",
-    );
+    const { cookie } = await signInUser(c);
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const grant = (await allGrantRows(c))[0]!;
@@ -281,10 +267,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-reapprove@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const listed = await listedGrants(c, key);
@@ -327,8 +310,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
  * **Two of these doors never reach the grant refusal.** `DELETE /items/{id}`
  * and `POST /items/{id}/transition` both run `requireTypeAccess(item.type,
  * "write")` first, and a grant is a `system.connection`: the
- * reserved-namespace fence admits only the operator key, whose own type map
- * is empty, so no credential the product can mint writes one. Both answer 403
+ * reserved-namespace fence refuses every public credential. Both answer 403
  * `type_not_permitted` and never consult liveness at all. No liveness
  * refusal sits behind that gate, because a refusal nobody can reach reads as
  * a protection somebody is relying on; what
@@ -345,10 +327,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-refuse@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
     expect(grant).toBeDefined();
@@ -373,10 +352,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-purge@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
@@ -400,10 +376,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-revoked@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
@@ -455,10 +428,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-strand@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
     await softDeleteGrantRow(c, grant!.id);
@@ -495,10 +465,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-transition@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
@@ -521,10 +488,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const { cookie, key } = await signInUser(
-      c,
-      "grant-visibility-cascade@example.com",
-    );
+    const { cookie, key } = await signInUser(c);
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 

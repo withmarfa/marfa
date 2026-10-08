@@ -274,22 +274,6 @@ export interface ApiKey {
    */
   sources?: string[];
   /**
-   * Operator-key gate. When `true`, the credential passes the fence in front
-   * of the reserved-namespace types (`system.*` and `marfa.*`; `core.*` is
-   * user-facing and carries no fence) — and meets its own empty type map
-   * immediately after, which is what actually closes those writes to
-   * everything. It does not admit reserved-namespace registration:
-   * `POST /types` refuses a reserved-root type for every credential, the
-   * operator key included — those types arrive with the build. The first
-   * credential created at server install is the seed operator key; only an
-   * existing operator key may mint another. Defaults to `false` for every
-   * ordinary working credential.
-   *
-   * This is the whole instance tier: the routes that run the instance take
-   * an operator key and nothing else, and no consent screen can offer one.
-   */
-  is_operator: boolean;
-  /**
    * Per-credential schema-enforcement override. Same shape as
    * `InstanceConfig.enforcement`; a lever set here wins over the instance
    * config for this credential's writes and reads, lever by lever
@@ -299,30 +283,11 @@ export interface ApiKey {
   enforcement_override?: EnforcementSettings;
   /** Tier stamped onto items when the client doesn't supply one. */
   default_tier: Tier;
-  /**
-   * The permissions this credential holds, as the literals themselves.
-   *
-   * A list rather than a map because a permission has no read/write
-   * axis: it is held or it is not. Stored as the same shape a grant carries,
-   * so one `hasPermission` answers for a key and for a sign-in and
-   * neither door has to know which it is looking at.
-   *
-   * Absent or empty means the credential holds none, which is the correct
-   * reading for an operator key as well: the instance tier is fenced off the
-   * model rather than expressed inside it.
-   */
+
   permissions?: Permission[];
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
-  /**
-   * Per-edge-type permissions map. Keyed by edge type id (`parent-of`,
-   * `about`, `karakeep.list-member`, …) or `*` for wildcard. Empty object
-   * means no edge permissions granted, and a credential with no entries
-   * cannot create, update or delete edges. The operator flag buys nothing
-   * here — the edge gate never reads it — so a credential carrying it is
-   * refused like any other holding no entries. Reads fall back to the source
-   * item's `type_permissions`.
-   */
+
   edge_permissions?: Record<string, EdgePermission>;
   /**
    * Per-metadata-sub-resource permissions map. Today `types` and
@@ -347,7 +312,7 @@ export interface ApiKey {
    *
    * A key minted through a grant belongs to the app that asked for it, so
    * the keys page groups it under that app and revoking the app offers to
-   * revoke it. Absent on a key a person or another key created directly.
+   * revoke it. Inherited by every descendant key. Absent only when no app is in its origin.
    */
   oauth_client_id?: string;
   created_at: string;
@@ -376,12 +341,6 @@ export interface CreateKeyInput {
   profile_permissions?: Record<string, ProfilePermission>;
   /** Per-credential schema-enforcement override; see `ApiKey`. */
   enforcement_override?: EnforcementSettings;
-  /**
-   * Optional. Only an existing operator key can set this to `true`; any
-   * other caller naming it is refused. The key minted at server install is
-   * the seed operator key.
-   */
-  is_operator?: boolean;
 }
 
 /**

@@ -25,17 +25,11 @@
  * check consulting one would let the opt-in and the exclusion disagree
  * about the same row. The route predicate has to be the column predicate.
  *
- * **What this is not.** On the two read doors it shapes an unnarrowed query
- * and permissions decide the rest: a credential still has to hold the type,
- * and the operator gate still decides who may write there. On
- * `POST /items/bulk-actions` that is not true — it runs no per-row
- * `requireTypeAccess`, so nothing stands between a match set and the action
- * taken on it except what narrowed the query. The type filter beside this
- * cannot cover for that: a credential granted write across the board
- * satisfies it and is still not the operator key. So on that door this
- * is the whole of the reserved-namespace control rather than one layer of
- * it, which is the reason it takes no widening token: a read widened by one
- * answers a bigger question, an action widened by one acts on more rows.
+ * On read routes this shapes the query; type permissions still decide
+ * which rows the credential can read. Bulk actions combine an explicit
+ * system type with the canonical reserved-namespace write check before
+ * allowing those rows into the match set. A broad type map alone cannot
+ * authorize a reserved write.
  *
  * `POST /items/bulk-get` is deliberately not a caller. It resolves a
  * caller's own id list rather than running a query, so it filters the rows

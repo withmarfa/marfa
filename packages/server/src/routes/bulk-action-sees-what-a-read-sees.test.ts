@@ -30,12 +30,8 @@ import type { Item, ItemState } from "@withmarfa/shared";
  * type column rather than the state column is what makes one fix cover both,
  * and a fix that closed one and not the other would close nothing.
  *
- * **Which reserved type the row is does not matter.** Widening this door
- * asks `mayWriteReserved`, and that fence admits the operator key alone. The
- * operator key holds no type at all, so the type filter empties its match set
- * before the fence is reached: every reserved type is unopenable on this door
- * by anybody, which is a property of the fence rather than of the row. A
- * `system.folder` row stands in for them all.
+ * Reserved namespaces are writable only by platform machinery. A
+ * `system.folder` row witnesses that the public bulk door cannot write them.
  */
 
 let ctx: TestContext;
@@ -48,12 +44,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/**
- * A reserved row. It goes in through storage because
- * no credential writes a reserved namespace: the fence admits the operator
- * key, whose own type permissions are empty, so the platform's own machinery
- * writes these rows.
- */
+/** A platform-owned row, seeded below the public reserved-namespace fence. */
 function seedReserved(marker: string, state?: ItemState): Promise<Item> {
   return itemWrites(ctx.storage).create({
     type: "system.folder",
@@ -171,11 +162,8 @@ describe("the bulk-action door and the read doors agree about system rows", () =
   });
 
   it("refuses the opt-in to a credential the fence does not admit", async () => {
-    // The opt-in is a credential the reserved fence admits naming a reserved
-    // type, and this is the half that is easy to leave out.
-    //
     // This door runs no per-row `requireTypeAccess`, so a credential that
-    // reaches the match query never meets the operator fence that
+    // reaches the match query never meets the reserved-namespace fence that
     // guards `system.*` on every single-item write door. Gating only the
     // default and letting anyone widen by naming a type would therefore
     // publish a write path into the reserved namespace that

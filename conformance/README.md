@@ -22,7 +22,7 @@ produce. `spec/device.md` lists the cases it cannot, with a reason for each.
 as the reference client of an instance: every scenario is a person or an agent
 at a terminal, driving the built binary against the server the run booted, end
 to end. Signing in, creating, attaching, searching, linking, a folder round
-trip, an export, a connector's registration and runs, the operator's operations, the
+trip, an export, a connector's registration and runs, instance management operations, the
 six exit codes, and a coverage scenario that reads `marfa operations` from the
 binary and holds it against the document the server serves, so an operation
 published without a command is red here. Every published operation is driven
@@ -83,19 +83,19 @@ to the byte, then removes what it wrote to the bucket. The report goes to
 `reports/restore-drill.md`, and `deploy/README.md` is what it proves.
 
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
-the server with `tsx` (never watch mode), waits for `/health`, reads the
-one-time bootstrap secret from the server's own log, mints the first key with
-it, and writes `.marfa-state/env`. The state directory holds the
+the server with `tsx` (never watch mode), waits for `/health`, claims the owner through the private socket using the
+production claim service, signs in, mints explicit ordinary fixture keys,
+and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, the pid and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
 
-`pnpm marfa:down` stops the server and removes those five, so every `up` is
+`pnpm marfa:down` stops the server and removes its instance state, so every `up` is
 a fresh instance. A database that outlives the bucket it was pointed at
 registers a second object store beside the first, and `scripts/marfa-server.ts`
 says why. `garage/` sits inside the same directory and is `garage:down`'s to
 remove.
 
-The server runs with enrichment, OCR and rate limiting switched off.
+The server runs with enrichment, OCR and general request rate limiting switched off. Password sign-in throttling remains enabled. Owner fixtures share a session in a file with mode `0600`, validate its authentication time with the server, and serialize password sign-ins across workers when it needs renewal. The launcher retains its authentication secret in the protected env file so a restart can reuse a valid session.
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot
@@ -114,28 +114,21 @@ corrupts a copy under it.
 
 ## Configuration
 
-| Variable             | Description                                                                       |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `MARFA_API_URL`      | The booted server. Unset, the run stops: there is no default target.              |
-| `MARFA_API_KEY`      | The key the bootstrap mint returns.                                               |
-| `MARFA_OPERATOR_KEY` | The same key, named for its reach on the operator-only routes.                    |
-| `MARFA_DEVICE_BIN`   | The built `marfa` binary the device fixtures and the scenario suite drive.        |
-| `MARFA_LOAD_PROFILE` | Sizes the load suites. `smoke` unset; `src/suites/load/profiles.ts` has the rest. |
+| Variable                    | Description                                                                                                    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `MARFA_API_URL`             | The booted server. Unset, the run stops: there is no default target.                                           |
+| `MARFA_API_KEY`             | Ordinary content/provisioning key with the original seven named permissions and write access in all five maps. |
+| `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all twelve named permissions and empty content maps.                      |
+| `MARFA_OWNER_SESSION_FILE`  | Protected shared session file used by owner fixtures to reuse a recent sign-in across test processes.          |
+| `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances.    |
+| `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
+| `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
+| `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
+| `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
-**`pnpm test:conformance` needs the first four.** `pnpm marfa:up` writes the
-first three — the bootstrap mint returns one key and two of them hold it — and
-the fourth is yours. An unset `MARFA_OPERATOR_KEY` throws in
-`src/utils/setup.ts`, an unset `MARFA_DEVICE_BIN` in
-`src/suites/device/harness.ts`, and neither is a skip.
+`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary you built before running `pnpm test:conformance`. Required fixture credentials and the binary fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
 
-`MARFA_API_KEY` is the key the suite provisions with. It holds no content
-permissions itself, but a key it mints naming no permissions, maps or claims
-carries the whole dataset, and that is how each test file gets its own key, with a
-`source` unique to that file. The server stamps each row with the
-credential's `source`, or with one its key claims when the write names it, and
-a file builds any claim from its own source, so every row a file writes is
-attributable to it and to nothing else. Teardown revokes the file's keys
-through the provisioning key.
+`MARFA_API_KEY` delegates content access and the seven permissions `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read` and `grants.manage`. Each test file mints its own key with a unique `source`. The server stamps each row with that source, or with one the key explicitly claims when the write names it, so each file can identify its own rows. Teardown uses the management key to revoke the file's keys. Fixtures that need direct authority use the owner session or the private socket; neither ordinary fixture key supplies it.
 
 Each load suite seeds its own corpus under its own credential, measures, and
 deletes what it created.

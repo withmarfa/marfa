@@ -1,14 +1,9 @@
-import {
-  withCredentialRequest,
-  withCredentialAudit,
-} from "./credential-adapter.js";
 import { afterEach, expect, it } from "vitest";
+import { createTestContext, request, type TestContext } from "../test-utils.js";
 import {
-  createTestAccount,
-  createTestContext,
-  request,
-  type TestContext,
-} from "../test-utils.js";
+  withCredentialAudit,
+  withCredentialRequest,
+} from "./credential-adapter.js";
 
 let ctx: TestContext | undefined;
 afterEach(async () => {
@@ -16,9 +11,8 @@ afterEach(async () => {
   ctx = undefined;
 });
 const origin = "http://localhost:0";
-async function signIn(context: TestContext, email: string) {
-  const password = "correct horse battery";
-  await createTestAccount(context, email, password, "Test User");
+async function signIn(context: TestContext) {
+  const { email, password } = context.owner;
   const response = await request(context.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin },
@@ -37,7 +31,7 @@ function native(context: TestContext) {
 
 it("refuses sign-out without clearing cookies when native session deletion fails, then retries successfully", async () => {
   ctx = await createTestContext();
-  const cookie = await signIn(ctx, "owner@example.test");
+  const cookie = ctx.owner.cookie;
   const db = native(ctx);
   const session = () =>
     request(ctx!.app, "GET", "/auth/get-session", { headers: { cookie } });
@@ -69,11 +63,17 @@ it("refuses sign-out without clearing cookies when native session deletion fails
 
 it("keeps concurrent sign-out outcomes isolated between sessions", async () => {
   ctx = await createTestContext();
-  const refusedCookie = await signIn(ctx, "refused@example.test");
-  const acceptedCookie = await signIn(ctx, "accepted@example.test");
+  const refusedCookie = await signIn(ctx);
+  const acceptedCookie = await signIn(ctx);
   const db = native(ctx);
+  const refusedSession = await request(ctx.app, "GET", "/auth/get-session", {
+    headers: { cookie: refusedCookie },
+  });
+  const refusedId = (
+    (await refusedSession.json()) as { session: { id: string } }
+  ).session.id;
   await db.__sqliteRun(
-    "CREATE TRIGGER reject_one_session_delete BEFORE DELETE ON auth_session WHEN OLD.user_id IN (SELECT id FROM auth_user WHERE email='refused@example.test') BEGIN SELECT RAISE(ABORT, 'one session deletion refused'); END",
+    `CREATE TRIGGER reject_one_session_delete BEFORE DELETE ON auth_session WHEN OLD.id='${refusedId.replaceAll("'", "''")}' BEGIN SELECT RAISE(ABORT, 'one session deletion refused'); END`,
     [],
   );
   const signOut = (cookie: string) =>
@@ -100,7 +100,7 @@ it("keeps concurrent sign-out outcomes isolated between sessions", async () => {
 
 it("refuses sign-out when native lookup cannot determine whether to delete the session, then retries successfully", async () => {
   ctx = await createTestContext();
-  const cookie = await signIn(ctx, "reader@example.test");
+  const cookie = ctx.owner.cookie;
   const db = native(ctx);
   const before = await db.__sqliteAll("SELECT id FROM auth_session");
   expect(before).toHaveLength(1);

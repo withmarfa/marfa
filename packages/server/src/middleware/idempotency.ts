@@ -353,11 +353,8 @@ export function idempotencyMiddleware(opts: {
     // caller's later use of the same one a fingerprint mismatch until it
     // aged out.
     //
-    // An unauthenticated request has no write to make idempotent, so there
-    // is nothing to give up by leaving it alone. No door here is the
-    // bootstrap door, and if one ever were, a bootstrap request also
-    // carries no `apiKey` and would take this same path — which is the
-    // safe direction.
+    // Credential-scoped replay applies only to bound bearer credentials.
+    // Claim proof is spent atomically by its own operation.
     const apiKey = c.get("apiKey");
     if (apiKey === undefined) return next();
 

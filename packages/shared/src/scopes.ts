@@ -162,7 +162,12 @@ export type Permission =
   | "config.manage"
   | "schema.write"
   | "items.purge"
-  | "audit.read";
+  | "audit.read"
+  | "instance.read"
+  | "instance.maintain"
+  | "connectors.manage"
+  | "blobs.manage"
+  | "keys.manage";
 
 /**
  * Every permission, in the order a consent screen should offer them:
@@ -191,6 +196,11 @@ export const PERMISSIONS: readonly Permission[] = [
   "items.purge",
   "keys.mint",
   "grants.manage",
+  "instance.read",
+  "instance.maintain",
+  "connectors.manage",
+  "blobs.manage",
+  "keys.manage",
 ];
 
 const PERMISSION_SET: ReadonlySet<string> = new Set(PERMISSIONS);

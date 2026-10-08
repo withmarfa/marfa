@@ -1,9 +1,9 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { serve } from "@hono/node-server";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
 import { subscribe } from "../pubsub.js";
-import { serve } from "@hono/node-server";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -23,17 +23,17 @@ describe("POST /items/bulk", () => {
 
     beforeAll(async () => {
       for (const tier of ["feed", "library"] as const) {
-        const rawKey = `marfa_k1_tier_${tier}_${crypto.randomUUID()}`;
-        await ctx.storage.keys.create(
-          {
-            label: `tier-parity-${tier}`,
-            source: `tier-parity-${tier}`,
-            type_permissions: { "core.note": "write" },
-            default_tier: tier,
-            is_operator: false,
-          },
-          hashApiKey(rawKey, "test-salt"),
-        );
+        const rawKey = await mintWorkingKey(ctx, {
+          permissions: [],
+          extension_permissions: {},
+          edge_permissions: {},
+          metadata_permissions: {},
+          profile_permissions: {},
+          label: `tier-parity-${tier}`,
+          source: `tier-parity-${tier}`,
+          type_permissions: { "core.note": "write" },
+          default_tier: tier,
+        });
         keys.set(tier, rawKey);
       }
       await new Promise<void>((resolve) => {
@@ -713,17 +713,17 @@ describe("POST /items/bulk", () => {
     // Bulk write authorization mirrors single-item POST /items: a credential
     // holding write on the type can bulk-create it, so the type map is the
     // whole of what decides `core.note`.
-    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "bulk-scoped-allowed",
-        source: `bulk-scoped-ok-${rawKey.slice(-6)}`,
-        type_permissions: { "core.note": "write" },
-        is_operator: false,
-      },
-      keyHash,
-    );
+    let rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "bulk-scoped-allowed",
+      source: `bulk-scoped-ok-${rawKey.slice(-6)}`,
+      type_permissions: { "core.note": "write" },
+    });
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: rawKey,
@@ -743,17 +743,17 @@ describe("POST /items/bulk", () => {
     // at the status that refusal has on its own: a caller sorts by status
     // before it reads a code, and a permission failure under 400 reads as a
     // body it can fix.
-    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "bulk-scoped-denied",
-        source: `bulk-scoped-no-${rawKey.slice(-6)}`,
-        type_permissions: { "core.task": "write" },
-        is_operator: false,
-      },
-      keyHash,
-    );
+    let rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "bulk-scoped-denied",
+      source: `bulk-scoped-no-${rawKey.slice(-6)}`,
+      type_permissions: { "core.task": "write" },
+    });
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: rawKey,
@@ -770,17 +770,17 @@ describe("POST /items/bulk", () => {
   });
 
   it("surfaces a per-item type_not_permitted error in non-atomic mode", async () => {
-    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "bulk-scoped-mixed",
-        source: `bulk-scoped-mix-${rawKey.slice(-6)}`,
-        type_permissions: { "core.note": "write" },
-        is_operator: false,
-      },
-      keyHash,
-    );
+    let rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
+    rawKey = await mintWorkingKey(ctx, {
+      permissions: [],
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "bulk-scoped-mixed",
+      source: `bulk-scoped-mix-${rawKey.slice(-6)}`,
+      type_permissions: { "core.note": "write" },
+    });
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: rawKey,

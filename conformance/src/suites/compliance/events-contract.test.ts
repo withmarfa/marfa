@@ -915,7 +915,7 @@ describe("the answers of the plain stream and the order its checks run in", () =
   });
 
   it("answers 403 type_not_permitted to a credential that reads no type, ahead of every fault in the request", async () => {
-    const operator = process.env.MARFA_OPERATOR_KEY!;
+    const operator = process.env.MARFA_MANAGEMENT_KEY!;
     const plain = await askEvents(operator);
     expect(plain.status).toBe(403);
     expect(plain.code).toBe("type_not_permitted");

@@ -7,8 +7,8 @@ import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { setAvailableBytesProbe } from "../storage/disk-space.js";
-import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 const MIB = 1024 * 1024;
 
@@ -123,7 +123,8 @@ function restore(c: TestContext, archive: Buffer): Promise<Response> {
     c.app.request("/restore", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.operatorKey}`,
+        cookie: c.owner.cookie,
+        origin: new URL(c.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,

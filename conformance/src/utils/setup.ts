@@ -1,3 +1,4 @@
+import { TEST_OWNER } from "./target.js";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../client/api.js";
 import type { TestContext, TrackedResource } from "../client/types.js";
@@ -19,8 +20,8 @@ export function requireApiUrl(): string {
 }
 
 /**
- * The key the suite provisions with: the one the bootstrap mint returns, which
- * mints the per-file keys that hold the dataset.
+ * The ordinary provisioning key issued through the private local connection
+ * after the real owner claim. It mints per-file keys within its own reach.
  */
 export function requireApiKey(): string {
   const key = process.env.MARFA_API_KEY;
@@ -81,8 +82,8 @@ export function newRunId(): string {
  * from every other file's inside the one dataset. The key is tracked so
  * `cleanup` revokes it.
  *
- * The per-file key names no permission maps, and the provisioning key's mint is
- * not held to the widening rule, so it takes the whole dataset.
+ * The per-file key names no permission maps, so it inherits the provisioning
+ * key's dataset reach. Its source identifies this file's writes.
  */
 export async function createTestContext(
   suite: string,
@@ -485,7 +486,7 @@ export async function cleanup(ctx: TestContext): Promise<void> {
   }
   outcomes.push(mergeOutcomes("Type", typeLevels));
   // Before the keys go: a registration stands after its key is revoked
-  // (`connectors/revoked-registration-stays`), and only the operator can remove another key's.
+  // (`connectors/revoked-registration-stays`); removing another key's needs connectors.manage.
   outcomes.push(await removeTrackedRegistrations(ctx));
   outcomes.push(
     await deleteAll(ctx.trackedKeys, (id) => provisioner.revokeKey(id), "Key"),
@@ -504,20 +505,19 @@ export async function cleanup(ctx: TestContext): Promise<void> {
 
 /**
  * Remove every connector registration a tracked key made, through the
- * operator. Called by `cleanup`, and by a file whose fixtures register, so
+ * management client. Called by `cleanup`, and by a file whose fixtures register, so
  * one failed fixture does not hand the next a registration it did not make.
- * Without the operator key nothing can remove another key's registration,
- * and nothing is attempted.
+ * Cleanup needs connectors.manage and is skipped without its credential.
  */
 export async function removeTrackedRegistrations(
   ctx: TestContext,
 ): Promise<CleanupOutcome> {
   const kind = "Connector";
-  if (ctx.trackedKeys.length === 0 || !process.env.MARFA_OPERATOR_KEY) {
+  if (ctx.trackedKeys.length === 0 || !process.env.MARFA_MANAGEMENT_KEY) {
     return { kind, failed: 0, total: 0 };
   }
-  const operator = getOperatorClient();
-  const listed = await operator.listConnectors();
+  const management = getManagementClient();
+  const listed = await management.listConnectors();
   if (!listed.ok) {
     console.warn(
       `${kind} cleanup could not list registrations (status ${String(listed.status)}).`,
@@ -527,23 +527,37 @@ export async function removeTrackedRegistrations(
   const mine = listed.data.data
     .filter((row) => ctx.trackedKeys.includes(row.key_id))
     .map((row) => row.id);
-  return deleteAll(mine, (id) => operator.deleteConnector(id), kind);
+  return deleteAll(mine, (id) => management.deleteConnector(id), kind);
 }
 
 /**
- * The operator key's client, for the operator-only maintenance routes.
+ * An ordinary key with the explicit management permissions.
  * Required by the fixtures that call it; a missing variable is a failure,
  * not a skip.
  */
-export function getOperatorClient(): MarfaClient {
-  const key = process.env.MARFA_OPERATOR_KEY;
+export function getManagementClient(): MarfaClient {
+  const key = process.env.MARFA_MANAGEMENT_KEY;
+  if (!key)
+    throw new Error(
+      "MARFA_MANAGEMENT_KEY is required; boot the fixture server first",
+    );
+  return new MarfaClient({ baseUrl: requireApiUrl(), apiKey: key });
+}
+
+export function getOwnerClient(): MarfaClient {
+  const key = process.env.MARFA_OWNER_COOKIE;
   if (!key) {
     throw new Error(
-      "MARFA_OPERATOR_KEY is required for the operator-only fixtures. " +
+      "MARFA_OWNER_COOKIE is required for direct owner fixtures. " +
         "`pnpm marfa:up` writes it to its env file.",
     );
   }
-  return new MarfaClient({ baseUrl: requireApiUrl(), apiKey: key });
+  return new MarfaClient({
+    baseUrl: requireApiUrl(),
+    ownerCookie: key,
+    ownerSessionFile: process.env.MARFA_OWNER_SESSION_FILE,
+    ownerCredentials: TEST_OWNER,
+  });
 }
 
 /**

@@ -17,6 +17,7 @@ interface LogEntry {
   timestamp: string;
   request_id: string;
   method: string;
+  transport: "http" | "local_socket";
   path: string;
   /**
    * The route template, in the document's spelling (`/items/{id}`), absent
@@ -104,7 +105,7 @@ export interface LogOptions {
    * rewrites attributes and deliberately leaves the body alone, on the
    * reasoning that a message string is Marfa-controlled and so safe by
    * construction. A line whose message *is* a credential breaks that
-   * reasoning, and there is exactly one: the bootstrap secret, which has to
+   * reasoning, and there is exactly one: the setup code, which has to
    * be readable by whoever runs the instance and by nobody further. Exporting
    * it would make "can read the log" mean "can read the observability
    * stack", which is a much larger set than "runs this server".
@@ -574,7 +575,7 @@ function matchedRoute(c: Context<AppEnv>): string | undefined {
   return addressed === undefined ? undefined : toOpenApiPath(addressed);
 }
 
-export function loggerMiddleware() {
+export function loggerMiddleware(transport: "http" | "local_socket" = "http") {
   return createMiddleware<AppEnv>(async (c, next) => {
     const requestId = resolveRequestId(c.req.header("X-Request-ID"));
     c.set("requestId", requestId);
@@ -589,6 +590,7 @@ export function loggerMiddleware() {
       timestamp: new Date().toISOString(),
       request_id: requestId,
       method: c.req.method,
+      transport,
       path: loggablePath(c.req.path),
       ...(route === undefined ? {} : { route }),
       status: c.res.status,

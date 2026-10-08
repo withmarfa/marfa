@@ -82,6 +82,68 @@ grep -q "\"version\":\"$sha\"" <<<"$body" || fail "the root document does not re
 until_true "the image's own health check passing" 60 \
   bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $fresh)\" = healthy ]"
 echo "booted, reports $sha, healthy"
+# Exercise the actual packaged command and the production claim/recovery services.
+docker exec -i "$fresh" node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+const cli = (args, body) => {
+  const result = spawnSync('marfa', ['--socket', '/data/control/marfa.sock', '--json', ...args], {encoding:'utf8', input: body && JSON.stringify(body)});
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+};
+assert.equal(cli(['setup','status']).claimed, false);
+assert.match(cli(['setup','code']).code, /^[A-Z2-7-]+$/);
+assert.match(cli(['setup','open','--no-browser']).url, /\/setup#handoff=.+/);
+const email='owner@example.com';
+const oldPassword='initial-container-password';
+const newPassword='replacement-container-password';
+cli(['setup','claim','--stdin'], {email,password:oldPassword});
+assert.equal(cli(['setup','status']).claimed,true);
+const key = cli(['keys','create','--label','container-check','--source','container-check','--permission','instance.read','--no-claims']);
+assert.ok(key.key);
+const signIn = password => fetch('http://localhost:8600/auth/sign-in/email',{method:'POST',headers:{'Content-Type':'application/json','Origin':'http://localhost:8600'},body:JSON.stringify({email,password})});
+assert.equal((await signIn(oldPassword)).status,200);
+cli(['owner','recover','--stdin'],{password:newPassword});
+assert.notEqual((await signIn(oldPassword)).status,200);
+assert.equal((await signIn(newPassword)).status,200);
+const ordinary=await fetch('http://localhost:8600/keys/current',{headers:{Authorization:`Bearer ${key.key}`}});
+assert.equal(ordinary.status,200);
+const forged=await fetch('http://localhost:8600/_control/owner/recover',{method:'POST',headers:{'Content-Type':'application/json','X-Marfa-Local-Authority':'true'},body:JSON.stringify({password:'forged-container-password'})});
+assert.notEqual(forged.status,200);
+// Respect Better Auth's three-attempt address window before the fourth sign-in.
+await new Promise(resolve=>setTimeout(resolve,11_000));
+assert.equal((await signIn(newPassword)).status,200);
+console.log('Packaged CLI claimed and recovered the owner; ordinary key still works; public authority forgery refused.');
+JS
+
+stop_and_check "$fresh"
+
+echo "== private recovery with no public listener"
+control=marfa-check-control-$$
+containers+=("$control")
+docker run -d --name "$control" --volumes-from "$fresh" "${secrets[@]}" -e MARFA_CONTROL_ONLY=true "$image" >/dev/null
+control_ready() { docker exec "$control" marfa --socket /data/control/marfa.sock --json setup status >/dev/null 2>&1; }
+until_true "the private control listener answering" 90 control_ready
+docker exec -i "$control" node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+await assert.rejects(fetch('http://localhost:8600/health'));
+const result=spawnSync('marfa',['--socket','/data/control/marfa.sock','--json','owner','recover','--stdin'],{encoding:'utf8',input:JSON.stringify({password:'control-only-container-password'})});
+assert.equal(result.status,0,result.stderr);
+assert.equal(JSON.parse(result.stdout).recovered,true);
+console.log('Packaged recovery succeeded with no public HTTP listener.');
+JS
+stop_and_check "$control"
+docker start "$fresh" >/dev/null
+port=$(port_of "$fresh")
+until_true "public HTTP after private recovery" 90 healthy
+docker exec -i "$fresh" node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+const signIn=password=>fetch('http://localhost:8600/auth/sign-in/email',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://localhost:8600'},body:JSON.stringify({email:'owner@example.com',password})});
+assert.notEqual((await signIn('replacement-container-password')).status,200);
+assert.equal((await signIn('control-only-container-password')).status,200);
+console.log('Recovery committed durably and the public server accepts the new password after restart.');
+JS
 stop_and_check "$fresh"
 
 echo "== a volume holding a database another build wrote"

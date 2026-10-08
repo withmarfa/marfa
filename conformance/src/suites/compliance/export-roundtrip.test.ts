@@ -15,7 +15,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackItem,
   trackEdge,
   cleanup,
@@ -23,14 +23,14 @@ import {
 import { createNote } from "../../generators/items.js";
 
 let client: MarfaClient;
-/** The operator key's client, for the restore half alone. */
-let operator: MarfaClient;
+/** The direct owner's client, for the restore half alone. */
+let owner: MarfaClient;
 let ctx: TestContext;
 
 beforeAll(async () => {
   const setup = await createTestContext("compliance", "export-roundtrip");
   ({ ctx, client } = setup);
-  operator = getOperatorClient();
+  owner = getOwnerClient();
 });
 
 afterAll(async () => {
@@ -79,7 +79,7 @@ describe("export → purge → restore round trip", () => {
     const gone = await client.getItem(itemId);
     expect(gone.status).toBe(404);
 
-    const restored = await operator.restoreArchive(archive.data);
+    const restored = await owner.restoreArchive(archive.data);
     expect(restored.ok).toBe(true);
     expect(restored.data.imported).toBeGreaterThanOrEqual(1);
 
@@ -137,7 +137,7 @@ describe("export → purge → restore round trip", () => {
       expect(purged.ok).toBe(true);
     }
 
-    const restored = await operator.restoreArchive(archive.data);
+    const restored = await owner.restoreArchive(archive.data);
     expect(restored.ok).toBe(true);
     expect(restored.data.imported).toBeGreaterThanOrEqual(2);
     expect(restored.data.edges_imported).toBeGreaterThanOrEqual(1);

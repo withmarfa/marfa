@@ -439,7 +439,7 @@ describe("permissions", () => {
     // the whole point is that a person grants webhooks without granting
     // credentials. The count is the cheapest statement of that.
     expect(new Set(PERMISSIONS).size).toBe(PERMISSIONS.length);
-    expect(PERMISSIONS.length).toBe(7);
+    expect(PERMISSIONS.length).toBe(12);
   });
 
   it("claims its whole namespace, members or nothing", () => {

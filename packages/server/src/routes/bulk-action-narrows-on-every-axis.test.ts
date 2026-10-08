@@ -1,14 +1,13 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import type { Permission } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { writeInstanceConfig } from "../storage/instance-config.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
   runBulkActionAsync,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { writeInstanceConfig } from "../storage/instance-config.js";
-import { hashApiKey } from "../middleware/auth.js";
-import type { Permission } from "@withmarfa/shared";
 
 /**
  * `POST /items/bulk-actions` narrows on every axis a read narrows on.
@@ -51,17 +50,17 @@ async function mintKey(
   typePermissions: Record<string, "read" | "write">,
   permissions: Permission[] = [],
 ): Promise<string> {
-  const raw = `marfa_k1_axes_${Math.random().toString(36).slice(2, 12)}`;
-  await ctx.storage.keys.create(
-    {
-      label,
-      source,
-      type_permissions: typePermissions,
-      permissions,
-      default_tier: "library",
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  const raw = await mintWorkingKey(ctx, {
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label,
+    source,
+    type_permissions: typePermissions,
+    permissions,
+    default_tier: "library",
+  });
   return raw;
 }
 

@@ -30,6 +30,7 @@ const STRONG = () => randomBytes(32).toString("hex");
 const FREE_TEXT = [
   "SQLITE_PATH",
   "BLOB_PATH",
+  "MARFA_CONTROL_SOCKET",
   "S3_BUCKET",
   "S3_REGION",
   "S3_ACCESS_KEY_ID",

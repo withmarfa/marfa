@@ -6,49 +6,49 @@ Where a blob's bytes live, and the rules that keep them. A store is a place byte
 
 ### `stores/list`
 
-When the operator key sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `policy`, `attached_at` and `detached_at`.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `policy`, `attached_at` and `detached_at`.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the operator key`, `› lists each store with the time it was first attached`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `› lists each store with the time it was first attached`.
 
 ### `stores/list-disk-always`
 
 The server MUST list the disk store on every instance, whatever its settings.
 
-**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `compliance/blob-stores.test.ts › lists the disk store and the object store to the operator key`.
+**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-kind`
 
-When the operator key sends `GET /blobs/stores`, the server MUST answer each store's `kind` as `disk` or `s3`.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer each store's `kind` as `disk` or `s3`.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the operator key`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-locator`
 
-Where an object store is attached, when the operator key sends `GET /blobs/stores`, the server MUST answer its `locator` as `s3://<bucket>/<prefix>` and nothing else.
+Where an object store is attached, when a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer its `locator` as `s3://<bucket>/<prefix>` and nothing else.
 
 **Reason:** the locator is one a person can read, and an exact match leaves no room for a credential in it.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the operator key`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-attached-at`
 
-When the operator key sends `GET /blobs/stores`, the server MUST answer each store's `attached_at` as the time the store was first attached, the same on every listing.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer each store's `attached_at` as the time the store was first attached, the same on every listing.
 
 **Tests:** `compliance/blob-stores.test.ts › lists each store with the time it was first attached`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/policy-all`
 
-When the operator key sends `GET /blobs/stores`, the server MUST answer every store's `policy` as `all`, which wants every blob.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer every store's `policy` as `all`, which wants every blob.
 
 **Reason:** `all` is the one policy this build defines.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the operator key`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-operator-only`
 
-When a credential other than the operator key sends `GET /blobs/stores`, the server MUST answer `403 forbidden`, whether it is a working key or an app's access token.
+When a key or app token lacking `instance.read` sends `GET /blobs/stores`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/blob-stores.test.ts › refuses the listing to a working key`, `compliance/blob-store-settings.test.ts › is refused the operator's operations on the stores, the report and the jobs, and the copy stays`.
+**Tests:** `compliance/blob-stores.test.ts › refuses the listing to a working key`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`, `compliance/management-grants.test.ts › instance.read grants reports to keys and apps without granting maintenance`.
 
 ### `stores/folder-keeps-store`
 
@@ -98,7 +98,7 @@ While a copy sits in a store the configuration no longer names, the server MUST 
 
 ### `stores/min-copies-reported`
 
-When the operator key sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `MARFA_BLOB_MIN_COPIES`, which is 1 unless set.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `MARFA_BLOB_MIN_COPIES`, which is 1 unless set.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
@@ -210,7 +210,7 @@ When a run of `blob-replicate` copies bytes that do not hash to the blob's name,
 
 ### `stores/replicate-result`
 
-When the operator key runs `blob-replicate`, the server MUST answer the run's `result` as `copied`, the number of blobs it placed, `bytes`, their total size, and `remaining`, the copies it left to make.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-replicate`, the server MUST answer the run's `result` as `copied`, the number of blobs it placed, `bytes`, their total size, and `remaining`, the copies it left to make.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › copies at most the batch, answers what it did, and runs again on its own for the rest`, `› copies a blob larger than the bound when it is the run's first, and nothing more`, `› stops before the blob that would push the copied bytes past the bound`.
 
@@ -254,7 +254,7 @@ When a copy has been dropped through `DELETE /blobs/{hash}/locations/{store}`, t
 
 ### `stores/drop-allowed`
 
-When the operator key sends `DELETE /blobs/{hash}/locations/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`.
 
@@ -272,7 +272,7 @@ When the server answers a drop with `200`, the server MUST remove the copy's byt
 
 ### `stores/drop-below-minimum`
 
-If the operator key sends `DELETE /blobs/{hash}/locations/{store}` and fewer than `min_copies` live copies would remain, then the server MUST answer `409 copies_below_minimum`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` and fewer than `min_copies` live copies would remain, then the server MUST answer `409 copies_below_minimum`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
@@ -290,37 +290,37 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 ### `stores/drop-no-copy`
 
-If the operator key sends `DELETE /blobs/{hash}/locations/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_location_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_location_not_found`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/drop-not-attached`
 
-If the operator key sends `DELETE /blobs/{hash}/locations/{store}` naming a store that is not attached, an unknown id and a detached store among them, then the server MUST answer `404 blob_location_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming a store that is not attached, an unknown id and a detached store among them, then the server MUST answer `404 blob_location_not_found`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/drop-operator-only`
 
-If a credential other than the operator key sends `DELETE /blobs/{hash}/locations/{store}`, whether it is a working key or an app's access token, then the server MUST answer `403 forbidden`.
+If a key or app token lacking `blobs.manage` sends `DELETE /blobs/{hash}/locations/{store}`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`, `compliance/blob-store-settings.test.ts › is refused the operator's operations on the stores, the report and the jobs, and the copy stays`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
+**Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
 ### `stores/drop-operator-refused-keeps`
 
-When the server refuses a drop to a credential other than the operator key, the server MUST keep the copy.
+When the server refuses a drop to a key or app token lacking `blobs.manage`, the server MUST keep the copy.
 
-**Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › is refused the operator's operations on the stores, the report and the jobs, and the copy stays`.
+**Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`.
 
 ### `stores/drop-bare-hash`
 
-When the operator key sends `DELETE /blobs/{hash}/locations/{store}` naming the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST answer as it does for the same hash with the prefix.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST answer as it does for the same hash with the prefix.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`.
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a credential other than the operator key, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, `409 copies_below_minimum`.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`.
 
@@ -336,7 +336,7 @@ The `blob-integrity` housekeeping job checks the copies the log claims.
 
 ### `stores/integrity-result`
 
-When the operator key runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, and `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, and `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing.
 
 **Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
 
@@ -402,7 +402,7 @@ The `blob-orphans` housekeeping job reports before it deletes. The referee boots
 
 ### `stores/orphan-listing`
 
-When the operator key sends `GET /blobs/orphans`, the server MUST answer `200` with the report, each row carrying a `hash`, `mime_type`, `size_bytes` and `reported_at`.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with the report, each row carrying a `hash`, `mime_type`, `size_bytes` and `reported_at`.
 
 **Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 
@@ -416,15 +416,15 @@ When an `update_properties` job whose patch names a blob's digest is enqueued th
 
 ### `stores/orphan-listing-order`
 
-When the operator key sends `GET /blobs/orphans`, the server MUST list the report's rows oldest `reported_at` first.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/orphans`, the server MUST list the report's rows oldest `reported_at` first.
 
 **Tests:** `compliance/blob-store-settings.test.ts › lists the orphan report oldest first`.
 
 ### `stores/orphan-operator-only`
 
-When a credential other than the operator key sends `GET /blobs/orphans`, the server MUST answer `403 forbidden`, whether it is a working key or an app's access token.
+When a key or app token lacking `instance.read` sends `GET /blobs/orphans`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › is refused the operator's operations on the stores, the report and the jobs, and the copy stays`.
+**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`, `compliance/management-grants.test.ts › instance.read grants reports to keys and apps without granting maintenance`.
 
 ### `stores/orphan-reports`
 
@@ -446,7 +446,7 @@ When a run of `blob-orphans` finds a blob that the report already names and that
 
 ### `stores/orphan-result`
 
-When the operator key runs `blob-orphans`, the server MUST answer the run's `result` as `reported`, the size of the report after the run, and `purged`, the number of blobs it purged.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-orphans`, the server MUST answer the run's `result` as `reported`, the size of the report after the run, and `purged`, the number of blobs it purged.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › records when a run first reported a blob`.
 
@@ -502,13 +502,13 @@ Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, the server MUST leave `blob-orphans
 
 ### `stores/orphan-switched-off-not-run`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, when the operator key asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
+Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `stores/orphan-switched-off-report`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0 on an instance that has never run `blob-orphans`, when the operator key sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
+Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0 on an instance that has never run `blob-orphans`, when a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
@@ -586,7 +586,7 @@ When a run of `blob-replicate` records a copy, the server MUST write an audit en
 
 ### `stores/audit-drop`
 
-When the operator key drops a copy, the server MUST write an audit entry with `action` `blob.copy_dropped`, `resource_id` the blob's hash and `details` naming the `store_id`.
+When a caller authorized by `blobs.manage` or direct owner or local authority drops a copy, the server MUST write an audit entry with `action` `blob.copy_dropped`, `resource_id` the blob's hash and `details` naming the `store_id`.
 
 **Tests:** `compliance/blob-rules.test.ts › records a drop, a replication and a purge in the audit log`.
 
@@ -638,7 +638,7 @@ When an `update_properties` job ends `completed`, `canceled` or `failed`, the se
 
 ### `stores/job-patch-no-reach`
 
-While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a working key or an app's access token that never held the bytes.
+While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a key or app token lacking `blobs.manage` that never held the bytes.
 
 **Reason:** retention grants no read.
 

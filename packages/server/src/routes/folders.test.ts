@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Item, TypePermission } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   collectItemEvents,
   createTestContext,
@@ -8,7 +9,6 @@ import {
   seedOauthBearer,
   settle,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -89,7 +89,7 @@ describe("POST /folders", () => {
         "type_not_permitted",
       );
     }
-    expect((await create(settings, ctx.operatorKey)).status).toBe(403);
+    expect((await create(settings, ctx.managementKey)).status).toBe(403);
   });
 
   it.each([
@@ -399,7 +399,7 @@ describe("minting a folder's key", () => {
     const minted = await body<{ key: string }>(fromKey);
     expect((await create({ title: "Minted" }, minted.key)).status).toBe(201);
 
-    const session = await seedOauthBearer(ctx.storage, [
+    const session = await seedOauthBearer(ctx, [
       "keys.mint",
       "system.folder:write",
     ]);

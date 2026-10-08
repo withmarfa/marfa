@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
-#                                       # exports URL, working/operator keys, the test owner and MARFA_SERVER_ENV
+#                                       # exports URL, working key and control socket, the test owner and MARFA_SERVER_ENV
 #   scripts/server-down.sh              # stops it, and removes a directory it made
 #
 # Assign, then eval: `eval "$(…)"` of a failed boot's empty output succeeds.
@@ -39,11 +39,11 @@ if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
   keep=1
   mkdir -p "${state}"
 else
-  state="$(mktemp -d "${TMPDIR:-/tmp}/marfa-core-server.XXXXXX")"
+  state="$(mktemp -d "/tmp/marfa-core-server.XXXXXX")"
 fi
+state="$(cd "${state}" && pwd -P)"
 boot="${state}/boot.env"
 kept_key=""
-kept_operator=""
 owner_email=""
 owner_password=""
 if [[ -f "${boot}" ]]; then
@@ -54,11 +54,10 @@ if [[ -f "${boot}" ]]; then
   MARFA_AUTH_SECRET="${BOOT_AUTH_SECRET}"
   API_KEY_SALT="${BOOT_KEY_SALT}"
   kept_key="${BOOT_KEY}"
-  kept_operator="${BOOT_OPERATOR_KEY:-}"
   owner_email="${BOOT_OWNER_EMAIL:-}"
   owner_password="${BOOT_OWNER_PASSWORD:-}"
-  if [[ -z "${kept_operator}" ]]; then
-    echo "server-up: kept state has no operator key; use a fresh MARFA_SERVER_KEEP directory" >&2
+  if [[ -z "${owner_email}" || -z "${owner_password}" || -z "${kept_key}" ]]; then
+    echo "server-up: kept state has no owner or working key; use a fresh MARFA_SERVER_KEEP directory" >&2
     exit 1
   fi
 fi
@@ -87,6 +86,12 @@ if [[ "${probe}" -eq 28 ]]; then
   exit 1
 fi
 
+# A kept data directory can exceed the Unix socket path limit, especially
+# under macOS temporary roots. The private listener gets its own short path.
+control_dir="$(mktemp -d "/tmp/marfa-core-control.XXXXXX")"
+control_dir="$(cd "${control_dir}" && pwd -P)"
+export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
+
 # The pid is pnpm's, two levels above node; server-down.sh walks the tree.
 (
   cd "${repo}"
@@ -103,7 +108,7 @@ write_env() {
   {
     echo "export MARFA_TEST_URL='${url}'"
     echo "export MARFA_TEST_KEY='${1:-}'"
-    echo "export MARFA_TEST_OPERATOR_KEY='${2:-}'"
+    echo "export MARFA_TEST_SOCKET='${MARFA_CONTROL_SOCKET}'"
     if [[ -n "${owner_email}" ]]; then
       echo "export MARFA_TEST_OWNER_EMAIL='${owner_email}'"
       echo "export MARFA_TEST_OWNER_PASSWORD='${owner_password}'"
@@ -111,6 +116,7 @@ write_env() {
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
+    echo "export MARFA_SERVER_CONTROL_DIR='${control_dir}'"
     echo "export MARFA_SERVER_KEPT='${keep}'"
   } >"${env_file}"
 }
@@ -119,8 +125,8 @@ write_env ""
 fail() {
   echo "server-up: $1" >&2
   echo "server-up: log follows" >&2
-  # The log may hold the bootstrap secret, and CI logs are public.
-  sed -E 's/on its stdin: [0-9a-f]{64}/on its stdin: [redacted]/g' "${log}" >&2 || true
+  # Setup proof belongs only to this process's private log.
+  sed -E 's/setup code: [A-Z2-7-]+/setup code: [redacted]/g' "${log}" >&2 || true
   "$(dirname "$0")/server-down.sh" "${env_file}" >/dev/null 2>&1 || true
   exit 1
 }
@@ -137,59 +143,36 @@ done
 curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
 
 if [[ -n "${kept_key}" ]]; then
-  write_env "${kept_key}" "${kept_operator}"
+  write_env "${kept_key}"
   cat "${env_file}"
   exit 0
 fi
 
-secret=""
-for _ in $(seq 1 40); do
-  if [[ "$(cat "${log}")" =~ on\ its\ stdin:\ ([0-9a-f]{64}) ]]; then
-    secret="${BASH_REMATCH[1]}"
-    break
-  fi
-  sleep 0.5
-done
-[[ -n "${secret}" ]] || fail "no bootstrap secret in the server log"
-
-mint() {
-  curl -sS --max-time 10 -X POST "${url}/keys" \
-    -H "Authorization: Bearer $1" \
-    -H 'Content-Type: application/json' \
-    -d "{\"label\":\"$2\",\"source\":\"$2\"}"
-}
-
-read_key() {
-  python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))'
-}
-
-# The operator key bootstrap answers with holds no permissions; it mints the
-# working key. Two sources, since no two keys may claim one.
-bootstrap="$(mint "${secret}" core-proof-operator)"
-operator="$(read_key <<<"${bootstrap}")"
-[[ -n "${operator}" ]] || fail "bootstrap did not mint an operator key: ${bootstrap}"
-working="$(mint "${operator}" core-proof)"
-key="$(read_key <<<"${working}")"
-[[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
-
+# Provision through the production private authority, with secrets on stdin.
 # shellcheck disable=SC1091
 source "$(dirname "$0")/test-owner.example.env"
-created="$(curl -sS --max-time 10 -X POST "${url}/owner" \
-  -H "Authorization: Bearer ${operator}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${MARFA_TEST_OWNER_EMAIL}\",\"password\":\"${MARFA_TEST_OWNER_PASSWORD}\"}")"
-[[ "${created}" == *'"email"'* ]] || fail "the test owner could not be created: ${created}"
+export MARFA_TEST_OWNER_EMAIL MARFA_TEST_OWNER_PASSWORD
+created="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["MARFA_TEST_OWNER_EMAIL"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))' |
+  curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
+    -X POST http://localhost/_control/setup/claim -H 'Content-Type: application/json' --data-binary @-)" || fail "the owner claim failed"
+[[ "${created}" == *'"email"'* ]] || fail "the claim returned no owner"
 owner_email="${MARFA_TEST_OWNER_EMAIL}"
 owner_password="${MARFA_TEST_OWNER_PASSWORD}"
+working="$(curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
+  -X POST http://localhost/keys -H 'Content-Type: application/json' --data-binary @- <<'JSON'
+{"label":"core-proof","source":"core-proof","permissions":["schema.write","keys.mint","items.purge","webhooks.manage","config.manage","audit.read","grants.manage","instance.read","instance.maintain","connectors.manage","blobs.manage","keys.manage"],"type_permissions":{"*":"write"},"extension_permissions":{"*":"write"},"edge_permissions":{"*":"write"},"metadata_permissions":{"*":"write"},"profile_permissions":{"*":"read"}}
+JSON
+)" || fail "the local authority could not mint a working key"
+key="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))' <<<"${working}")"
+[[ -n "${key}" ]] || fail "the mint returned no working key"
 
-write_env "${key}" "${operator}"
+write_env "${key}"
 if [[ -n "${keep}" ]]; then
   {
     echo "BOOT_PORT='${port}'"
     echo "BOOT_AUTH_SECRET='${MARFA_AUTH_SECRET}'"
     echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
     echo "BOOT_KEY='${key}'"
-    echo "BOOT_OPERATOR_KEY='${operator}'"
     echo "BOOT_OWNER_EMAIL='${owner_email}'"
     echo "BOOT_OWNER_PASSWORD='${owner_password}'"
   } >"${boot}"

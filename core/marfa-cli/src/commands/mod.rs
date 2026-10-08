@@ -15,6 +15,7 @@ pub mod keys;
 pub mod login;
 pub mod logout;
 pub mod metadata;
+pub mod metrics;
 pub mod operations;
 pub mod owner;
 pub mod restore;

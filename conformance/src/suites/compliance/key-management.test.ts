@@ -3,7 +3,8 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
+  getManagementClient,
   trackItem,
   trackKey,
   cleanup,
@@ -395,7 +396,7 @@ describe("key management", () => {
 
     for (const [who, tag, minter] of [
       ["a working key", "working", client],
-      ["the operator key", "operator", getOperatorClient()],
+      ["the signed-in owner", "owner", getOwnerClient()],
     ] as const) {
       const minted = await minter.createKey({
         label: `${label}-${tag}`,
@@ -539,11 +540,9 @@ describe("key management", () => {
     const { key } = await createClientWithoutPermissions(
       `km-standing-${ctx.runId}`,
     );
-    // Each door asks the same of every caller: the operator key, or one
-    // permission. The request is one no validator would take, so a 400
-    // would be the body being read first.
+    // These doors require management grants or direct authority. Invalid
+    // requests distinguish that gate from later request validation.
     const doors: [string, string][] = [
-      ["POST", "/owner"],
       ["GET", "/metrics"],
       ["GET", "/housekeeping"],
       ["POST", "/restore"],
@@ -562,19 +561,12 @@ describe("key management", () => {
       ["POST", "/edge-types"],
       ["DELETE", "/edge-types/not%20an%20edge%20type"],
     ];
-    // Registering a connector takes a working key of its own, so the
-    // operator key is the credential that door refuses.
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey).toBeTruthy();
-    const refusing = (path: string) =>
-      path === "/connectors" ? operatorKey! : key;
-    doors.push(["POST", "/connectors"]);
     const wrong: string[] = [];
     for (const [method, path] of doors) {
       const response = await fetch(`${apiUrl}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${refusing(path)}`,
+          Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
         },
         body:
@@ -626,8 +618,8 @@ describe("key management", () => {
     expect(notRefused).toEqual([]);
   });
 
-  it("the operator key is refused the data plane, reading as well as writing", async () => {
-    const operator = getOperatorClient();
+  it("management permissions do not grant content access", async () => {
+    const operator = getManagementClient();
 
     // A row the file's own key can see, so `POST /items/bulk-get` names
     // something real: an empty answer there has to be the refusal and not
@@ -738,11 +730,9 @@ describe("key management", () => {
   });
 
   it("refuses a bulk action to a key reaching no type, and narrows one for a key writing none", async () => {
-    // A key reaching no type at all, the operator key among them, is refused
-    // the bulk action as it is every other door of the data plane: a dry run
-    // answering it `200` with nothing matched said "there is nothing here",
-    // which is not what happened.
-    const operator = getOperatorClient();
+    // Management grants confer no type access. A dry run must refuse a key
+    // with an empty type map rather than report an empty match set.
+    const operator = getManagementClient();
     const dryRunBody = JSON.stringify({
       action: "transition",
       filter: { type: "core.note" },
@@ -777,36 +767,17 @@ describe("key management", () => {
     expect(narrowed.data.matched).toBe(0);
   });
 
-  it("the operator key mints past its own reach, which is how a run is provisioned", async () => {
-    const operator = getOperatorClient();
-    const label = `km-operator-mint-${ctx.runId}`;
-
-    const minted = await operator.createKey({
-      label,
-      source: `${ctx.source}-${label}`,
+  it("the direct owner issues an ordinary key without a caller ceiling", async () => {
+    const owner = getOwnerClient();
+    const minted = await owner.createKey({
+      label: "owner-issued",
+      source: `${ctx.source}-owner-issued`,
     });
     expect(minted.ok).toBe(true);
-    try {
-      // The widening rule holds for a working key and not for this one: the
-      // operator holds no content families and no permissions, and the
-      // key it mints naming nothing holds every one of them.
-      expect(minted.data.is_operator).toBe(false);
-      expect(minted.data.type_permissions).toEqual({ "*": "write" });
-      expect(minted.data.edge_permissions).toEqual({ "*": "write" });
-      expect(minted.data.extension_permissions).toEqual({ "*": "write" });
-      expect(minted.data.metadata_permissions).toEqual({ "*": "write" });
-      expect(minted.data.permissions?.length).toBeGreaterThan(0);
-
-      const rows = await operator.listKeys();
-      expect(rows.ok).toBe(true);
-      const own = rows.data.data.find((k) => k.is_operator === true);
-      expect(own).toBeDefined();
-      expect(own!.type_permissions).toEqual({});
-      expect(own!.edge_permissions).toEqual({});
-      expect(own!.permissions).toEqual([]);
-    } finally {
-      const revoked = await operator.revokeKey(minted.data.id);
-      expect(revoked.ok).toBe(true);
-    }
+    trackKey(ctx, minted.data.id);
+    expect(minted.data.type_permissions).toEqual({ "*": "write" });
+    expect(minted.data.permissions).toContain("instance.read");
+    expect(minted.data.permissions).toContain("keys.manage");
+    expect(minted.data).not.toHaveProperty("is_operator");
   });
 });

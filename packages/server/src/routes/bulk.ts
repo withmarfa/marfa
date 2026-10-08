@@ -46,6 +46,8 @@ import type { ApiKey, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
+  holdsPermission,
+  authorityId,
   requireAuth,
   checkTypeAccess,
   mayWriteReserved,
@@ -366,7 +368,7 @@ const bulkActionRoute = createRoute({
 // Poll endpoint for a queued / running / terminal job. The job envelope
 // is identical to what `POST /items/bulk-actions` returns initially;
 // subsequent calls reflect the worker's progress until the row reaches
-// a terminal status. Auth: the originating credential or the operator key.
+// a terminal status. Auth: the originating credential or the holder of instance.read.
 const bulkActionStatusRoute = createRoute({
   method: "get",
   path: "/bulk-actions/jobs/{id}",
@@ -374,7 +376,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Get a bulk-action job",
   description:
-    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.",
+    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -402,7 +404,7 @@ const bulkActionStatusRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
+        "- `forbidden`: another credential queued the job, and yours lacks instance.read.",
     },
     404: {
       content: {
@@ -453,7 +455,7 @@ const bulkActionCancelRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
+        "- `forbidden`: another credential queued the job, and yours lacks instance.maintain.",
     },
     404: {
       content: {
@@ -1135,19 +1137,17 @@ export function bulkRoutes(storage: Storage) {
 
   // GET /items/bulk-actions/jobs/:id — poll status.
   router.openapi(bulkActionStatusRoute, async (c) => {
-    requireAuth(c);
     const id = c.req.valid("param").id;
     const job = await storage.bulkActionJobs.getById(id);
     if (!job) {
       throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
     }
-    assertJobAuth(c, job);
+    assertJobAuth(c, job, "instance.read");
     return c.json(jobRowToEnvelope(job), 200);
   });
 
   // POST /items/bulk-actions/jobs/:id/cancel — request cancellation.
   router.openapi(bulkActionCancelRoute, async (c) => {
-    requireAuth(c);
     const id = c.req.valid("param").id;
     const { after } = await runAuditedTransaction(
       storage,
@@ -1155,7 +1155,7 @@ export function bulkRoutes(storage: Storage) {
         const existing = await storage.bulkActionJobs.getById(id);
         if (!existing)
           throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
-        assertJobAuth(c, existing);
+        assertJobAuth(c, existing, "instance.maintain");
         await storage.bulkActionJobs.cancel(id, new Date().toISOString());
         const after = await storage.bulkActionJobs.getById(id);
         if (!after)
@@ -1166,7 +1166,7 @@ export function bulkRoutes(storage: Storage) {
         changed
           ? {
               client_ip: c.get("clientIp") ?? null,
-              key_id: requireAuth(c).id,
+              key_id: authorityId(c),
               action: "items.bulk_action.cancel",
               resource_type: "items.bulk_action",
               resource_id: id,
@@ -1179,33 +1179,19 @@ export function bulkRoutes(storage: Storage) {
   return router;
 }
 
-// Who may read or cancel a job, in the order the checks run:
-//
-//   - the operator key reaches any job, which is what the instance tier is;
-//   - anyone else reaches only jobs their own credential created, since
-//     separate credentials do not observe each other's bulk_action jobs;
-//   - a job another credential created is refused, not cloaked: its
-//     existence is not a secret, only its contents.
-//
-// `bulkActionJobs.getById` applies no filter, so this function is the whole
-// fence.
-function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
-  const apiKey = c.get("apiKey");
-  if (!apiKey) {
-    throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
+// A bulk job belongs to its originating credential. Management grants reach
+// other credentials' jobs independently for inspection and cancellation.
+function assertJobAuth(
+  c: Context<AppEnv>,
+  job: BulkActionJobRow,
+  permission: "instance.read" | "instance.maintain",
+): void {
+  if (holdsPermission(c, permission)) {
+    requirePermission(c, permission);
+    return;
   }
-  // Operator authority reaches every job: `bulkActionJobs.getById` is
-  // deliberately unscoped, so this is the only fence.
-  if (apiKey.is_operator) return;
-  // **A job belongs to the credential that started it, and to nothing else.**
-  // No permission says "read another credential's bulk jobs", and an arm
-  // admitting an administrator to any job anyone else had started would need
-  // one invented for it — widening the model to fit a line rather than the
-  // other way round. A signed-in app is its app and person, so the token it
-  // refreshes to still owns what the earlier token queued.
+  requireAuth(c);
   if (credentialHandle(c) === job.credential) return;
-  // The job's existence is not a secret, only its contents, so this is a
-  // 403 rather than a cloaked 404.
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     "This job belongs to a different credential",

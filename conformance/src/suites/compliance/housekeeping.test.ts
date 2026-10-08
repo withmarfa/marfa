@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -36,8 +36,8 @@ const ALWAYS_LISTED = [
 ];
 
 describe("the housekeeping the server runs on itself", () => {
-  it("lists the housekeeping jobs to the operator key", async () => {
-    const listed = await getOperatorClient().listHousekeeping();
+  it("lists the housekeeping jobs to the management key", async () => {
+    const listed = await getManagementClient().listHousekeeping();
     expect(listed.status).toBe(200);
     await expectMatchesSchema("GET", "/housekeeping", 200, listed.data);
     const names = listed.data.data.map((row) => row.name);
@@ -51,14 +51,14 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("refuses the listing to a working key", async () => {
-    expect((await getOperatorClient().listHousekeeping()).status).toBe(200);
+    expect((await getManagementClient().listHousekeeping()).status).toBe(200);
     const listed = await client.listHousekeeping();
     expect(listed.status).toBe(403);
     expect(listed.error?.error.code).toBe("forbidden");
   });
 
   it("runs a housekeeping job on demand and the listing records the run", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const run = await operator.runHousekeeping("rate-limit-cleanup");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     await expectMatchesSchema(
@@ -100,7 +100,7 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("answers 404 for a name the instance does not run, where a listed one runs", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);
     const unknown = await operator.runHousekeeping("nothing-runs-this");
     expect(unknown.status).toBe(404);
@@ -110,7 +110,7 @@ describe("the housekeeping the server runs on itself", () => {
   it("leaves a job a setting switches off out of the listing, and answers 404 for it", async () => {
     // The referee boots with enrichment off. The enrichment fixtures boot
     // servers with it on and run this name there.
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const listed = await operator.listHousekeeping();
     expect(listed.status).toBe(200);
     const names = listed.data.data.map((row) => row.name);
@@ -158,7 +158,7 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("runs each cleanup job at the largest retention it accepts", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const before = await client.getConfig();
     expect(before.status).toBe(200);
     const config = before.data as Record<string, unknown>;
@@ -190,7 +190,7 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("refuses a malformed name and a working key", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);
     const malformed = await operator.runHousekeeping("Not%20A%20Job");
     expect(malformed.status).toBe(400);

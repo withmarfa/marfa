@@ -861,7 +861,7 @@ export function typeRoutes(storage: Storage) {
       // nothing legitimate mints one over HTTP, and the route's own published
       // description already says so.
       //
-      // No credential is excepted, the operator key included, because a
+      // No caller is excepted, because a
       // restore refuses a reserved-namespace type whatever credential it
       // runs under: a door that admitted one would put a row in the exports
       // that its own restore then refuses, taking the archive with it.

@@ -1,3 +1,8 @@
+import { requireSecureOwnerTransport } from "./auth/owner-browser.js";
+import { controlRoutes } from "./control/routes.js";
+import { setupRoutes } from "./routes/setup.js";
+import { ownerPages } from "./routes/owner-pages.js";
+import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
   EXPOSED_RESPONSE_HEADERS,
@@ -17,7 +22,7 @@ import {
   invalidReadViewRequest,
 } from "./middleware/read-view.js";
 import { deriveKey, SECRET_INFO } from "./crypto/derive-key.js";
-import { authMiddleware } from "./middleware/auth.js";
+import { authMiddleware, hashApiKey } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
@@ -89,7 +94,7 @@ import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import { healthRoutes, operatorCaller } from "./routes/health.js";
+import { healthRoutes, instanceReadCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
 import {
   refuseUndeclaredKeysOf,
@@ -121,6 +126,7 @@ export function createApp(
    * it, and the server's boot is what calls that.
    */
   instanceId: string,
+  options: { localAuthority?: boolean } = {},
 ) {
   // The empty string is the one wrong value the type cannot refuse, and it
   // is what a caller reaching for a field that is not there hands over. An
@@ -128,6 +134,33 @@ export function createApp(
   // 200 on three doors — loud here beats quiet everywhere.
   if (instanceId === "") {
     throw new Error("createApp: instanceId is empty; resolve it first");
+  }
+
+  // Better Auth setup. Instance is created up front so it can be passed
+  // into authRoutes (the OAuth consent screen consumes its cookie-based
+  // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
+  // is registered AFTER the explicit /auth routes so explicit handlers
+  // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
+  //
+  // The better-auth handle is one optional field on the Storage interface
+  // (`BetterAuthStorageAdapter`), so a Storage that wires no better-auth
+  // simply skips the auth mount.
+  let auth: MarfaAuth | undefined;
+  if (storage.betterAuthDb) {
+    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
+      Boolean,
+    );
+    auth = createMarfaAuth({
+      db: storage.betterAuthDb,
+      baseURL: config.authBaseUrl,
+      secret: config.authSecret,
+      trustedOrigins,
+      // storage + salt are needed by the @better-auth/oauth-provider plugin
+      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
+      // grants into system.connection).
+      storage,
+      apiKeySalt: config.apiKeySalt,
+    });
   }
 
   const app = new OpenAPIHono<AppEnv>();
@@ -206,7 +239,10 @@ export function createApp(
   });
 
   // Structured logging (wraps entire request lifecycle)
-  app.use("*", loggerMiddleware());
+  app.use(
+    "*",
+    loggerMiddleware(options.localAuthority ? "local_socket" : "http"),
+  );
 
   // After the logger, so its refusal carries `X-Request-ID` like any other.
   app.use("*", async (c, next) => {
@@ -382,8 +418,7 @@ export function createApp(
     });
   });
   // Ahead of the credential and the limiter, as the probe of a container
-  // must be. It looks the operator key up for itself, because that key is
-  // the one caller told what a failing component said.
+  // must be. Detailed diagnostics check instance.read independently.
   app.route(
     "/health",
     healthRoutes(
@@ -394,7 +429,41 @@ export function createApp(
         sqlitePath: config.sqlitePath,
         blobPath: config.blobPath,
       }),
-      operatorCaller(storage, config.apiKeySalt),
+      async (c) => {
+        if (options.localAuthority) return true;
+        const authorization = c.req.header("authorization");
+        try {
+          if (authorization !== undefined) {
+            if (authorization.startsWith("Bearer marfa_at_")) {
+              const token = await storage.oauthProvider?.validateAccessToken(
+                hashApiKey(
+                  authorization.slice("Bearer marfa_at_".length),
+                  config.apiKeySalt,
+                ),
+              );
+              return (
+                token?.userId !== null &&
+                token?.scopes.includes("instance.read") === true
+              );
+            }
+            return await instanceReadCaller(
+              storage,
+              config.apiKeySalt,
+            )(authorization);
+          }
+          if (auth) requireSecureOwnerTransport(auth);
+          const session = await auth?.getSession(c.req.raw.headers, {
+            readOnly: true,
+          });
+          return (
+            session !== null &&
+            session !== undefined &&
+            (await storage.owner?.find())?.id === session.user.id
+          );
+        } catch {
+          return false;
+        }
+      },
     ),
   );
 
@@ -425,6 +494,15 @@ export function createApp(
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
+  app.use(
+    "*",
+    directAuthorityMiddleware(
+      storage,
+      auth,
+      config.authBaseUrl,
+      options.localAuthority,
+    ),
+  );
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
   // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects every door
@@ -433,59 +511,69 @@ export function createApp(
   // flows through AppConfig: the rate-limit middleware reads its settings
   // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
-  if (config.rateLimitEnabled) {
+  if (config.rateLimitEnabled && !options.localAuthority) {
+    const requestLimiter = rateLimitMiddleware({
+      defaultLimit: config.rateLimitDefaultLimit,
+      windowMs: config.rateLimitWindowMs,
+      pathLimits: {
+        // The one cap an instance can name for itself
+        // (`RATE_LIMIT_KEYS_REQUESTS`), on every door under `/keys`:
+        // minting is how a caller widens its own reach, so the doors
+        // that do it are held well under the default, and a deployment
+        // whose callers legitimately mint more needs a number rather
+        // than a fork. A key reading itself shares the allowance.
+        "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
+        // Insertion order matters: the middleware iterates and
+        // takes the FIRST `path.startsWith(prefix)` match, so
+        // place more-specific prefixes ahead of broader siblings
+        // (e.g. `/auth/device/code` MUST precede `/auth/device`).
+        //
+        // Auth-endpoint caps calibrated for realistic human retry
+        // patterns plus iterative smoke testing. The global default
+        // (1000/window) bounds anything else.
+        //
+        // Device-flow polling goes to `/auth/oauth2/token` with the
+        // device grant and shares that endpoint's budget: RFC 8628's
+        // default 5-second poll interval means one in-flight device flow
+        // burns 12 calls/minute.
+        "/auth/device/code": 30,
+        "/auth/device": 30,
+        "/auth/sign-in/email": 30,
+        "/auth/sign-in": 30,
+        // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
+        // this, every plugin endpoint inherits the global default
+        // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
+        // which is unauthenticated. Specific prefixes appear BEFORE
+        // broader siblings per the insertion-order match rule.
+        //
+        // `/auth/authorize/decision` (Marfa proxy) precedes
+        // `/auth/authorize` (Marfa consent render).
+        "/auth/oauth2/register": 10,
+        "/auth/oauth2/token": 60,
+        "/auth/oauth2/introspect": 60,
+        "/auth/oauth2/revoke": 30,
+        "/auth/oauth2/authorize": 30,
+        "/auth/authorize/decision": 30,
+        "/auth/authorize": 60,
+      },
+      storage,
+      // Aggregate per-identifier cap (defaultLimit × multiplier),
+      // keyed on the identifier with no path split, so a key's budget
+      // can't multiply across path groups and an unattributed identifier
+      // still hits a ceiling. `0` disables it.
+      aggregateMultiplier: config.rateLimitAggregateMultiplier,
+    });
     app.use(
       "*",
-      rateLimitMiddleware({
-        defaultLimit: config.rateLimitDefaultLimit,
-        windowMs: config.rateLimitWindowMs,
-        pathLimits: {
-          // The one cap an instance can name for itself
-          // (`RATE_LIMIT_KEYS_REQUESTS`), on every door under `/keys`:
-          // minting is how a caller widens its own reach, so the doors
-          // that do it are held well under the default, and a deployment
-          // whose callers legitimately mint more needs a number rather
-          // than a fork. A key reading itself shares the allowance.
-          "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
-          // Insertion order matters: the middleware iterates and
-          // takes the FIRST `path.startsWith(prefix)` match, so
-          // place more-specific prefixes ahead of broader siblings
-          // (e.g. `/auth/device/code` MUST precede `/auth/device`).
-          //
-          // Auth-endpoint caps calibrated for realistic human retry
-          // patterns plus iterative smoke testing. The global default
-          // (1000/window) bounds anything else.
-          //
-          // Device-flow polling goes to `/auth/oauth2/token` with the
-          // device grant and shares that endpoint's budget: RFC 8628's
-          // default 5-second poll interval means one in-flight device flow
-          // burns 12 calls/minute.
-          "/auth/device/code": 30,
-          "/auth/device": 30,
-          "/auth/sign-in/email": 30,
-          "/auth/sign-in": 30,
-          // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
-          // this, every plugin endpoint inherits the global default
-          // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
-          // which is unauthenticated. Specific prefixes appear BEFORE
-          // broader siblings per the insertion-order match rule.
-          //
-          // `/auth/authorize/decision` (Marfa proxy) precedes
-          // `/auth/authorize` (Marfa consent render).
-          "/auth/oauth2/register": 10,
-          "/auth/oauth2/token": 60,
-          "/auth/oauth2/introspect": 60,
-          "/auth/oauth2/revoke": 30,
-          "/auth/oauth2/authorize": 30,
-          "/auth/authorize/decision": 30,
-          "/auth/authorize": 60,
-        },
-        storage,
-        // Aggregate per-identifier cap (defaultLimit × multiplier),
-        // keyed on the identifier with no path split, so a key's budget
-        // can't multiply across path groups and an unattributed identifier
-        // still hits a ceiling. `0` disables it.
-        aggregateMultiplier: config.rateLimitAggregateMultiplier,
+      createMiddleware<AppEnv>((c, next) => {
+        // Setup has its own durable guessing limit. A valid handoff is not a guess.
+        if (
+          c.req.path === "/setup" ||
+          c.req.path.startsWith("/setup/") ||
+          (c.req.path === "/owner" && c.req.method === "POST")
+        )
+          return next();
+        return requestLimiter(c, next);
       }),
     );
   }
@@ -521,33 +609,6 @@ export function createApp(
     const [method, path] = door.split(" ");
     if (method === undefined || path === undefined) continue;
     app.on(method, path, originGuard);
-  }
-
-  // Better Auth setup. Instance is created up front so it can be passed
-  // into authRoutes (the OAuth consent screen consumes its cookie-based
-  // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
-  // is registered AFTER the explicit /auth routes so explicit handlers
-  // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
-  //
-  // The better-auth handle is one optional field on the Storage interface
-  // (`BetterAuthStorageAdapter`), so a Storage that wires no better-auth
-  // simply skips the auth mount.
-  let auth: MarfaAuth | undefined;
-  if (storage.betterAuthDb) {
-    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
-      Boolean,
-    );
-    auth = createMarfaAuth({
-      db: storage.betterAuthDb,
-      baseURL: config.authBaseUrl,
-      secret: config.authSecret,
-      trustedOrigins,
-      // storage + salt are needed by the @better-auth/oauth-provider plugin
-      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
-      // grants into system.connection).
-      storage,
-      apiKeySalt: config.apiKeySalt,
-    });
   }
 
   // Discovery (RFC 8414 + OIDC Discovery). The discovery doc points RPs at the
@@ -681,7 +742,13 @@ export function createApp(
   app.route("/platform-types", platformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
-  if (auth) app.route("/owner", ownerRoutes(storage, auth));
+  if (auth) {
+    app.route("/owner", ownerRoutes(storage, auth));
+    app.route("/setup", setupRoutes(storage, auth));
+    if (options.localAuthority)
+      app.route("/_control", controlRoutes(storage, auth, config.authBaseUrl));
+    app.route("/auth/owner", ownerPages(storage, auth));
+  }
   app.route("/export", exportRoutes(storage, blobs, instanceId));
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
@@ -747,6 +814,13 @@ export function createApp(
   })) {
     app.openAPIRegistry.register(name, schema);
   }
+  app.openAPIRegistry.registerComponent("securitySchemes", "ownerSession", {
+    type: "apiKey",
+    in: "cookie",
+    name: "marfa.auth.session_token",
+    description:
+      "The owner's browser sign-in. Writes require this instance's Origin; sensitive changes require actual authentication within five minutes. Apps cannot use this authority.",
+  });
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
     scheme: "bearer",

@@ -70,7 +70,13 @@ async function marfa(
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !name.startsWith("MARFA_")) env[name] = value;
   }
-  Object.assign(env, keychainEnv(), extra);
+  Object.assign(
+    env,
+    args.includes("setup") || args.includes("--socket")
+      ? { MARFA_KEYCHAIN: "/marfa-test-no-keychain" }
+      : keychainEnv(),
+    extra,
+  );
   try {
     const pending = run(requireBinary(), args, {
       env,
@@ -435,7 +441,9 @@ describe("the contract the binary was built for", () => {
     const words = await marfa(["--url", started.url, "--key", KEY, "status"]);
     expect(words.code, words.stderr).toBe(0);
     expect(words.stdout).toContain("health ok");
-    expect(words.stdout).toContain("items need a working key");
+    expect(words.stdout).toContain(
+      "this credential's type permissions reach no type",
+    );
   });
 
   it("hands on any other refusal of the counts", async () => {
@@ -444,40 +452,74 @@ describe("the contract the binary was built for", () => {
     expect(refusal(outcome.stderr).error.server?.status).toBe(401);
   });
 
-  it("mints the operator key with a bootstrap secret read from stdin", async () => {
-    const secret = "c".repeat(64);
-    const bootstrap = async (stdin: string) => {
+  it("claims the owner with setup proof and password read from structured stdin", async () => {
+    const claim = async (stdin: string) => {
       const started = await ScriptedServer.start();
-      started.answer("POST", "/keys", {
+      started.answer("POST", "/owner", {
         kind: "json",
         status: 201,
-        body: { key: "marfa_k1_operator", id: "k", label: "operator" },
+        body: {
+          id: "owner",
+          email: "a@cyzr.me",
+          name: "Owner",
+          created_at: "2026-01-01T00:00:00Z",
+        },
       });
       server = started;
       const outcome = await marfa(
-        ["--json", "--url", started.url, "keys", "bootstrap"],
+        ["--json", "--url", started.url, "setup", "claim", "--stdin"],
         stdin,
       );
-      const mints = started.requests.filter(
-        (request) => request.method === "POST" && request.pathname === "/keys",
+      const claims = started.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/owner",
       );
       await started.stop();
       server = undefined;
-      return { outcome, mints };
+      return { outcome, claims };
     };
-    const read = await bootstrap(`${secret}\n`);
+    const body = {
+      email: "a@cyzr.me",
+      password: "an owner password",
+      code: "TEST-SETUP-CODE",
+    };
+    const read = await claim(JSON.stringify(body));
     expect(read.outcome.code, read.outcome.stderr).toBe(0);
-    expect(read.outcome.stdout).toContain("marfa_k1_operator");
-    expect(read.mints).toHaveLength(1);
-    expect(read.mints[0]?.headers.authorization).toBe(`Bearer ${secret}`);
-    // With the mint above as its witness: no secret on stdin sends none.
-    const empty = await bootstrap("");
-    expect(empty.outcome.code).not.toBe(0);
-    expect(empty.mints).toEqual([]);
-    const invalid = await bootstrap("  \n");
-    expect(invalid.outcome.code).toBe(1);
-    expect(refusal(invalid.outcome.stderr).error.code).toBe("invalid");
-    expect(invalid.mints).toEqual([]);
+    expect(read.claims).toHaveLength(1);
+    expect(JSON.parse(read.claims[0]!.body)).toEqual(body);
+    expect(read.claims[0]?.headers.authorization).toBeUndefined();
+    expect(read.outcome.stdout).not.toContain(body.password);
+    expect(read.outcome.stdout).not.toContain(body.code);
+    for (const blank of ["", "  \n", "not JSON"]) {
+      const invalid = await claim(blank);
+      expect(invalid.outcome.code, invalid.outcome.stderr).toBe(1);
+      expect(refusal(invalid.outcome.stderr).error.code).toBe("invalid");
+      expect(invalid.claims).toEqual([]);
+    }
+  });
+
+  it("refuses ambiguous or unavailable sockets without falling back to HTTP", async () => {
+    server = await ScriptedServer.start();
+    for (const ordinary of [
+      ["--url", server.url],
+      ["--key", KEY],
+    ]) {
+      const outcome = await marfa([
+        "--socket",
+        "/marfa-test-missing/control.sock",
+        ...ordinary,
+        "setup",
+        "status",
+      ]);
+      expect(outcome.code).not.toBe(0);
+    }
+    const missing = await marfa([
+      "--socket",
+      "/marfa-test-missing/control.sock",
+      "setup",
+      "status",
+    ]);
+    expect(missing.code).not.toBe(0);
+    expect(server.requests).toEqual([]);
   });
 });
 
@@ -491,6 +533,7 @@ const HASH = `sha256:${"a".repeat(64)}`;
 const WHEN = "2026-01-01T00:00:00Z";
 const LATER = "2026-01-02T00:00:00Z";
 const invocations: Record<string, () => string[]> = {
+  metrics: () => [],
   "items create": () => ["--type", "core.note"],
   "items list": () => [],
   "items stats": () => [],
@@ -611,7 +654,7 @@ const invocations: Record<string, () => string[]> = {
   "folders revoke": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
-  "owner create": () => ["--email", "owner@example.com", "--password-stdin"],
+  "setup claim": () => ["--stdin"],
 };
 
 /** The refusal's code, or what stderr said when it is not a refusal. */
@@ -628,12 +671,14 @@ function codeOf(stderr: string): string {
  * the table lists published operations, and these reach one without being
  * its entry.
  */
-const beyondTheTable: Record<string, () => string[]> = {
-  "keys bootstrap": () => ["--secret", "s"],
-};
+const beyondTheTable: Record<string, () => string[]> = {};
 
 const stdinFor: Record<string, string> = {
-  "owner create": "a password\n",
+  "setup claim": JSON.stringify({
+    email: "a@cyzr.me",
+    password: "an owner password",
+    code: "TEST-SETUP-CODE",
+  }),
 };
 
 /**
@@ -655,6 +700,14 @@ const refusedOnly: Record<string, () => string[]> = {
  * need no driving.
  */
 const NOT_DRIVEN: Record<string, string> = {
+  "setup status":
+    "requires the private socket; exercised by packaged image smoke and socket refusal cases",
+  "setup code":
+    "requires the private socket; exercised by packaged image smoke",
+  "setup open":
+    "requires the private socket; exercised by packaged image smoke",
+  "owner recover":
+    "requires the private socket; packaged image smoke changes the production password and verifies it after restart",
   status: "describes a server on another contract; held by its own case",
   whoami: "describes a server on another contract; held by its own case",
   logout:
@@ -1221,7 +1274,6 @@ describe("every command holds the server to the contract", () => {
     // root on the built-for contract.
     const mints: Record<string, string[]> = {
       "keys create": invocations["keys create"]?.() ?? [],
-      "keys bootstrap": beyondTheTable["keys bootstrap"]?.() ?? [],
       "webhooks create": invocations["webhooks create"]?.() ?? [],
     };
     for (const [command, argv] of Object.entries(mints)) {
@@ -1254,7 +1306,8 @@ describe("every command holds the server to the contract", () => {
     const tree = await commandTree();
     // Witness: the tree is read, and reaches below the roots.
     expect(tree).toContain("items create");
-    expect(tree).toContain("keys bootstrap");
+    expect(tree).toContain("setup claim");
+    expect(tree).not.toContain("keys bootstrap");
     const driven = new Set([
       ...(await table()).map((row) => row.command),
       ...Object.keys(beyondTheTable),
@@ -1306,7 +1359,7 @@ describe("every command holds the server to the contract", () => {
       expect.soft(outcome.code, label).toBe(1);
       expect.soft(codeOf(outcome.stderr), label).toBe("contract_mismatch");
       // Silence is asserted for every command; its witness is the case
-      // below, which holds every table command and `keys bootstrap` but
+      // below, which holds every table command but
       // `login` (`SILENT_HERE`) and the refusal-only ones to printing.
       if (row.command !== "login") {
         expect.soft(outcome.stdout, label).toBe("");

@@ -1,11 +1,4 @@
 {
-  "auth/bootstrap-secret.ts": {
-    "boundary": "Operational bootstrap secret initialization and rollback-safe latch; owner and key creation consume the secret within their audited transaction.",
-    "calls": {
-      "SettingsStore.claim": 2,
-      "SettingsStore.release": 1
-    }
-  },
   "auth/ceiling-catchup.ts": {
     "boundary": "Audited compare-and-set client scope ceiling widening; no-op creates no audit. Native rejection and concurrent single-winner controls in credential-retention-audit.test.ts.",
     "calls": {
@@ -28,6 +21,14 @@
       "OauthProviderStore.revokeTokensForGrant": 1,
       "runAuditedTransaction": 2,
       "writeItem": 3
+    }
+  },
+  "auth/instance-claim.ts": {
+    "boundary": "Machine-issued setup proofs, atomic owner claim, password changes and recovery share strict audited transactions. Fault and process tests cover rollback, durable consumption and uncertain commits; operational sign-in counters clear within the credential change.",
+    "calls": {
+      "RateLimitStore.clearSignIn": 2,
+      "SettingsStore.set": 1,
+      "runAuditedTransaction": 7
     }
   },
   "auth/instance.ts": {
@@ -182,35 +183,6 @@
       "EdgeStore.deleteBySource": 1
     }
   },
-  "routes/restore-archive-types.ts": {
-    "boundary": "Audited registration units nested in the restore's one transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
-    "calls": {
-      "EdgeTypeStore.create": 1,
-      "TypeStore.create": 1,
-      "runAuditedTransaction": 2
-    }
-  },
-  "routes/restore-archive.ts": {
-    "boundary": "One audited restore transaction holding the registrations, blob rows, items, metadata, history, edges and events; blob bytes are placed before it opens, each behind an unaudited copy-deletion record that the transaction clears, as the cleanup queue's bookkeeping. Native failure coverage in external-audit.test.ts, archive-complete-roundtrip.test.ts and archive-restore-bounds.test.ts.",
-    "calls": {
-      "BlobRegistry.queueCopyDeletion": 1,
-      "BlobRegistry.recordLocation": 1,
-      "BlobRegistry.recordUploader": 1,
-      "BlobRegistry.register": 1,
-      "EdgeStore.createRaw": 1,
-      "MetadataStore.setExtensions": 1,
-      "runAuditedTransaction": 2,
-      "writeItem": 1,
-      "finalizeArchiveItem": 1
-    }
-  },
-  "routes/platform-types.ts": {
-    "boundary": "Audited platform type removal, registry settlement inside transaction; platform-types.test.ts.",
-    "calls": {
-      "TypeStore.deletePlatformType": 1,
-      "runAuditedTransaction": 1
-    }
-  },
   "routes/auth-consent.ts": {
     "boundary": "Audited consent approval and silent reuse contain provider consent, token and grant projection changes under the consent lock; credential-audit.test.ts and auth-consent-skip.test.ts.",
     "calls": {
@@ -361,18 +333,39 @@
     }
   },
   "routes/keys.ts": {
-    "boundary": "Audited create/update/revoke and atomic bootstrap claim/secret consumption; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts and bootstrap-audit-outcome.test.ts.",
+    "boundary": "Audited ordinary key create/update/revoke; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts.",
     "calls": {
       "KeyStore.create": 1,
-      "SettingsStore.claim": 1,
       "runAuditedTransaction": 3
     }
   },
-  "routes/owner.ts": {
-    "boundary": "Owner creation delegates to the credential transaction after password hashing, including bootstrap claim and secret consumption; credential-audit.test.ts covers native audit failure and commit outcomes.",
+  "routes/platform-types.ts": {
+    "boundary": "Audited platform type removal, registry settlement inside transaction; platform-types.test.ts.",
     "calls": {
-      "SettingsStore.claim": 2,
-      "SettingsStore.release": 2
+      "TypeStore.deletePlatformType": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "routes/restore-archive-types.ts": {
+    "boundary": "Audited registration units nested in the restore's one transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
+    "calls": {
+      "EdgeTypeStore.create": 1,
+      "TypeStore.create": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "routes/restore-archive.ts": {
+    "boundary": "One audited restore transaction holding the registrations, blob rows, items, metadata, history, edges and events; blob bytes are placed before it opens, each behind an unaudited copy-deletion record that the transaction clears, as the cleanup queue's bookkeeping. Native failure coverage in external-audit.test.ts, archive-complete-roundtrip.test.ts and archive-restore-bounds.test.ts.",
+    "calls": {
+      "BlobRegistry.queueCopyDeletion": 1,
+      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordUploader": 1,
+      "BlobRegistry.register": 1,
+      "EdgeStore.createRaw": 1,
+      "MetadataStore.setExtensions": 1,
+      "runAuditedTransaction": 2,
+      "writeItem": 1,
+      "finalizeArchiveItem": 1
     }
   },
   "routes/types.ts": {

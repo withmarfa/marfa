@@ -116,7 +116,7 @@ When the server answers `POST /blobs` with `507 insufficient_storage`, the serve
 
 ### `blobs/upload-needs-write`
 
-If a working key or an app's access token that holds write on no registered type outside `system.*` sends `POST /blobs`, then the server MUST answer `403 type_not_permitted`.
+If a working key or an app's access token lacking `blobs.manage` that holds write on no registered type outside `system.*` sends `POST /blobs`, then the server MUST answer `403 type_not_permitted`.
 
 **Reason:** a grant on a pattern that no registered type falls under writes nothing, and neither does a grant on a `system.*` type alone.
 
@@ -152,9 +152,9 @@ When an app's access token sends `POST /blobs` and the server takes the upload, 
 
 ### `blobs/upload-operator-key`
 
-When the operator key sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
 
-**Tests:** `compliance/blob-reach.test.ts › serves the operator key every blob and takes its uploads`.
+**Tests:** `compliance/blob-reach.test.ts › serves the management key every blob and takes its uploads`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
 ## Downloading a blob
 
@@ -294,9 +294,9 @@ If a request to the instance's link names a blob by a malformed hash, then the s
 
 ### `blobs/hash-unknown`
 
-If the operator key, or a working key or an access token whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `404 blob_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority, or a working key or an access token lacking `blobs.manage` whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `404 blob_not_found`.
 
-**Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the operator key the blob doors although it holds no type map`.
+**Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the management key the blob doors although it holds no type map`.
 
 ## Query keys
 
@@ -450,7 +450,7 @@ A reference is a digest anywhere in a string, as `stores/reference-digest-anywhe
 
 ### `blobs/read-no-type`
 
-If a working key or an app's access token whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
+If a working key or an app's access token lacking `blobs.manage` whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
 
 **Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth.md` 1), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
 
@@ -458,13 +458,13 @@ If a working key or an app's access token whose type map reaches no type sends `
 
 ### `blobs/read-operator-key`
 
-When the operator key sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST serve every blob it holds, referenced or not, although the key holds no type map.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
 
-**Tests:** `compliance/blob-reach.test.ts › serves the operator key every blob and takes its uploads`, `› serves the operator key the blob doors although it holds no type map`.
+**Tests:** `compliance/blob-reach.test.ts › serves the management key every blob and takes its uploads`, `› serves the management key the blob doors although it holds no type map`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
 ### `blobs/read-unregistered-map`
 
-If a working key or an app's access token whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
+If a working key or an app's access token lacking `blobs.manage` whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
 
 **Reason:** a pattern is a pattern whether or not a type matches it, so the key reaches a type and is not refused under `blobs/read-no-type`.
 
@@ -472,7 +472,7 @@ If a working key or an app's access token whose type map names only a type nothi
 
 ### `blobs/read-unreferenced`
 
-While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, the credential that uploaded it included.
+While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token lacking `blobs.manage` that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, the credential that uploaded it included.
 
 **Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
 
@@ -480,7 +480,7 @@ While no row references a blob, the server MUST answer `404 blob_not_found` to e
 
 ### `blobs/read-unreadable`
 
-If a working key or an access token reads a blob that only rows it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
+If a working key or an access token lacking `blobs.manage` reads a blob that only rows it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
 
 **Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth.md` 20).
 
@@ -494,7 +494,7 @@ While an item of a type a working key or an access token may read references a b
 
 ### `blobs/lend-earlier-version`
 
-While only an earlier version of an item references a blob, the server MUST answer a working key or an app's access token `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While only an earlier version of an item references a blob, the server MUST answer a working key or an app's access token lacking `blobs.manage` `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
 
 **Reason:** the `blob-orphans` housekeeping job keeps such a blob (`stores/orphan-keeps-versions`), so only the read is withheld.
 
@@ -516,7 +516,7 @@ While a working key or an app's access token may read an edge's type by its edge
 
 ### `blobs/lend-edge-unread`
 
-If a working key or an app's access token may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
+If a working key or an app's access token lacking `blobs.manage` may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
 
 **Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `compliance/blob-reach-app.test.ts › serves a blob named only in an edge's properties to an app that reads the edge, and to no other`, `› does not serve a blob named only in an edge's properties to an app that holds no edge scope`.
 
@@ -536,7 +536,7 @@ While a working key may read an extension namespace by its extension map and may
 
 ### `blobs/lend-extension-unread`
 
-If a working key or an app's access token may not read an extension namespace by its extension map, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
+If a working key or an app's access token lacking `blobs.manage` may not read an extension namespace by its extension map, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
 
 **Reason:** a key's label names no namespace, and an app holds no extension map, since no scope names a namespace (`keys-and-oauth.md` 21).
 
@@ -640,7 +640,7 @@ When the enrichment sweep writes onto a file item, the server MUST NOT make a di
 
 ### `blobs/read-order`
 
-If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
+If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token lacking `blobs.manage` whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
 
 **Reason:** a blob the credential may not read and an unknown one answer alike, so their order cannot be told.
 
@@ -662,11 +662,11 @@ Where the instance serves a link, if a fetch of it meets more than one refusal, 
 
 ### `blobs/export-operator-refused`
 
-If the operator key sends `GET /export`, then the server MUST answer `403 type_not_permitted`, whether it asks for `ndjson` or for the archive.
+If a key or app token with `blobs.manage` and no type map sends `GET /export`, then the server MUST answer `403 type_not_permitted`, whether it asks for `ndjson` or for the archive.
 
-**Reason:** the operator key holds no type map, so the exporter is always a working key or an access token.
+**Reason:** management permissions grant no content type reach.
 
-**Tests:** `compliance/blob-reach.test.ts › refuses the operator key an export and takes a working key's`.
+**Tests:** `compliance/blob-reach.test.ts › refuses the management key an export and takes a working key's`.
 
 ### `blobs/export-carries-served`
 
@@ -710,7 +710,7 @@ When a working key sends `GET /export?format=archive`, the server MUST list on e
 
 ### `blobs/restore-standing`
 
-When the operator key sends `POST /restore`, the server MUST make each digest in a restored item, edge or extension lend exactly when its archive line lists it as lending.
+When a recently authenticated direct owner or a local caller sends `POST /restore`, the server MUST make each digest in a restored item, edge or extension lend exactly when its archive line lists it as lending.
 
 **Reason:** every other digest the line names restores as one that does not lend, and `blobs/proof-repair` is how it is repaired.
 
@@ -718,13 +718,13 @@ When the operator key sends `POST /restore`, the server MUST make each digest in
 
 ### `blobs/restore-unlisted`
 
-When the operator key sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
+When a recently authenticated direct owner or a local caller sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
 
 **Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
 
 ### `blobs/restore-reserve`
 
-Where an instance keeps a reserve of free space, if the operator key sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
+Where an instance keeps a reserve of free space, if a recently authenticated direct owner or a local caller sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
 

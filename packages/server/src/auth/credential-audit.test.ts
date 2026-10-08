@@ -1,52 +1,60 @@
 import { CredentialPersistencePhase } from "./credential-adapter.js";
 import { afterEach, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import { request } from "../test-utils.js";
+import { createClaimTestApp } from "./claim-test-app.js";
+type TestContext = Awaited<ReturnType<typeof createClaimTestApp>>;
 const contexts: TestContext[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.cleanup();
 });
 async function fixture() {
-  const ctx = await createTestContext();
+  const ctx = await createClaimTestApp("http://localhost:0");
   contexts.push(ctx);
   return ctx;
 }
 function native(ctx: TestContext) {
-  return ctx.storage as typeof ctx.storage & {
-    __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
-    __sqliteAll(sql: string): Promise<unknown[]>;
-  };
+  return ctx.storage;
 }
 const body = { email: "owner@example.test", password: "correct horse battery" };
 it("rolls owner and account back on a native owner audit failure, then accepts a retry", async () => {
   const ctx = await fixture();
   const db = native(ctx);
   await db.__sqliteRun(
-    "CREATE TRIGGER refuse_owner_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'owner.created' BEGIN SELECT RAISE(ABORT, 'audit fault'); END",
+    "CREATE TRIGGER refuse_owner_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'owner.claimed' BEGIN SELECT RAISE(ABORT, 'audit fault'); END",
     [],
   );
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(500);
   expect(await db.__sqliteAll("SELECT id FROM auth_user")).toHaveLength(0);
   expect(await db.__sqliteAll("SELECT id FROM auth_account")).toHaveLength(0);
   await db.__sqliteRun("DROP TRIGGER refuse_owner_audit", []);
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   expect(await db.__sqliteAll("SELECT id FROM auth_user")).toHaveLength(1);
   expect(await db.__sqliteAll("SELECT id FROM auth_account")).toHaveLength(1);
   expect(
-    (await ctx.storage.audit.list({ action: "owner.created" })).data,
+    (await ctx.storage.audit.list({ action: "owner.claimed" })).data,
   ).toHaveLength(1);
 });
 it("returns no cookie and stores no session if the accepted sign-in audit fails", async () => {
   const ctx = await fixture();
   const db = native(ctx);
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   const signin = () =>
     request(ctx.app, "POST", "/auth/sign-in/email", {
@@ -171,8 +179,11 @@ it("keeps a cached session usable if provider sign-out audit fails, then invalid
   const ctx = await fixture();
   const db = native(ctx);
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   const signed = await request(ctx.app, "POST", "/auth/sign-in/email", {
     body,
@@ -205,8 +216,11 @@ it("rolls password replacement and session turnover back when their final audit 
   const ctx = await fixture();
   const db = native(ctx);
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   const signed = await request(ctx.app, "POST", "/auth/sign-in/email", {
     body,
@@ -216,12 +230,16 @@ it("rolls password replacement and session turnover back when their final audit 
     .getSetCookie()
     .map((value) => value.split(";")[0])
     .join("; ");
+  await request(ctx.app, "POST", "/auth/sign-in/email", {
+    body,
+    headers: { origin: "http://localhost:0" },
+  });
   const sessions = await db.__sqliteAll("SELECT id FROM auth_session");
   const accounts = await db.__sqliteAll(
     "SELECT id, password FROM auth_account",
   );
   await db.__sqliteRun(
-    "CREATE TRIGGER reject_password_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.password.changed' BEGIN SELECT RAISE(ABORT, 'password audit fault'); END",
+    "CREATE TRIGGER reject_password_audit BEFORE INSERT ON audit_log WHEN NEW.action='owner.password.changed' BEGIN SELECT RAISE(ABORT, 'password audit fault'); END",
     [],
   );
   const change = () =>
@@ -250,7 +268,7 @@ it("rolls password replacement and session turnover back when their final audit 
   await db.__sqliteRun("DROP TRIGGER reject_password_audit", []);
   const accepted = await change();
   expect(accepted.status).toBe(200);
-  expect(accepted.headers.getSetCookie().length).toBeGreaterThan(0);
+  expect(accepted.headers.getSetCookie()).toEqual([]);
   expect(await db.__sqliteAll("SELECT id FROM auth_session")).not.toEqual(
     sessions,
   );
@@ -260,7 +278,7 @@ it("rolls password replacement and session turnover back when their final audit 
         headers: { cookie },
       })
     ).json(),
-  ).toBeNull();
+  ).not.toBeNull();
   expect(
     (
       await request(ctx.app, "POST", "/auth/sign-in/email", {
@@ -278,16 +296,19 @@ it("rolls password replacement and session turnover back when their final audit 
     ).status,
   ).toBe(200);
   expect(
-    (await ctx.storage.audit.list({ action: "auth.password.changed" })).data,
+    (await ctx.storage.audit.list({ action: "owner.password.changed" })).data,
   ).toHaveLength(1);
 });
 
-it("couples provider profile updates and signing-key creation to their native audits", async () => {
+it("couples provider profile updates to their native audits", async () => {
   const ctx = await fixture();
   const db = native(ctx);
   expect(
-    (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-      .status,
+    (
+      await request(ctx.app, "POST", "/owner", {
+        body: { ...body, code: ctx.setupCode },
+      })
+    ).status,
   ).toBe(201);
   const signed = await request(ctx.app, "POST", "/auth/sign-in/email", {
     body,
@@ -318,6 +339,15 @@ it("couples provider profile updates and signing-key creation to their native au
   expect(await db.__sqliteAll("SELECT name FROM auth_user")).toEqual([
     { name: "Changed Owner" },
   ]);
+  expect(
+    (await ctx.storage.audit.list({ action: "auth.user.update" })).data,
+  ).toHaveLength(1);
+});
+
+it("couples signing-key creation to its native audit", async () => {
+  const ctx = await fixture();
+  const db = native(ctx);
+  expect(await db.__sqliteAll("SELECT id FROM auth_jwks")).toHaveLength(0);
   await db.__sqliteRun(
     "CREATE TRIGGER reject_jwks_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.jwks.create' BEGIN SELECT RAISE(ABORT, 'jwks audit fault'); END",
     [],
@@ -338,8 +368,11 @@ it.each(["revoke-session", "revoke-sessions", "revoke-other-sessions"])(
     const ctx = await fixture();
     const db = native(ctx);
     expect(
-      (await request(ctx.app, "POST", "/owner", { key: ctx.operatorKey, body }))
-        .status,
+      (
+        await request(ctx.app, "POST", "/owner", {
+          body: { ...body, code: ctx.setupCode },
+        })
+      ).status,
     ).toBe(201);
     const signin = () =>
       request(ctx.app, "POST", "/auth/sign-in/email", {

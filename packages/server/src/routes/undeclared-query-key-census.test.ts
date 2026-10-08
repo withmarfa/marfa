@@ -52,6 +52,19 @@ const STRAY = "definitely-not-a-filter";
  * library. None of them answers a set a dropped filter could widen.
  */
 const OTHER_PARTIES_QUERY: Record<string, string> = {
+  "GET /setup": "the setup page, before any owner exists",
+  "POST /setup/exchange":
+    "exchanges machine-issued proof for a setup-only cookie",
+  "POST /setup/claim": "claims using setup proof or a setup-only cookie",
+  "GET /auth/owner/manage":
+    "management page authenticated by direct owner session",
+  "GET /auth/owner/restore":
+    "restore form authenticated by direct owner session",
+  "GET /auth/owner/password":
+    "owner password form authenticated by the owner session cookie",
+  "POST /auth/owner/password":
+    "owner password change authenticated by session, current password and origin",
+
   "POST /inbound/:token":
     "a sender's delivery, whose query string is recorded as it arrived",
   "GET /.well-known/oauth-authorization-server/auth":
@@ -92,14 +105,19 @@ function servedDoors(): string[] {
 
 async function answer(
   door: string,
-  key: string,
+  key: string | undefined,
 ): Promise<{ status: number; unknown: unknown }> {
   const [method, path] = door.split(" ");
   const concrete = (path ?? "").replace(/:[^/]+/g, BY_PATH[door] ?? UNKNOWN_ID);
   const res = await ctx.app.request(`${concrete}?${STRAY}=1`, {
     method,
     headers: {
-      Authorization: `Bearer ${key}`,
+      ...(key === undefined
+        ? {
+            cookie: ctx.owner.cookie,
+            origin: new URL(ctx.config.authBaseUrl).origin,
+          }
+        : { Authorization: `Bearer ${key}` }),
       "Content-Type": "application/json",
     },
     body: method === "GET" || method === "DELETE" ? undefined : "{}",
@@ -125,10 +143,10 @@ describe("a query key no door declares", () => {
     const unrefused: string[] = [];
     for (const door of doors) {
       // Each door is tried as the credential that may use it. The working key
-      // holds every permission; the operator key holds the instance routes
+      // holds every permission; the management key holds the instance routes
       // the working key does not.
       let refused = false;
-      for (const key of [ctx.workingKey, ctx.operatorKey]) {
+      for (const key of [ctx.workingKey, undefined]) {
         const { status, unknown } = await answer(door, key);
         if (
           status === 400 &&
@@ -158,8 +176,8 @@ describe("a query key no door declares", () => {
         headers: key === undefined ? {} : { Authorization: `Bearer ${key}` },
       });
     expect((await ask()).status).toBe(401);
-    // The operator key reads no type, so the door turns it away whatever the query holds.
-    expect((await ask(ctx.operatorKey)).status).toBe(403);
+    // The management key reads no type, so the door turns it away whatever the query holds.
+    expect((await ask(ctx.managementKey)).status).toBe(403);
     // A key that may use the door meets the copy stream's own refusal of the key.
     expect((await ask(ctx.workingKey)).status).toBe(400);
   });

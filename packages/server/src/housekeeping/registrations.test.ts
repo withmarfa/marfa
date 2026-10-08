@@ -3,20 +3,20 @@
  * each gate is asserted from both sides: the housekeeping job is there under
  * the setting that admits it, and gone under the one that switches it off.
  */
-import { afterEach, describe, expect, it } from "vitest";
-import type { AppConfig } from "../config.js";
-import type { Storage } from "../storage/interface.js";
-import {
-  createUnbootstrappedTestApp,
-  type UnbootstrappedTestApp,
-} from "../test-utils.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_RUN_DEADLINE_MS, Housekeeping } from "./scheduler.js";
-import { registerHousekeepingJobs } from "./registrations.js";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AppConfig } from "../config.js";
 import { DiskBlobStore, type BlobStore } from "../storage/blob-store.js";
+import type { Storage } from "../storage/interface.js";
+import {
+  createUnclaimedTestApp,
+  type UnclaimedTestApp,
+} from "../test-utils.js";
+import { registerHousekeepingJobs } from "./registrations.js";
+import { DEFAULT_RUN_DEADLINE_MS, Housekeeping } from "./scheduler.js";
 
-const contexts: UnbootstrappedTestApp[] = [];
+const contexts: UnclaimedTestApp[] = [];
 
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.cleanup();
@@ -28,7 +28,7 @@ async function namesUnder(
   overrides: Partial<AppConfig>,
   storageOf: (storage: Storage) => Storage = (storage) => storage,
 ): Promise<{ names: string[]; intervalOf: (name: string) => number }> {
-  const ctx = await createUnbootstrappedTestApp(overrides);
+  const ctx = await createUnclaimedTestApp(overrides);
   contexts.push(ctx);
   const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
     pollIntervalMs: 3_600_000,
@@ -167,7 +167,7 @@ describe("the housekeeping registrations", () => {
   });
 
   it("holds the quick jobs to a short deadline, the byte-bound ones to a long one, and the rest to the default", async () => {
-    const ctx = await createUnbootstrappedTestApp({
+    const ctx = await createUnclaimedTestApp({
       heartbeatUrl: "https://example.test/ping",
     });
     contexts.push(ctx);
@@ -211,7 +211,7 @@ describe("the copy rules' wakes", () => {
   /** The app's layer with a second disk store beside its disk, attached
    *  the way the layer attaches one, so the registrations copy between
    *  them. */
-  async function twoStores(ctx: UnbootstrappedTestApp): Promise<BlobStore> {
+  async function twoStores(ctx: UnclaimedTestApp): Promise<BlobStore> {
     const second = new DiskBlobStore(join(ctx.tmpDir, "second-store"));
     await second.attach();
     await ctx.storage.blobs.attachStore({
@@ -225,7 +225,7 @@ describe("the copy rules' wakes", () => {
     return second;
   }
 
-  async function upload(ctx: UnbootstrappedTestApp, content: string) {
+  async function upload(ctx: UnclaimedTestApp, content: string) {
     const disk = ctx.blobs.disk;
     const hash = `sha256:${(await import("node:crypto"))
       .createHash("sha256")
@@ -242,7 +242,7 @@ describe("the copy rules' wakes", () => {
   }
 
   it("wakes replication again after a run that copied some of a backlog, and not after one that copied nothing", async () => {
-    const ctx = await createUnbootstrappedTestApp({ blobReplicateBatch: 1 });
+    const ctx = await createUnclaimedTestApp({ blobReplicateBatch: 1 });
     contexts.push(ctx);
     const second = await twoStores(ctx);
     await upload(ctx, "backlog one");
@@ -300,7 +300,7 @@ describe("the copy rules' wakes", () => {
   });
 
   it("wakes replication after the integrity check strikes a copy", async () => {
-    const ctx = await createUnbootstrappedTestApp();
+    const ctx = await createUnclaimedTestApp();
     contexts.push(ctx);
     await twoStores(ctx);
     const hash = await upload(ctx, "struck, then put back");

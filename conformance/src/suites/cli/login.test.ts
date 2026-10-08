@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup } from "../../utils/setup.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { cliContext, once, releaseHeld } from "./harness.js";
 import type { CliContext } from "./harness.js";
 
@@ -44,13 +45,6 @@ afterAll(async () => {
   await cleanup(c.ctx);
 });
 
-/**
- * One owner per instance, so one fixed pair: the scenario creates the
- * owner on a server the run booted, and on a re-run against the same
- * server finds them already there and signs in as them.
- */
-const OWNER = { email: "owner@example.com", password: "correct horse battery" };
-
 interface Owner {
   id: string;
   email: string;
@@ -59,35 +53,31 @@ interface Owner {
 }
 
 describe("the owner", () => {
-  it("is created through the operator's door, once, and is not a working key's to see", async () => {
-    const outcome = await c.operator.run(
-      ["--json", "owner", "create", "--email", OWNER.email, "--password-stdin"],
-      { stdin: `${OWNER.password}\n` },
-    );
-    if (outcome.code === 0) {
-      const created = JSON.parse(outcome.stdout) as Owner;
-      expect(created.email).toBe(OWNER.email);
-    } else {
-      const refusal = JSON.parse(outcome.stderr) as {
-        error: { server: { code: string } | null };
-        exit: number;
-      };
-      expect(refusal.error.server?.code).toBe("owner_exists");
-      expect(refusal.exit).toBe(1);
-    }
-    const shown = await c.operator.json<Owner>(["owner", "show"]);
-    expect(shown.email).toBe(OWNER.email);
-
-    const again = await c.operator.refused(
-      ["owner", "create", "--email", "second@example.com", "--password-stdin"],
-      { stdin: `${OWNER.password}\n` },
-    );
+  it("keeps the fixture owner after a repeated private claim and refuses ordinary keys", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const local = c.cli.viaSocket(socket!);
+    expect(
+      (await local.json<{ claimed: boolean }>(["setup", "status"])).claimed,
+    ).toBe(true);
+    const shown = await local.json<Owner>(["owner", "show"]);
+    expect(shown.email).toBe(TEST_OWNER.email);
+    const again = await local.refused(["setup", "claim", "--stdin"], {
+      stdin: JSON.stringify({
+        email: "second@example.com",
+        password: "another test owner password",
+      }),
+    });
     expect(again.code).toBe(1);
     expect(again.envelope.error.server?.code).toBe("owner_exists");
-
-    const working = await c.cli.refused(["owner", "show"]);
-    expect(working.code).toBe(1);
-    expect(working.envelope.error.server?.code).toBe("forbidden");
+    expect(await local.json<Owner>(["owner", "show"])).toEqual(shown);
+    for (const ordinary of [c.cli, c.operator]) {
+      const refused = await ordinary.refused(["owner", "show"]);
+      expect(refused.envelope.error.server?.code).toBe("forbidden");
+    }
   });
 
   it("signs in with a device code approved in a browser session, and the token reaches the data plane", async () => {
@@ -151,7 +141,7 @@ describe("the owner", () => {
     const signIn = await fetch(`${origin}/auth/sign-in/email`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(OWNER),
+      body: JSON.stringify(TEST_OWNER),
     });
     expect(signIn.status).toBe(200);
     const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
@@ -208,7 +198,7 @@ describe("the owner", () => {
     }>(["whoami"]);
     expect(me.credential.kind).toBe("token");
     expect(me.credential.from).toBe("MARFA_API_KEY");
-    expect(me.credential.person?.email).toBe(OWNER.email);
+    expect(me.credential.person?.email).toBe(TEST_OWNER.email);
     const listed = await c.cli
       .as(token.access_token)
       .json<{ data: unknown[] }>(["items", "list", "--type", "core.note"]);

@@ -10,13 +10,31 @@
  * writer at a time, which is what stops two of those increments landing as
  * one.
  */
-import { lt, sql } from "drizzle-orm";
+import { and, eq, or, lt, sql } from "drizzle-orm";
 import type { RateLimitStore } from "../interface.js";
 import { rateLimitWindows } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 export class SqliteRateLimitStore implements RateLimitStore {
   constructor(private db: DrizzleDb) {}
+
+  async clearSignIn(email: string): Promise<void> {
+    const account = email.trim().toLowerCase();
+    await this.db
+      .delete(rateLimitWindows)
+      .where(
+        or(
+          and(
+            eq(rateLimitWindows.family, "sign-in-account"),
+            eq(rateLimitWindows.window_key, account),
+          ),
+          and(
+            eq(rateLimitWindows.family, "sign-in-account-address"),
+            sql`substr(${rateLimitWindows.window_key}, 1, ${account.length + 1}) = ${account + "|"}`,
+          ),
+        ),
+      );
+  }
 
   async incrementWindow(
     family: string,

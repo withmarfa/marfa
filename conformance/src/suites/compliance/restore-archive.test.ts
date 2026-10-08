@@ -28,7 +28,7 @@ import {
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackEdgeType,
   trackItem,
   trackKey,
@@ -48,14 +48,14 @@ let ctx: TestContext;
 let apiUrl: string;
 /** The file's own credential, for the export half. */
 let fileKey: string;
-/** The operator key's client, for the restore half. */
-let operator: MarfaClient;
+/** The direct owner's client, for the restore half. */
+let owner: MarfaClient;
 
 beforeAll(async () => {
   const setup = await createTestContext("compliance", "restore-archive");
   ({ ctx, client, apiUrl } = setup);
   fileKey = setup.apiKey;
-  operator = getOperatorClient();
+  owner = getOwnerClient();
 });
 
 afterAll(async () => {
@@ -90,7 +90,7 @@ describe("restore", () => {
     // items; the seeded `(source, source_id)` pair matches the row
     // already there, so it dedupes — that's the assertion proving
     // archive → restore rebuilds the same shape the export emitted.
-    const restored = await operator.restoreArchive(archiveBytes);
+    const restored = await owner.restoreArchive(archiveBytes);
     expect(restored.ok).toBe(true);
     expect(restored.data.duplicates).toBeGreaterThanOrEqual(1);
     expect(restored.data.blobs_imported).toBe(0);
@@ -127,8 +127,8 @@ describe("restore", () => {
     );
     expect(archive.byteLength).toBeGreaterThan(1024 * 1024);
 
-    expect((await operator.downloadBlob(hash)).status).toBe(404);
-    const restored = await operator.restoreArchive(archive);
+    expect((await owner.downloadBlob(hash)).status).toBe(404);
+    const restored = await owner.restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
     expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
@@ -137,8 +137,8 @@ describe("restore", () => {
     expect(read.status).toBe(200);
     expect(read.headers.get("content-type")).toBe("application/x-drill");
     expect(Buffer.from(read.data).equals(Buffer.from(data))).toBe(true);
-    expect((await operator.downloadBlob(claimed)).status).toBe(404);
-    expect((await operator.downloadBlob(blobHash(impostor))).status).toBe(404);
+    expect((await owner.downloadBlob(claimed)).status).toBe(404);
+    expect((await owner.downloadBlob(blobHash(impostor))).status).toBe(404);
     const item = await client.getItem(id);
     expect(item.ok).toBe(true);
     expect(item.data.item.properties.blob_ref).toBe(hash);
@@ -155,7 +155,7 @@ describe("restore", () => {
     // never half a restore.
     const fine = uuidv7();
     const planted = uuidv7();
-    const refused = await operator.restoreArchive(
+    const refused = await owner.restoreArchive(
       itemsArchive([
         {
           id: fine,
@@ -186,9 +186,9 @@ describe("restore", () => {
       `a blob no refused archive should land ${ctx.runId}`,
     );
     const hash = blobHash(bytes);
-    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect((await owner.downloadBlob(hash)).status).toBe(404);
 
-    const withBlob = await operator.restoreArchive(
+    const withBlob = await owner.restoreArchive(
       itemsArchive(
         [
           {
@@ -204,7 +204,7 @@ describe("restore", () => {
     expect(withBlob.status).toBe(400);
     expect(withBlob.error?.error.code).toBe("validation_error");
     expect(
-      (await operator.downloadBlob(hash)).status,
+      (await owner.downloadBlob(hash)).status,
       "a refused archive left its blob bytes in the store",
     ).toBe(404);
 
@@ -212,7 +212,7 @@ describe("restore", () => {
     // what was refused is the source and not the archive.
     const okFine = uuidv7();
     const okOther = uuidv7();
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       itemsArchive([
         {
           id: okFine,
@@ -257,9 +257,7 @@ describe("restore", () => {
         properties: { body: `Note in ${state}` },
       },
     ];
-    const refused = await operator.restoreArchive(
-      itemsArchive(rows("revoked")),
-    );
+    const refused = await owner.restoreArchive(itemsArchive(rows("revoked")));
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect(refused.error?.error.message).toContain(impossible);
@@ -273,7 +271,7 @@ describe("restore", () => {
     // (`routes/items-lifecycle-graph.test.ts`), not this file's: no door
     // the referee holds could remove a system row it restored.
     const systemId = uuidv7();
-    const systemRefused = await operator.restoreArchive(
+    const systemRefused = await owner.restoreArchive(
       itemsArchive([
         {
           id: systemId,
@@ -294,7 +292,7 @@ describe("restore", () => {
     // A value that is no state at all is refused the same way, since the
     // store would otherwise write it as it came.
     const numbered = uuidv7();
-    const numeric = await operator.restoreArchive(
+    const numeric = await owner.restoreArchive(
       itemsArchive([
         {
           id: numbered,
@@ -311,9 +309,7 @@ describe("restore", () => {
 
     // The same two rows in states the lifecycle contains restore, each in
     // the state the archive recorded.
-    const restored = await operator.restoreArchive(
-      itemsArchive(rows("active")),
-    );
+    const restored = await owner.restoreArchive(itemsArchive(rows("active")));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, fine);
     trackItem(ctx, impossible);
@@ -371,7 +367,7 @@ describe("restore", () => {
     ];
 
     for (const { reshape, path } of cases) {
-      const refused = await operator.restoreArchive(archive(reshape));
+      const refused = await owner.restoreArchive(archive(reshape));
       expect(refused.status, path).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       expect(refused.error?.error.message).toContain(path);
@@ -379,11 +375,11 @@ describe("restore", () => {
         { path: string }[] | undefined;
       expect(errors?.map((e) => e.path)).toContain(path);
       expect((await client.getItem(id)).status).toBe(404);
-      expect((await operator.downloadBlob(hash)).status).toBe(404);
+      expect((await owner.downloadBlob(hash)).status).toBe(404);
     }
 
     // The same archive under the manifest as built restores, row and blob.
-    const restored = await operator.restoreArchive(archive((m) => m));
+    const restored = await owner.restoreArchive(archive((m) => m));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
     expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
@@ -426,12 +422,12 @@ describe("restore", () => {
 
     // The witness: the same archive at version 0 restores, so what is
     // refused below is the version and nothing else.
-    const restored = await operator.restoreArchive(archiveAt(0, witness));
+    const restored = await owner.restoreArchive(archiveAt(0, witness));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, witness);
     expect(restored.data.imported).toBe(1);
 
-    const refused = await operator.restoreArchive(archiveAt(1, other));
+    const refused = await owner.restoreArchive(archiveAt(1, other));
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect(refused.error?.error.message).toContain(
@@ -458,7 +454,7 @@ describe("restore", () => {
 
   it("steps past an entry it does not read", async () => {
     const id = uuidv7();
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       tarGz([
         manifest,
         {
@@ -475,7 +471,7 @@ describe("restore", () => {
 
   it("refuses a line longer than 64 MiB, and writes nothing", async () => {
     const id = uuidv7();
-    const refused = await operator.restoreArchive(
+    const refused = await owner.restoreArchive(
       tarGz([
         manifest,
         {
@@ -500,7 +496,7 @@ describe("restore", () => {
       name: "items.ndjson",
       body: archivedLine(id, body) + "\n",
     });
-    const refused = await operator.restoreArchive(
+    const refused = await owner.restoreArchive(
       tarGz([
         manifest,
         items(first, "first copy"),
@@ -516,7 +512,7 @@ describe("restore", () => {
     expect((await client.getItem(second)).status).toBe(404);
 
     // The witness: either copy alone restores.
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       tarGz([manifest, items(first, "first copy")]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -524,9 +520,9 @@ describe("restore", () => {
     expect(restored.data.imported).toBe(1);
   });
 
-  it("requires the operator key", async () => {
+  it("requires direct owner authority", async () => {
     // A credential holding write on every type. The archive routes take the
-    // operator key, which is a different thing from holding every permission:
+    // direct owner, which is a different thing from holding every permission:
     // running the instance is fenced outside the model.
     const keyResp = await client.createKey({
       label: "archive-working",
@@ -541,7 +537,7 @@ describe("restore", () => {
       apiKey: keyResp.data.key,
     });
 
-    // A zero-length body is rejected before the operator check, so build a real
+    // A zero-length body is rejected before the owner check, so build a real
     // minimal archive to isolate the 403 path. Reuse the server-built archive,
     // valid by construction and scoped to this file's own `source`: this case
     // needs only *a* valid body, and an unscoped export is work it has no use
@@ -598,12 +594,12 @@ describe("a body that is no archive", () => {
   }
 
   it("refuses an empty body, and takes an archive of nothing", async () => {
-    const refused = await operator.restoreArchive(new Uint8Array(0));
+    const refused = await owner.restoreArchive(new Uint8Array(0));
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
 
     // The witness: an archive that carries no row is not an empty body.
-    const nothing = await operator.restoreArchive(itemsArchive([]));
+    const nothing = await owner.restoreArchive(itemsArchive([]));
     expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
     expect(nothing.data).toMatchObject({ imported: 0, duplicates: 0 });
   });
@@ -625,7 +621,7 @@ describe("a body that is no archive", () => {
     ];
 
     // The witness: the whole archive restores and writes its row.
-    const restored = await operator.restoreArchive(whole.archive);
+    const restored = await owner.restoreArchive(whole.archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBe(1);
     trackItem(ctx, whole.id);
@@ -635,14 +631,14 @@ describe("a body that is no archive", () => {
     expect((await client.getItem(whole.id)).status).toBe(404);
 
     for (const [what, body] of bodies) {
-      const refused = await operator.restoreArchive(body);
+      const refused = await owner.restoreArchive(body);
       expect(refused.status, what).toBe(400);
       expect(refused.error?.error.code, what).toBe("validation_error");
       expect((await client.getItem(whole.id)).status, what).toBe(404);
       const health = await client.rawRequest<{ status: string }>("/health");
       expect(health.status, `${what}: the server stopped answering`).toBe(200);
     }
-    const after = await operator.restoreArchive(whole.archive);
+    const after = await owner.restoreArchive(whole.archive);
     expect(after.ok, JSON.stringify(after.error)).toBe(true);
     expect(after.data.imported).toBe(1);
   });
@@ -718,7 +714,7 @@ describe("what a restore answers", () => {
     trackType(ctx, ids.type);
     trackEdgeType(ctx, ids.edgeType);
 
-    const first = await operator.restoreArchive(rows.archive());
+    const first = await owner.restoreArchive(rows.archive());
     expect(first.ok, JSON.stringify(first.error)).toBe(true);
     expect(Object.keys(first.data).sort()).toEqual(
       [
@@ -750,7 +746,7 @@ describe("what a restore answers", () => {
 
     // The same archive again, with an edge naming a row it does not carry and
     // one naming no kind of edge.
-    const again = await operator.restoreArchive(
+    const again = await owner.restoreArchive(
       rows.archive([
         {
           id: uuidv7(),
@@ -791,7 +787,7 @@ describe("what a restore answers", () => {
     trackItem(ctx, held.b);
     trackType(ctx, ids.type);
     trackEdgeType(ctx, ids.edgeType);
-    const taken = await operator.restoreArchive(held.archive());
+    const taken = await owner.restoreArchive(held.archive());
     expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
 
     // The same two ids, defined another way, beside a type nothing holds.
@@ -830,7 +826,7 @@ describe("what a restore answers", () => {
       "types.ndjson",
       types.map((line) => `${JSON.stringify(line)}\n`).join(""),
     );
-    const refused = await operator.restoreArchive(redefining);
+    const refused = await owner.restoreArchive(redefining);
     expect(refused.status, JSON.stringify(refused.error)).toBe(409);
     expect(refused.error?.error.code).toBe("conflict");
     expect(refused.error?.error.details?.conflicting_ids).toEqual(
@@ -932,7 +928,7 @@ describe("a restore refused after it began", () => {
         (e) => (e.data as { item?: { id?: string } } | undefined)?.item?.id,
       );
 
-    const refused = await operator.restoreArchive(
+    const refused = await owner.restoreArchive(
       archive("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"),
     );
     expect(refused.status, JSON.stringify(refused.error)).toBe(400);
@@ -944,7 +940,7 @@ describe("a restore refused after it began", () => {
     expect(
       (await client.listEdgeTypes()).data.data.map((e) => e.id),
     ).not.toContain(ids.edgeType);
-    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect((await owner.downloadBlob(hash)).status).toBe(404);
     expect(
       (await client.listAudit({ resource_id: ids.type })).data.data,
     ).toEqual([]);
@@ -967,7 +963,7 @@ describe("a restore refused after it began", () => {
 
     // The witness: the same archive with a rule it can unfold restores every
     // row, registration and blob, announces them and audits the type.
-    const taken = await operator.restoreArchive(
+    const taken = await owner.restoreArchive(
       archive("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28"),
     );
     expect(taken.ok, JSON.stringify(taken.error)).toBe(true);

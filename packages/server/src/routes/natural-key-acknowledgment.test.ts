@@ -35,14 +35,15 @@
  * state the resolved-row gates exist for, a reachable row the caller may no
  * longer write.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -72,29 +73,28 @@ interface SyncKey {
 /**
  * A credential whose stamped `source` fixes its natural-key namespace.
  *
- * Not the operator key, which is the instance tier and reaches no content at
- * all. Both maps below decide every type and every
- * `acme.*` namespace this credential touches, which is what each case here
- * asserts.
+ * Its maps decide every type and every `acme.*` namespace it touches.
  */
 async function syncCredential(options: {
   types: Record<string, "read" | "write">;
   extensions: Record<string, "read" | "write">;
 }): Promise<SyncKey> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `marfa_k1_sync_${suffix}`;
   const source = `sync-${suffix}`;
-  const created = await ctx.storage.keys.create(
-    {
-      label: `sync-${suffix}`,
-      source,
-      type_permissions: options.types,
-      extension_permissions: options.extensions,
-      default_tier: "library",
-      is_operator: false,
-    },
+  const raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `sync-${suffix}`,
+    source,
+    type_permissions: options.types,
+    extension_permissions: options.extensions,
+    default_tier: "library",
+  });
+  const created = (await ctx.storage.keys.validate(
     hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+  ))!;
   return { id: created.id, key: raw, source };
 }
 

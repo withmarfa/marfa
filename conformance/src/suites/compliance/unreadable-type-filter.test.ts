@@ -475,7 +475,7 @@ describe("a key whose map reaches no type", () => {
 });
 
 describe("a map that reaches no type is refused on every door that takes a type filter", () => {
-  it("answers 403 type_not_permitted whatever the filter names, to a working key and to the operator key", async () => {
+  it("answers 403 type_not_permitted whatever the filter names, to a working key and to a management key", async () => {
     const minted = await client.createKey({
       label: "unreadable-type-filter-every-door",
       source: `${ctx.source}-unreadable-type-filter-every-door`,
@@ -485,8 +485,8 @@ describe("a map that reaches no type is refused on every door that takes a type 
     });
     expect(minted.ok).toBe(true);
     trackKey(ctx, minted.data.id);
-    const operator = process.env.MARFA_OPERATOR_KEY;
-    expect(operator, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    expect(management, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
     // The witness: a key that reads some type is answered the wildcard on
     // each door, and the bulk action the type it reads.
@@ -503,7 +503,7 @@ describe("a map that reaches no type is refused on every door that takes a type 
       ).status,
     ).toBe(200);
 
-    for (const as of [minted.data.key, operator ?? ""]) {
+    for (const as of [minted.data.key, management ?? ""]) {
       for (const type of ["core.*", UNREADABLE, "core.entity", UNREGISTERED]) {
         for (const door of DOORS) {
           const seen = await door.ask(type, as);

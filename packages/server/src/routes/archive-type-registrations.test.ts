@@ -14,18 +14,18 @@
  * is not an error anywhere, it is four zeros in a `200`.
  */
 
-import { itemWrites } from "../storage/item-writes.js";
-import { createGunzip, createGzip } from "node:zlib";
+import { getTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { Readable } from "node:stream";
-import { describe, expect, it, afterAll } from "vitest";
+import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
+import { afterAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   closeTestContexts,
   createTestContext,
   request,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { getTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
   const entries = new Map<string, Buffer>();
@@ -170,13 +170,13 @@ async function exportArchive(ctx: TestContext): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Restore an archive. `/restore` is an operator route, so it
- *  takes the operator key and no working credential reaches it. */
+/** Full archive restore uses the recently authenticated owner session. */
 async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
   return await ctx.app.request(`/restore`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,

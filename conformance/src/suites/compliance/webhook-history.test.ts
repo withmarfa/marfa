@@ -40,7 +40,7 @@ beforeAll(async () => {
   await waitFor(
     "the audit sweep's first run",
     async () => {
-      const jobs = await operator().listHousekeeping();
+      const jobs = await manager().listHousekeeping();
       return (
         jobs.data.data.find((job) => job.name === "audit-cleanup")
           ?.last_finished_at ?? undefined
@@ -62,10 +62,10 @@ function owner(): MarfaClient {
   });
 }
 
-function operator(): MarfaClient {
+function manager(): MarfaClient {
   return new MarfaClient({
     baseUrl: server!.apiUrl,
-    apiKey: server!.operatorKey,
+    apiKey: server!.managementKey,
   });
 }
 
@@ -74,7 +74,7 @@ async function run(name: string): Promise<unknown> {
   return waitFor(
     `${name} to run`,
     async () => {
-      const ran = await operator().runHousekeeping(name);
+      const ran = await manager().runHousekeeping(name);
       if (ran.status === 409) return undefined;
       expect(ran.status, JSON.stringify(ran.error)).toBe(200);
       expect(ran.data.outcome, ran.data.error ?? "").toBe("ok");

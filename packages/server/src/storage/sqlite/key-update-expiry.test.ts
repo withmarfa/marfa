@@ -20,7 +20,7 @@ it.each([{ label: "too late" }, {}])(
     try {
       const store = new SqliteKeyStore(connection.db);
       const key = await store.create(
-        { label: "before", source: "expiry-test", is_operator: false },
+        { label: "before", source: "expiry-test" },
         "expiry-test-hash",
       );
       await connection.raw.execute({

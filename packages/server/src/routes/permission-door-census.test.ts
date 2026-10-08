@@ -3,7 +3,7 @@
  * request, and whether it does.
  *
  * **A census rather than a test per door.** A rule a door asks of every
- * caller, the operator key or one permission, refused inside its handler is
+ * caller, a management key or one permission, refused inside its handler is
  * reached only after the router has validated the request, so a key that may
  * not use the door is told what is wrong with its body before it is told it
  * may not use the door. Such a door reads as covered from every angle a
@@ -44,20 +44,19 @@ beforeAll(async () => {
     profile_permissions: {},
     sources: [],
   });
-  appHoldingEverything = (
-    await seedOauthBearer(ctx.storage, buildAllowedScopes())
-  ).token;
+  appHoldingEverything = (await seedOauthBearer(ctx, buildAllowedScopes()))
+    .token;
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-const OPERATOR = "operator key";
+const DIRECT = "owner or local command";
 const WORKING_KEY = "a working key";
 const KEYS_ONLY = "a key, not a signed-in app";
 const READS = "reads some type";
-const READS_BLOBS = "reads some type, or the operator key";
+const READS_BLOBS = "reads some type, or blobs.manage";
 
 /** Every data-plane door, which a credential reaching no type is refused. */
 const DATA_PLANE = [
@@ -101,17 +100,16 @@ const DATA_PLANE = [
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
-  "GET /owner": OPERATOR,
-  "POST /owner": OPERATOR,
-  "GET /blobs/orphans": OPERATOR,
-  "GET /blobs/stores": OPERATOR,
-  "DELETE /blobs/:hash/locations/:store": OPERATOR,
-  "GET /housekeeping": OPERATOR,
-  "POST /housekeeping/:name/run": OPERATOR,
-  "GET /platform-types/drift": OPERATOR,
-  "DELETE /platform-types/:id": OPERATOR,
-  "POST /restore": OPERATOR,
-  "GET /metrics": OPERATOR,
+  "GET /owner": DIRECT,
+  "GET /blobs/orphans": "instance.read",
+  "GET /blobs/stores": "instance.read",
+  "DELETE /blobs/:hash/locations/:store": "blobs.manage",
+  "GET /housekeeping": "instance.read",
+  "POST /housekeeping/:name/run": "instance.maintain",
+  "GET /platform-types/drift": "instance.read",
+  "DELETE /platform-types/:id": "instance.maintain",
+  "POST /restore": DIRECT,
+  "GET /metrics": "instance.read",
   "POST /webhooks": "webhooks.manage",
   "GET /webhooks": "webhooks.manage",
   "GET /webhooks/:id": "webhooks.manage",
@@ -122,10 +120,10 @@ const STANDING: Record<string, string> = {
   "GET /config": "config.manage",
   "PUT /config": "config.manage",
   "GET /audit": "audit.read",
-  "POST /keys": "keys.mint or operator key",
-  "GET /keys": "keys.mint or operator key",
-  "DELETE /keys/:id": "keys.mint or operator key",
-  "PATCH /keys/:id": "keys.mint or operator key",
+  "POST /keys": "keys.mint",
+  "GET /keys": "keys.manage or keys.mint",
+  "DELETE /keys/:id": "keys.manage or keys.mint",
+  "PATCH /keys/:id": "keys.manage or keys.mint",
   "POST /items/:id/purge": "items.purge",
   "POST /types": "metadata.types:write",
   "PUT /types/:id": "schema.write or metadata.types:write",
@@ -140,7 +138,7 @@ const STANDING: Record<string, string> = {
   "GET /blobs/:hash": READS_BLOBS,
   "GET /blobs/:hash/locations": READS_BLOBS,
   "GET /blobs/:hash/url": READS_BLOBS,
-  "POST /blobs": "writes some type, or the operator key",
+  "POST /blobs": "writes some type, or blobs.manage",
   ...Object.fromEntries(DATA_PLANE.map((door) => [door, READS])),
 };
 
@@ -159,14 +157,15 @@ const ASKED_IN_PLACE: Record<string, string> = {
  * every credential gets past the request, and what it is admitted to is the
  * row. Each is driven against a real row with four credentials, a key holding
  * nothing, a signed-in app's token holding every scope, the row's own key and
- * the operator key: a malformed request must answer all of them alike and
+ * a management key: a malformed request must answer all of them alike and
  * never `403`, and a well-formed one must admit exactly those named here and
  * refuse the rest `403`.
  */
 const EVERYONE = "every credential";
 const OWNER = "the row's own key";
-const OWNER_OR_OPERATOR = "the row's own key, or the operator key";
-const PRIVATE_READ = "the row's own key or operator, hidden from others";
+const OWNER_OR_MANAGER =
+  "the row's own key, or the route's management permission";
+const PRIVATE_READ = "the row's own key or a manager, hidden from others";
 
 const OPEN_BY_ROW: Record<string, string> = {
   "GET /connectors": EVERYONE,
@@ -187,17 +186,27 @@ const OPEN_BY_ROW: Record<string, string> = {
   "POST /connectors/:id/hold": OWNER,
   "DELETE /connectors/:id/hold": OWNER,
   "POST /connectors/:id/runs": OWNER,
-  "GET /connectors/:id/endpoints": OWNER_OR_OPERATOR,
-  "POST /connectors/:id/endpoints": OWNER_OR_OPERATOR,
-  "DELETE /connectors/:id/endpoints/:endpoint_id": OWNER_OR_OPERATOR,
-  "DELETE /connectors/:id/state": OWNER_OR_OPERATOR,
-  "DELETE /connectors/:id": OWNER_OR_OPERATOR,
-  "GET /items/bulk-actions/jobs/:id": OWNER_OR_OPERATOR,
-  "POST /items/bulk-actions/jobs/:id/cancel": OWNER_OR_OPERATOR,
+  "GET /connectors/:id/endpoints": OWNER_OR_MANAGER,
+  "POST /connectors/:id/endpoints": OWNER_OR_MANAGER,
+  "DELETE /connectors/:id/endpoints/:endpoint_id": OWNER_OR_MANAGER,
+  "DELETE /connectors/:id/state": OWNER_OR_MANAGER,
+  "DELETE /connectors/:id": OWNER_OR_MANAGER,
+  "GET /items/bulk-actions/jobs/:id": OWNER_OR_MANAGER,
+  "POST /items/bulk-actions/jobs/:id/cancel": OWNER_OR_MANAGER,
 };
 
 /** Doors that take no credential at all, by why. */
 const NO_CREDENTIAL: Record<string, readonly string[]> = {
+  "setup proof or an owner browser session, checked by the handler": [
+    "GET /setup",
+    "POST /setup/exchange",
+    "POST /setup/claim",
+    "GET /auth/owner/manage",
+    "GET /auth/owner/restore",
+    "GET /auth/owner/password",
+    "POST /auth/owner/password",
+    "POST /owner",
+  ],
   "who the instance is, and how it is reached and described": [
     "GET /",
     "GET /health",
@@ -240,6 +249,32 @@ const PERMISSION_CALLS: Record<
   string,
   { asks: Record<string, number>; because: string }
 > = {
+  "routes/_blob-reach.ts": {
+    asks: { "blobs.manage": 4 },
+    because:
+      "manager admission alongside item reach, including copy lending rechecked under the write lock",
+  },
+  "routes/_connector-reach.ts": {
+    asks: { "connectors.manage": 1 },
+    because: "manager admission alongside row ownership",
+  },
+  "routes/connectors.ts": {
+    asks: { "connectors.manage": 1 },
+    because: "manager admission alongside row ownership",
+  },
+  "routes/audit.ts": {
+    asks: { "audit.read": 1 },
+    because: "rechecks the permission enforced by the standing rule",
+  },
+  "routes/config.ts": {
+    asks: { "config.manage": 2 },
+    because: "rechecks the permission enforced by the standing rule",
+  },
+  "routes/keys.ts": {
+    asks: { "keys.mint": 2, "config.manage": 2, "keys.manage": 1 },
+    because:
+      "mint and edit authority depends on the requested fields and target row, then records the permission used",
+  },
   "routes/_schema-reach.ts": {
     asks: { "schema.write": 2 },
     because:
@@ -463,7 +498,7 @@ function withSeededRows(door: string, body: unknown): unknown {
  */
 const STOPS_AT_LOOKUP: Record<string, string> = {
   "DELETE /connectors/:id":
-    "the row's own key deletes the connector first, so the operator key, driven after it, finds no row and is answered 404",
+    "the row's own key deletes the connector first, so a management key, driven after it, finds no row and is answered 404",
 };
 
 /** The row a door's path parameter names. */
@@ -508,7 +543,7 @@ function wellFormed(door: string, doc: Schema, bearer: string) {
 
 /** The credential a door's rule refuses. */
 function refusedBy(door: string): string {
-  if (STANDING[door] === WORKING_KEY) return ctx.operatorKey;
+  if (STANDING[door] === WORKING_KEY) return appHoldingEverything;
   if (STANDING[door] === KEYS_ONLY) return appHoldingEverything;
   return holdsNothing;
 }
@@ -561,15 +596,15 @@ describe("every door asks what it asks of every caller before anything else", ()
     await seedRows(doc);
     const credentials = {
       holdsNothing,
-      appHoldingEverything,
       owner: ctx.workingKey,
-      operator: ctx.operatorKey,
+      appHoldingEverything,
+      manager: ctx.managementKey,
     };
     const admitted = (rule: string, who: keyof typeof credentials) =>
       rule === EVERYONE ||
       (who === "owner" && rule !== EVERYONE) ||
-      (who === "operator" &&
-        (rule === OWNER_OR_OPERATOR || rule === PRIVATE_READ));
+      ((who === "manager" || who === "appHoldingEverything") &&
+        (rule === OWNER_OR_MANAGER || rule === PRIVATE_READ));
     const wrong: string[] = [];
     const doors = Object.keys(OPEN_BY_ROW).sort((a, b) => rank(a) - rank(b));
     for (const door of doors) {
@@ -595,7 +630,10 @@ describe("every door asks what it asks of every caller before anything else", ()
         if (
           got.startsWith("404") &&
           admitted(OPEN_BY_ROW[door]!, who) &&
-          !(door in STOPS_AT_LOOKUP && who === "operator")
+          !(
+            door in STOPS_AT_LOOKUP &&
+            (who === "manager" || who === "appHoldingEverything")
+          )
         ) {
           wrong.push(`${door}, well-formed, ${who}: ${got}, at the lookup`);
         }
@@ -625,7 +663,6 @@ describe("every door asks what it asks of every caller before anything else", ()
     const config = await malformed("PUT /config", ctx.workingKey);
     expect(config.status).toBe(400);
     const owner = await request(ctx.app, "POST", "/owner", {
-      key: ctx.operatorKey,
       body: { email: "not an address", password: "x" },
     });
     expect(owner.status).toBe(400);

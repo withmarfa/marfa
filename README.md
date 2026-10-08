@@ -37,26 +37,23 @@ Run the server locally:
 
 ```bash
 cd packages/server
+export MARFA_AUTH_SECRET="$(openssl rand -hex 32)"
 pnpm dev    # http://localhost:8600
 ```
 
-A new instance has no key and no owner, and nobody can sign in until both exist. In a second terminal, make the first key:
+A new instance has no owner. Open <http://localhost:8600/setup>, enter the setup code printed in the server's terminal, and choose the owner's email and password. The code authorizes this one claim; it does not grant API access. Claiming the owner closes setup permanently.
+
+You can also open a setup link from the machine running Marfa. In a second terminal at the repository root:
 
 ```bash
 cargo install --locked --path core/marfa-cli
-export MARFA_API_URL=http://localhost:8600
-marfa keys bootstrap    # paste the bootstrap secret from the server's log, then press Enter
+unset MARFA_API_URL MARFA_API_KEY
+marfa --socket "$(pwd -P)/packages/server/data/control/marfa.sock" setup open
 ```
 
-The command prints the operator key. Use it to create the owner, then open the sign-in page:
+The command uses the private socket under the server's operating-system account. It opens a single-use link; `setup open --no-browser` prints the link instead. On Linux, install the `acl` package so the server and command can check socket access.
 
-```bash
-read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
-marfa owner create --email owner@example.com      # asks for a password on the terminal
-unset MARFA_API_KEY
-```
-
-Sign in at <http://localhost:8600/auth/sign-in>. [`CONTRIBUTING.md`](./CONTRIBUTING.md#making-the-first-key) goes on to make a working key and check the instance.
+Sign in at <http://localhost:8600/auth/sign-in>, then open <http://localhost:8600/auth/owner/manage> to manage keys, apps, connectors and maintenance. Apps and scripts use ordinary keys or approved OAuth access tokens with explicit permissions. Neither becomes machine authority. [`CONTRIBUTING.md`](./CONTRIBUTING.md#claiming-the-instance-and-making-a-key) shows terminal setup and key creation; the [deployment guide](./deploy/README.md#recovering-the-owner) covers password recovery.
 
 `.env.example` lists every setting the server reads; the settings schema in `packages/server/src/config.ts` defines each one's type, bounds and default, and the server refuses to start on a value outside them. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 

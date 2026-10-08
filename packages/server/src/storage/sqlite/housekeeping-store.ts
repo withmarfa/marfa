@@ -1,3 +1,4 @@
+import { validateRequestAuthority } from "../../auth/request-authority.js";
 import { and, eq, isNotNull, isNull, lte, notInArray, sql } from "drizzle-orm";
 import type {
   HousekeepingFinish,
@@ -138,16 +139,19 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
   }
 
   async claim(name: string, now: string): Promise<HousekeepingRow | null> {
-    const rows = await this.db
-      .update(housekeeping)
-      .set({ running_since: now, last_started_at: now })
-      .where(
-        and(eq(housekeeping.name, name), isNull(housekeeping.running_since)),
-      )
-      .returning()
-      .all();
-    const row = rows[0];
-    return row ? toRow(row) : null;
+    return this.db.transaction(async () => {
+      await validateRequestAuthority();
+      const rows = await this.db
+        .update(housekeeping)
+        .set({ running_since: now, last_started_at: now })
+        .where(
+          and(eq(housekeeping.name, name), isNull(housekeeping.running_since)),
+        )
+        .returning()
+        .all();
+      const row = rows[0];
+      return row ? toRow(row) : null;
+    });
   }
 
   async finish(name: string, outcome: HousekeepingFinish): Promise<void> {

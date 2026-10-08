@@ -1,13 +1,13 @@
-import { beforeEach, afterEach, expect, it } from "vitest";
 import { generateId } from "@withmarfa/shared";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { catchUpClientScopeCeiling } from "../auth/ceiling-catchup.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
 import { itemWrites } from "./item-writes.js";
 import {
+  DcrClientCleaner,
   RevokedGrantPurger,
   RevokedKeyReaper,
-  DcrClientCleaner,
 } from "./retention.js";
-import { catchUpClientScopeCeiling } from "../auth/ceiling-catchup.js";
 let ctx: TestContext;
 beforeEach(async () => {
   ctx = await createTestContext();
@@ -50,7 +50,7 @@ it.each(["grant", "key", "client"] as const)(
         });
       else if (family === "key") {
         const row = await ctx.storage.keys.create(
-          { label: "Audit Cleanup", source: "audit-purge", is_operator: true },
+          { label: "Audit Cleanup", source: "audit-purge" },
           generateId(),
         );
         await raw().__sqliteRun(

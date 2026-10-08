@@ -15,14 +15,13 @@
  * it -- which would turn trashing an item into a way to disclose its
  * relationships.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createTestContext,
+  mintWorkingKey,
   request,
-  TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -51,18 +50,18 @@ async function mintKey(
   } = {},
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_edge_read_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `edge-read-${suffix}`,
-      source: `edge-read-${suffix}`,
-      default_tier: "library",
-      type_permissions: over.type_permissions ?? { "*": "write" },
-      edge_permissions: over.edge_permissions ?? { "*": "write" },
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-  );
+
+  const raw = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: `edge-read-${suffix}`,
+    source: `edge-read-${suffix}`,
+    default_tier: "library",
+    type_permissions: over.type_permissions ?? { "*": "write" },
+    edge_permissions: over.edge_permissions ?? { "*": "write" },
+  });
   return raw;
 }
 

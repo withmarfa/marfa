@@ -13,6 +13,7 @@
  * a loopback receiver, which is what reading the source cannot prove.
  */
 import { createServer, type Server } from "node:http";
+import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,7 @@ import { DELIVERY_FAILURE, createWebhookHttpClient } from "./outbound-http.js";
 
 const SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
-/** Modules that open outbound connections, each with why it may. */
+/** Modules using a connection primitive, including in-process fetch dispatch. */
 const OUTBOUND: Record<string, string> = {
   "webhooks/outbound-http.ts":
     "the delivery client: the one way a webhook delivery reaches the network",
@@ -32,11 +33,60 @@ const OUTBOUND: Record<string, string> = {
   "middleware/error-notifier.ts":
     "posts 500 alerts to the URL the operator configures; no credential names it",
   "test-browser.ts":
-    "a test helper that asks the system for a free loopback port, and is never part of the server",
+    "dispatches browser fixture requests through app.fetch in process; it sends no webhook delivery",
 };
 
-const OUTBOUND_PRIMITIVE =
-  /\bfetch\(|globalThis\.fetch|^import (?!type)[^;]*from "(node:)?(http|https|http2|net|tls|undici)";/m;
+function usesOutboundPrimitive(source: string): boolean {
+  const file = ts.createSourceFile(
+    "source.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      /^(node:)?(http|https|http2|net|tls|undici)$/.test(
+        node.moduleSpecifier.text,
+      ) &&
+      node.importClause?.phaseModifier !== ts.SyntaxKind.TypeKeyword
+    ) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      if (
+        !clause ||
+        clause.name ||
+        !bindings ||
+        !ts.isNamedImports(bindings) ||
+        bindings.elements.some(
+          (element) =>
+            !element.isTypeOnly &&
+            (element.propertyName ?? element.name).text !== "createServer",
+        )
+      )
+        found = true;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ((ts.isIdentifier(node.expression) && node.expression.text === "fetch") ||
+        (ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "fetch"))
+    )
+      found = true;
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "globalThis" &&
+      node.name.text === "fetch"
+    )
+      found = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
 
 function sourceFiles(dir = SRC): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -62,13 +112,33 @@ function functionBody(source: string, name: string): string {
 }
 
 describe("the outbound census", () => {
-  it("names every module that opens an outbound connection", () => {
+  it("classifies every module using an outbound connection primitive", () => {
     const found = sourceFiles()
-      .filter((file) => OUTBOUND_PRIMITIVE.test(read(file)))
+      .filter((file) => usesOutboundPrimitive(read(file)))
       .sort();
     // The witness: the pattern finds the client itself.
     expect(found).toContain("webhooks/outbound-http.ts");
     expect(found).toEqual(Object.keys(OUTBOUND).sort());
+  });
+
+  it("distinguishes executable clients from listeners and browser script text", () => {
+    for (const source of [
+      "fetch(url)",
+      "app.fetch(request)",
+      "globalThis.fetch(url)",
+      "const client = globalThis.fetch",
+      'import { request } from "node:http";',
+      'import { createServer, request as send } from "node:http";',
+      'import * as http from "node:http";',
+    ])
+      expect(usesOutboundPrimitive(source), source).toBe(true);
+    for (const source of [
+      'import { createServer, type Server } from "node:http";',
+      'import type { Server } from "node:http";',
+      'const script = `fetch("/setup/claim")`;',
+      'const description = "globalThis.fetch";',
+    ])
+      expect(usesOutboundPrimitive(source), source).toBe(false);
   });
 
   it("posts a delivery from one function, after narrowing it to the credential", () => {

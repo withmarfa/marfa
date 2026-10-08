@@ -49,7 +49,7 @@ describe("GET /health in the app", () => {
     );
   });
 
-  it("answers 503 with the database down, and tells only the operator key why", async () => {
+  it("answers 503 with the database down, and tells only the management key why", async () => {
     const ctx = await newContext();
     // Reads refuse; the key table, which resolving a caller reads, still
     // answers, as a database that fails on one table would.
@@ -58,7 +58,7 @@ describe("GET /health in the app", () => {
 
     const anonymous = await request(ctx.app, "GET", "/health");
     const asOperator = await request(ctx.app, "GET", "/health", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const asWorking = await request(ctx.app, "GET", "/health", {
       key: ctx.workingKey,
@@ -87,21 +87,21 @@ describe("GET /health in the app", () => {
     ctx.storage.keys.validate = () => Promise.reject(new Error("unreadable"));
 
     const res = await request(ctx.app, "GET", "/health", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
 
     expect(res.status).toBe(503);
     expect(((await res.json()) as Answer).status).toBe("down");
   });
 
-  it("tells the operator key why while every write is failing, as it is on a full disk", async () => {
+  it("tells the management key why while every write is failing, as it is on a full disk", async () => {
     const ctx = await newContext();
     const full = () => Promise.reject(new Error("database or disk is full"));
     ctx.storage.settings.set = full;
     ctx.storage.keys.updateLastUsed = full;
 
     const res = await request(ctx.app, "GET", "/health", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const body = (await res.json()) as Answer;
 

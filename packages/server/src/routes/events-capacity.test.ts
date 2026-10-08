@@ -26,7 +26,7 @@ afterAll(async () => {
  *  factory's. */
 function makeApp(options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(ctx.storage));
+  app.use("*", storedViewerKey(ctx));
   app.route("/events", eventRoutes(ctx.storage, options));
   // The real app's error handler maps MarfaError onto its own status;
   // this bare harness needs the same mapping or every refusal reads 500.

@@ -1,5 +1,5 @@
 /**
- * POST /restore: operator key only, tar.gz body.
+ * POST /restore: direct owner or local authority only, tar.gz body.
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
@@ -42,8 +42,9 @@ import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   isReservedCredentialSource,
-  operatorOnly,
-  requireAuth,
+  directAuthorityOnly,
+  requireRecentOwnerAuthentication,
+  authorityId,
 } from "../middleware/auth.js";
 import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
 import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
@@ -52,11 +53,7 @@ import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import {
-  createOpenAPIRouter,
-  makeErrorResponseSchema,
-  OPERATOR_ONLY_RESPONSE,
-} from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   planArchiveTypes,
   writeArchiveTypes,
@@ -70,7 +67,6 @@ import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
-import { blobPrincipal } from "./_blob-reach.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
 import { archiveDates, archiveVersions } from "./restore-archive-history.js";
 import { archiveLines, readArchive } from "./restore-archive-read.js";
@@ -152,9 +148,9 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.",
-  security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+    "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
+  security: [{ ownerSession: [] }],
+  middleware: directAuthorityOnly,
   request: {
     body: {
       required: true,
@@ -244,7 +240,13 @@ const restoreArchiveRoute = createRoute({
       },
       description: "Unauthorized",
     },
-    403: OPERATOR_ONLY_RESPONSE,
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description:
+        "Requires direct owner or local authority and recent owner authentication.",
+    },
     409: {
       content: {
         "application/json": {
@@ -864,9 +866,7 @@ async function restoreRows(
                 properties: (edge.properties ?? {}) as Record<string, unknown>,
               },
             ],
-            // A restore replays every row the archive holds, so no
-            // target is one to withhold; the operator's own map
-            // reaches no type.
+            // Direct authority restores every row the archive holds.
             () => true,
             { replay: true },
           );
@@ -946,9 +946,10 @@ export function restoreArchiveRoutes(
   );
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    const uploader = blobPrincipal(requireAuth(c), "api_key");
+    requireRecentOwnerAuthentication(c);
+    const uploader = authorityId(c);
     const actor = {
-      key_id: c.get("apiKey")?.id,
+      key_id: authorityId(c),
       client_ip: c.get("clientIp") ?? null,
     };
 
@@ -1043,6 +1044,7 @@ export function restoreArchiveRoutes(
       try {
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
         try {
+          requireRecentOwnerAuthentication(c);
           const result = await restoreRows(storage, blobs, {
             plan: typePlan,
             pending: archive.blobs,

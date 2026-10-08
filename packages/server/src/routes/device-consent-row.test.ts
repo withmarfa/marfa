@@ -21,14 +21,10 @@
  * an approval whose bind fails leaves no row; revoking the grant removes the
  * row and the browser is asked again.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 // Each case signs a user up and in and drives a device flow end to end
 // before asserting, which is more than the default budget allows on a
@@ -88,9 +84,8 @@ async function seedClient(c: TestContext): Promise<string> {
   return clientId;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -103,25 +98,6 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   const match = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(setCookie);
   if (!match?.[1]) throw new Error("sign-in: session_token cookie not found");
   return match[1];
-}
-
-async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema();
-  const { eq } = await import("drizzle-orm");
-  const db = c.storage.betterAuthDb as {
-    select: () => {
-      from: (t: unknown) => {
-        where: (w: unknown) => Promise<{ id: string }[]>;
-      };
-    };
-  };
-  const rows = await db
-    .select()
-    .from(schema.auth_user)
-    .where(eq(schema.auth_user.email, email));
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
-  return id;
 }
 
 /** Initiate and approve a device flow for `scope`; returns the user code. */
@@ -249,8 +225,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   it("an approval leaves a consent row carrying the merged scopes", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "device@example.com");
-    const authUserId = await authUserIdFor(ctx, "device@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
 
     await approveOnDevice(ctx, clientId, cookie, "core.note:read");
 
@@ -261,7 +237,7 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   it("a browser authorize for the same app is then answered silently", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "browser@example.com");
+    const cookie = await signInUser(ctx);
 
     // Before any grant the browser is asked.
     expect(
@@ -279,8 +255,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   it("a re-approval widens the one row rather than adding a second", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "again@example.com");
-    const authUserId = await authUserIdFor(ctx, "again@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
 
     await approveOnDevice(ctx, clientId, cookie, "core.note:read");
     await approveOnDevice(ctx, clientId, cookie, "core.task:read");
@@ -306,8 +282,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // not an accident of replace-versus-merge.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "standalone@example.com");
-    const authUserId = await authUserIdFor(ctx, "standalone@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     await ctx.storage.oauthProvider!.upsertConsent({
       clientId,
       authUserId,
@@ -329,8 +305,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // requests concatenated. Disjoint keys cannot tell those apart.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "merge@example.com");
-    const authUserId = await authUserIdFor(ctx, "merge@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
 
     await approveOnDevice(ctx, clientId, cookie, "core.note:read");
     await approveOnDevice(ctx, clientId, cookie, "core.note:write");
@@ -351,8 +327,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     // gate, so the row is written only behind it.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "loser@example.com");
-    const authUserId = await authUserIdFor(ctx, "loser@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     vi.spyOn(
       ctx.storage.oauthProvider!,
       "narrowDeviceCodeScope",
@@ -380,8 +356,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
   it("revoking the grant removes the row with the rest", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "revoke@example.com");
-    const authUserId = await authUserIdFor(ctx, "revoke@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
 
     await approveOnDevice(ctx, clientId, cookie, "core.note:read");
     expect((await consentRows(ctx, clientId, authUserId)).length).toBe(1);
@@ -408,8 +384,8 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
 it("keeps the device pending and creates neither grant half on a native approval audit failure", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx);
-  const cookie = await signInUser(ctx, "audit-device@example.test");
-  const userId = await authUserIdFor(ctx, "audit-device@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const initiated = await request(ctx.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope: "core.note:read" },
     headers: { origin: ORIGIN },
@@ -451,7 +427,7 @@ it.each(["create", "claim", "deny", "poll", "consume", "delete"] as const)(
     ctx = await createTestContext();
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-audit@example.test");
+    const cookie = await signInUser(c);
     const db = c.storage as typeof c.storage & {
       __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
       __sqliteAll(sql: string): Promise<unknown[]>;

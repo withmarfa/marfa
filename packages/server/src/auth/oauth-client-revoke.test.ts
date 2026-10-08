@@ -24,17 +24,13 @@
  * one has to reach the projection anyway, and rotating one has to be refused
  * rather than answered with another token nothing accepts.
  */
-import { itemWrites } from "../storage/item-writes.js";
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import { withConsentLock, consentLockDepth } from "./consent-lock.js";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as logger from "../middleware/logger.js";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
+import { consentLockDepth, withConsentLock } from "./consent-lock.js";
 import { resolveRevokeClientId } from "./oauth-provider.js";
 
 import type { InStatement } from "@libsql/client";
@@ -151,9 +147,8 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
   return clientId;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -168,25 +163,6 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
     if (head?.includes("session_token")) return head;
   }
   throw new Error("sign-in: session_token cookie not found");
-}
-
-async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule = await betterAuthSchema();
-  const { eq } = await import("drizzle-orm");
-  const db = c.storage.betterAuthDb as {
-    select: () => {
-      from: (t: unknown) => {
-        where: (w: unknown) => Promise<{ id: string }[]>;
-      };
-    };
-  };
-  const rows = await db
-    .select()
-    .from(schemaModule.auth_user)
-    .where(eq(schemaModule.auth_user.email, email));
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
-  return id;
 }
 
 function pkcePair(): { verifier: string; challenge: string } {
@@ -414,8 +390,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("drops the consent row, every token and the projection, writes the audit row, and the next authorize asks again", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Revoking App");
-    const cookie = await signInUser(ctx, "revoke@example.com");
-    const authUserId = await authUserIdFor(ctx, "revoke@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const scope = "core.note:read offline_access";
     const tokens = await codeGrant(ctx, clientId, cookie, scope);
     const refreshToken = tokens.refresh_token;
@@ -458,8 +434,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     ctx = await createTestContext({});
     const owner = await seedClient(ctx, "Owner App");
     const other = await seedClient(ctx, "Other App");
-    const cookie = await signInUser(ctx, "stolen@example.com");
-    const authUserId = await authUserIdFor(ctx, "stolen@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       owner,
@@ -496,8 +472,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("a rotated-out refresh token still ends the grant, because the plugin has already ended its tokens", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Rotating App");
-    const cookie = await signInUser(ctx, "rotated@example.com");
-    const authUserId = await authUserIdFor(ctx, "rotated@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const first = await codeGrant(
       ctx,
       clientId,
@@ -533,8 +509,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("a request the plugin refuses moves nothing, even with a live token and a matching client_id", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Refused App");
-    const cookie = await signInUser(ctx, "refused@example.com");
-    const authUserId = await authUserIdFor(ctx, "refused@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -564,8 +540,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("a grant whose projection is already gone still loses its consent row and tokens", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Projectionless App");
-    const cookie = await signInUser(ctx, "projectionless@example.com");
-    const authUserId = await authUserIdFor(ctx, "projectionless@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -591,8 +567,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("a token sent with its Authorization scheme is revoked and cascaded like a bare one", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Header Shaped App");
-    const cookie = await signInUser(ctx, "scheme@example.com");
-    const authUserId = await authUserIdFor(ctx, "scheme@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -617,8 +593,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("an access-token revoke stays token-only", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Signing Out App");
-    const cookie = await signInUser(ctx, "signout@example.com");
-    const authUserId = await authUserIdFor(ctx, "signout@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -669,7 +645,7 @@ describe("POST /auth/oauth2/revoke answers 200 for a token that is already gone"
   it("answers 200 for a token revoked before, and still refuses a request with no token", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Twice Revoking App");
-    const cookie = await signInUser(ctx, "twice@example.com");
+    const cookie = await signInUser(ctx);
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -694,7 +670,7 @@ describe("POST /auth/oauth2/revoke answers 200 for a token that is already gone"
     // revocation that did not happen.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Mislabeling App");
-    const cookie = await signInUser(ctx, "mislabel@example.com");
+    const cookie = await signInUser(ctx);
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -759,8 +735,8 @@ describe("a token carrying no reference_id", () => {
     // this whole change exists to close.
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Upgraded App");
-    const cookie = await signInUser(ctx, "unbound-revoke@example.com");
-    const authUserId = await authUserIdFor(ctx, "unbound-revoke@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const scope = "core.note:read offline_access";
     await codeGrant(ctx, clientId, cookie, scope);
 
@@ -836,8 +812,8 @@ it.each(["browser", "client"])(
   async (door) => {
     ctx = await createTestContext();
     const clientId = await seedClient(ctx, "Audit Revoke");
-    const cookie = await signInUser(ctx, "audit-revoke@example.test");
-    const userId = await authUserIdFor(ctx, "audit-revoke@example.test");
+    const cookie = await signInUser(ctx);
+    const userId = ctx.owner.id;
     const tokens = await codeGrant(
       ctx,
       clientId,
@@ -879,8 +855,8 @@ it.each(["browser", "client"])(
 it("rolls rotation back when the final issuance audit is refused, preserving the usable refresh token", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "Audit Rotation");
-  const cookie = await signInUser(ctx, "audit-rotation@example.test");
-  const userId = await authUserIdFor(ctx, "audit-rotation@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const tokens = await codeGrant(
     ctx,
     clientId,
@@ -915,8 +891,8 @@ it("rolls rotation back when the final issuance audit is refused, preserving the
 it("keeps replay withdrawal and its observation together even though the token response is refused", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "Audit Replay");
-  const cookie = await signInUser(ctx, "audit-replay@example.test");
-  const userId = await authUserIdFor(ctx, "audit-replay@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const tokens = await codeGrant(
     ctx,
     clientId,
@@ -952,8 +928,8 @@ it("keeps replay withdrawal and its observation together even though the token r
 it("rolls provider consent and code back together with a refused browser grant audit", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "Audit Consent");
-  const cookie = await signInUser(ctx, "audit-consent@example.test");
-  const userId = await authUserIdFor(ctx, "audit-consent@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const pair = pkcePair();
   const auth = await request(
     ctx.app,
@@ -997,7 +973,7 @@ it("rolls provider consent and code back together with a refused browser grant a
 it("rolls a caught token persistence failure back with its one-use authorization code", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "One-use audit");
-  const cookie = await signInUser(ctx, "one-use@example.test");
+  const cookie = await signInUser(ctx);
   const form = await prepareCode(
     ctx,
     clientId,
@@ -1045,8 +1021,8 @@ it("rolls a caught token persistence failure back with its one-use authorization
 it("takes the consent lock before the RFC 7009 writer under concurrent consent", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "Concurrent revoke");
-  const cookie = await signInUser(ctx, "concurrent-revoke@example.test");
-  const userId = await authUserIdFor(ctx, "concurrent-revoke@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const tokens = await codeGrant(
     ctx,
     clientId,
@@ -1090,7 +1066,7 @@ it.each(["before", "after", "unknown"])(
   async (mode) => {
     ctx = await createTestContext();
     const clientId = await seedClient(ctx, "Token outcome");
-    const cookie = await signInUser(ctx, "token-outcome@example.test");
+    const cookie = await signInUser(ctx);
     const form = await prepareCode(
       ctx,
       clientId,
@@ -1137,7 +1113,7 @@ it.each(["before", "after", "unknown"])(
   async (mode) => {
     ctx = await createTestContext();
     const clientId = await seedClient(ctx, "Consent outcome");
-    const cookie = await signInUser(ctx, "consent-outcome@example.test");
+    const cookie = await signInUser(ctx);
     const pair = pkcePair();
     const authorization = await request(
       ctx.app,
@@ -1190,8 +1166,8 @@ it.each(["before", "after", "unknown"])(
 it("keeps the entire RFC 7009 provider tail in the grant transaction", async () => {
   ctx = await createTestContext();
   const clientId = await seedClient(ctx, "Revoke tail");
-  const cookie = await signInUser(ctx, "revoke-tail@example.test");
-  const userId = await authUserIdFor(ctx, "revoke-tail@example.test");
+  const cookie = await signInUser(ctx);
+  const userId = ctx.owner.id;
   const tokens = await codeGrant(
     ctx,
     clientId,
@@ -1235,7 +1211,7 @@ it("keeps remote client key retrieval outside the credential writer", async () =
     corsOrigins: ["https://client.example.test"],
   });
   const clientId = await seedClient(ctx, "Remote client key");
-  const remoteCookie = await signInUser(ctx, "remote-owner@example.test");
+  const remoteCookie = await signInUser(ctx);
   const remoteTokens = await codeGrant(
     ctx,
     clientId,
@@ -1282,7 +1258,7 @@ it("keeps remote client key retrieval outside the credential writer", async () =
   ).toHaveLength(1);
   vi.restoreAllMocks();
   const publicClient = await seedClient(ctx, "Public control");
-  const cookie = await signInUser(ctx, "remote-control@example.test");
+  const cookie = await signInUser(ctx);
   expect(
     (await codeGrant(ctx, publicClient, cookie, "core.note:read")).access_token,
   ).toBeTruthy();

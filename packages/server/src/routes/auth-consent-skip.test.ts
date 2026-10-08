@@ -51,16 +51,15 @@
  * (prompt=none, prompt=login, empty scope) are minted locally with
  * better-auth's `makeSignature` against the fixed test auth secret.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
-  createTestAccount,
   request,
   waitForConsentLockDepth,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
 
 // Every test here boots a server, signs a user up and in (two password
@@ -169,9 +168,8 @@ async function disableClient(c: TestContext, clientId: string): Promise<void> {
 }
 
 /** Sign up + verify + sign in; returns the session cookie (`name=value`). */
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -398,7 +396,7 @@ async function grantUserId(c: TestContext): Promise<string> {
 describe("GET /auth/authorize (consent skip) — harness", () => {
   it("GUARD: Better Auth's origin check is live, so the skip assertions below mean something", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "origin-guard@example.com");
+    const cookie = await signInUser(ctx);
 
     // A cookie-bearing POST with no Origin is exactly what a naive
     // internal dispatch from a top-level GET produces. Better Auth must
@@ -432,7 +430,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("REGRESSION: second authorize with the same scopes skips consent — 302 straight to redirect_uri with a code, no HTML", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-equal@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -464,14 +462,10 @@ describe("GET /auth/authorize (consent skip)", () => {
     ],
   ] as const)(
     "classifies a code callback for a %s registered redirect URI",
-    async (kind, redirectUri) => {
+    async (_kind, redirectUri) => {
       ctx = await createTestContext({});
       const clientId = await seedClient(ctx, redirectUri);
-      const fixtureKind = kind.replaceAll(" ", "-");
-      const cookie = await signInUser(
-        ctx,
-        `skip-callback-${fixtureKind}@example.com`,
-      );
+      const cookie = await signInUser(ctx);
       const scope = "openid core.note:read";
 
       const signedQuery = await grantFirstConsent(
@@ -505,7 +499,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("REGRESSION: skips with no Referer at all (magic link, Referrer-Policy: no-referrer)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-noreferer@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -524,7 +518,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("REGRESSION: skips when the Referer is the relying party's own origin (the ordinary cross-site start)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-rp-referer@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -545,7 +539,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("stamps no-store on the code-bearing redirect", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-nostore@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -562,7 +556,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("skips when the requested scopes are a subset of the prior grant", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-subset@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(
       ctx,
@@ -593,7 +587,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("renders the re-consent diff when the request widens the prior grant (superset)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-superset@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(ctx, clientId, cookie, "openid core.note:read", [
       "openid",
@@ -626,7 +620,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("prompt=consent forces a render even when the grant covers the request", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-prompt-consent@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -652,7 +646,7 @@ describe("GET /auth/authorize (consent skip)", () => {
   it("renders after the grant is revoked (revocation deletes the consent row)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-revoked@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -696,7 +690,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("a wildcard grant covers a concrete scope beneath it", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-wildcard@example.com");
+    const cookie = await signInUser(ctx);
 
     // The user approved `core.*:read`. A later request naming one type under
     // it asks for strictly less than they already said yes to, and asking
@@ -742,7 +736,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("a request that drops the narrower half of a grant is not covered by it", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-escalation@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(
       ctx,
@@ -762,7 +756,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("a parent-type grant does not cover a child-type scope", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-parent-type@example.com");
+    const cookie = await signInUser(ctx);
 
     // `core.media` with no `.*` is one type, not a subtree. The wildcard is
     // what expresses breadth, and this is what keeps the case above from
@@ -782,7 +776,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("a child-type grant does not cover the parent-type scope", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-child-type@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(
       ctx,
@@ -802,7 +796,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("an empty requested scope set is not 'already granted'", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-empty-scope@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(ctx, clientId, cookie, "openid core.note:read", [
       "openid",
@@ -822,7 +816,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
   it("a forged signature is refused outright, even with a covering grant", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-forged@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -854,10 +848,10 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
   });
 
-  it("another user's grant does not satisfy this user's request", async () => {
+  it("an orphaned consent does not satisfy the owner's request", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const granterCookie = await signInUser(ctx, "skip-granter@example.com");
+    const granterCookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(
@@ -868,11 +862,13 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
       ["openid", "core.note:read"],
     );
 
-    // A second user replays the first user's signed query. The consent
-    // lookup is keyed on (client_id, user_id); the grant is not theirs.
-    const otherCookie = await signInUser(ctx, "skip-other-user@example.com");
+    // Deliberate damaged state: a consent has lost its owning account.
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun("UPDATE auth_oauth_consent SET user_id = NULL", []);
     const res = await landOnConsentPage(ctx, signedQuery, {
-      cookie: otherCookie,
+      cookie: granterCookie,
     });
     expectRendersConsent(res, await res.text());
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
@@ -882,7 +878,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
     ctx = await createTestContext({});
     const grantedClient = await seedClient(ctx);
     const otherClient = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-other-client@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     await grantFirstConsent(ctx, grantedClient, cookie, scope, [
@@ -909,7 +905,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
   it("with a covering grant, silently mints a code even with no Origin and no Referer (hidden-iframe renewal)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-none-grant@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -939,7 +935,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
   it("without a covering grant, redirects with error=consent_required and never renders", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-none-nogrant@example.com");
+    const cookie = await signInUser(ctx);
 
     const signedQuery = await mintSignedQuery(
       authorizeFields(clientId, "openid core.note:read", {
@@ -973,13 +969,10 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
     ],
   ] as const)(
     "classifies a prompt=none provider error for a %s registered redirect URI",
-    async (kind, redirectUri) => {
+    async (_kind, redirectUri) => {
       ctx = await createTestContext({});
       const clientId = await seedClient(ctx, redirectUri);
-      const cookie = await signInUser(
-        ctx,
-        `skip-none-callback-${kind.replaceAll(" ", "-")}@example.com`,
-      );
+      const cookie = await signInUser(ctx);
       const scope = "openid core.note:read";
       await grantFirstConsent(
         ctx,
@@ -1004,7 +997,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       const signedQuery = await mintSignedQuery(
         authorizeFields(clientId, scope, {
           redirect_uri: redirectUri,
-          state: `none-${kind}`,
+          state: `none-${_kind}`,
           prompt: "none",
           code_challenge: "",
           code_challenge_method: "S256",
@@ -1022,7 +1015,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       expect(addedResponseValues(location, redirectUri, "error")).toContain(
         "invalid_request",
       );
-      expect(callback.searchParams.getAll("state")).toContain(`none-${kind}`);
+      expect(callback.searchParams.getAll("state")).toContain(`none-${_kind}`);
       expect(addedResponseValues(location, redirectUri, "code")).toHaveLength(
         0,
       );
@@ -1035,10 +1028,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
     const firstRedirect = `${CALLBACK}?channel=stable&code=fixed-first`;
     const requestedRedirect = `${CALLBACK}?channel=stable&code=fixed-second`;
     const clientId = await seedClient(ctx, [firstRedirect, requestedRedirect]);
-    const cookie = await signInUser(
-      ctx,
-      "skip-none-multiple-reserved-callbacks@example.com",
-    );
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
     await grantFirstConsent(
       ctx,
@@ -1099,7 +1089,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
   it("with a forged signature, 400s instead of echoing attacker-chosen state to the client", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-none-forged@example.com");
+    const cookie = await signInUser(ctx);
 
     // Any signed-in user's browser can be navigated here with a
     // registered client_id, that client's registered redirect_uri,
@@ -1123,7 +1113,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
   it("with an unregistered redirect_uri, 400s instead of redirecting", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-none-baduri@example.com");
+    const cookie = await signInUser(ctx);
 
     const signedQuery = await mintSignedQuery({
       response_type: "code",
@@ -1147,7 +1137,7 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
   it("emits auth.grant.reused on skip and leaves the projected grant untouched", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-audit@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -1203,7 +1193,7 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
   it("a narrower request leaves the stored grant at the scopes the user approved", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-narrowing@example.com");
+    const cookie = await signInUser(ctx);
 
     await grantFirstConsent(
       ctx,
@@ -1255,7 +1245,7 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
   it("a disabled client is refused without an auth.grant.reused row", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-disabled@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     const signedQuery = await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -1275,7 +1265,7 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
   it("an unsatisfied prompt=login is refused without an auth.grant.reused row", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-prompt-login@example.com");
+    const cookie = await signInUser(ctx);
     const scope = "openid core.note:read";
 
     await grantFirstConsent(ctx, clientId, cookie, scope, [
@@ -1363,7 +1353,7 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "race-narrow@example.com");
+    const cookie = await signInUser(c);
     const wide = "openid core.note:read core.task:read";
 
     await grantFirstConsent(c, clientId, cookie, wide, [
@@ -1415,7 +1405,7 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "race-revoke@example.com");
+    const cookie = await signInUser(c);
     const wide = "openid core.note:read core.task:read";
 
     await grantFirstConsent(c, clientId, cookie, wide, [
@@ -1488,7 +1478,7 @@ describe("a scope named twice is stored once on the skip path", () => {
   it("writes one copy when a covered request repeats a literal", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "skip-dupe@example.com");
+    const cookie = await signInUser(ctx);
 
     // A WILDCARD first, which is what makes this reach Marfa's skip at all.
     // The plugin has its own already-consented check and it is exact

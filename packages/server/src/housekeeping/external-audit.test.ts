@@ -1,23 +1,31 @@
+import type { Transaction, TransactionMode } from "@libsql/client";
+import {
+  generateId,
+  getEdgeTypeSchema,
+  getTypeSchema,
+} from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { TransactionMode, Transaction } from "@libsql/client";
 import { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as tar from "tar-stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import {
-  generateId,
-  getTypeSchema,
-  getEdgeTypeSchema,
-} from "@withmarfa/shared";
+  planArchiveTypes,
+  writeArchiveTypes,
+} from "../routes/restore-archive-types.js";
+import { itemWrites } from "../storage/item-writes.js";
+import { TrashPurger } from "../storage/retention.js";
+import { VersionThinner } from "../storage/version-thinner.js";
 import {
   createTestContext,
   request,
   withSecondStore,
   type TestContext,
 } from "../test-utils.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import {
   dropBlobCopy,
   finishPendingCopyDeletions,
@@ -25,14 +33,6 @@ import {
 } from "./blob-delete.js";
 import { BlobIntegrityChecker } from "./blob-integrity.js";
 import { BlobReplicator } from "./blob-replicate.js";
-import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
-import { TrashPurger } from "../storage/retention.js";
-import { VersionThinner } from "../storage/version-thinner.js";
-import {
-  planArchiveTypes,
-  writeArchiveTypes,
-} from "../routes/restore-archive-types.js";
-import { itemWrites } from "../storage/item-writes.js";
 
 const commitFault = vi.hoisted(() => ({
   next: undefined as "before" | "after" | undefined,
@@ -214,7 +214,8 @@ async function restore(body: Buffer) {
   return ctx.app.request("/restore", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body,

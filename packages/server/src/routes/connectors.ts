@@ -9,8 +9,16 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
+import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, standingRule } from "../middleware/auth.js";
+import {
+  requireAuth,
+  standingRule,
+  holdsPermission,
+  requirePermission,
+  authorityId,
+  isDirectAuthority,
+} from "../middleware/auth.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 import type { InboundEndpoint, Storage } from "../storage/interface.js";
 import {
@@ -289,7 +297,7 @@ const hiddenConnectorResponse = {
   404: {
     ...notFoundResponse[404],
     description:
-      "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key.",
+      "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
   },
 };
 
@@ -306,16 +314,16 @@ const forbiddenResponse = (description: string) => ({
 export const ownKeyResponses = {
   ...anyKeyResponses,
   ...forbiddenResponse(
-    "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+    "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
   ),
   ...notFoundResponse,
 };
 
-/** The doors the operator key reaches too. */
-export const ownKeyOrOperatorResponses = {
+/** The doors connectors.manage reaches too. */
+export const ownKeyOrManagerResponses = {
   ...anyKeyResponses,
   ...forbiddenResponse(
-    "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+    "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
   ),
   ...notFoundResponse,
 };
@@ -327,21 +335,20 @@ export const ownKeyOrOperatorResponses = {
 /**
  * A connector registers under a working key of its own. A session token's
  * synthetic key is the token row, renewed on every refresh, so a
- * registration keyed to it would be orphaned by the next; and the operator
- * key runs the instance rather than feeding it.
+ * registration keyed to it would be orphaned by the next.
  */
 const workingKeyOnly = standingRule("a working key", (c) => {
-  const key = requireAuth(c);
+  if (isDirectAuthority(c)) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "A connector registers under its own ordinary key",
+    );
+  }
+  requireAuth(c);
   if (c.get("authType") === "oauth") {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "A connector registers under a key, not under an app's session token",
-    );
-  }
-  if (key.is_operator) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "The operator key runs the instance and does not register as a connector",
     );
   }
 });
@@ -383,7 +390,7 @@ const registerConnectorRoute = createRoute({
     },
     ...anyKeyResponses,
     ...forbiddenResponse(
-      "- `forbidden`: your credential is an app's session token, not a key, or the operator key, which runs the instance and can't register as a connector.",
+      "- `forbidden`: your credential is an app's session token, not a key, or direct owner or local authority.",
     ),
   },
 });
@@ -395,7 +402,7 @@ const listConnectorsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List connectors",
   description:
-    "Returns your registration, or every registration if you use the operator key, newest first.",
+    "Returns your registration, or every registration if you hold connectors.manage, newest first.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -451,7 +458,7 @@ const deleteConnectorRoute = createRoute({
       },
       description: "Returns `ok: true`.",
     },
-    ...ownKeyOrOperatorResponses,
+    ...ownKeyOrManagerResponses,
   },
 });
 
@@ -578,7 +585,7 @@ const createEndpointRoute = createRoute({
       description:
         "- `validation_error`: `label` isn't 1 to 200 characters, `duplicate_header` isn't a valid header name, or the body has a top-level field this endpoint doesn't take.",
     },
-    ...ownKeyOrOperatorResponses,
+    ...ownKeyOrManagerResponses,
     409: {
       content: {
         "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
@@ -612,7 +619,7 @@ const listEndpointsRoute = createRoute({
       description:
         "Returns the endpoints, each with its `path` redacted to its last four characters.",
     },
-    ...ownKeyOrOperatorResponses,
+    ...ownKeyOrManagerResponses,
   },
 });
 
@@ -633,7 +640,7 @@ const retireEndpointRoute = createRoute({
         "Returns the endpoint with `retired_at` set. Retiring it again returns it unchanged.",
     },
     ...anyKeyResponses,
-    403: ownKeyOrOperatorResponses[403],
+    403: ownKeyOrManagerResponses[403],
     404: {
       content: {
         "application/json": {
@@ -822,24 +829,18 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listConnectorsRoute, async (c) => {
-    const reader = connectorsForReader(requireAuth(c), storage);
+    const reader = connectorsForReader(c, storage);
     return c.json({ data: await reader.list(), next_cursor: null }, 200);
   });
 
   router.openapi(getConnectorRoute, async (c) => {
-    const reader = connectorsForReader(requireAuth(c), storage);
+    const reader = connectorsForReader(c, storage);
     return c.json(await reader.get(c.req.valid("param").id), 200);
   });
 
   router.openapi(deleteConnectorRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    if (connector.key_id !== key.id && !key.is_operator) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Only the connector's own key or the operator key removes a registration",
-      );
-    }
+    requireOwnKeyOrManager(connector.key_id, c);
     // Two removals at once: the one whose statement deleted nothing answers
     // as if it had arrived after the other, and audits nothing.
     await runAuditedTransaction(
@@ -854,7 +855,7 @@ export function connectorRoutes(storage: Storage) {
       },
       {
         client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
+        key_id: authorityId(c),
         action: "connector.delete",
         resource_type: "connector",
         resource_id: connector.id,
@@ -902,7 +903,7 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listRunsRoute, async (c) => {
-    const reader = connectorsForReader(requireAuth(c), storage);
+    const reader = connectorsForReader(c, storage);
     const connector = await reader.get(c.req.valid("param").id);
     const { limit, cursor } = c.req.valid("query");
     return c.json(
@@ -912,9 +913,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(createEndpointRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKeyOrOperator(connector.key_id, key);
+    requireOwnKeyOrManager(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), EndpointInputSchema);
     const body = c.req.valid("json");
     const token = mintInboundToken();
@@ -941,7 +941,7 @@ export function connectorRoutes(storage: Storage) {
       },
       (endpoint) => ({
         client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
+        key_id: authorityId(c),
         action: "inbound_endpoint.create",
         resource_type: "inbound_endpoint",
         resource_id: endpoint.id,
@@ -952,9 +952,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listEndpointsRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKeyOrOperator(connector.key_id, key);
+    requireOwnKeyOrManager(connector.key_id, c);
     const endpoints = await storage.inbound.listEndpoints(connector.id);
     return c.json(
       {
@@ -966,10 +965,9 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(retireEndpointRoute, async (c) => {
-    const key = requireAuth(c);
     const { id, endpoint_id } = c.req.valid("param");
     const connector = await connectorOrRefuse(storage, id);
-    requireOwnKeyOrOperator(connector.key_id, key);
+    requireOwnKeyOrManager(connector.key_id, c);
     const retired = await runAuditedTransaction(
       storage,
       async () => {
@@ -989,7 +987,7 @@ export function connectorRoutes(storage: Storage) {
         retired.retired
           ? {
               client_ip: c.get("clientIp") ?? null,
-              key_id: key.id,
+              key_id: authorityId(c),
               action: "inbound_endpoint.retire",
               resource_type: "inbound_endpoint",
               resource_id: retired.endpoint.id,
@@ -1066,16 +1064,20 @@ function endpointView(endpoint: InboundEndpoint, path?: string) {
   };
 }
 
-export function requireOwnKeyOrOperator(
+export function requireOwnKeyOrManager(
   ownerKeyId: string,
-  key: { id: string; is_operator?: boolean },
+  c: Context<AppEnv>,
 ): void {
-  if (ownerKeyId !== key.id && key.is_operator !== true) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "Only the connector's own key or the operator key may do this",
-    );
+  if (holdsPermission(c, "connectors.manage")) {
+    requirePermission(c, "connectors.manage");
+    return;
   }
+  if (c.get("authType") !== "oauth" && ownerKeyId === c.get("apiKey")?.id)
+    return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    "Only the connector's own key or a holder of connectors.manage may do this",
+  );
 }
 
 export function requireOwnKey(ownerKeyId: string, keyId: string): void {

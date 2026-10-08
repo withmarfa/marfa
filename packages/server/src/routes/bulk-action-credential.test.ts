@@ -1,9 +1,9 @@
-import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/index.js";
+import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
 import type { BulkActionJob, BulkActionResult } from "../bulk-actions/types.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 
 /**
  * A bulk-action job acts on what the credential that queued it holds when
@@ -331,7 +331,7 @@ describe("a bulk-action job asks after its credential when it runs", () => {
   });
 
   it("writes nothing once the grant behind a sign-in is revoked, and runs while it stands", async () => {
-    const standing = await seedOauthBearer(ctx.storage, ["core.note:write"]);
+    const standing = await seedOauthBearer(ctx, ["core.note:write"]);
     const tagOk = marker("bacred-oauth-ok");
     const ok = await seed(tagOk, "core.note", { body: "n" });
     const okJob = await queue(standing.token, {
@@ -343,7 +343,7 @@ describe("a bulk-action job asks after its credential when it runs", () => {
     expect(okDone.status).toBe("completed");
     expect(await tierOf(ok)).toBe("library");
 
-    const revoking = await seedOauthBearer(ctx.storage, ["core.note:write"]);
+    const revoking = await seedOauthBearer(ctx, ["core.note:write"]);
     const grant = await ctx.storage.items.get(revoking.grantId);
     const authUserId = grant!.properties.user_id as string;
     const tag = marker("bacred-oauth");
@@ -365,7 +365,7 @@ describe("a bulk-action job asks after its credential when it runs", () => {
   });
 
   it("runs on once a sign-in's token reaches its ordinary expiry while the grant stands", async () => {
-    const signedIn = await seedOauthBearer(ctx.storage, ["core.note:write"]);
+    const signedIn = await seedOauthBearer(ctx, ["core.note:write"]);
     const tag = marker("bacred-oauth-expired");
     const note = await seed(tag, "core.note", { body: "n" });
     const before = await tierOf(note);

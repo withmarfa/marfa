@@ -1,25 +1,6 @@
-/**
- * Regression suite for the two fences that stop a credential reaching past
- * the authority it was given.
- *
- * 1. **A mint never exceeds its caller.** `POST /keys` takes the new key's
- *    permissions from the request body, so a credential asking for one
- *    it does not hold itself would widen by minting. The clamp refuses by
- *    name; a peer mint of what the caller already holds is permitted, because
- *    privilege travels sideways or down.
- *
- * 2. **The operator tier is a flag on the row and nothing else.**
- *    `checkOperatorKey` reads `is_operator`, so a working credential reaches
- *    none of the operator doors however it came to exist.
- *
- * Each layer is tested on its own, because either fence holding says nothing
- * about the other.
- */
-
 import { describe, it, expect, afterEach } from "vitest";
-import type { ApiKey, Permission } from "@withmarfa/shared";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import { checkOperatorKey, hashApiKey } from "./auth.js";
+import type { Permission } from "@withmarfa/shared";
+import { hashApiKey } from "./auth.js";
 import {
   createTestContext,
   request,
@@ -28,62 +9,11 @@ import {
 } from "../test-utils.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 
-// ---------------------------------------------------------------------------
-// Unit — checkOperatorKey reads the flag
-// ---------------------------------------------------------------------------
-
-function fakeKey(overrides: Partial<ApiKey> = {}): ApiKey {
-  return {
-    id: "key-test",
-    label: "test",
-    source: "test",
-    is_operator: false,
-    default_tier: "library",
-    type_permissions: {},
-    extension_permissions: {},
-    edge_permissions: {},
-    metadata_permissions: {},
-    created_at: new Date().toISOString(),
-    last_used_at: null,
-    ...overrides,
-  };
-}
-
-describe("checkOperatorKey (unit)", () => {
-  it("admits an unbound operator key", () => {
-    const key = fakeKey({ is_operator: true });
-    expect(checkOperatorKey(key)).toBe(key);
-  });
-
-  it("rejects a credential without the operator flag", () => {
-    expect(() => checkOperatorKey(fakeKey({ is_operator: false }))).toThrow(
-      MarfaError,
-    );
-    expect(() => checkOperatorKey(fakeKey())).toThrow(MarfaError);
-  });
-
-  it("rejects undefined with UNAUTHORIZED", () => {
-    try {
-      checkOperatorKey(undefined);
-      expect.unreachable(
-        "checkOperatorKey must throw for a missing credential",
-      );
-    } catch (e) {
-      expect((e as MarfaError).code).toBe(ErrorCode.UNAUTHORIZED);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Integration
-// ---------------------------------------------------------------------------
-
 async function mintKey(
   ctx: TestContext,
   opts: {
     label: string;
     permissions?: Permission[];
-    is_operator?: boolean;
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -95,7 +25,6 @@ async function mintKey(
       permissions: opts.permissions ?? [],
       default_tier: "library",
       type_permissions: {},
-      is_operator: opts.is_operator ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );

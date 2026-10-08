@@ -5,7 +5,8 @@ import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
+  getOwnerClient,
   trackFolder,
   trackItem,
   trackKey,
@@ -24,7 +25,7 @@ beforeAll(async () => {
     "compliance",
     "blob-reach",
   ));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {
@@ -591,7 +592,7 @@ describe("who may read and upload a blob", () => {
       expect((await client.deleteItem(id)).ok).toBe(true);
       expect((await client.purgeItem(id)).ok).toBe(true);
     }
-    const restored = await operator.restoreArchive(archive.data);
+    const restored = await getOwnerClient().restoreArchive(archive.data);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, source.id);
     trackItem(ctx, target.id);
@@ -664,7 +665,7 @@ describe("who may read and upload a blob", () => {
       { name: "edges.ndjson", body: "" },
       { name: "types.ndjson", body: "" },
     ]);
-    const restored = await operator.restoreArchive(archive);
+    const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     for (const line of lines) trackItem(ctx, line.id);
 
@@ -762,7 +763,7 @@ describe("who may read and upload a blob", () => {
     expect(archive.status).toBe(200);
     expect((await client.deleteItem(id)).ok).toBe(true);
     expect((await client.purgeItem(id)).ok).toBe(true);
-    const restored = await operator.restoreArchive(archive.data);
+    const restored = await getOwnerClient().restoreArchive(archive.data);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
 
@@ -856,7 +857,7 @@ describe("who may read and upload a blob", () => {
     }
   });
 
-  it("refuses the operator key an export and takes a working key's", async () => {
+  it("refuses the management key an export and takes a working key's", async () => {
     await noteSaying("an export the operator may not make");
     const reader = await keyHolding({ "core.note": "read" });
     for (const format of ["ndjson", "archive"]) {
@@ -871,7 +872,7 @@ describe("who may read and upload a blob", () => {
     expect(archive.status).toBe(200);
   });
 
-  it("serves the operator key every blob and takes its uploads", async () => {
+  it("serves the management key every blob and takes its uploads", async () => {
     const hash = await upload("bytes the operator reads unreferenced");
     expect(await readingDoors(operator, hash)).toEqual(SERVED);
 
@@ -928,7 +929,7 @@ describe("who may read and upload a blob", () => {
     expect(refused.error?.error.code).toBe("type_not_permitted");
   });
 
-  it("serves the operator key the blob doors although it holds no type map", async () => {
+  it("serves the management key the blob doors although it holds no type map", async () => {
     const own = await operator.getCurrentKey();
     expect(own.status, JSON.stringify(own.error)).toBe(200);
     // The witness: a working key with the same empty map is refused.
@@ -937,8 +938,8 @@ describe("who may read and upload a blob", () => {
     const unknown = `sha256:${"c".repeat(64)}`;
     expect((await empty.client.downloadBlob(unknown)).status).toBe(403);
 
-    // Refused nothing for its map, the operator key reaches the lookup, and
-    // a hash nothing holds is an unknown one.
+    // blobs.manage admits the lookup even without a type map; an absent
+    // hash still answers unknown.
     expect(await readingDoors(operator, unknown)).toEqual(UNKNOWN);
     const malformed = await operator.downloadBlob("not-a-hash");
     expect(malformed.status).toBe(400);
@@ -2021,7 +2022,7 @@ describe("which write that names a digest lends it", () => {
       })),
       { name: "types.ndjson", body: "" },
     ]);
-    const restored = await operator.restoreArchive(archive);
+    const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.edges_imported).toBe(2);
     trackItem(ctx, ids.source);

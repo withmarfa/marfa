@@ -1,10 +1,10 @@
+import type { Item, Version } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import type { Item, Version } from "@withmarfa/shared";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { itemWrites } from "../storage/item-writes.js";
 import {
   closeTestContexts,
@@ -98,7 +98,8 @@ function restore(ctx: TestContext, archive: Buffer) {
   return ctx.app.request("/restore", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,

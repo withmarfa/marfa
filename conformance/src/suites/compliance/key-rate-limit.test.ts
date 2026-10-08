@@ -57,7 +57,7 @@ afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
  * The limiter keys on the credential, so two cases sharing one key would
  * share one budget and the second would read the first's spending.
  *
- * Minted by the working key rather than the operator key, because the
+ * Minted by the working key rather than the management key, because the
  * boot has already spent one of the operator's `/keys` requests minting
  * that working key and the cap this file sets is deliberately small.
  * The working key's own window is untouched: it was minted, it has not

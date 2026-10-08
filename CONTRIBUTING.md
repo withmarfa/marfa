@@ -17,35 +17,42 @@ The server runs on SQLite, which is the only database it has:
 
 ```bash
 cd packages/server
+export MARFA_AUTH_SECRET="$(openssl rand -hex 32)"
 pnpm dev
 ```
 
 This starts the server on `http://localhost:8600` with a local SQLite database.
 
-### Making the first key
+### Claiming the instance and making a key
 
-Until the instance holds a credential, the server logs a one-time bootstrap secret at every boot. In a second terminal, build `marfa` and use the secret to mint the first key:
+Open `http://localhost:8600/setup` and enter the code from the server's terminal to create the owner. Alternatively, from a second terminal at the repository root, claim it through the private socket:
 
 ```bash
 cargo install --locked --path core/marfa-cli
-export MARFA_API_URL=http://localhost:8600
-marfa keys bootstrap          # paste the secret from the server's log, then press Enter
+unset MARFA_API_URL MARFA_API_KEY
+marfa_socket="$(pwd -P)/packages/server/data/control/marfa.sock"
+marfa --socket "$marfa_socket" setup claim --email owner@example.com
 ```
 
-The command prints the operator key; the secret works once, so if the README's quick start already ran it, start at the `read -rs` step below. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
+The command prompts for the password without echoing it. `setup claim --stdin` instead accepts a JSON object containing `email`, `password` and optional `name`. A remote claim uses `--url https://marfa.example.com setup claim --email owner@example.com` and prompts for both password and setup code; its JSON input also requires `code`. Supply secrets through the prompt or standard input, never command-line arguments.
+
+The socket command must run under the server's operating-system account. Linux requires the `acl` package. `--socket` cannot be combined with `--url`, `--key`, `MARFA_API_URL` or `MARFA_API_KEY`, and an unavailable socket never falls back to HTTP or the keychain.
+
+Sign in at `http://localhost:8600/auth/sign-in` and open `/auth/owner/manage` to create a key with the access you need. To create a content key from the machine instead:
 
 ```bash
-read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
-marfa status                  # the server, the instance and its health; the counts need a working key
-marfa keys create --label laptop --source laptop
-unset MARFA_API_KEY
-marfa keys keep               # paste the working key that keys create printed
-marfa status                  # now with the item counts
+marfa --socket "$marfa_socket" keys create --label laptop --source laptop \
+  --type-permission '*=write' --edge-permission '*=write' \
+  --metadata-permission '*=write' --extension-permission '*=write' \
+  --profile-permission '*=write'
+export MARFA_API_URL=http://localhost:8600
+marfa keys keep    # paste the returned key on standard input
+marfa status
 ```
 
-On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
+The key has the five maps named above and no additional permissions. Use narrower maps for an app that needs only part of the dataset. Add named permissions only when needed; [the glossary](./GLOSSARY.md#permissions) lists all twelve. `keys.mint` permits delegation within the caller's own access; `keys.manage` permits key administration but does not grant content access or unrestricted minting.
 
-Sign-in needs an owner too; the [README's quick start](./README.md#quick-start) creates it with the operator key.
+On a system without a keychain, supply the ordinary key through `MARFA_API_KEY` and skip `keys keep`. Owner password recovery requires the private socket; see [Recovering the owner](./deploy/README.md#recovering-the-owner). Creating or changing keys through an owner browser session requires a password sign-in within the last five minutes.
 
 ## Code style
 

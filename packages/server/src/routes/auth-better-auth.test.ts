@@ -1,10 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -60,8 +56,10 @@ describe("better-auth /auth/* surface", () => {
   });
 
   it("authenticates an existing user via sign-in/email", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "carol@example.com", "correct horse battery");
+    ctx = await createTestContext(
+      {},
+      { email: "carol@example.com", password: "correct horse battery" },
+    );
 
     const res = await signIn(ctx, "carol@example.com", "correct horse battery");
     if (res.status !== 200) {
@@ -84,16 +82,18 @@ describe("better-auth /auth/* surface", () => {
     // Regression guard: under an HTTPS baseURL, the cookie attributes
     // MUST include Secure so the cookie isn't sent over HTTP.
     const HTTPS_ORIGIN = "https://example.test";
-    ctx = await createTestContext({
-      authBaseUrl: HTTPS_ORIGIN,
-    });
-    // Use the matching origin since baseURL drives trustedOrigins.
-    await createTestAccount(
-      ctx,
-      "secure-cookie-test@example.com",
-      "correct horse battery",
-      "Test",
+    ctx = await createTestContext(
+      {
+        authBaseUrl: HTTPS_ORIGIN,
+      },
+      {
+        email: "secure-cookie-test@example.com",
+        password: "correct horse battery",
+        name: "Test",
+      },
     );
+    // Use the matching origin since baseURL drives trustedOrigins.
+
     const res = await request(ctx.app, "POST", "/auth/sign-in/email", {
       body: {
         email: "secure-cookie-test@example.com",
@@ -115,8 +115,10 @@ describe("better-auth /auth/* surface", () => {
   });
 
   it("rejects a wrong password with 4xx", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "dave@example.com", "correct horse battery");
+    ctx = await createTestContext(
+      {},
+      { email: "dave@example.com", password: "correct horse battery" },
+    );
 
     const res = await signIn(ctx, "dave@example.com", "wrong");
     expect(res.status).toBeGreaterThanOrEqual(400);
@@ -124,8 +126,11 @@ describe("better-auth /auth/* surface", () => {
   });
 
   it("session cookie does NOT authenticate /items — data plane stays bearer-only", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "eve@example.com", "correct horse battery");
+    ctx = await createTestContext(
+      {},
+      { email: "eve@example.com", password: "correct horse battery" },
+    );
+
     const signInRes = await signIn(
       ctx,
       "eve@example.com",
@@ -140,8 +145,11 @@ describe("better-auth /auth/* surface", () => {
   });
 
   it("returns the active session via /auth/get-session for a signed-in user", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "frank@example.com", "correct horse battery");
+    ctx = await createTestContext(
+      {},
+      { email: "frank@example.com", password: "correct horse battery" },
+    );
+
     const signInRes = await signIn(
       ctx,
       "frank@example.com",

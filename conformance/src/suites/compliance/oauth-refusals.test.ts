@@ -1,3 +1,4 @@
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedAppToken,
@@ -18,7 +19,6 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 let grants: FreshServer | undefined;
 let clients: FreshServer | undefined;
 
-const OWNER = { email: "owner@example.com", password: "correct horse battery" };
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
 
 beforeAll(async () => {
@@ -96,14 +96,7 @@ describe("GET /auth/device/consent", () => {
 
   it("answers 400 invalid_client for a pending code whose client is no longer registered", async () => {
     const server = clients!;
-    const operator = { Authorization: `Bearer ${server.operatorKey}` };
-    const created = await fetch(`${server.apiUrl}/owner`, {
-      method: "POST",
-      headers: { ...operator, "Content-Type": "application/json" },
-      body: JSON.stringify(OWNER),
-    });
-    expect(created.status).toBe(201);
-
+    const management = { Authorization: `Bearer ${server.managementKey}` };
     const discovery = (await (
       await fetch(
         `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -163,7 +156,7 @@ describe("GET /auth/device/consent", () => {
     expect(Number(aged.changes)).toBe(1);
     const swept = await fetch(
       `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
-      { method: "POST", headers: operator },
+      { method: "POST", headers: management },
     );
     expect(swept.status).toBe(200);
     expect(await swept.json()).toMatchObject({

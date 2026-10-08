@@ -1,25 +1,25 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { existsSync } from "node:fs";
-import { once } from "node:events";
-import { join } from "node:path";
 import { serve } from "@hono/node-server";
-import {
-  createTestContext,
-  mintWorkingKey,
-  request as appRequest,
-  withSecondStore,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { BulkActionWorker } from "../bulk-actions/worker.js";
+import type { Item } from "@withmarfa/shared";
+import { once } from "node:events";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { createApp } from "../app.js";
 import type { BulkActionJob } from "../bulk-actions/types.js";
+import { BulkActionWorker } from "../bulk-actions/worker.js";
+import { purgeBlob } from "../housekeeping/blob-delete.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
 import { BlobReplicator } from "../housekeeping/blob-replicate.js";
-import type { Item } from "@withmarfa/shared";
-import { createApp } from "../app.js";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { ensureInstanceId } from "../storage/instance-id.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
-import { purgeBlob } from "../housekeeping/blob-delete.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
+import { createSqliteStorage } from "../storage/sqlite/index.js";
+import type { TestContext } from "../test-utils.js";
+import {
+  request as appRequest,
+  createTestContext,
+  mintWorkingKey,
+  withSecondStore,
+} from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 let writer: string;
@@ -50,9 +50,19 @@ async function request(
 async function setup(): Promise<TestContext> {
   ctx = await createTestContext();
   writer = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
     type_permissions: { "core.note": "write" },
   });
   reader = await mintWorkingKey(ctx, {
+    permissions: [],
+    extension_permissions: {},
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
     type_permissions: { "core.note": "read" },
   });
   time = Date.now();
@@ -170,7 +180,7 @@ async function sweep(c: TestContext, name = "blob-orphans") {
   time += 1;
   const run = await json<{ outcome: string; result: Record<string, number> }>(
     await request(c.app, "POST", `/housekeeping/${name}/run`, {
-      key: c.operatorKey,
+      key: c.managementKey,
     }),
     200,
   );
@@ -233,7 +243,7 @@ describe("bulk property updates retain their blobs", () => {
     const hash = await upload(c, bytes);
     const target = await note(c, "target");
     const before = await request(c.app, "GET", `/blobs/${hash}`, {
-      key: c.operatorKey,
+      key: c.managementKey,
     });
     expect(before.status).toBe(200);
     expect(await before.text()).toBe(bytes);
@@ -302,7 +312,9 @@ describe("bulk property updates retain their blobs", () => {
             })
           ).status,
         ).toBe(200);
-        expect((await finish(c, job.id, c.operatorKey)).status).toBe(terminal);
+        expect((await finish(c, job.id, c.managementKey)).status).toBe(
+          terminal,
+        );
       } else {
         expect(await finish(c, job.id)).toMatchObject({
           status: terminal,
@@ -482,7 +494,7 @@ describe("bulk property updates retain their blobs", () => {
       (await request(c.app, "GET", `/blobs/${hash}`, { key: reader })).status,
     ).toBe(404);
     expect(
-      (await request(c.app, "GET", `/blobs/${hash}`, { key: c.operatorKey }))
+      (await request(c.app, "GET", `/blobs/${hash}`, { key: c.managementKey }))
         .status,
     ).toBe(404);
   });
@@ -507,7 +519,7 @@ describe("bulk property updates retain their blobs", () => {
       (await request(c.app, "GET", `/blobs/${hash}`, { key: reader })).status,
     ).toBe(404);
     const res = await request(c.app, "GET", `/blobs/${hash}`, {
-      key: c.operatorKey,
+      key: c.managementKey,
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(bytes);

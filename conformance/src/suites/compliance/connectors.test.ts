@@ -5,7 +5,8 @@ import {
   createTestContext,
   createSecondClient,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
+  getOwnerClient,
   removeTrackedRegistrations,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -41,7 +42,7 @@ async function register(c: MarfaClient, name: string, description?: string) {
 }
 
 describe("registration", () => {
-  it("keeps registrations and runs to the own key or operator", async () => {
+  it("keeps registrations and runs to the own key or manager", async () => {
     const mine = await register(client, `${ctx.runId} private reader`);
     const theirs = await register(other, `${ctx.runId} another reader`);
     const unrelated = await createSecondClient(ctx, "unregistered-reader");
@@ -55,7 +56,7 @@ describe("registration", () => {
     });
     expect(run.status).toBe(201);
 
-    for (const allowed of [client, getOperatorClient()]) {
+    for (const allowed of [client, getManagementClient()]) {
       const one = await allowed.getConnector(mine.data.id);
       expect(one.status).toBe(200);
       expect(one.data.last_run?.summary).toBe("vendor details");
@@ -118,7 +119,7 @@ describe("registration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const theirs = await register(other, `${ctx.runId} calendar reader`);
-    const listed = await getOperatorClient().listConnectors();
+    const listed = await getManagementClient().listConnectors();
     expect(listed.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
     const ids = listed.data.data.map((row) => row.id);
@@ -127,7 +128,7 @@ describe("registration", () => {
     expect(ids.indexOf(theirs.data.id)).toBeLessThan(
       ids.indexOf(created.data.id),
     );
-    const one = await getOperatorClient().getConnector(created.data.id);
+    const one = await getManagementClient().getConnector(created.data.id);
     expect(one.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, one.data);
     expect(one.data).toEqual(created.data);
@@ -136,8 +137,8 @@ describe("registration", () => {
     expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
   });
 
-  it("refuses to register the operator key", async () => {
-    const operator = getOperatorClient();
+  it("refuses to register direct owner authority", async () => {
+    const operator = getOwnerClient();
     // The witness: the same door registers a working key.
     const witness = await createSecondClient(ctx, "register-witness");
     const mine = await witness.registerConnector({
@@ -275,7 +276,7 @@ describe("registration", () => {
     const listed = await client.listConnectorRuns(next.data.id);
     expect(listed.status).toBe(200);
     expect(listed.data.data).toEqual([]);
-    const gone = await getOperatorClient().listConnectorRuns(old.data.id);
+    const gone = await getManagementClient().listConnectorRuns(old.data.id);
     expect(gone.status).toBe(404);
     expect((await client.deleteConnector(next.data.id)).status).toBe(200);
   });
@@ -390,13 +391,13 @@ describe("registration", () => {
     expect((await client.deleteConnector(real.data.id)).status).toBe(200);
   });
 
-  it("removes a registration for its own key or the operator, never another", async () => {
+  it("removes a registration for its own key or the manager, never another", async () => {
     const mine = await register(client, `${ctx.runId} mine`);
     const theirs = await other.deleteConnector(mine.data.id);
     expect(theirs.status).toBe(403);
     expect(theirs.error?.error.code).toBe("forbidden");
     expect((await client.getConnector(mine.data.id)).status).toBe(200);
-    const operator = await getOperatorClient().deleteConnector(mine.data.id);
+    const operator = await getManagementClient().deleteConnector(mine.data.id);
     expect(operator.status).toBe(200);
     expect((await client.getConnector(mine.data.id)).status).toBe(404);
     const again = await register(client, `${ctx.runId} mine again`);
@@ -407,7 +408,7 @@ describe("registration", () => {
     expect((await client.getConnector(again.data.id)).status).toBe(404);
   });
 
-  it("keeps a registration whose key was revoked, until the operator removes it", async () => {
+  it("keeps a registration whose key was revoked, until the manager removes it", async () => {
     const shortLived = await createSecondClient(ctx, "short-lived");
     const mine = await shortLived.registerConnector({
       name: `${ctx.runId} short-lived reader`,
@@ -420,7 +421,7 @@ describe("registration", () => {
     const lastBeat = await shortLived.heartbeatConnector(mine.data.id);
     expect(lastBeat.status).toBe(200);
 
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
     const refused = await shortLived.heartbeatConnector(mine.data.id);
     expect(refused.status).toBe(401);
@@ -444,7 +445,7 @@ describe("registration", () => {
 describe("heartbeats and runs", () => {
   it("takes a heartbeat from the connector's key alone", async () => {
     const mine = await register(client, `${ctx.runId} beats`);
-    for (const c of [other, getOperatorClient()]) {
+    for (const c of [other, getManagementClient()]) {
       const refused = await c.heartbeatConnector(mine.data.id);
       expect(refused.status).toBe(403);
       expect(refused.error?.error.code).toBe("forbidden");
@@ -470,7 +471,7 @@ describe("heartbeats and runs", () => {
       Date.now() + 1_000,
     );
     expect(
-      (await getOperatorClient().getConnector(mine.data.id)).data
+      (await getManagementClient().getConnector(mine.data.id)).data
         .last_heartbeat_at,
     ).toBe(beat.data.last_heartbeat_at);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -596,7 +597,7 @@ describe("heartbeats and runs", () => {
       expect(refused.status, what).toBe(400);
       expect(refused.error?.error.code, what).toBe("validation_error");
     }
-    for (const c of [other, getOperatorClient()]) {
+    for (const c of [other, getManagementClient()]) {
       const theirs = await c.reportConnectorRun(mine.data.id, good);
       expect(theirs.status).toBe(403);
       expect(theirs.error?.error.code).toBe("forbidden");
@@ -738,7 +739,7 @@ describe("heartbeats and runs", () => {
     });
     expect(late.status).toBe(201);
     expect(late.data.reported_at).not.toBe(late.data.started_at);
-    const runs = await getOperatorClient().listConnectorRuns(mine.data.id);
+    const runs = await getManagementClient().listConnectorRuns(mine.data.id);
     expect(runs.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}/runs", 200, runs.data);
     expect(runs.data.data.map((run) => run.summary)).toEqual([
@@ -750,7 +751,7 @@ describe("heartbeats and runs", () => {
     expect(Date.parse(runs.data.data[0]?.reported_at ?? "")).toBeGreaterThan(
       Date.parse(runs.data.data[1]?.reported_at ?? ""),
     );
-    const two = await getOperatorClient().listConnectorRuns(mine.data.id, {
+    const two = await getManagementClient().listConnectorRuns(mine.data.id, {
       limit: 2,
     });
     expect(two.data.data.map((run) => run.summary)).toEqual([
@@ -759,7 +760,7 @@ describe("heartbeats and runs", () => {
     ]);
     // A page the limit cut says so, and its cursor reaches the rest.
     expect(two.data.next_cursor).not.toBeNull();
-    const rest = await getOperatorClient().listConnectorRuns(mine.data.id, {
+    const rest = await getManagementClient().listConnectorRuns(mine.data.id, {
       limit: 2,
       cursor: two.data.next_cursor!,
     });
@@ -768,10 +769,10 @@ describe("heartbeats and runs", () => {
       "run 3",
     ]);
     expect(rest.data.next_cursor).toBeNull();
-    const listed = await getOperatorClient().getConnector(mine.data.id);
+    const listed = await getManagementClient().getConnector(mine.data.id);
     expect(listed.data.last_run?.summary).toBe("reported late");
     expect(
-      (await getOperatorClient().listConnectors()).data.data.find(
+      (await getManagementClient().listConnectors()).data.data.find(
         (row) => row.id === mine.data.id,
       )?.last_run?.summary,
     ).toBe("reported late");
@@ -788,7 +789,7 @@ describe("heartbeats and runs", () => {
     expect(theirRun.status).toBe(201);
     expect(
       (
-        await getOperatorClient().listConnectorRuns(theirs.data.id)
+        await getManagementClient().listConnectorRuns(theirs.data.id)
       ).data.data.map((run) => run.summary),
     ).toEqual(["their run"]);
     expect(
@@ -796,7 +797,7 @@ describe("heartbeats and runs", () => {
         (run) => run.summary,
       ),
     ).toEqual(["reported late", "run 1", "run 2", "run 3"]);
-    const rows = (await getOperatorClient().listConnectors()).data.data;
+    const rows = (await getManagementClient().listConnectors()).data.data;
     expect(
       rows.find((row) => row.id === theirs.data.id)?.last_run?.summary,
     ).toBe("their run");
@@ -819,8 +820,11 @@ describe("heartbeats and runs", () => {
     ]);
     // Witness: the declared key is answered.
     expect(
-      (await getOperatorClient().listConnectorRuns(mine.data.id, { limit: 1 }))
-        .status,
+      (
+        await getManagementClient().listConnectorRuns(mine.data.id, {
+          limit: 1,
+        })
+      ).status,
     ).toBe(200);
   });
 

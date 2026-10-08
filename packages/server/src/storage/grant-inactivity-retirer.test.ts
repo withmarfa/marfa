@@ -7,17 +7,13 @@
  * cascade has real tokens and a real consent row to remove, and the
  * projection is backdated afterwards the way time would have.
  */
-import { itemWrites } from "./item-writes.js";
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
-import { GrantInactivityRetirer } from "./retention.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { Storage } from "./interface.js";
+import { itemWrites } from "./item-writes.js";
+import { GrantInactivityRetirer } from "./retention.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -56,9 +52,8 @@ async function seedClient(c: TestContext): Promise<string> {
   return clientId;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -176,14 +171,14 @@ describe("GrantInactivityRetirer.runOnce", () => {
   it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one alone", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "forgotten@example.com");
+    const cookie = await signInUser(ctx);
     const accessToken = await deviceGrant(ctx, clientId, cookie);
     expect(await tokenRows(ctx, clientId)).toBe(2);
     expect(await consentRows(ctx, clientId)).toBe(1);
 
     // Beside it: a grant used today, so a widened window shows.
     const freshClientId = await seedClient(ctx);
-    const freshCookie = await signInUser(ctx, "present@example.com");
+    const freshCookie = await signInUser(ctx);
     await deviceGrant(ctx, freshClientId, freshCookie);
 
     // Recent: nothing to retire.
@@ -251,7 +246,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
     async (field) => {
       ctx = await createTestContext({});
       const clientId = await seedClient(ctx);
-      const cookie = await signInUser(ctx, `moved-${field}@example.com`);
+      const cookie = await signInUser(ctx);
       await deviceGrant(ctx, clientId, cookie);
       await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
       const dormant = async () => {
@@ -305,7 +300,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
   it("counts from the approval when the grant was never used, and a disabled window retires nothing", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "never-used@example.com");
+    const cookie = await signInUser(ctx);
     await deviceGrant(ctx, clientId, cookie);
 
     // The poll stamps last_used_at; clear it so the fallback to granted_at

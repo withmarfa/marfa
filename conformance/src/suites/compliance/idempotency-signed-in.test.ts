@@ -1,3 +1,4 @@
+import { TEST_OWNER } from "../../utils/target.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -17,10 +18,7 @@ let server: FreshServer | undefined;
 let origin: string;
 let cookie: string;
 
-const OWNER = {
-  email: "replay@example.com",
-  password: "correct horse battery",
-};
+const OWNER = TEST_OWNER;
 const CALLBACK = "http://127.0.0.1:9/callback";
 const SCOPE = "core.note:write offline_access";
 
@@ -31,11 +29,6 @@ interface Tokens {
 
 beforeAll(async () => {
   server = await bootFreshServer("idempotency-signed-in");
-  const operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  });
-  expect((await operator.createOwner(OWNER)).status).toBe(201);
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );

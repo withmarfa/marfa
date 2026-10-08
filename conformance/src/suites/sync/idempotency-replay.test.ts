@@ -13,7 +13,7 @@ import type {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackEdge,
   trackEdgeType,
   trackFolder,
@@ -46,7 +46,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
-let operator: MarfaClient;
+let owner: MarfaClient;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
@@ -55,7 +55,7 @@ beforeAll(async () => {
   ));
   const caps = await detectSyncCapabilities({ client, ctx, apiUrl, apiKey });
   requireRule(caps, "idempotencyKeys");
-  operator = getOperatorClient();
+  owner = getOwnerClient();
 });
 
 afterAll(async () => {
@@ -95,7 +95,7 @@ async function mint(overrides: Partial<ApiKeyRequest> = {}): Promise<Actor> {
   };
 }
 
-/** Changes what the key holds; `sources` needs the operator key. */
+/** The owner can assign claims outside the fixture key's own sources. */
 async function grant(
   actor: Actor,
   changes: Partial<ApiKeyRequest>,
@@ -382,7 +382,7 @@ describe("a retained answer after its credential is narrowed", () => {
   it("refuses a replay once the key no longer claims the source the write named, naming the source", async () => {
     const actor = await mint();
     const source = `${ctx.source}-claimed-create`;
-    await grant(actor, { sources: [source] }, operator);
+    await grant(actor, { sources: [source] }, owner);
     const ask = keyed(actor, "POST", "/items", {
       type: "core.note",
       source,
@@ -394,12 +394,12 @@ describe("a retained answer after its credential is narrowed", () => {
     expect(itemOf(first).source).toBe(source);
     expectReplay(await ask(), first);
 
-    await grant(actor, { sources: [] }, operator);
+    await grant(actor, { sources: [] }, owner);
     const refused = await ask();
     expectRefused(refused, 403, "forbidden");
     expect(refused.error?.error.details?.source).toBe(source);
 
-    await grant(actor, { sources: [source] }, operator);
+    await grant(actor, { sources: [source] }, owner);
     expectReplay(await ask(), first);
   });
 
@@ -772,7 +772,7 @@ describe("a retained answer after its credential is narrowed", () => {
   it("withholds a disclosed source once the key cannot read the row", async () => {
     const actor = await mint();
     const source = `${ctx.source}-withheld`;
-    await grant(actor, { sources: [source] }, operator);
+    await grant(actor, { sources: [source] }, owner);
     const made = await actor.client.createItem({
       type: "core.note",
       source,
@@ -794,7 +794,7 @@ describe("a retained answer after its credential is narrowed", () => {
     await grant(
       actor,
       { sources: [], type_permissions: { "core.task": "read" } },
-      operator,
+      owner,
     );
     const refused = await ask();
     expectRefused(refused, 404, "item_not_found");
@@ -804,7 +804,7 @@ describe("a retained answer after its credential is narrowed", () => {
     await grant(
       actor,
       { sources: [source], type_permissions: { "*": "write" } },
-      operator,
+      owner,
     );
     expectReplay(await ask(), first);
   });
@@ -812,7 +812,7 @@ describe("a retained answer after its credential is narrowed", () => {
   it("keeps the source refusal's details for a source the key still reads", async () => {
     const actor = await mint();
     const source = `${ctx.source}-kept`;
-    await grant(actor, { sources: [source] }, operator);
+    await grant(actor, { sources: [source] }, owner);
     const made = await actor.client.createItem({
       type: "core.note",
       source,
@@ -830,7 +830,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectFirst(first, 200);
     expect(text(first)).toContain(source);
 
-    await grant(actor, { sources: [] }, operator);
+    await grant(actor, { sources: [] }, owner);
     expect(
       (await actor.client.getItem(item.id)).status,
       "the key still reads the row",
@@ -839,7 +839,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectRefused(refused, 403, "forbidden");
     expect(refused.error?.error.details).toEqual({ source });
 
-    await grant(actor, { sources: [source] }, operator);
+    await grant(actor, { sources: [source] }, owner);
     expectReplay(await ask(), first);
   });
 

@@ -776,7 +776,7 @@ export interface ItemStore {
   /**
    * How many items carry this exact type identifier.
    *
-   * The only caller is the operator surface that decides whether a retired
+   * The maintenance operation decides whether a retired
    * shipped type can be removed: a row kept because items of it still exist
    * is kept for everyone, since the row is what makes those items resolve.
    *
@@ -1157,10 +1157,8 @@ export interface SearchStore {
 /**
  * What a revoke did, rather than whether it did anything.
  *
- * A revoke has three outcomes and a boolean carries two of them, which is
- * how a route came to answer `{ ok: true }` for an id that matched no row at
- * all: the operator key had nothing else left to ask. `"already_revoked"` and `"not_found"` are both misses and both refuse,
- * but they are different mistakes to have made and the answer says which.
+ * A caller must distinguish a successful revocation from an already revoked
+ * key or an unknown id; both misses are refused without reporting success.
  */
 export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
 
@@ -2297,20 +2295,9 @@ export interface SettingsStore {
   get(key: string): Promise<string | null>;
   /** Upsert — overwrites any existing value for the key. */
   set(key: string, value: string): Promise<void>;
-  /** Atomic insert-or-bail: returns true if this caller's INSERT created the
-   *  row, false if a row already existed. What lets exactly one of N
-   *  concurrent callers win a one-shot act: the bootstrap mint of the first
-   *  key, the instance id, the creation of the owner. */
+  /** Atomically set an absent key. Returns false when it already exists. */
   claim(key: string, value: string): Promise<boolean>;
-  /** Give a claim back. Removes the row if it exists and is a no-op if it
-   *  does not.
-   *
-   *  The claim has to come first, or two concurrent callers both act; but
-   *  everything after it can fail, and a burned claim with nothing behind
-   *  it is a door nobody can open again: the middleware admits an
-   *  unauthenticated mint only while the bootstrap sentinel is absent, and
-   *  the owner door creates only while its claim is free. Releasing on
-   *  failure makes the attempt retryable instead. */
+  /** Remove a setting if it exists. */
   release(key: string): Promise<void>;
 }
 
@@ -2534,15 +2521,7 @@ export interface OwnerRecord {
   createdAt: Date;
 }
 
-/**
- * The owner: the one account on the instance's sign-in surface.
- *
- * Sign-up is disabled on every instance and `POST /owner` refuses once an
- * account exists, so the account created first is the owner and there is
- * no second. Read from `auth_user` rather than kept as a separate marker,
- * because a marker could outlive the row and close the door with nobody
- * behind it.
- */
+/** The owner named by the durable, completed instance claim. */
 export interface OwnerStore {
   /** The owner, or `null` on an instance that has none yet. */
   find(): Promise<OwnerRecord | null>;
@@ -2569,6 +2548,8 @@ export interface OwnerStore {
  * traffic this is built for — low thousands of requests a second at peak.
  */
 export interface RateLimitStore {
+  /** Clear password sign-in locks for one account, including its address windows. */
+  clearSignIn(email: string): Promise<void>;
   /**
    * Atomic upsert that increments the counter for `(family, key)` by 1.
    * If the existing row's `expires_at` has already passed, the row is
@@ -2701,10 +2682,8 @@ export interface BulkActionJobStore {
     limit: number,
     cursor?: string,
   ): Promise<{ patches: unknown[]; cursor: string | null }>;
-  /** Fetch by id. The store returns the row regardless of caller; the route
-   *  handler enforces auth: the credential that created the job, or the
-   *  operator key, and nothing else. No permission says "read another
-   *  credential's bulk jobs". */
+  /** Fetch by id. The route admits the credential that created the job,
+   *  a caller holding instance.read, or direct owner or local authority. */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
    * Atomically claim the next queued job: a plain

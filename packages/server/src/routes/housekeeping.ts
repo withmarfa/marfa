@@ -1,13 +1,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { operatorOnly } from "../middleware/auth.js";
+import { standingPermission } from "../middleware/auth.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
-import {
-  createOpenAPIRouter,
-  makeErrorResponseSchema,
-  OPERATOR_ONLY_RESPONSE,
-} from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { nullableRef, wholeListOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +97,7 @@ const NameParam = z.object({
     .describe("The housekeeping job's name, as `GET /housekeeping` lists it."),
 });
 
-const operatorResponses = {
+const managementResponses = {
   401: {
     content: {
       "application/json": {
@@ -110,7 +106,12 @@ const operatorResponses = {
     },
     description: "Unauthorized",
   },
-  403: OPERATOR_ONLY_RESPONSE,
+  403: {
+    content: {
+      "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+    },
+    description: "Caller lacks the required management permission.",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -124,9 +125,9 @@ const listHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "List housekeeping jobs",
   description:
-    "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.",
+    "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires instance.read.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   responses: {
     200: {
       content: {
@@ -140,7 +141,7 @@ const listHousekeepingRoute = createRoute({
       },
       description: "Returns every housekeeping job, in one page.",
     },
-    ...operatorResponses,
+    ...managementResponses,
   },
 });
 
@@ -151,9 +152,9 @@ const runHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "Run a housekeeping job",
   description:
-    "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.",
+    "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.maintain"),
   request: { params: NameParam },
   responses: {
     200: {
@@ -169,7 +170,7 @@ const runHousekeepingRoute = createRoute({
       description:
         "- `validation_error`: `name` isn't lowercase letters, digits and hyphens starting with a letter, or a query parameter is unknown.",
     },
-    ...operatorResponses,
+    ...managementResponses,
     404: {
       content: {
         "application/json": {

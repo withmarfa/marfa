@@ -1,5 +1,7 @@
 import { PERMISSIONS } from "@withmarfa/shared";
-import { itemWrites } from "./storage/item-writes.js";
+import type { Permission } from "@withmarfa/shared";
+import { createHash, randomBytes } from "node:crypto";
+import { claimOwner, issueSetupCode } from "./auth/instance-claim.js";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
@@ -145,19 +147,11 @@ export interface TestContext {
   /** What the app was built with, so a test can build a second app over
    *  the same database. */
   config: AppConfig;
-  /**
-   * The instance tier, and nothing else: no permissions, exactly what the
-   * one unauthenticated mint hands back. It opens the instance routes and
-   * reaches no content at all, so a test about anything inside the
-   * permission model wants `workingKey`.
-   */
-  operatorKey: string;
-  /**
-   * A working credential holding every permission and writing every
-   * content family — what the operator mints first through `POST /keys`.
-   * This is the suite's working credential: content, the permissions,
-   * everything but the instance routes.
-   */
+  owner: { id: string; email: string; password: string; cookie: string };
+  ownerRequest: (path: string, init?: RequestInit) => Promise<Response>;
+  /** Explicit management grants, with no content maps. */
+  managementKey: string;
+  /** Content maps and the seven non-management permissions. */
   workingKey: string;
   /** The per-context temporary directory holding the sqlite database and
    *  the blob root. Exposed so a test can assert on its lifetime; removed
@@ -170,8 +164,7 @@ export interface TestContext {
    *  it leaks. Best practice: `await ctx.cleanup()`. */
   cleanup: () => Promise<void>;
   /** The Better Auth instance the app mounted, for tests that need a
-   *  signed-in user behind the OAuth provider. `createTestAccount` is the
-   *  usual way in. */
+   *  signed-in owner behind the OAuth provider. */
   auth: MarfaAuth;
 }
 
@@ -191,149 +184,116 @@ export async function closeTestContexts(
   }
 }
 
-/**
- * Seed an OAuth-bearer token end-to-end for tests that need the bearer
- * middleware to resolve an OAuth-issued token. Writes into the
- * @better-auth/oauth-provider plugin's tables (`auth_oauth_client`,
- * `auth_oauth_access_token`).
- *
- * Returns the raw access token (with `marfa_at_` prefix) and the
- * system.connection item id. The bearer middleware looks the token up
- * by `hashApiKey(token, TEST_API_KEY_SALT)` and resolves to the right
- * scope projection.
- *
- * @param scopes literal scope strings (e.g. `["core.note:read"]`)
- * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.authUserId    Better Auth user id; if absent a synthetic
- *                           one is seeded into `auth_user`.
- */
+/** Approve a real registered app through the browser PKCE flow. */
 export async function seedOauthBearer(
-  storage: Storage,
+  ctx: TestContext,
   scopes: string[],
-  opts: {
-    clientName?: string;
-    authUserId?: string;
-  } = {},
-): Promise<{ token: string; grantId: string; clientId: string }> {
-  if (
-    typeof storage.oauthProvider?.mintTokenPair !== "function" ||
-    !storage.betterAuthDb
-  ) {
+  opts: { clientName?: string; authUserId?: string; clientId?: string } = {},
+): Promise<{
+  token: string;
+  grantId: string;
+  clientId: string;
+  refreshToken?: string;
+}> {
+  if (opts.authUserId !== undefined && opts.authUserId !== ctx.owner.id) {
+    throw new Error("An app grant belongs to this instance's claimed owner");
+  }
+  const origin = new URL(ctx.config.authBaseUrl).origin;
+  async function checked(
+    response: Response,
+    status: number,
+  ): Promise<Record<string, unknown>> {
+    if (response.status !== status)
+      throw new Error(
+        `App fixture returned ${String(response.status)}: ${await response.text()}`,
+      );
+    return (await response.json()) as Record<string, unknown>;
+  }
+  const registered = opts.clientId
+    ? { client_id: opts.clientId }
+    : await checked(
+        await request(ctx.app, "POST", "/auth/oauth2/register", {
+          headers: { origin },
+          body: {
+            client_name: opts.clientName ?? "Test App",
+            application_type: "native",
+            grant_types: ["authorization_code", "refresh_token"],
+            token_endpoint_auth_method: "none",
+            redirect_uris: ["http://localhost:5173/callback"],
+            response_types: ["code"],
+          },
+        }),
+        201,
+      );
+  const clientId = registered.client_id as string;
+  const redirectUri = "http://localhost:5173/callback";
+  const verifier = randomBytes(32).toString("base64url");
+  const query = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    prompt: "consent",
+    scope: scopes.join(" "),
+    state: randomBytes(16).toString("hex"),
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
+  });
+  const initiated = await ctx.ownerRequest(
+    `/auth/oauth2/authorize?${query.toString()}`,
+  );
+  const consentLocation = initiated.headers.get("location");
+  if (initiated.status !== 302 || !consentLocation)
     throw new Error(
-      "seedOauthBearer requires storage.oauthProvider + betterAuthDb",
+      `App authorization returned ${String(initiated.status)}: ${await initiated.text()}`,
     );
-  }
-
-  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
-  const clientPk = `client_pk_${Math.random().toString(36).slice(2, 10)}`;
-  const clientName = opts.clientName ?? "Test App";
-  const now = new Date();
-
-  // Seed the OAuth client row directly (the plugin's own DCR endpoint
-  // would create the same row — we shortcut for test setup speed).
-  const db = storage.betterAuthDb as unknown as {
-    insert: (table: unknown) => {
-      values: (v: Record<string, unknown>) => {
-        run?: () => Promise<unknown>;
-        execute?: () => Promise<unknown>;
-      };
-    };
-  };
-
-  // Bearer middleware reads from auth_oauth_access_token, not auth_user,
-  // but the FK on user_id requires the row to exist.
-  const authUserId =
-    opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
-  if (!opts.authUserId) {
-    await requireSqliteRun(storage)(
-      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
-      [
-        authUserId,
-        "Test User",
-        `${authUserId}@test.local`,
-        Math.floor(now.getTime() / 1000),
-        Math.floor(now.getTime() / 1000),
-      ],
+  const consentUrl = new URL(consentLocation, origin);
+  const screen = await ctx.ownerRequest(
+    `${consentUrl.pathname}${consentUrl.search}`,
+  );
+  if (screen.status !== 200)
+    throw new Error(
+      `App consent screen returned ${String(screen.status)}: ${await screen.text()}`,
     );
-  }
-
-  const schemaModule = await import("./storage/sqlite/schema.js");
-  // `redirect_uris` is plain `text` holding a JSON-serialized array, the
-  // shape the Better Auth adapter writes.
-  const redirectUrisValue = JSON.stringify(["http://localhost:5173/callback"]);
-  const insertOp = db.insert(schemaModule.auth_oauth_client).values({
-    id: clientPk,
-    clientId,
-    name: clientName,
-    redirectUris: redirectUrisValue,
-    disabled: false,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
-
-  const grant = await itemWrites(storage).create({
-    type: "system.connection",
-    tier: "library",
-    state: "active",
-    properties: {
-      kind: "app",
+  const approved = await request(ctx.app, "POST", "/auth/authorize/decision", {
+    headers: { origin, cookie: ctx.owner.cookie },
+    form: {
+      accept: "true",
       client_id: clientId,
-      user_id: authUserId,
+      oauth_query: consentUrl.search.slice(1),
       scopes,
-      status: "active",
-      granted_at: now.toISOString(),
     },
-    source: "test/oauth-bearer",
   });
-
-  // Mint the token pair via the plugin's storage helper. Hash the BARE
-  // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
-  // does — see middleware/auth.ts bearer path + the device-flow terminal
-  // in routes/auth-pages.ts for the canonical convention.
-  const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
-  const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
-  const { hashApiKey } = await import("./middleware/auth.js");
-  await storage.oauthProvider.mintTokenPair({
-    accessTokenHash: hashApiKey(
-      rawToken.slice("marfa_at_".length),
-      TEST_API_KEY_SALT,
-    ),
-    refreshTokenHash: hashApiKey(
-      rawRefresh.slice("marfa_rt_".length),
-      TEST_API_KEY_SALT,
-    ),
+  const location = approved.headers.get("location");
+  if (approved.status !== 302 || !location)
+    throw new Error(
+      `App approval returned ${String(approved.status)}: ${await approved.text()}`,
+    );
+  const code = new URL(location).searchParams.get("code");
+  if (!code) throw new Error("App approval returned no authorization code");
+  const exchanged = await checked(
+    await request(ctx.app, "POST", "/auth/oauth2/token", {
+      headers: { origin },
+      form: {
+        grant_type: "authorization_code",
+        client_id: clientId,
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      },
+    }),
+    200,
+  );
+  const grantId = await ctx.storage.oauthProvider?.findGrantItemId({
     clientId,
-    authUserId,
-    scopes,
-    accessTtlMs: 3600_000,
+    authUserId: ctx.owner.id,
   });
-
-  return { token: rawToken, grantId: grant.id, clientId };
-}
-
-/**
- * Put a password account behind the OAuth provider's sign-in page.
- *
- * Goes around `POST /owner`, through the seam the app exposes, so a test
- * can put any number of people behind the sign-in page without the one
- * owner the door allows.
- * The account arrives verified, so a test signs in through
- * `POST /auth/sign-in/email` (or the form at `POST /auth/sign-in`) right
- * away. A refusal throws rather than returning, because a fixture with no
- * user behind it fails somewhere far from here.
- */
-export async function createTestAccount(
-  ctx: { auth: MarfaAuth },
-  email: string,
-  password: string,
-  name?: string,
-): Promise<{ authUserId: string; email: string }> {
-  const result = await ctx.auth.createEmailAccount({ email, password, name });
-  if (!result.ok) {
-    throw new Error(`createTestAccount(${email}) refused: ${result.reason}`);
-  }
-  return { authUserId: result.authUserId, email: result.email };
+  if (!grantId) throw new Error("App consent did not create its grant");
+  return {
+    token: exchanged.access_token as string,
+    grantId,
+    clientId,
+    refreshToken: exchanged.refresh_token as string | undefined,
+  };
 }
 
 /**
@@ -375,27 +335,27 @@ export async function waitForConsentLockDepth(
   }
 }
 
-/**
- * A working credential, shaped the way the operator's `POST /keys` shapes
- * one for a body that names no narrowing: everything unless the caller
- * narrows it, and never the operator tier.
- *
- * For a test that needs a second working credential beside the one
- * `createTestContext` provisions, or a narrower one. Minting through the
- * store rather than the route keeps a fixture out of the operator key's way,
- * and the shape is the route's — `test-context-credentials.test.ts` is what
- * holds the two together.
- */
+export const TEST_MANAGEMENT_PERMISSIONS: Permission[] = [
+  "instance.read",
+  "instance.maintain",
+  "connectors.manage",
+  "blobs.manage",
+  "keys.manage",
+];
+export const TEST_CONTENT_PERMISSIONS = PERMISSIONS.filter(
+  (permission) => !TEST_MANAGEMENT_PERMISSIONS.includes(permission),
+);
+
+/** Issue an ordinary key through the owner's authenticated management operation. */
 export async function mintWorkingKey(
-  ctx: Pick<TestContext, "storage">,
-  options?: Partial<CreateKeyInput> & { rawKey?: string },
+  ctx: Pick<TestContext, "ownerRequest">,
+  options: Partial<CreateKeyInput> = {},
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = options?.rawKey ?? `marfa_k1_test_working_${suffix}`;
-  const input: Partial<CreateKeyInput> = { ...options };
-  delete (input as { rawKey?: string }).rawKey;
-  await ctx.storage.keys.create(
-    {
+  const response = await ctx.ownerRequest("/keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
       label: `test-working-key-${suffix}`,
       source: `test-working-key-${suffix}`,
       type_permissions: { "*": "write" },
@@ -403,22 +363,36 @@ export async function mintWorkingKey(
       edge_permissions: { "*": "write" },
       metadata_permissions: { "*": "write" },
       profile_permissions: { "*": "write" },
-      permissions: [...PERMISSIONS],
+      permissions: TEST_CONTENT_PERMISSIONS,
       default_tier: "library",
-      ...input,
-      is_operator: false,
-    },
-    hashApiKey(rawKey, SALT),
-  );
-  return rawKey;
+      ...options,
+    }),
+  });
+  if (response.status !== 201)
+    throw new Error(
+      `Key fixture returned ${String(response.status)}: ${await response.text()}`,
+    );
+  return ((await response.json()) as { key: string }).key;
 }
+
+export interface TestOwnerDetails {
+  email: string;
+  password: string;
+  name?: string;
+}
+export const TEST_OWNER: TestOwnerDetails = {
+  email: "owner@example.test",
+  password: "test owner password",
+  name: "Test Owner",
+};
 
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
+  ownerDetails: TestOwnerDetails = TEST_OWNER,
 ): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   try {
-    return await buildTestContext(tmpDir, overrides);
+    return await buildTestContext(tmpDir, overrides, ownerDetails);
   } catch (error) {
     // The only thing that removes this directory on the happy path is the
     // `cleanup` closure, and that closure does not exist until the build
@@ -431,12 +405,9 @@ export async function createTestContext(
 }
 
 /**
- * An app and its storage with nothing seeded: no key and no
- * `bootstrapped` sentinel. The shape a brand-new installation starts from, so
- * a test can drive the product's own first-mint doors rather than describing
- * what they produce.
+ * A fresh unclaimed instance for exercising the production claim operations.
  */
-export interface UnbootstrappedTestApp {
+export interface UnclaimedTestApp {
   app: TestApp;
   storage: Storage;
   blobs: BlobLayer;
@@ -447,10 +418,10 @@ export interface UnbootstrappedTestApp {
   auth: MarfaAuth;
 }
 
-async function buildUnbootstrappedApp(
+async function buildUnclaimedApp(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
-): Promise<UnbootstrappedTestApp> {
+): Promise<UnclaimedTestApp> {
   const blobPath = join(tmpDir, "blobs");
 
   const dbPath = join(tmpDir, "test.db");
@@ -536,12 +507,12 @@ async function buildUnbootstrappedApp(
  * Build an app with nothing seeded, in its own temporary directory. The
  * caller owns `cleanup`.
  */
-export async function createUnbootstrappedTestApp(
+export async function createUnclaimedTestApp(
   overrides?: Partial<AppConfig>,
-): Promise<UnbootstrappedTestApp> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-unbootstrapped-"));
+): Promise<UnclaimedTestApp> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-unclaimed-"));
   try {
-    return await buildUnbootstrappedApp(tmpDir, overrides);
+    return await buildUnclaimedApp(tmpDir, overrides);
   } catch (error) {
     rmSync(tmpDir, { recursive: true, force: true });
     throw error;
@@ -550,76 +521,57 @@ export async function createUnbootstrappedTestApp(
 
 async function buildTestContext(
   tmpDir: string,
-  overrides?: Partial<AppConfig>,
+  overrides: Partial<AppConfig> | undefined,
+  ownerDetails: TestOwnerDetails,
 ): Promise<TestContext> {
-  const { app, storage, blobs, housekeeping, config, cleanup, auth } =
-    await buildUnbootstrappedApp(tmpDir, overrides);
-
-  const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_test_operator_key_${suffix}`;
-  const keyHash = hashApiKey(rawKey, SALT);
-  await storage.keys.create(
+  const fresh = await buildUnclaimedApp(tmpDir, overrides);
+  const { code } = await issueSetupCode(fresh.storage);
+  const claimed = await claimOwner(fresh.storage, fresh.auth, {
+    ...ownerDetails,
+    proof: { kind: "code", code, address: "127.0.0.1" },
+  });
+  const origin = new URL(fresh.config.authBaseUrl).origin;
+  const signedIn = await request(fresh.app, "POST", "/auth/sign-in/email", {
+    headers: { origin },
+    body: { email: ownerDetails.email, password: ownerDetails.password },
+  });
+  if (signedIn.status !== 200)
+    throw new Error(
+      `Owner sign-in returned ${String(signedIn.status)}: ${await signedIn.text()}`,
+    );
+  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    signedIn.headers.get("set-cookie") ?? "",
+  )?.[1];
+  if (!cookie)
+    throw new Error("Owner sign-in did not issue its session cookie");
+  const owner = {
+    id: claimed.id,
+    email: claimed.email,
+    password: ownerDetails.password,
+    cookie,
+  };
+  const ownerRequest = (
+    path: string,
+    init: RequestInit = {},
+  ): Promise<Response> => {
+    const headers = new Headers(init.headers);
+    headers.set("cookie", cookie);
+    headers.set("origin", origin);
+    return Promise.resolve(fresh.app.request(path, { ...init, headers }));
+  };
+  const workingKey = await mintWorkingKey({ ownerRequest });
+  const managementKey = await mintWorkingKey(
+    { ownerRequest },
     {
-      label: "test-operator",
-      source: `test-operator-${suffix}`,
-      // **The shape bootstrap forces, stated in full.** The one
-      // unauthenticated mint takes nothing on any axis — five empty maps and
-      // an empty permission list — because running the instance sits outside
-      // the permission model rather than being a large set inside it.
-      //
-      // Named rather than left to the store's defaults so the fixture says
-      // what it is, and so a default that drifted would show up here.
-      // `test-context-credentials.test.ts` compares this row against one
-      // driven out of the real door.
       type_permissions: {},
       extension_permissions: {},
       edge_permissions: {},
       metadata_permissions: {},
       profile_permissions: {},
-      permissions: [],
-      default_tier: "library",
-      is_operator: true,
+      permissions: TEST_MANAGEMENT_PERMISSIONS,
     },
-    keyHash,
   );
-  await storage.settings.set("bootstrapped", "true");
-
-  // **The working key, minted here because the operator mints it there.**
-  // This fixture stamps the sentinel directly rather than driving the
-  // unauthenticated mint, so nothing else would create it.
-  //
-  // The wildcard maps and the whole permission list are what the operator's
-  // `POST /keys` hands back for a body that names no narrowing: a seed with
-  // no creator above it takes everything.
-  const workingRawKey = `marfa_k1_test_working_key_${suffix}`;
-  await storage.keys.create(
-    {
-      label: "test-working-key",
-      source: `test-working-${suffix}`,
-      type_permissions: { "*": "write" },
-      extension_permissions: { "*": "write" },
-      edge_permissions: { "*": "write" },
-      metadata_permissions: { "*": "write" },
-      profile_permissions: { "*": "write" },
-      permissions: [...PERMISSIONS],
-      default_tier: "library",
-      is_operator: false,
-    },
-    hashApiKey(workingRawKey, SALT),
-  );
-
-  return {
-    app,
-    storage,
-    blobs,
-    housekeeping,
-    config,
-    operatorKey: rawKey,
-    workingKey: workingRawKey,
-    tmpDir,
-    cleanup,
-    auth,
-  };
+  return { ...fresh, owner, ownerRequest, workingKey, managementKey };
 }
 
 export function request(
@@ -1031,27 +983,24 @@ export function gatedEventLog(base: Storage): {
  * Reads every type and no edge type unless `maps` says otherwise.
  */
 export function storedViewerKey(
-  storage: Storage,
+  ctx: TestContext,
   maps: Partial<CreateKeyInput> = {},
 ): MiddlewareHandler<AppEnv> {
   let minted: Promise<ApiKey> | undefined;
   return async (c, next) => {
     minted ??= (async () => {
-      const suffix = Math.random().toString(36).slice(2, 14);
-      return storage.keys.create(
-        {
-          label: `events-viewer-${suffix}`,
-          source: `events-viewer-${suffix}`,
-          type_permissions: { "*": "read" },
-          extension_permissions: {},
-          edge_permissions: {},
-          metadata_permissions: {},
-          permissions: [],
-          ...maps,
-          is_operator: false,
-        },
-        hashApiKey(`marfa_k1_events_viewer_${suffix}`, SALT),
-      );
+      const raw = await mintWorkingKey(ctx, {
+        type_permissions: { "*": "read" },
+        extension_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        profile_permissions: {},
+        permissions: [],
+        ...maps,
+      });
+      const row = await ctx.storage.keys.validate(hashApiKey(raw, SALT));
+      if (!row) throw new Error("The owner-issued event viewer key is missing");
+      return row;
     })();
     c.set("apiKey", await minted);
     await next();
@@ -1065,11 +1014,12 @@ export function storedViewerKey(
  * grants them.
  */
 export function eventsAppWithKey(
+  ctx: TestContext,
   storage: Storage,
   maps: Partial<CreateKeyInput> = {},
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(storage, maps));
+  app.use("*", storedViewerKey(ctx, maps));
   app.route("/events", eventRoutes(storage));
   return app;
 }

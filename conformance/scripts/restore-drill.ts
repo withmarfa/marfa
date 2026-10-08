@@ -240,11 +240,10 @@ async function call<T>(
   return { status: res.status, body: parsed as T };
 }
 
-/** A key that may write every type, minted through the operator's; the
- *  operator's own key runs the housekeeping door and nothing else. */
-async function mintWorkingKey(operator: Api): Promise<string> {
+/** A content key bounded by the provisioning credential's permissions. */
+async function mintWorkingKey(provisioner: Api): Promise<string> {
   const { status, body } = await call<{ key: string }>(
-    operator,
+    provisioner,
     "POST",
     "/keys",
     {
@@ -322,7 +321,7 @@ async function instanceId(api: Api): Promise<string> {
 }
 
 /** Every blob's bytes as the instance serves them, hashed. Asked with the
- *  operator's key, which reads every blob, the one nothing names included. */
+ *  blobs.manage credential, including the blob that nothing names. */
 async function blobsOverHttp(
   api: Api,
   hashes: string[],
@@ -446,10 +445,13 @@ async function deletePrefix(prefix: string): Promise<number> {
   return removed;
 }
 
-/** The operator's key and the url, from the env file a boot wrote. */
-function apiFor(state: string): Api {
+/** An ordinary fixture credential and URL from production provisioning. */
+function apiFor(state: string, management = false): Api {
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
-  return { url: env.MARFA_API_URL ?? "", key: env.MARFA_OPERATOR_KEY ?? "" };
+  const key = management ? env.MARFA_MANAGEMENT_KEY : env.MARFA_API_KEY;
+  if (!key || !env.MARFA_API_URL)
+    throw new Error("Fixture credentials are missing");
+  return { url: env.MARFA_API_URL, key };
 }
 
 async function main(): Promise<void> {
@@ -508,9 +510,9 @@ async function main(): Promise<void> {
     // 1. The source instance, replicating.
     process.env.S3_PREFIX = `${prefix}/blobs`;
     await bootServer({ state: sourceState });
-    const sourceOperator = apiFor(sourceState);
-    const workingKey = await mintWorkingKey(sourceOperator);
-    const source: Api = { url: sourceOperator.url, key: workingKey };
+    const sourceManagement = apiFor(sourceState, true);
+    const workingKey = await mintWorkingKey(apiFor(sourceState));
+    const source: Api = { url: sourceManagement.url, key: workingKey };
     litestreamPid = startLitestream(
       config,
       join(args.state, "litestream.log"),
@@ -550,7 +552,7 @@ async function main(): Promise<void> {
         body: `phase A note ${String(i)}`,
       });
     }
-    const copiedA = await replicateToZero(sourceOperator);
+    const copiedA = await replicateToZero(sourceManagement);
     await sleep(SYNC_SETTLE_MS);
     const phaseACount = Number(
       sqlite3(sourceDb, "SELECT count(*) FROM items;"),
@@ -576,9 +578,9 @@ async function main(): Promise<void> {
         body: `phase B note ${String(i)}`,
       });
     }
-    const copiedB = await replicateToZero(sourceOperator);
+    const copiedB = await replicateToZero(sourceManagement);
     const sourceInstance = await instanceId(source);
-    const sourceOverHttp = await blobsOverHttp(sourceOperator, hashes);
+    const sourceOverHttp = await blobsOverHttp(sourceManagement, hashes);
     // And the working key that sent a file's bytes and named them reads
     // them too, so the drill holds the reference index to what it lends.
     await blobsOverHttp(source, [small]);
@@ -627,11 +629,11 @@ async function main(): Promise<void> {
       readFileSync(join(sourceState, "env")),
     );
     await bootServer({ state: restoredState });
-    const restoredOperator = apiFor(restoredState);
-    const restored: Api = { url: restoredOperator.url, key: workingKey };
+    const restoredManagement = apiFor(restoredState, true);
+    const restored: Api = { url: restoredManagement.url, key: workingKey };
     const restoredInstance = await instanceId(restored);
-    const copiedBack = await replicateToZero(restoredOperator);
-    const restoredOverHttp = await blobsOverHttp(restoredOperator, hashes);
+    const copiedBack = await replicateToZero(restoredManagement);
+    const restoredOverHttp = await blobsOverHttp(restoredManagement, hashes);
     await blobsOverHttp(restored, [small]);
     await stopServer({ state: restoredState });
     const restoredOnDisk = blobsOnDisk(join(restoredState, "blobs"));

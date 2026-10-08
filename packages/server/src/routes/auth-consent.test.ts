@@ -15,17 +15,13 @@
  *   - GET /authorize renders 200 for clients with null client_name
  *     (DCR registration without client_name is RFC 7591-compliant)
  */
-import { itemWrites } from "../storage/item-writes.js";
-import { describe, it, expect, afterEach } from "vitest";
 import { makeSignature } from "better-auth/crypto";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { __test_internals } from "./auth-consent.js";
+import { afterEach, describe, expect, it } from "vitest";
 import { setActivePermissionBundles } from "../config.js";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
+import { __test_internals } from "./auth-consent.js";
 
 let ctx: TestContext | undefined;
 
@@ -94,9 +90,8 @@ async function seedClient(
  * value (already in `name=value` form, ready to thread into a `Cookie`
  * header on subsequent requests).
  */
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -278,7 +273,7 @@ describe("GET /auth/authorize (consent page)", () => {
     // chrome. Rejecting the submit later does not undo that: the page is
     // the payload.
     const clientId = await seedClient(ctx, { name: "Marfa Drive" });
-    const cookie = await signInUser(ctx, "forged-render@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -298,7 +293,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("REGRESSION: refuses to render a genuinely signed query past its exp", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "expired-render@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(clientId, "openid", {
       exp: String(Math.floor(Date.now() / 1000) - 1),
     });
@@ -322,7 +317,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("tells a link whose exp was edited into the past that it is invalid, not that it expired", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "edited-exp@example.com");
+    const cookie = await signInUser(ctx);
     // Signed while its window was open, then edited so the window reads as
     // closed. Its signature no longer matches what it carries.
     const genuine = new URLSearchParams(
@@ -343,7 +338,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("tells a signed link edited after signing that it is invalid, whether or not its window has closed", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "edited-scope@example.com");
+    const cookie = await signInUser(ctx);
     for (const exp of [
       String(Math.floor(Date.now() / 1000) + 600),
       String(Math.floor(Date.now() / 1000) - 60),
@@ -381,7 +376,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("F9: sets Cache-Control: no-store on the rendered consent page", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f9@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -400,7 +395,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("F12: renders 200 for clients with null client_name (uses clientId as display)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: null });
-    const cookie = await signInUser(ctx, "f12@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -417,14 +412,21 @@ describe("GET /auth/authorize (consent page)", () => {
   it("enumerates the registered custom types under a requested user.* wildcard", async () => {
     // The enumeration resolves the consenting user through the `users`
     // store, which only sign-up provisions.
-    ctx = await createTestContext({});
+    ctx = await createTestContext(
+      {},
+      {
+        email: "custom-types@example.com",
+        password: "correct horse battery",
+        name: "Test User",
+      },
+    );
     const clientId = await seedClient(ctx, { name: "Custom Types App" });
 
     // Sign up capturing the auth user id, so the account the enumeration
     // reads for is resolvable — the shared signInUser helper discards it.
     const email = "custom-types@example.com";
     const password = "correct horse battery";
-    await createTestAccount(ctx, email, password, "Test User");
+
     const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
       body: { email, password },
       headers: { origin: ORIGIN },
@@ -463,7 +465,7 @@ describe("GET /auth/authorize (consent page)", () => {
     ctx = await createTestContext({});
     // Default seedClient shape is public (token_endpoint_auth_method: none).
     const clientId = await seedClient(ctx, { name: "Google Drive" });
-    const cookie = await signInUser(ctx, "unverified-app@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -483,7 +485,7 @@ describe("GET /auth/authorize (consent page)", () => {
       name: "Secret App",
       confidential: true,
     });
-    const cookie = await signInUser(ctx, "secret-app@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -501,7 +503,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("404s when client genuinely does not exist", async () => {
     ctx = await createTestContext({});
     // Don't seed the client.
-    const cookie = await signInUser(ctx, "missing-client@example.com");
+    const cookie = await signInUser(ctx);
     const res = await request(
       ctx.app,
       "GET",
@@ -514,7 +516,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("renders OIDC scopes as profile toggles plus hidden mechanism fields", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f11-oidc@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -540,7 +542,7 @@ describe("GET /auth/authorize (consent page)", () => {
   it("renders an edge scope as a per-type toggle carrying the concrete literal", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f11-edge@example.com");
+    const cookie = await signInUser(ctx);
 
     const res = await request(
       ctx.app,
@@ -611,7 +613,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F2: accept=true with zero selected scopes redirects to consent with error (no projection)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f2@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -644,7 +646,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("REGRESSION: the zero-scope bounce keeps the signed query intact, so the retry works", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "zero-scope-retry@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -685,10 +687,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     async (failureMode) => {
       ctx = await createTestContext({});
       const clientId = await seedClient(ctx);
-      const cookie = await signInUser(
-        ctx,
-        `invalid-query-${failureMode}@example.com`,
-      );
+      const cookie = await signInUser(ctx);
       const wideScopes = ["openid", "core.note:read", "core.note:write"];
 
       const firstQuery = await buildSignedOauthQuery(
@@ -783,7 +782,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("stamps Cache-Control: no-store on the redirect it hands back, accepted or refused", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "decision-no-store@example.com");
+    const cookie = await signInUser(ctx);
 
     // The accepted decision is the primary code-bearing redirect on the
     // whole auth surface: its `Location` carries a single-use
@@ -826,7 +825,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F1+F7: projection uses client_id from oauth_query (NOT the form's client_id) + audit row carries client_ip", async () => {
     ctx = await createTestContext({});
     const realClientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f1@example.com");
+    const cookie = await signInUser(ctx);
 
     // Hostile form: oauth_query (the signed source-of-truth) names the
     // REAL client, but the form's client_id field claims a different one.
@@ -877,7 +876,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F3+F6: re-consent updates projection in place (no duplicate) + flips status to active + clears revoked_at + bumps version", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f3@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -945,7 +944,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F4: re-consent with narrowed scopes revokes the grant's existing access tokens", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f4@example.com");
+    const cookie = await signInUser(ctx);
 
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
@@ -1036,7 +1035,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("REGRESSION: a narrowing whose token revocation fails does not report success", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "revoke-fails@example.com");
+    const cookie = await signInUser(ctx);
     const wide = ["openid", "core.note:read", "core.note:write"];
     const oauthQuery = await buildSignedOauthQuery(clientId, wide.join(" "));
 
@@ -1091,7 +1090,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F4: re-consent with SAME scopes leaves access tokens alone (no narrowing → no revoke)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f4-same@example.com");
+    const cookie = await signInUser(ctx);
 
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
@@ -1172,7 +1171,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F4: re-consent that widens a grant leaves access tokens alone", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f4-widen@example.com");
+    const cookie = await signInUser(ctx);
 
     const narrowQuery = await buildSignedOauthQuery(
       clientId,
@@ -1256,7 +1255,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "f1-scope@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1300,7 +1299,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   it("rejects a cross-origin POST (non-allowlisted Origin) with 403, before any projection", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "csrf-origin@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1328,7 +1327,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
   it("rejects a cross-origin POST inferred from Referer (no Origin header) with 403", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "csrf-referer@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1356,7 +1355,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     // Default test config: authBaseUrl = http://localhost:0, corsOrigins = [].
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "csrf-same@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1379,13 +1378,13 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     expect(items.data.length).toBe(1);
   });
 
-  it("allows a same-origin POST whose Origin is a CORS_ORIGINS entry", async () => {
+  it("refuses an app origin even when it is a CORS_ORIGINS entry", async () => {
     const allowedOrigin = "https://app.example.com";
     ctx = await createTestContext({
       corsOrigins: [allowedOrigin],
     });
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "csrf-cors@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1400,18 +1399,18 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
       },
       headers: { cookie, origin: allowedOrigin },
     });
-    expect(res.status).toBe(302);
+    expect(res.status).toBe(403);
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
-    expect(items.data.length).toBe(1);
+    expect(items.data.length).toBe(0);
   });
 
   it("passes a POST with no Origin or Referer to the proxy hop, where Better Auth refuses it", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "csrf-absent@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read",
@@ -1487,7 +1486,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     setActivePermissionBundles(BUNDLES);
     try {
       const clientId = await seedClient(ctx);
-      const cookie = await signInUser(ctx, "default-on@example.com");
+      const cookie = await signInUser(ctx);
       const requested = "openid core.note:read core.task:write";
       const oauthQuery = await buildSignedOauthQuery(clientId, requested);
 
@@ -1543,7 +1542,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     setActivePermissionBundles(BUNDLES);
     try {
       const clientId = await seedClient(ctx);
-      const cookie = await signInUser(ctx, "reconsent@example.com");
+      const cookie = await signInUser(ctx);
       const requested = "openid core.note:read core.task:write";
 
       const firstQuery = await buildSignedOauthQuery(clientId, requested);
@@ -1618,7 +1617,7 @@ describe("a scope named twice is stored once", () => {
   it("writes one copy when the request names the literal twice", async () => {
     ctx = await createTestContext();
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "dupe-request@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "core.note:read core.note:read core.task:read",
@@ -1667,7 +1666,7 @@ describe("a scope named twice is stored once", () => {
     // the screen rendered.
     ctx = await createTestContext();
     const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx, "dupe-form@example.com");
+    const cookie = await signInUser(ctx);
     const oauthQuery = await buildSignedOauthQuery(clientId, "core.note:read");
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {

@@ -13,10 +13,10 @@
  * the plugin stamps the column on end-session is its own behavior and is
  * verified against a running deployment rather than re-implemented here.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
-import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -55,11 +55,7 @@ describe("a revoked OAuth access token", () => {
     // `keys.mint` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
-    const { token, clientId } = await seedOauthBearer(
-      ctx.storage,
-      ["keys.mint"],
-      {},
-    );
+    const { token, clientId } = await seedOauthBearer(ctx, ["keys.mint"], {});
 
     // The token is live: an hour of expiry left, and it authenticates.
     const before = await request(ctx.app, "GET", "/keys", { key: token });
@@ -78,11 +74,7 @@ describe("a revoked OAuth access token", () => {
     // `keys.mint` because the probe below uses `/keys` to ask whether
     // the token authenticates at all. The question is revocation; the door is
     // incidental, and it now wants the scope.
-    const { token, clientId } = await seedOauthBearer(
-      ctx.storage,
-      ["keys.mint"],
-      {},
-    );
+    const { token, clientId } = await seedOauthBearer(ctx, ["keys.mint"], {});
 
     const { hashApiKey } = await import("../middleware/auth.js");
     const { TEST_API_KEY_SALT } = await import("../test-utils.js");

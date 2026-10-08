@@ -43,7 +43,7 @@ async function instance(label: string): Promise<Instance> {
     writer: () =>
       new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey }),
     operator: () =>
-      new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.operatorKey }),
+      new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.managementKey }),
   };
 }
 

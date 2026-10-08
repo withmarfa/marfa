@@ -10,8 +10,10 @@
  * subscriptions from its next token. Revoking the grant is, and narrowing it
  * narrows what is sent.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Item } from "@withmarfa/shared";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import { __resetEventLogForTests, initEventLog, publish } from "../pubsub.js";
 import {
   createTestContext,
   request,
@@ -19,8 +21,6 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { initEventLog, __resetEventLogForTests, publish } from "../pubsub.js";
 import { WebhookPoller, WebhookScheduler } from "./delivery.js";
 import type { WebhookHttpClient, WebhookPost } from "./outbound-http.js";
 
@@ -63,42 +63,23 @@ function rawRun(query: string, params: unknown[]): Promise<unknown> {
 
 /** A consented grant and a first token under it. */
 async function grant(scopes = SCOPES) {
-  const seeded = await seedOauthBearer(ctx.storage, scopes);
+  const seeded = await seedOauthBearer(ctx, scopes);
   const row = await provider().validateAccessToken(
     hashApiKey(seeded.token.slice("marfa_at_".length), TEST_API_KEY_SALT),
   );
   if (!row?.userId) throw new Error("the seeded token did not resolve");
-  await provider().upsertConsent({
-    clientId: seeded.clientId,
-    authUserId: row.userId,
-    scopes,
-  });
   return {
     clientId: seeded.clientId,
+    grantId: seeded.grantId,
     userId: row.userId,
     first: seeded.token,
     firstId: row.id,
   };
 }
 
-/** Another token under the same grant, as a refresh mints one. */
+/** The owner approves another token for the same registered app. */
 async function nextToken(g: { clientId: string; userId: string }) {
-  const raw = `marfa_at_next_${Math.random().toString(36).slice(2)}`;
-  await provider().mintTokenPair({
-    accessTokenHash: hashApiKey(
-      raw.slice("marfa_at_".length),
-      TEST_API_KEY_SALT,
-    ),
-    refreshTokenHash: hashApiKey(
-      `refresh_${Math.random().toString(36).slice(2)}`,
-      TEST_API_KEY_SALT,
-    ),
-    clientId: g.clientId,
-    authUserId: g.userId,
-    scopes: SCOPES,
-    accessTtlMs: 3600_000,
-  });
-  return raw;
+  return (await seedOauthBearer(ctx, SCOPES, { clientId: g.clientId })).token;
 }
 
 async function register(token: string): Promise<string> {
@@ -195,15 +176,16 @@ describe("a signed-in app's subscription", () => {
       1,
     );
 
-    await provider().revokeTokensForGrant(g.clientId, g.userId);
+    expect(
+      (
+        await ctx.ownerRequest(`/auth/grants/${g.grantId}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(204);
     expect(await ctx.storage.outboundWebhooks.get(id)).toBeNull();
 
-    // The same person consents to the same app again.
-    await provider().upsertConsent({
-      clientId: g.clientId,
-      authUserId: g.userId,
-      scopes: SCOPES,
-    });
+    // The same owner consents to the same app again.
     const reconnected = await nextToken(g);
     expect(await delivered([item("01HAFTERRECONNECTAFTERR00")])).toEqual([]);
     const listed = (await (
@@ -216,30 +198,22 @@ describe("a signed-in app's subscription", () => {
     ).toBe(404);
   });
 
-  it("is not another person's on the same app", async () => {
+  it("is not another app's for the same owner", async () => {
     const g = await grant();
     const id = await register(g.first);
-    const other = await seedOauthBearer(ctx.storage, SCOPES);
-    const otherRow = await provider().validateAccessToken(
-      hashApiKey(other.token.slice("marfa_at_".length), TEST_API_KEY_SALT),
-    );
-    if (!otherRow?.userId) throw new Error("the second person did not resolve");
-    // The same app, another person.
-    const sameApp = await nextToken({
-      clientId: g.clientId,
-      userId: otherRow.userId,
-    });
+    const other = await seedOauthBearer(ctx, SCOPES);
+    const otherApp = other.token;
     // The witness: the owner reads it.
     expect(
       (await request(ctx.app, "GET", `/webhooks/${id}`, { key: g.first }))
         .status,
     ).toBe(200);
     expect(
-      (await request(ctx.app, "GET", `/webhooks/${id}`, { key: sameApp }))
+      (await request(ctx.app, "GET", `/webhooks/${id}`, { key: otherApp }))
         .status,
     ).toBe(404);
     const listed = (await (
-      await request(ctx.app, "GET", "/webhooks", { key: sameApp })
+      await request(ctx.app, "GET", "/webhooks", { key: otherApp })
     ).json()) as { data: unknown[] };
     expect(listed.data).toEqual([]);
   });
@@ -251,17 +225,21 @@ describe("a signed-in app's subscription", () => {
     expect(await delivered([item("01HBEFOREREVOKEBEFOREREV0")])).toHaveLength(
       1,
     );
-    await provider().revokeTokensForGrant(g.clientId, g.userId);
+    expect(
+      (
+        await ctx.ownerRequest(`/auth/grants/${g.grantId}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(204);
     expect(await delivered([item("01HAFTERREVOKEAFTERREVOK0")])).toEqual([]);
   });
 
   it("narrows its deliveries when the grant is narrowed", async () => {
     const g = await grant();
     await register(g.first);
-    await provider().upsertConsent({
+    await seedOauthBearer(ctx, ["core.note:read", "webhooks.manage"], {
       clientId: g.clientId,
-      authUserId: g.userId,
-      scopes: ["core.note:read", "webhooks.manage"],
     });
     expect(
       await delivered([

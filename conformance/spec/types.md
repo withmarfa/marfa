@@ -692,23 +692,23 @@ The server MUST ship `system.connection` with `kind` taking `app` alone, a descr
 
 ## The platform registry
 
-The registry rows of shipped types are the platform's. An instance upgraded past a build that shipped a type keeps its row, drifted, until the operator removes it.
+The registry rows of shipped types are the platform's. An instance upgraded past a build that shipped a type keeps its row, drifted, until an authorized caller removes it.
 
 ### `types/platform-drift`
 
-When the operator key sends `GET /platform-types/drift`, the server MUST list each platform row the build no longer ships, with its `item_count`, `child_types` and whether it is `removable`.
+When a caller with `instance.read` or direct owner or local authority sends `GET /platform-types/drift`, the server MUST list each platform row the build no longer ships, with its `item_count`, `child_types` and whether it is `removable`.
 
 **Tests:** `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
 
 ### `types/platform-remove`
 
-When the operator key sends `DELETE /platform-types/{id}` for a drifted type no item holds and no type names as parent, the server MUST remove it and answer `200` with `removed: true`.
+When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no type names as parent, the server MUST remove it and answer `200` with `removed: true`.
 
 **Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
 
 ### `types/platform-remove-audit`
 
-When `DELETE /platform-types/{id}` removes a type, the server MUST record a `platform_type.removed` entry at `GET /audit` naming the type and the operator key.
+When `DELETE /platform-types/{id}` removes a type, the server MUST record a `platform_type.removed` entry at `GET /audit` naming the type and the acting authority.
 
 **Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
 
@@ -726,6 +726,6 @@ If `DELETE /platform-types/{id}` names an identifier no registry row carries, th
 
 ### `types/platform-operator-only`
 
-If a credential other than the operator key sends `GET /platform-types/drift` or `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
+If a credential lacking `instance.read` sends `GET /platform-types/drift`, or one lacking `instance.maintain` sends `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/platform-types.test.ts › refuses removal to a working key`, `› refuses the listing to a working key and to no credential`.
+**Tests:** `compliance/platform-types.test.ts › refuses removal without instance.maintain`, `› refuses the listing without instance.read and to no credential`.

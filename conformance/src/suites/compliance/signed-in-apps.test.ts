@@ -1,6 +1,6 @@
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -11,13 +11,12 @@ import {
  * An app signing in through the authorization flow, from registration to a
  * refreshed token, driven the way a browser and an app drive it. A person
  * has to be signed in, and an instance has one owner, so this file boots a
- * server of its own, with the limiter on, and creates the owner there.
+ * server of its own, with the limiter on, and claims its owner through the production local command.
  */
 let server: FreshServer | undefined;
 let origin: string;
 let cookie: string;
 
-const OWNER = { email: "apps@example.com", password: "correct horse battery" };
 const CALLBACK = "http://127.0.0.1:9/callback";
 const REGISTERED = "core.note:read offline_access";
 /** A scope the instance publishes to every client and the client did not
@@ -32,11 +31,6 @@ beforeAll(async () => {
   server = await bootFreshServer("signed-in-apps", {
     RATE_LIMIT_ENABLED: "true",
   });
-  const operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  });
-  expect((await operator.createOwner(OWNER)).status).toBe(201);
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );

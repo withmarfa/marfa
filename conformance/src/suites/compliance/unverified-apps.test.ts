@@ -1,5 +1,5 @@
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -14,24 +14,18 @@ import {
  * the witness that the page shows the caution at all.
  *
  * Approving needs the owner signed in, and an instance has one owner, so this
- * file boots a server of its own and creates the owner there.
+ * file boots a server of its own and claims its owner through the production local command.
  */
 let server: FreshServer | undefined;
 let origin: string;
 let cookie: string;
 
-const OWNER = { email: "apps@example.com", password: "correct horse battery" };
 const CALLBACK = "http://127.0.0.1:9/callback";
 const CAUTION = "hasn't verified this app";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 beforeAll(async () => {
   server = await bootFreshServer("unverified-apps");
-  const operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  });
-  expect((await operator.createOwner(OWNER)).status).toBe(201);
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );

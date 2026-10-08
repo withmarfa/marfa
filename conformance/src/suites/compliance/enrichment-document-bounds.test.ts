@@ -42,7 +42,7 @@ function clients(): void {
   });
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
 }
 

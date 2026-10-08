@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
+import { createTestContext, request, type TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 beforeAll(async () => {
@@ -91,7 +91,7 @@ it("runs native stores and registered cleanup jobs at accepted maximums and zero
         ctx.app,
         "POST",
         `/housekeeping/${name}/run`,
-        { key: ctx.operatorKey },
+        { key: ctx.managementKey },
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
@@ -147,7 +147,7 @@ it("keeps witnessed expired rows at zero and expires them through the registered
         ctx.app,
         "POST",
         `/housekeeping/${name}/run`,
-        { key: ctx.operatorKey },
+        { key: ctx.managementKey },
       );
       expect(await response.json()).toMatchObject({
         outcome: "ok",
@@ -191,7 +191,7 @@ it("runs each affected registered job with maximum environment defaults", async 
         maximum.app,
         "POST",
         `/housekeeping/${name}/run`,
-        { key: maximum.operatorKey },
+        { key: maximum.managementKey },
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({

@@ -10,21 +10,21 @@ An endpoint belongs to one registration, which holds at most ten live endpoints.
 
 ### `inbound-webhooks/endpoint-created`
 
-When the connector's own key or the operator key sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
+When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
 ### `inbound-webhooks/endpoint-live`
 
 When the server answers a new endpoint, the server MUST give its `retired_at` as `null`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
 ### `inbound-webhooks/endpoint-path-form`
 
 When the server answers a new endpoint, the server MUST give its `path` as `/inbound/` and 43 characters of base64url.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
 ### `inbound-webhooks/endpoint-path-redacted`
 
@@ -32,13 +32,13 @@ When the server answers an endpoint, other than in the answer to the `POST /conn
 
 **Reason:** the address is the credential.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`, `› retires an endpoint, after which its address is not served`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`, `› retires an endpoint, after which its address is not served`.
 
 ### `inbound-webhooks/endpoint-header-lowercased`
 
 When `POST /connectors/{id}/endpoints` names a `duplicate_header`, the server MUST answer it lowercased.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
 ### `inbound-webhooks/endpoint-label-bounds`
 
@@ -54,7 +54,7 @@ If `POST /connectors/{id}/endpoints` names a `duplicate_header` that is not an H
 
 ### `inbound-webhooks/endpoint-other-refused`
 
-If a key that is neither the connector's own nor the operator key sends `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELETE /connectors/{id}/endpoints/{endpoint_id}`, then the server MUST answer `403 forbidden`.
+If a key or app token that is not the connector's own and lacks `connectors.manage` sends `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELETE /connectors/{id}/endpoints/{endpoint_id}`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses another key, an unknown registration and a header that is no header name`.
 
@@ -66,19 +66,19 @@ If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELET
 
 ### `inbound-webhooks/endpoint-list`
 
-When the connector's own key or the operator key sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
+When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`, `› retires an endpoint, after which its address is not served`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`, `› retires an endpoint, after which its address is not served`.
 
 ### `inbound-webhooks/endpoint-list-newest-first`
 
 When the server lists endpoints, the server MUST list the newest endpoint first.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the operator, answering its address once`.
+**Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
 ### `inbound-webhooks/endpoint-list-whole`
 
-When the connector's own key or the operator key sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
+When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
 
 **Reason:** the operation takes no `limit` and no `cursor`.
 
@@ -92,7 +92,7 @@ If a registration holds ten live endpoints and the server would otherwise take a
 
 ### `inbound-webhooks/order-body-before-endpoint-limit`
 
-If the connector's own key or the operator key sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
+If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a body the door refuses 400 before the limit of ten live endpoints' 409`.
 
@@ -110,7 +110,7 @@ When twenty requests to `POST /connectors/{id}/endpoints` arrive at once for a r
 
 ### `inbound-webhooks/endpoint-retire`
 
-When the connector's own key or the operator key sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
+When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`.
 
@@ -128,7 +128,7 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 ### `inbound-webhooks/endpoint-retire-unknown`
 
-If the connector's own key or the operator key sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
+If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
@@ -598,9 +598,9 @@ If `GET /connectors/{id}/deliveries` names a query key the operation does not de
 
 ### `inbound-webhooks/deliveries-own-key-only`
 
-If a key that is not the connector's own, the operator key included, sends `GET /connectors/{id}/deliveries`, `GET /connectors/{id}/deliveries/{delivery_id}/body` or `POST /connectors/{id}/deliveries/handled`, then the server MUST answer `403 forbidden`.
+If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `GET /connectors/{id}/deliveries`, `GET /connectors/{id}/deliveries/{delivery_id}/body` or `POST /connectors/{id}/deliveries/handled`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › reads and marks to the connector's own key alone`.
+**Tests:** `compliance/inbound-webhooks.test.ts › reads and marks to the connector's own key alone`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
 
 ### `inbound-webhooks/deliveries-other-keeps`
 
@@ -818,7 +818,7 @@ Where the retention of handled deliveries or of unhandled ones is 0, when the `i
 
 ## The cleanup job
 
-`inbound-delivery-cleanup` is one of the jobs `housekeeping.md` lists, and the operator key runs it with `POST /housekeeping/inbound-delivery-cleanup/run`.
+`inbound-delivery-cleanup` is one of the jobs `housekeeping.md` lists, and a caller with `instance.maintain` runs it with `POST /housekeeping/inbound-delivery-cleanup/run`.
 
 ### `inbound-webhooks/cleanup-result`
 

@@ -1,8 +1,8 @@
 /**
  * What an archive may write, and what a refused restore may leave behind.
  *
- * An archive is a file somebody can hand you. Restore is operator-key
- * gated, so this is trust-boundary erosion rather than an open door, but a
+ * Full archive restore requires direct authority, but a supplied file
+ * still needs validation. A
  * replay through the raw edge insert (no registry lookup, no endpoint-type
  * constraints, no cardinality, no cycle check, no self-edge guard, no
  * duplicate guard) would let a hand-edited archive plant relationships the
@@ -12,14 +12,14 @@
  * which is many-to-many with `["*"]` on both ends: the one core edge type
  * for which the missing validation would make no observable difference.
  */
-import { createGzip } from "node:zlib";
-import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
-import { describe, expect, it, afterAll, afterEach } from "vitest";
+import { Readable } from "node:stream";
+import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { createTestContext } from "../test-utils.js";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { createTestContext } from "../test-utils.js";
 
 const contexts: TestContext[] = [];
 
@@ -115,7 +115,7 @@ const A = "01912345-0000-7000-8000-0000000000a1";
 const B = "01912345-0000-7000-8000-0000000000b2";
 const C = "01912345-0000-7000-8000-0000000000c3";
 
-/** Restore an archive. The route is operator-gated. */
+/** Restore through the recently authenticated owner session. */
 async function restoreInto(
   ctx: TestContext,
   archive: Buffer,
@@ -123,7 +123,8 @@ async function restoreInto(
   return ctx.app.request(`/restore`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.operatorKey}`,
+      cookie: ctx.owner.cookie,
+      origin: new URL(ctx.config.authBaseUrl).origin,
       "Content-Type": "application/gzip",
     },
     body: archive,

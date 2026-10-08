@@ -11,32 +11,22 @@ use crate::values::Tier;
 
 #[derive(Debug, Subcommand)]
 pub enum KeysCommand {
-    /// Mint a fresh instance's operator key with the one-time secret it
-    /// printed to its log. The secret is read from `--secret` or from stdin.
-    /// The operator key is not a working key: the next call is `keys create`
-    /// with it.
-    Bootstrap {
-        /// The bootstrap secret from the server's log. Left out, it is read
-        /// from stdin, which keeps it out of the shell's history.
-        #[arg(long, value_name = "SECRET")]
-        secret: Option<String>,
-    },
-    /// Mint a key. Needs `keys.mint`, or the operator key.
+    /// Mint a key. Needs `keys.mint` or direct owner/local authority.
     ///
     /// The key holds exactly what the flags name. A permission, a map entry
     /// or a claim each names a part of what it holds, and a part left
     /// unnamed is held as nothing. With none named, the key takes the
     /// caller's whole set.
     Create(KeyCreateArgs),
-    /// Every key, without plaintext. Needs `keys.mint`, or the operator key.
+    /// List key metadata. Needs `keys.manage` or direct owner/local authority.
     List,
     /// The key this call bears, without plaintext: what it holds and what it
     /// claims. Any key may read itself.
     Current,
-    /// Change a key's label, tier or permission maps. Needs `keys.mint`.
+    /// Change a key's label, tier or permission maps. Needs `keys.manage` or direct owner/local authority.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
-    /// `keys.mint`, or the operator key.
+    /// `keys.manage` or direct owner/local authority.
     Revoke {
         /// The key id.
         id: String,
@@ -65,6 +55,16 @@ pub enum Permission {
     AuditRead,
     #[value(name = "grants.manage")]
     GrantsManage,
+    #[value(name = "instance.read")]
+    InstanceRead,
+    #[value(name = "instance.maintain")]
+    InstanceMaintain,
+    #[value(name = "connectors.manage")]
+    ConnectorsManage,
+    #[value(name = "blobs.manage")]
+    BlobsManage,
+    #[value(name = "keys.manage")]
+    KeysManage,
 }
 
 impl Permission {
@@ -77,6 +77,11 @@ impl Permission {
             Permission::ConfigManage => "config.manage",
             Permission::AuditRead => "audit.read",
             Permission::GrantsManage => "grants.manage",
+            Permission::InstanceRead => "instance.read",
+            Permission::InstanceMaintain => "instance.maintain",
+            Permission::ConnectorsManage => "connectors.manage",
+            Permission::BlobsManage => "blobs.manage",
+            Permission::KeysManage => "keys.manage",
         }
     }
 }
@@ -180,9 +185,7 @@ pub struct KeyCreateArgs {
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
-    /// Mint a second operator key, which holds nothing. Operator only.
-    #[arg(long)]
-    pub operator: bool,
+
     /// A key that holds nothing at all, asked for out loud.
     #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions"])]
     pub no_permissions: bool,
@@ -264,12 +267,6 @@ impl ClaimArgs {
     }
 }
 
-pub fn bootstrap_request() -> Request {
-    Request::post(&["keys"])
-        .json(json!({ "label": "operator", "source": "operator" }))
-        .minting()
-}
-
 pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     body.insert("label".into(), Value::String(args.label.clone()));
@@ -284,9 +281,6 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
         "default_tier",
         args.default_tier.map(Tier::as_str),
     );
-    if args.operator {
-        body.insert("is_operator".into(), Value::Bool(true));
-    }
     Ok(Request::post(&["keys"]).json(Value::Object(body)).minting())
 }
 
@@ -331,17 +325,6 @@ pub fn revoke_request(id: &str) -> Request {
 
 pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
-        KeysCommand::Bootstrap { secret } => {
-            let secret = match secret {
-                Some(secret) => secret.clone(),
-                None => read_line(
-                    "no bootstrap secret: pass --secret, or write the secret from the server's log on stdin",
-                )?,
-            };
-            // Whatever key the environment holds: a fresh instance has none.
-            let minted = Remote::keyed(remote.url(), &secret)?.json(&bootstrap_request())?;
-            return print_minted(&minted, out);
-        }
         KeysCommand::Create(args) => create_request(args)?,
         KeysCommand::List => list_request(),
         KeysCommand::Current => current_request(),

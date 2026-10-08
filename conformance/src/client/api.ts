@@ -1,4 +1,5 @@
 import { ofetch, type FetchOptions } from "ofetch";
+import { authenticateOwner, withOwnerSession } from "./owner-session.js";
 import type {
   ApiResponse,
   MarfaItem,
@@ -52,7 +53,10 @@ import type {
 
 export interface MarfaClientOptions {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
+  ownerCookie?: string;
+  ownerSessionFile?: string;
+  ownerCredentials?: { email: string; password: string };
 }
 
 export interface CreateItemInput {
@@ -137,10 +141,64 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
+  private ownerCookie: string | undefined;
+  private ownerCredentials: MarfaClientOptions["ownerCredentials"];
+  private ownerSessionFile: string | undefined;
+  private ownerAuthenticatedAt = 0;
+  private ownerAuthentication: Promise<void> | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.apiKey = options.apiKey;
+    this.apiKey = options.apiKey ?? "";
+    this.ownerCookie = options.ownerCookie;
+    this.ownerSessionFile = options.ownerSessionFile;
+    this.ownerCredentials = options.ownerCredentials;
+  }
+
+  /** Long-running fixtures reauthenticate through the real sign-in operation. */
+  private async ensureRecentOwner(): Promise<void> {
+    const credentials = this.ownerCredentials;
+    if (
+      !credentials ||
+      !this.ownerCookie ||
+      Date.now() - this.ownerAuthenticatedAt < 240_000
+    )
+      return;
+    if (this.ownerAuthentication) return this.ownerAuthentication;
+    const authenticate = async (save?: (cookie: string) => Promise<void>) => {
+      const session = await authenticateOwner(
+        this.baseUrl,
+        this.ownerCookie,
+        credentials,
+      );
+      this.ownerCookie = session.cookie;
+      this.ownerAuthenticatedAt = session.authenticatedAt;
+      await save?.(session.cookie);
+    };
+    this.ownerAuthentication = this.ownerSessionFile
+      ? withOwnerSession(this.ownerSessionFile, async (session, save) => {
+          if (
+            session.baseUrl !== this.baseUrl ||
+            typeof session.cookie !== "string"
+          )
+            throw new Error(
+              "Shared owner session does not match the target instance",
+            );
+          this.ownerCookie = session.cookie;
+          await authenticate(save);
+        })
+      : authenticate();
+    try {
+      await this.ownerAuthentication;
+    } finally {
+      this.ownerAuthentication = undefined;
+    }
+  }
+
+  private authHeaders(): Record<string, string> {
+    return this.ownerCookie === undefined
+      ? { Authorization: `Bearer ${this.apiKey}` }
+      : { cookie: this.ownerCookie, origin: new URL(this.baseUrl).origin };
   }
 
   /**
@@ -442,7 +500,7 @@ export class MarfaClient {
     const url = `${this.baseUrl}/export?${params.toString()}`;
     try {
       const response = await ofetch.raw(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { ...this.authHeaders() },
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -634,7 +692,7 @@ export class MarfaClient {
     }
   }
 
-  /** Restore an archive. The operator key only. */
+  /** Restore an archive with recent owner authentication. */
   async restoreArchive(
     archive: ArrayBuffer | Uint8Array,
   ): Promise<ApiResponse<RestoreArchiveResponse>> {
@@ -1027,7 +1085,7 @@ export class MarfaClient {
   ): Promise<Response> {
     return fetch(
       `${this.baseUrl}/connectors/${id}/deliveries/${deliveryId}/body`,
-      { headers: { Authorization: `Bearer ${this.apiKey}` } },
+      { headers: { ...this.authHeaders() } },
     );
   }
 
@@ -1298,13 +1356,14 @@ export class MarfaClient {
     );
   }
 
-  /** `GET /owner`: the operator key only. */
+  /** `GET /owner`: direct owner or local authority. */
   async getOwner(): Promise<ApiResponse<Owner>> {
     return this.request<Owner>("/owner");
   }
 
-  /** `POST /owner`: the operator key only. */
+  /** `POST /owner`: one-time machine-issued claim proof. */
   async createOwner(body: {
+    code?: string;
     email: string;
     password: string;
     name?: string;
@@ -1312,7 +1371,7 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `GET /platform-types/drift`: the operator key only. */
+  /** `GET /platform-types/drift`: requires instance.read. */
   async listPlatformTypeDrift(): Promise<
     ApiResponse<
       PaginatedResult<{
@@ -1327,7 +1386,7 @@ export class MarfaClient {
   }
 
   /**
-   * `DELETE /platform-types/{id}`: the operator key only.
+   * `DELETE /platform-types/{id}`: requires instance.maintain.
    *
    * Encoded because the identifier is the last segment: a `?` or a `#`
    * in one would otherwise end the path early and the door would answer a
@@ -1430,9 +1489,15 @@ export class MarfaClient {
     path: string,
     options: FetchOptions = {},
   ): Promise<ApiResponse<T>> {
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(
+        String(options.method ?? "GET").toUpperCase(),
+      )
+    )
+      await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
+      ...this.authHeaders(),
       ...((options.headers as Record<string, string>) ?? {}),
     };
 
@@ -1488,7 +1553,7 @@ export class MarfaClient {
     try {
       const response = await ofetch.raw(url, {
         method,
-        headers: { Authorization: `Bearer ${this.apiKey}`, ...extraHeaders },
+        headers: { ...this.authHeaders(), ...extraHeaders },
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1537,7 +1602,7 @@ export class MarfaClient {
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { ...this.authHeaders() },
         responseType: "text",
         ignoreResponseError: true,
       });
@@ -1586,12 +1651,13 @@ export class MarfaClient {
     body: ArrayBuffer | Uint8Array,
     contentType: string,
   ): Promise<ApiResponse<T>> {
+    await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          ...this.authHeaders(),
           "Content-Type": contentType,
         },
         body,

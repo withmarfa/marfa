@@ -36,7 +36,7 @@ let app: Hono<AppEnv>;
 beforeAll(async () => {
   ctx = await createTestContext();
   app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(ctx.storage));
+  app.use("*", storedViewerKey(ctx));
   app.route("/events", eventRoutes(ctx.storage));
 });
 

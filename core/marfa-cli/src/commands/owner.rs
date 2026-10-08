@@ -1,107 +1,158 @@
-use std::io::IsTerminal;
-
-use clap::{Args, Subcommand};
-use serde_json::json;
-
-use crate::auth;
 use crate::error::CliError;
 use crate::output::Printer;
-use crate::remote::Remote;
-use crate::remote::request::Request;
+use crate::remote::{Remote, request::Request};
+use clap::{Args, Subcommand};
+use serde_json::{Value, json};
+use std::io::{IsTerminal, Read};
 
-/// The owner: the one account behind the instance's sign-in surface.
 #[derive(Debug, Subcommand)]
 pub enum OwnerCommand {
-    /// Who owns this instance. Operator key.
+    /// Show the instance's owner.
     Show,
-    /// Create the owner, once. The password is asked for on the terminal,
-    /// or read from stdin with --password-stdin; it is never an argument.
-    /// Operator key.
-    Create(CreateArgs),
+    /// Recover the owner's password using private machine authority; revoke browser sessions.
+    Recover(SecretInput),
 }
 
 #[derive(Debug, Args)]
-pub struct CreateArgs {
-    /// The owner's email address, which is what they sign in with.
-    #[arg(long, value_name = "EMAIL")]
-    pub email: String,
-    /// A display name. The address's local part when absent.
-    #[arg(long, value_name = "NAME")]
-    pub name: Option<String>,
-    /// Read the password from stdin (the first line) instead of the terminal.
+pub struct SecretInput {
+    /// Read a JSON object containing password from standard input instead of a hidden prompt.
     #[arg(long)]
-    pub password_stdin: bool,
+    pub stdin: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SetupCommand {
+    /// Show whether this instance has been claimed (private socket required).
+    Status,
+    /// Replace the setup code and invalidate earlier setup sessions (private socket required).
+    Code,
+    /// Issue a single-use browser handoff and open it (private socket required).
+    Open {
+        /// Print the handoff link without opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Claim the instance. Password and remote setup code use hidden prompts or structured stdin.
+    Claim(ClaimArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ClaimArgs {
+    /// The owner's email address. Required when using terminal prompts.
+    #[arg(long)]
+    pub email: Option<String>,
+    /// The owner's display name.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Read JSON containing email, password, optional name, and code for a remote claim.
+    #[arg(long, conflicts_with_all=["email","name"])]
+    pub stdin: bool,
+}
+
+fn input(stdin: bool) -> Result<Value, CliError> {
+    if stdin {
+        let mut body = String::new();
+        std::io::stdin().take(65_537).read_to_string(&mut body)?;
+        if body.len() > 65_536 {
+            return Err(CliError::Invalid("input exceeds 64 KiB".into()));
+        }
+        return serde_json::from_str(&body)
+            .map_err(|_| CliError::Invalid("expected a JSON object on stdin".into()));
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(CliError::Usage(
+            "use --stdin to supply a JSON object without a terminal".into(),
+        ));
+    }
+    Ok(json!({"password":rpassword::prompt_password("New owner password: ")?}))
+}
+
+fn require_local(remote: &Remote) -> Result<(), CliError> {
+    if remote.is_local() {
+        Ok(())
+    } else {
+        Err(CliError::Usage(
+            "this operation requires --socket PATH".into(),
+        ))
+    }
 }
 
 pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
-        OwnerCommand::Create(args) => {
-            let password = read_password(args.password_stdin)?;
-            let mut body = json!({ "email": args.email, "password": password });
-            if let Some(name) = args.name {
-                body["name"] = json!(name);
+        OwnerCommand::Recover(args) => {
+            require_local(remote)?;
+            let body = input(args.stdin)?;
+            out.value(&remote.json(&Request::post(&["_control", "owner", "recover"]).json(body))?)
+        }
+    }
+}
+
+pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    match command {
+        SetupCommand::Status => {
+            require_local(remote)?;
+            out.value(&remote.json(&Request::get(&["_control", "setup", "status"]))?)
+        }
+        SetupCommand::Code => {
+            require_local(remote)?;
+            out.value(&remote.json(&Request::post(&["_control", "setup", "code"]))?)
+        }
+        SetupCommand::Open { no_browser } => {
+            require_local(remote)?;
+            let result = remote.json(&Request::post(&["_control", "setup", "ticket"]))?;
+            let link = result
+                .get("url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::Invalid("server returned no setup link".into()))?;
+            if !no_browser {
+                let command = if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                };
+                let status = std::process::Command::new(command).arg(link).status();
+                if !status.is_ok_and(|status| status.success()) {
+                    eprintln!("Could not open a browser; use the setup link below.");
+                }
             }
-            let created = remote.json(&Request::post(&["owner"]).json(body))?;
-            let page = auth::sign_in_page(remote);
-            out.report(&created, || {
-                created_line(
-                    created.get("email").and_then(|v| v.as_str()).unwrap_or(""),
-                    remote.origin(),
-                    page.as_deref(),
-                )
-            })
+            out.value(&result)
         }
-    }
-}
-
-fn created_line(email: &str, origin: &str, sign_in_page: Option<&str>) -> String {
-    let created = format!("created the owner {email} on {origin}");
-    match sign_in_page {
-        Some(page) => format!("{created}\nsign in at {page}"),
-        None => created,
-    }
-}
-
-fn read_password(from_stdin: bool) -> Result<String, CliError> {
-    let password = if from_stdin {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line)?;
-        line.trim_end_matches(['\r', '\n']).to_string()
-    } else {
-        if !std::io::stdin().is_terminal() {
-            return Err(CliError::Invalid(
-                "no terminal to ask for the password on: pass --password-stdin and write it on stdin"
-                    .into(),
-            ));
+        SetupCommand::Claim(args) => {
+            if !remote.is_local() {
+                let url = url::Url::parse(remote.url())
+                    .map_err(|_| CliError::Invalid("invalid setup URL".into()))?;
+                let loopback = match url.host() {
+                    Some(url::Host::Domain("localhost")) => true,
+                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                    _ => false,
+                };
+                if url.scheme() != "https" && !loopback {
+                    return Err(CliError::Usage(
+                        "setup requires HTTPS, except on loopback".into(),
+                    ));
+                }
+            }
+            let mut body = input(args.stdin)?;
+            if !args.stdin {
+                body["email"] = json!(
+                    args.email
+                        .ok_or_else(|| CliError::Usage("provide --email or use --stdin".into()))?
+                );
+                if let Some(name) = args.name {
+                    body["name"] = json!(name);
+                }
+                if !remote.is_local() {
+                    body["code"] = json!(rpassword::prompt_password("Setup code: ")?);
+                }
+            }
+            let path = if remote.is_local() {
+                vec!["_control", "setup", "claim"]
+            } else {
+                vec!["owner"]
+            };
+            out.value(&remote.json(&Request::post(&path).public().json(body))?)
         }
-        rpassword::prompt_password("Password for the owner: ")?
-    };
-    if password.is_empty() {
-        return Err(CliError::Invalid("the password is empty".into()));
-    }
-    Ok(password)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn creating_the_owner_names_the_page_to_sign_in_at() {
-        assert_eq!(
-            created_line(
-                "owner@example.com",
-                "http://127.0.0.1:8600",
-                Some("http://localhost:8600/auth/sign-in")
-            ),
-            "created the owner owner@example.com on http://127.0.0.1:8600\nsign in at http://localhost:8600/auth/sign-in",
-            "the page is the issuer's, not the address the command was given"
-        );
-        assert_eq!(
-            created_line("owner@example.com", "http://127.0.0.1:8600", None),
-            "created the owner owner@example.com on http://127.0.0.1:8600",
-            "a server whose page cannot be read names none rather than a guess"
-        );
     }
 }

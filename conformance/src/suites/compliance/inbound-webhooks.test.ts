@@ -12,7 +12,7 @@ import {
   createTestContext,
   createSecondClient,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -142,7 +142,7 @@ async function pending(owner: Connector): Promise<InboundDeliveryRow[]> {
 }
 
 describe("endpoints", () => {
-  it("makes an endpoint for the connector's own key and the operator, answering its address once", async () => {
+  it("makes an endpoint for the connector's own key and the manager, answering its address once", async () => {
     const owner = await connector("endpoint-maker");
     const made = await owner.client.createInboundEndpoint(owner.id, {
       label: "github",
@@ -161,12 +161,12 @@ describe("endpoints", () => {
     expect(made.data.path).toMatch(/^\/inbound\/[A-Za-z0-9_-]{43}$/);
     expect(made.data.retired_at).toBeNull();
 
-    const byOperator = await getOperatorClient().createInboundEndpoint(
+    const byOperator = await getManagementClient().createInboundEndpoint(
       owner.id,
     );
     expect(byOperator.status).toBe(201);
 
-    for (const reader of [owner.client, getOperatorClient()]) {
+    for (const reader of [owner.client, getManagementClient()]) {
       const listed = await reader.listInboundEndpoints(owner.id);
       expect(listed.status).toBe(200);
       await expectMatchesSchema(
@@ -258,7 +258,7 @@ describe("endpoints", () => {
     const made = await endpoint(owner);
     const before = idOf(await send(apiUrl, made.path, "before"));
 
-    const retired = await getOperatorClient().retireInboundEndpoint(
+    const retired = await getManagementClient().retireInboundEndpoint(
       owner.id,
       made.id,
     );
@@ -866,7 +866,7 @@ describe("reading and handling", () => {
     const other = await createSecondClient(ctx, "read-stranger");
     const made = await endpoint(owner);
     const id = idOf(await send(apiUrl, made.path, "mine"));
-    for (const reader of [other, getOperatorClient()]) {
+    for (const reader of [other, getManagementClient()]) {
       expect((await reader.listInboundDeliveries(owner.id)).status).toBe(403);
       const marked = await reader.markInboundDeliveriesHandled(owner.id, {
         ids: [id],

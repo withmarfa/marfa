@@ -51,7 +51,7 @@ async function seedKey(
       edge_permissions: {},
       metadata_permissions: {},
       default_tier: "library",
-      is_operator: false,
+
       oauth_client_id: clientId,
     },
     hashApiKey(`marfa_k1_${label}_${suffix}`, TEST_API_KEY_SALT),

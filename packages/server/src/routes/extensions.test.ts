@@ -1,20 +1,14 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
 const SCOPED_LABEL = "noter";
 let scopedKey: string;
 
-// A working credential rather than the operator key, and that is load-bearing
-// rather than incidental: the reserved-namespace fence admits an operator key,
-// so an operator fixture would pass the very door two tests here exist to see
-// refused.
-//
-// It shares the context, so the working key and the scoped key address the
+// The working key and the scoped key address the
 // same items and the difference between them is the permission map alone,
 // which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
@@ -32,17 +26,17 @@ beforeAll(async () => {
   // the "noter" one.
   const suffix = Math.random().toString(36).slice(2, 10);
   scopedKey = `marfa_k1_ext_scoped_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: SCOPED_LABEL,
-      source: `ext-scoped-${suffix}`,
-      type_permissions: { "*": "write" },
-      extension_permissions: { friends: "read", [SCOPED_LABEL]: "write" },
-      default_tier: "feed",
-      is_operator: false,
-    },
-    hashApiKey(scopedKey, "test-salt"),
-  );
+  scopedKey = await mintWorkingKey(ctx, {
+    permissions: [],
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    label: SCOPED_LABEL,
+    source: `ext-scoped-${suffix}`,
+    type_permissions: { "*": "write" },
+    extension_permissions: { friends: "read", [SCOPED_LABEL]: "write" },
+    default_tier: "feed",
+  });
 });
 
 afterAll(async () => {
@@ -194,7 +188,7 @@ describe("GET /items/:id/extensions/:namespace", () => {
 });
 
 describe("PUT /items/:id/extensions/:namespace", () => {
-  it("rejects a reserved namespace write from a non-operator key with 403", async () => {
+  it("rejects a reserved namespace write from an ordinary key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {
@@ -255,7 +249,7 @@ describe("PUT /items/:id/extensions/:namespace", () => {
 });
 
 describe("DELETE /items/:id/extensions/:namespace", () => {
-  it("rejects a reserved namespace delete from a non-operator key with 403", async () => {
+  it("rejects a reserved namespace delete from an ordinary key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {

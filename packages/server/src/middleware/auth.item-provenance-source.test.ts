@@ -5,9 +5,9 @@
  * the rule is pinned here once, beside the function, and the doors are held
  * to it by their own tests and by the conformance fixtures.
  */
-import { describe, it, expect } from "vitest";
 import type { ApiKey } from "@withmarfa/shared";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { describe, expect, it } from "vitest";
 import { itemProvenanceSource } from "./auth.js";
 
 function key(overrides: Partial<ApiKey> = {}): ApiKey {
@@ -16,7 +16,7 @@ function key(overrides: Partial<ApiKey> = {}): ApiKey {
     label: "test",
     source: "laptop",
     sources: ["notes-folder"],
-    is_operator: false,
+
     default_tier: "library",
     type_permissions: {},
     created_at: new Date().toISOString(),

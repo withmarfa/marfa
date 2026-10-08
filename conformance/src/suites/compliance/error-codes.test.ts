@@ -256,8 +256,8 @@ describe("every refusal's code", () => {
     const table = tableCodes();
     expect(table.size).toBeGreaterThan(40);
 
-    const operator = process.env.MARFA_OPERATOR_KEY;
-    expect(operator, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const operator = process.env.MARFA_MANAGEMENT_KEY;
+    expect(operator, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
     const narrowed = await client.createKey({
       label: `${ctx.source}-narrowed`,
       source: `${ctx.source}-narrowed`,
@@ -343,9 +343,9 @@ describe("every refusal's code", () => {
         bodies: [0, 3, 4],
       },
       {
-        // An operator's `{}` could write, so its writes are sent only what
-        // no door reads as an object.
-        name: "the operator key",
+        // This credential can manage the instance, so send only bodies
+        // that cannot be accepted as an object.
+        name: "a key holding management grants",
         headers: { Authorization: `Bearer ${operator!}` },
         bodies: [0, 1, 2],
       },

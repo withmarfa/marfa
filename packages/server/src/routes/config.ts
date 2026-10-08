@@ -4,7 +4,11 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { MAX_RETENTION_DAYS, MAX_RETENTION_HOURS } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, standingPermission } from "../middleware/auth.js";
+import {
+  requirePermission,
+  authorityId,
+  standingPermission,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -138,7 +142,7 @@ const InstanceConfigWriteSchema = z.strictObject({
 const managesConfig = standingPermission("config.manage");
 
 const CONFIG_MANAGE_REFUSAL =
-  "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.";
+  "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.";
 
 const getConfigRoute = createRoute({
   operationId: "getConfig",
@@ -235,7 +239,7 @@ export function configRoutes(storage: Storage, instanceId: string) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getConfigRoute, async (c) => {
-    requireAuth(c);
+    requirePermission(c, "config.manage");
     const config = await readInstanceConfig(storage.settings);
     // The identity last, so a stored row carrying the key cannot shadow it.
     // `readInstanceConfig` parses without a runtime schema, so whatever is
@@ -245,7 +249,7 @@ export function configRoutes(storage: Storage, instanceId: string) {
   });
 
   router.openapi(putConfigRoute, async (c) => {
-    const key = requireAuth(c);
+    requirePermission(c, "config.manage");
     const { instance_id: addressed, ...rest } = c.req.valid("json");
     if (addressed !== undefined && addressed !== instanceId) {
       throw new MarfaError(
@@ -272,7 +276,7 @@ export function configRoutes(storage: Storage, instanceId: string) {
       () => writeInstanceConfig(storage.settings, body),
       {
         client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
+        key_id: authorityId(c),
         action: "config.update",
         resource_type: "config",
       },

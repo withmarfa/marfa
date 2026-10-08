@@ -11,17 +11,20 @@
  * A fence on the credential being bound at all says nothing about what was
  * granted: under one, a key minted with a single read scope could list
  * every connected app and revoke any of them. So the boundary is tested
- * with keys minted for it: the operator key satisfies every gate and so
- * cannot show where the boundary is.
+ * with keys that differ only in whether they hold `grants.manage`.
  *
  * The session-gated twin (`POST /auth/grants/:id/revoke`) is a different
  * surface with a different principal — the signed-in human acting on their
  * own grants — and is unaffected.
  */
 
-import { itemWrites } from "../storage/item-writes.js";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  seedOauthBearer,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Permission } from "@withmarfa/shared";
 
@@ -37,20 +40,8 @@ afterEach(async () => {
 
 /** One active app grant, plus keys holding different permissions. */
 async function seedGrant() {
-  const grant = await itemWrites(ctx.storage).create({
-    type: "system.connection",
-    tier: "library",
-    state: "active",
-    properties: {
-      kind: "app",
-      client_id: "client_under_test",
-      user_id: "auth_user_under_test",
-      scopes: ["core.note:read"],
-      status: "active",
-      granted_at: new Date().toISOString(),
-    },
-    source: "test/grants-authority",
-  });
+  const { grantId } = await seedOauthBearer(ctx, ["core.note:read"]);
+  const grant = { id: grantId };
 
   const mint = (name: string, permissions: Permission[]): Promise<string> => {
     const suffix = Math.random().toString(36).slice(2, 10);
@@ -117,7 +108,7 @@ describe("the bearer grants API refuses a key without `grants.manage`", () => {
     expect(revoke.status).toBe(204);
   });
 
-  it("still admits the operator key", async () => {
+  it("admits the standard working key that holds grants.manage", async () => {
     await seedGrant();
 
     const res = await request(ctx.app, "GET", "/auth/grants", {

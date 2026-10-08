@@ -4,16 +4,16 @@
  * credential to come back to is owned by that pair, not by the access-token
  * row a refresh replaces, and a token naming no person names no credential.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { hashApiKey } from "../middleware/auth.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -59,7 +59,7 @@ async function sql(statement: string, params: unknown[]): Promise<void> {
 
 describe("a bulk-action job queued by a signed-in app", () => {
   it("belongs to its app and person across a token refresh", async () => {
-    const first = await seedOauthBearer(ctx.storage, SCOPES);
+    const first = await seedOauthBearer(ctx, SCOPES);
     const person = await personOf(first.grantId);
     const tag = `owner-${generateId()}`;
     const key = `owner-key-${generateId()}`;
@@ -101,12 +101,11 @@ describe("a bulk-action job queued by a signed-in app", () => {
     );
     expect(cancel.status).toBe(200);
 
-    // The witness: another person signed in to the same app is not its owner.
-    const someoneElse = await seedOauthBearer(ctx.storage, SCOPES);
-    const elsewhere = await refreshed(
-      first.clientId,
-      await personOf(someoneElse.grantId),
-    );
+    // Another app signed in as this owner does not own the first app's job.
+    const anotherApp = await seedOauthBearer(ctx, SCOPES);
+    expect(await personOf(anotherApp.grantId)).toBe(person);
+    expect(anotherApp.clientId).not.toBe(first.clientId);
+    const elsewhere = await refreshed(anotherApp.clientId, person);
     const refused = await request(
       ctx.app,
       "GET",
@@ -119,7 +118,7 @@ describe("a bulk-action job queued by a signed-in app", () => {
 
 describe("a token naming no person", () => {
   it("is refused as no credential at all", async () => {
-    const seeded = await seedOauthBearer(ctx.storage, SCOPES);
+    const seeded = await seedOauthBearer(ctx, SCOPES);
     // The witness: the same token, with its person, is a credential.
     const before = await request(ctx.app, "GET", "/items", {
       key: seeded.token,

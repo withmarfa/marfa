@@ -480,7 +480,7 @@ If a key whose type map reaches no type sends `POST /items/bulk-get`, then the s
 
 **Reason:** an empty answer would say the ids named nothing, rather than that the key may see nothing.
 
-**Tests:** `compliance/key-management.test.ts › the operator key is refused the data plane, reading as well as writing`.
+**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`.
 
 ### `items/bulk-get-cap`
 
@@ -1402,9 +1402,9 @@ If the credential's source filter changes, or hides a matched item, while the se
 
 ### `items/job-read`
 
-When the credential that queued a bulk-action job, or the operator key, sends `GET /items/bulk-actions/jobs/{id}`, the server MUST answer the job's `status`, `matched`, `processed`, `succeeded` and `errored`.
+When the credential that queued a bulk-action job, a caller with `instance.read`, or direct owner or local authority sends `GET /items/bulk-actions/jobs/{id}`, the server MUST answer the job's `status`, `matched`, `processed`, `succeeded` and `errored`.
 
-**Tests:** `compliance/bulk.test.ts › POST returns 202 with a queued envelope; status terminates completed`, `compliance/bulk-limits.test.ts › lets the operator key read and cancel any job`.
+**Tests:** `compliance/bulk.test.ts › POST returns 202 with a queued envelope; status terminates completed`, `compliance/bulk-limits.test.ts › lets instance.read and instance.maintain read and cancel any job`.
 
 ### `items/job-result`
 
@@ -1420,7 +1420,7 @@ If `GET /items/bulk-actions/jobs/{id}` or its cancel names a job that does not e
 
 ### `items/job-other-credential`
 
-If a credential other than the one that queued a job, and other than the operator key, reads or cancels it, then the server MUST answer `403 forbidden`.
+If a credential other than the one that queued a job reads it without `instance.read` or cancels it without `instance.maintain`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/bulk.test.ts › refuses another credential reading or canceling the job, 403 forbidden`.
 

@@ -7,6 +7,12 @@
   },
   "components": {
     "securitySchemes": {
+      "ownerSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "marfa.auth.session_token",
+        "description": "The owner's browser sign-in. Writes require this instance's Origin; sensitive changes require actual authentication within five minutes. Apps cannot use this authority."
+      },
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
@@ -5300,7 +5306,7 @@
           },
           "oauth_client_id": {
             "type": "string",
-            "description": "The `client_id` of the app whose sign-in token created this key. Absent on every other key."
+            "description": "The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin."
           },
           "default_tier": {
             "allOf": [
@@ -5311,10 +5317,6 @@
                 "description": "The tier an item this key creates goes to when the write names none."
               }
             ]
-          },
-          "is_operator": {
-            "type": "boolean",
-            "description": "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items."
           },
           "type_permissions": {
             "type": "object",
@@ -5381,7 +5383,6 @@
           "sources",
           "permissions",
           "default_tier",
-          "is_operator",
           "type_permissions",
           "extension_permissions",
           "edge_permissions",
@@ -5401,7 +5402,12 @@
           "audit.read",
           "items.purge",
           "keys.mint",
-          "grants.manage"
+          "grants.manage",
+          "instance.read",
+          "instance.maintain",
+          "connectors.manage",
+          "blobs.manage",
+          "keys.manage"
         ],
         "description": "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access."
       },
@@ -5477,7 +5483,7 @@
           },
           "oauth_client_id": {
             "type": "string",
-            "description": "The `client_id` of the app whose sign-in token created this key. Absent on every other key."
+            "description": "The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin."
           },
           "default_tier": {
             "allOf": [
@@ -5488,10 +5494,6 @@
                 "description": "The tier an item this key creates goes to when the write names none."
               }
             ]
-          },
-          "is_operator": {
-            "type": "boolean",
-            "description": "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items."
           },
           "type_permissions": {
             "type": "object",
@@ -5564,7 +5566,6 @@
           "sources",
           "permissions",
           "default_tier",
-          "is_operator",
           "type_permissions",
           "extension_permissions",
           "edge_permissions",
@@ -5893,15 +5894,15 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Unique identifier for the owner's account."
+            "description": "Unique identifier for the owner."
           },
           "email": {
             "type": "string",
-            "description": "The owner's email address, in lowercase."
+            "description": "Email address used to sign in."
           },
           "name": {
             "type": "string",
-            "description": "The owner's name."
+            "description": "Display name of the owner."
           },
           "created_at": {
             "type": "string",
@@ -5914,7 +5915,7 @@
           "name",
           "created_at"
         ],
-        "description": "The owner is the one person who can sign in to the instance."
+        "description": "The single owner of the instance."
       },
       "OwnerNotFoundRefusal": {
         "type": "object",
@@ -5961,6 +5962,41 @@
                 "type": "string",
                 "enum": [
                   "owner_exists"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "RateLimitedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "rate_limited"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -6269,40 +6305,18 @@
         ],
         "description": "An audit log entry records one action and who took it."
       },
-      "RateLimitedRefusal": {
+      "MetricCount": {
         "type": "object",
         "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "rate_limited"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
+          "total": {
+            "type": "number",
+            "description": "Number of records."
           }
         },
         "required": [
-          "error"
+          "total"
         ],
-        "description": "An error response."
+        "description": "Number of unrevoked keys."
       },
       "WriteContentionRefusal": {
         "type": "object",
@@ -14061,7 +14075,7 @@
           "Bulk actions"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.",
+        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.",
         "security": [
           {
             "bearerAuth": []
@@ -14168,7 +14182,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
+            "description": "- `forbidden`: another credential queued the job, and yours lacks instance.read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14467,7 +14481,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
+            "description": "- `forbidden`: another credential queued the job, and yours lacks instance.maintain.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24046,7 +24060,7 @@
           "Blobs"
         ],
         "summary": "List orphaned blobs",
-        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires the operator key.",
+        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.",
         "security": [
           {
             "bearerAuth": []
@@ -24141,7 +24155,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Caller lacks the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24303,7 +24317,7 @@
           "Blobs"
         ],
         "summary": "List blob stores",
-        "description": "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires the operator key.",
+        "description": "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.",
         "security": [
           {
             "bearerAuth": []
@@ -24398,7 +24412,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Caller lacks the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24570,10 +24584,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
             "name": "hash",
             "in": "path"
           }
@@ -24988,10 +25002,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
             "name": "hash",
             "in": "path"
           },
@@ -25313,10 +25327,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
             "name": "hash",
             "in": "path"
           }
@@ -25602,7 +25616,7 @@
           "Blobs"
         ],
         "summary": "Delete a blob's copy in a store",
-        "description": "Deletes the copy of a blob that one store holds, and its row in the location log. Requires the operator key.",
+        "description": "Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.",
         "security": [
           {
             "bearerAuth": []
@@ -25719,7 +25733,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Caller lacks the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25941,7 +25955,7 @@
           "Instance"
         ],
         "summary": "List housekeeping jobs",
-        "description": "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.",
+        "description": "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires instance.read.",
         "security": [
           {
             "bearerAuth": []
@@ -26036,7 +26050,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Caller lacks the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26198,7 +26212,7 @@
           "Instance"
         ],
         "summary": "Run a housekeeping job",
-        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.",
+        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.",
         "security": [
           {
             "bearerAuth": []
@@ -26306,7 +26320,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Caller lacks the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26697,7 +26711,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is an app's session token, not a key, or the operator key, which runs the instance and can't register as a connector.",
+            "description": "- `forbidden`: your credential is an app's session token, not a key, or direct owner or local authority.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26878,7 +26892,7 @@
           "Connectors"
         ],
         "summary": "List connectors",
-        "description": "Returns your registration, or every registration if you use the operator key, newest first.",
+        "description": "Returns your registration, or every registration if you hold connectors.manage, newest first.",
         "security": [
           {
             "bearerAuth": []
@@ -27212,7 +27226,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key.",
+            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27479,7 +27493,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27808,7 +27822,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28171,7 +28185,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28512,7 +28526,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key.",
+            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28804,7 +28818,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29152,7 +29166,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29461,7 +29475,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29830,7 +29844,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30140,7 +30154,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30485,7 +30499,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30845,7 +30859,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31205,7 +31219,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31525,7 +31539,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31864,7 +31878,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32212,7 +32226,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32615,7 +32629,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33000,7 +33014,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33337,7 +33351,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+            "description": "- `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34897,6 +34911,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "ownerSession": []
           }
         ],
         "requestBody": {
@@ -34925,7 +34942,7 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any."
                   },
                   "permissions": {
                     "type": "array",
@@ -34943,10 +34960,6 @@
                         "description": "The tier an item this key creates goes to when the write names none. Leave it out for `library`."
                       }
                     ]
-                  },
-                  "is_operator": {
-                    "type": "boolean",
-                    "description": "`true` to create another operator key, which holds no permissions, maps or claimed sources. Only the operator key can create one."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -35005,7 +35018,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items.",
+            "description": "Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35092,7 +35105,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it gives an operator key any reach; or it asks for an operator key and you aren't one. `details.required_scope` or `details.source` names what you lack.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant. `details.required_scope` or `details.source` names what you lack.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35303,10 +35316,13 @@
           "Access"
         ],
         "summary": "List API keys",
-        "description": "Returns the API keys you could have created, your own included, without their plaintext. The operator key gets every key. Requires `keys.mint` or the operator key.",
+        "description": "Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "ownerSession": []
           }
         ],
         "responses": {
@@ -35398,7 +35414,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it.",
+            "description": "- `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35867,10 +35883,13 @@
           "Access"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint` or the operator key.",
+        "description": "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "ownerSession": []
           }
         ],
         "parameters": [
@@ -35974,7 +35993,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it.",
+            "description": "- `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36004,7 +36023,7 @@
             }
           },
           "404": {
-            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The operator key's message says when the key was already revoked.",
+            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The owner or local command's message says when the key was already revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36185,10 +36204,13 @@
           "Access"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint` or the operator key.",
+        "description": "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "ownerSession": []
           }
         ],
         "parameters": [
@@ -36233,7 +36255,7 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -36387,7 +36409,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body gives the key a permission, map entry or source you don't hold; it gives an operator key any reach; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36695,7 +36717,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37035,7 +37057,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37218,10 +37240,10 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.",
+        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
         "security": [
           {
-            "bearerAuth": []
+            "ownerSession": []
           }
         ],
         "requestBody": {
@@ -37382,7 +37404,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "Requires direct owner or local authority and recent owner authentication.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37600,7 +37622,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.",
+        "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.",
         "responses": {
           "200": {
             "description": "Returns the stale types. A type you delete drops out of the list at once.",
@@ -37690,7 +37712,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: you aren't using the operator key.",
+            "description": "`forbidden`: you lack the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37857,7 +37879,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Deletes one platform type that this build no longer ships. The type stops resolving at once. Operator key only.",
+        "description": "Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.",
         "parameters": [
           {
             "schema": {
@@ -37974,7 +37996,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: you aren't using the operator key.",
+            "description": "`forbidden`: you lack the required management permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38219,13 +38241,13 @@
         "summary": "Get the owner",
         "security": [
           {
-            "bearerAuth": []
+            "ownerSession": []
           }
         ],
-        "description": "Returns the owner: the one account that can sign in to the instance and approve apps. A new instance has no owner until `POST /owner` creates one. Requires the operator key.",
+        "description": "Returns the owner of the claimed instance. Requires a direct owner sign-in or local process authority.",
         "responses": {
           "200": {
-            "description": "Returns the owner.",
+            "description": "The owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38312,7 +38334,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "This operation requires direct owner or local authority.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38342,7 +38364,7 @@
             }
           },
           "404": {
-            "description": "- `owner_not_found`: the instance has no owner yet.",
+            "description": "The owner is unavailable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38501,13 +38523,8 @@
         "tags": [
           "Access"
         ],
-        "summary": "Create the owner",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "description": "Creates the owner, the one account that can sign in to the instance, and returns it. The owner can sign in at once with the email address and password. No other route creates an account. Requires the operator key.",
+        "summary": "Claim the instance",
+        "description": "Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.",
         "requestBody": {
           "required": true,
           "content": {
@@ -38519,16 +38536,20 @@
                     "type": "string",
                     "maxLength": 254,
                     "format": "email",
-                    "description": "The owner's email address, which they sign in with. Marfa stores it in lowercase."
+                    "description": "Email address the owner uses to sign in."
                   },
                   "password": {
                     "type": "string",
-                    "description": "The password the owner signs in with."
+                    "description": "Password for the new owner."
                   },
                   "name": {
                     "type": "string",
                     "maxLength": 200,
-                    "description": "The owner's name. Leave it out or blank to use the part of `email` before the `@`."
+                    "description": "Display name. Defaults to the part before @ in the email address when omitted or blank."
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Machine-issued setup code. Omit when using a setup-only browser session."
                   }
                 },
                 "required": [
@@ -38541,7 +38562,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the new owner.",
+            "description": "The new owner can sign in.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38555,20 +38576,11 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               }
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `email` or `password` is missing.\n- `validation_error`: a field is invalid, such as an `email` that isn't an email address or a `password` shorter or longer than sign-in allows. For `password`, the message names the limit.",
+            "description": "Owner details are invalid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38583,22 +38595,13 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "description": "Setup proof is invalid, expired, or replaced.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38613,22 +38616,13 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
           "403": {
-            "description": "- `forbidden`: your key isn't an operator key.",
+            "description": "The browser origin or transport is not permitted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38643,22 +38637,13 @@
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
               },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
           "409": {
-            "description": "- `owner_exists`: the instance already has an owner.",
+            "description": "The instance has already been claimed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38672,15 +38657,6 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -38709,7 +38685,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "description": "The address has used its setup-code attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38723,15 +38699,6 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -38756,75 +38723,6 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "507": {
-            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
@@ -41590,7 +41488,353 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it.",
+            "description": "- `forbidden`: you don't hold `audit.read`. `details.required_scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getServerMetrics",
+        "tags": [
+          "Instance"
+        ],
+        "summary": "Get server metrics",
+        "description": "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number",
+                          "description": "Number of items across all states."
+                        },
+                        "by_state": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          },
+                          "description": "Item counts by state."
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "by_state"
+                      ],
+                      "description": "Instance-wide item counts."
+                    },
+                    "blobs": {
+                      "type": "object",
+                      "properties": {
+                        "count": {
+                          "type": "number",
+                          "description": "Number of stored blobs."
+                        },
+                        "total_bytes": {
+                          "type": "number",
+                          "description": "Total size of stored blobs, in bytes."
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "total_bytes"
+                      ],
+                      "description": "Stored blob counts and size."
+                    },
+                    "types": {
+                      "type": "object",
+                      "properties": {
+                        "core": {
+                          "type": "number",
+                          "description": "Number of built-in types."
+                        },
+                        "registered": {
+                          "type": "number",
+                          "description": "Number of registered types."
+                        }
+                      },
+                      "required": [
+                        "core",
+                        "registered"
+                      ],
+                      "description": "Built-in and registered type counts."
+                    },
+                    "keys": {
+                      "$ref": "#/components/schemas/MetricCount"
+                    },
+                    "webhooks": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/MetricCount"
+                        },
+                        {
+                          "description": "Number of webhook registrations."
+                        }
+                      ]
+                    },
+                    "uptime_seconds": {
+                      "type": "number",
+                      "description": "Seconds since this server process started."
+                    },
+                    "cached_at": {
+                      "type": "string",
+                      "description": "When these counters were collected, in UTC."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "blobs",
+                    "types",
+                    "keys",
+                    "webhooks",
+                    "uptime_seconds",
+                    "cached_at"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Caller lacks instance.read",
             "content": {
               "application/json": {
                 "schema": {

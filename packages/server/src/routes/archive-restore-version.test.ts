@@ -1,17 +1,17 @@
 /** A restored row retains its version so an old client precondition cannot
  *  match unrelated content as the row advances after restoration. */
 
-import { itemWrites } from "../storage/item-writes.js";
-import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
-import { describe, expect, it, afterAll } from "vitest";
+import { createGunzip } from "node:zlib";
 import * as tar from "tar-stream";
+import { afterAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   closeTestContexts,
   createTestContext,
   request,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
   const entries = new Map<string, Buffer>();
@@ -114,12 +114,12 @@ describe("a restore does not rewind a row's version", () => {
       .find((line) => line.item.id === note.id);
     expect(itemLine?.item.version).toBe(archivedItem?.version);
 
-    // `/restore` is an operator route, and the operator key is
-    // the only credential that reaches it.
+    // Full archive restore requires recent owner authentication or local authority.
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
+        cookie: destination.owner.cookie,
+        origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,

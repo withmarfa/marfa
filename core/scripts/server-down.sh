@@ -32,6 +32,7 @@ if kill -0 "${MARFA_SERVER_PID}" 2>/dev/null; then
   done
   stop KILL
 fi
+[[ -z "${MARFA_SERVER_CONTROL_DIR:-}" ]] || rm -rf "${MARFA_SERVER_CONTROL_DIR}"
 [[ -n "${MARFA_SERVER_KEPT:-}" ]] || rm -rf "${MARFA_SERVER_STATE}"
 # A stale env file names a pid the system may since have reused.
 [[ "${env_file}" == "${MARFA_SERVER_STATE}"/* ]] || rm -f "${env_file}"

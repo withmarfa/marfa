@@ -19,6 +19,7 @@ const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "core.yml:core",
   "release.yml:build",
+  "control-socket.yml:macos",
 ]);
 
 // Ubuntu for a pull request, a push and a dispatch that does not ask, macOS

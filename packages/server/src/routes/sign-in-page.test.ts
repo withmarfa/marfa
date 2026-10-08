@@ -1,10 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-page.js";
 import { renderSignInPage } from "./test-render.js";
 
@@ -355,9 +351,12 @@ describe("GET /auth/sign-in", () => {
 
 describe("POST /auth/sign-in (form wrapper)", () => {
   it("redirects to /auth/sign-in?error=invalid_credentials on bad password", async () => {
-    ctx = await createTestContext();
+    ctx = await createTestContext(undefined, {
+      email: "alice@example.com",
+      password: "correct horse",
+      name: "Alice",
+    });
     // First, create the account so the credential check has a target.
-    await createTestAccount(ctx, "alice@example.com", "correct horse", "Alice");
 
     // Then submit the form-handler with a wrong password.
     const formBody = new URLSearchParams({
@@ -412,8 +411,11 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     // GET handler synthesizes return_to=/auth/authorize?<params>, the
     // hidden field carries it forward, POST honors it, user lands at
     // the consent screen as RFC 6749 §3.1 prescribes.
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "carla@example.com", "correct horse", "Carla");
+    ctx = await createTestContext(undefined, {
+      email: "carla@example.com",
+      password: "correct horse",
+      name: "Carla",
+    });
 
     // 1. GET /auth/sign-in with OAuth params directly on the URL —
     //    simulating the plugin's loginPage redirect shape.
@@ -478,8 +480,12 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     // validateReturnTo runs on the POST side too, so even if some
     // upstream slipped an absolute URL into the hidden field, the
     // wrapper falls back to "/" instead of redirecting off-origin.
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "dora@example.com", "correct horse", "Dora");
+    ctx = await createTestContext(undefined, {
+      email: "dora@example.com",
+      password: "correct horse",
+      name: "Dora",
+    });
+
     const formBody = new URLSearchParams({
       email: "dora@example.com",
       password: "correct horse",
@@ -500,8 +506,11 @@ describe("POST /auth/sign-in (form wrapper)", () => {
   });
 
   it("redirects to return_to with Set-Cookie on successful sign-in", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "bob@example.com", "correct horse", "Bob");
+    ctx = await createTestContext(undefined, {
+      email: "bob@example.com",
+      password: "correct horse",
+      name: "Bob",
+    });
 
     const formBody = new URLSearchParams({
       email: "bob@example.com",
@@ -537,8 +546,12 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     // A sandboxed frame on any page sends `Origin: null`, so it says nothing
     // about where the post came from. This server's own pages are served
     // under a referrer policy that keeps a real Origin on the form post.
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "edgar@example.com", "correct horse", "Edgar");
+    ctx = await createTestContext(undefined, {
+      email: "edgar@example.com",
+      password: "correct horse",
+      name: "Edgar",
+    });
+
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/sign-in`, {
         method: "POST",
@@ -560,8 +573,11 @@ describe("POST /auth/sign-in (form wrapper)", () => {
   it("succeeds when browser omits the Origin header entirely", async () => {
     // Some legacy browsers / curl-without-explicit-origin omit Origin
     // on POST. The wrapper falls back to auth.baseURL.
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "frank@example.com", "correct horse", "Frank");
+    ctx = await createTestContext(undefined, {
+      email: "frank@example.com",
+      password: "correct horse",
+      name: "Frank",
+    });
 
     const formBody = new URLSearchParams({
       email: "frank@example.com",
@@ -583,8 +599,12 @@ describe("POST /auth/sign-in (form wrapper)", () => {
   });
 
   it("never redirects off the instance on a return_to a browser would read as another host", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "tab@example.com", "correct horse", "Tab");
+    ctx = await createTestContext(undefined, {
+      email: "tab@example.com",
+      password: "correct horse",
+      name: "Tab",
+    });
+
     // A browser removes tabs and newlines from a URL before resolving it,
     // and resolving collapses dot segments, so each of these reaches it as
     // `//evil.example`.
@@ -624,8 +644,12 @@ describe("POST /auth/sign-in (form wrapper)", () => {
   });
 
   it("rejects unsafe return_to values and falls back to /", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "carol@example.com", "correct horse", "Carol");
+    ctx = await createTestContext(undefined, {
+      email: "carol@example.com",
+      password: "correct horse",
+      name: "Carol",
+    });
+
     const formBody = new URLSearchParams({
       email: "carol@example.com",
       password: "correct horse",
@@ -648,8 +672,12 @@ describe("POST /auth/sign-in (form wrapper)", () => {
 
 describe("the sign-in page keeps what was typed", () => {
   it("returns the email after a wrong password, and only the email", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "dana@example.com", "correct horse", "Dana");
+    ctx = await createTestContext(undefined, {
+      email: "dana@example.com",
+      password: "correct horse",
+      name: "Dana",
+    });
+
     const failed = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/sign-in`, {
         method: "POST",
@@ -786,8 +814,12 @@ describe("the sign-in page names the app that sent the person", () => {
 
 describe("signing in with no app waiting", () => {
   it("ends at the server's address, which tells a browser it is signed in", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "erin@example.com", "correct horse", "Erin");
+    ctx = await createTestContext(undefined, {
+      email: "erin@example.com",
+      password: "correct horse",
+      name: "Erin",
+    });
+
     const signedIn = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/sign-in`, {
         method: "POST",
@@ -826,8 +858,12 @@ describe("signing in with no app waiting", () => {
   });
 
   it("tells somebody already signed in so, on the sign-in page", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "finn@example.com", "correct horse", "Finn");
+    ctx = await createTestContext(undefined, {
+      email: "finn@example.com",
+      password: "correct horse",
+      name: "Finn",
+    });
+
     const cookie = await signInCookie(ctx, "finn@example.com", "correct horse");
     const page = await request(ctx.app, "GET", "/auth/sign-in", {
       headers: { cookie },
@@ -845,8 +881,12 @@ describe("signing in with no app waiting", () => {
   });
 
   it("still shows the form to a signed-in person an authorization sent to sign in afresh", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "iris@example.com", "correct horse", "Iris");
+    ctx = await createTestContext(undefined, {
+      email: "iris@example.com",
+      password: "correct horse",
+      name: "Iris",
+    });
+
     const cookie = await signInCookie(ctx, "iris@example.com", "correct horse");
     // `prompt=login` is how an app asks for a new sign-in from somebody who
     // has a session; the plugin answers by sending them to the sign-in page.
@@ -867,8 +907,12 @@ describe("signing in with no app waiting", () => {
   });
 
   it("offers to continue to where an already signed-in person was headed", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, "gail@example.com", "correct horse", "Gail");
+    ctx = await createTestContext(undefined, {
+      email: "gail@example.com",
+      password: "correct horse",
+      name: "Gail",
+    });
+
     const cookie = await signInCookie(ctx, "gail@example.com", "correct horse");
     const page = await request(
       ctx.app,

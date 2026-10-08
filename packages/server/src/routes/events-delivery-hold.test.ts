@@ -213,7 +213,7 @@ describe("the prologue's hold", () => {
     const cursor = await ctx.storage.eventLog.getMaxId();
 
     const { storage, open, reached } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage, {
+    const res = await eventsAppWithKey(ctx, storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
@@ -264,7 +264,7 @@ describe("the prologue's hold", () => {
       await note(`gate-open-seed-${String(ticks)}`);
       const from = await ctx.storage.eventLog.getMaxId();
       const { storage, open, reached } = gatedEventLog(ctx.storage);
-      const res = await eventsAppWithKey(storage).request("/events", {
+      const res = await eventsAppWithKey(ctx, storage).request("/events", {
         headers: { "Last-Event-ID": String(from) },
       });
       expect(res.status).toBe(200);
@@ -325,7 +325,7 @@ describe("the prologue's hold", () => {
     const cursor = await ctx.storage.eventLog.getMaxId();
 
     const { storage, open, reached } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage, {
+    const res = await eventsAppWithKey(ctx, storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
@@ -359,7 +359,7 @@ describe("the prologue's hold", () => {
     const cursor = await ctx.storage.eventLog.getMaxId();
 
     const { storage, open, reached } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage, {
+    const res = await eventsAppWithKey(ctx, storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
@@ -393,7 +393,7 @@ describe("the prologue's hold", () => {
     const cursor = await ctx.storage.eventLog.getMaxId();
 
     const { storage, open, reached } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage, {
+    const res = await eventsAppWithKey(ctx, storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },

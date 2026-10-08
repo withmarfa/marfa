@@ -15,13 +15,13 @@
  * threw `INVALID_TRANSITION` for a non-trashed row, so a code-only assertion
  * passes with the new `validateTransition` call deleted.
  */
-import { itemWrites } from "../storage/item-writes.js";
-import { createGzip } from "node:zlib";
-import { describe, expect, it, afterEach } from "vitest";
-import * as tar from "tar-stream";
 import { generateId } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import { createGzip } from "node:zlib";
+import * as tar from "tar-stream";
+import { afterEach, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 
@@ -258,7 +258,8 @@ describe("POST /restore — an archive names a state the type's lifecycle contai
     const res = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.operatorKey}`,
+        cookie: c.owner.cookie,
+        origin: new URL(c.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -276,7 +277,8 @@ describe("POST /restore — an archive names a state the type's lifecycle contai
     const archived = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.operatorKey}`,
+        cookie: c.owner.cookie,
+        origin: new URL(c.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: await buildArchive(MANIFEST, [
@@ -301,7 +303,8 @@ describe("POST /restore — an archive names a state the type's lifecycle contai
     const numeric = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.operatorKey}`,
+        cookie: c.owner.cookie,
+        origin: new URL(c.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: await buildArchive(MANIFEST, [
@@ -350,7 +353,8 @@ describe("POST /restore — an archive names a state the type's lifecycle contai
     const res = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.operatorKey}`,
+        cookie: c.owner.cookie,
+        origin: new URL(c.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
       body: archive,

@@ -6,10 +6,12 @@
  * replay re-sends the stored `payload` string from `event_log` without
  * parsing it. A fix to one is not a fix.
  */
+import { PERMISSIONS } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { initEventLog } from "../pubsub.js";
 import { itemWrites } from "../storage/item-writes.js";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { TestContext } from "../test-utils.js";
 import {
-  TEST_API_KEY_SALT,
   createTestContext,
   mintWorkingKey,
   readSse,
@@ -17,10 +19,6 @@ import {
   seedOauthBearer,
   settle,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { initEventLog } from "../pubsub.js";
-import { PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -175,11 +173,7 @@ describe("an OAuth-derived subscriber", () => {
     // the only thing left to narrow the frame is the extension map. With
     // no scopes at all it receives no events whatever, which would make
     // the assertions below pass for the wrong reason.
-    const { token } = await seedOauthBearer(
-      ctx.storage,
-      ["core.note:read"],
-      {},
-    );
+    const { token } = await seedOauthBearer(ctx, ["core.note:read"], {});
 
     const item = await itemWrites(ctx.storage).create({
       type: "core.note",
@@ -212,23 +206,20 @@ describe("an OAuth-derived subscriber", () => {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
-    // Written by a working credential rather than the operator key, whose
-    // own maps are empty.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const writerKey = `marfa_k1_oauthwriter_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `oauthwriter-${suffix}`,
-        source: `oauthwriter-${suffix}`,
-        permissions: [...PERMISSIONS],
-        type_permissions: { "*": "write" },
-        // Named, because the extension door reads this map and nothing else.
-        extension_permissions: { mine: "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(writerKey, TEST_API_KEY_SALT),
-    );
+
+    const writerKey = await mintWorkingKey(ctx, {
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: `oauthwriter-${suffix}`,
+      source: `oauthwriter-${suffix}`,
+      permissions: [...PERMISSIONS],
+      type_permissions: { "*": "write" },
+      // Named, because the extension door reads this map and nothing else.
+      extension_permissions: { mine: "write" },
+      default_tier: "library",
+    });
     const write = await request(
       ctx.app,
       "PUT",

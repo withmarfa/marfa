@@ -10,7 +10,8 @@ import type {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
+  getOwnerClient,
   trackEdge,
   trackFolder,
   trackItem,
@@ -496,8 +497,8 @@ describe("a type's link", () => {
 
   it("stops a restore registering a link the rows a forced delete left share", async () => {
     const { id, fields } = await leftBehind("left-restore");
-    const operator = getOperatorClient();
-    const refused = await operator.restoreArchive(
+    const owner = getOwnerClient();
+    const refused = await owner.restoreArchive(
       itemsArchive([], [], [{ id, fields, link_field: "vendor_id" }]),
     );
     expect(refused.status, JSON.stringify(refused.error)).toBe(409);
@@ -505,7 +506,7 @@ describe("a type's link", () => {
     expect((await client.getType(id)).status).toBe(404);
 
     // The witness: the same archive naming a link the rows hold apart restores.
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       itemsArchive([], [], [{ id, fields, link_field: "remote_id" }]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -915,11 +916,11 @@ describe("a link is one row's", () => {
   });
 
   it("counts an archived row whose link another row holds as a duplicate", async () => {
-    const operator = getOperatorClient();
+    const owner = getOwnerClient();
     const taken = v("archive-held");
     const holder = await row({ vendor_id: taken, title: "the live row" });
     const duplicate = uuidv7();
-    const refused = await operator.restoreArchive(
+    const refused = await owner.restoreArchive(
       itemsArchive([
         {
           id: duplicate,
@@ -938,7 +939,7 @@ describe("a link is one row's", () => {
 
     // The witness: the same row under a value nothing holds is restored.
     const fresh = uuidv7();
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       itemsArchive([
         {
           id: fresh,
@@ -1386,9 +1387,7 @@ describe("POST /items/tombstones", () => {
       tombstone,
     ]);
 
-    const claimant = await keyFor(getOperatorClient(), "claimant", [
-      ctx.source,
-    ]);
+    const claimant = await keyFor(getOwnerClient(), "claimant", [ctx.source]);
     const moved = await claimant.settleTombstones({
       ...byKey,
       settled_at: later,
@@ -1639,7 +1638,7 @@ describe("POST /items/lookup", () => {
     const folderKey = v("nk-system-folder");
     const noteKey = v("nk-system-note");
     const folderId = uuidv7();
-    const restored = await getOperatorClient().restoreArchive(
+    const restored = await getOwnerClient().restoreArchive(
       itemsArchive([
         {
           id: folderId,
@@ -1766,8 +1765,8 @@ describe("POST /items/lookup", () => {
     }
 
     // A key whose map reaches no type is refused rather than answered empty.
-    const operator = getOperatorClient();
-    const none = await operator.lookupItems(byLink);
+    const management = getManagementClient();
+    const none = await management.lookupItems(byLink);
     expect(none.status).toBe(403);
     expect(none.error?.error.code).toBe("type_not_permitted");
   });

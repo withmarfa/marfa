@@ -19,11 +19,7 @@ import {
   OPENAPI_DOCUMENT_INFO,
 } from "../openapi-finalize.js";
 import { FENCED_PLUGIN_ENDPOINTS } from "./oauth-plugin-fence.js";
-import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
-import {
-  createTestContext,
-  createUnbootstrappedTestApp,
-} from "../test-utils.js";
+import { createTestContext, createUnclaimedTestApp } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -106,6 +102,8 @@ function documentedDoors(): Set<string> {
  * root are open by construction.
  */
 const OPEN_OPERATIONS: Record<string, string> = {
+  "POST /owner":
+    "claims the owner with setup proof carried in the body or setup session",
   "GET /":
     "the instance's description, where a caller with no credential yet reads which instance answers and which contract it speaks",
   "POST /auth/oauth2/register":
@@ -155,6 +153,20 @@ function fencedDoors(): Set<string> {
  * lands on before it holds anything.
  */
 const OPEN_DOORS: Record<string, string> = {
+  "POST /owner": "one-time owner claim authenticated by setup proof",
+  "GET /setup": "the setup page, before any owner exists",
+  "POST /setup/exchange":
+    "exchanges machine-issued proof for a setup-only cookie",
+  "POST /setup/claim": "claims using setup proof or a setup-only cookie",
+  "GET /auth/owner/manage":
+    "management page authenticated by direct owner session",
+  "GET /auth/owner/restore":
+    "restore form authenticated by direct owner session",
+  "GET /auth/owner/password":
+    "owner password form authenticated by the owner session cookie",
+  "POST /auth/owner/password":
+    "owner password change authenticated by session, current password and origin",
+
   "GET /":
     "names the instance, its build, its contract version and the surfaces it serves",
   "GET /health": "liveness, read before any credential exists",
@@ -284,23 +296,25 @@ describe("the credential gate", () => {
     expect(wrong.sort()).toEqual([]);
   });
 
-  it("leaves the one credential-less mint open", async () => {
-    // `POST /keys` declares a credential like every other door, so the gate
-    // would close the first mint on a fresh instance if it read the
-    // declaration alone. Bootstrap presents the boot log's one-time secret
-    // instead, and the gate steps aside for it.
-    const fresh = await createUnbootstrappedTestApp();
+  it("refuses credential-less key minting before an owner claims the instance", async () => {
+    const fresh = await createUnclaimedTestApp();
     try {
-      const secret = await ensureBootstrapSecret(fresh.storage);
       const res = await fresh.app.request("/keys", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${secret}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: "first", source: "first" }),
       });
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(401);
+      expect((await fresh.storage.keys.list()).length).toBe(0);
+      const ownerMint = await ctx.ownerRequest("/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "owner-witness",
+          source: "owner-witness",
+        }),
+      });
+      expect(ownerMint.status).toBe(201);
     } finally {
       await fresh.cleanup();
     }
@@ -317,7 +331,15 @@ describe("the credential gate", () => {
       // The global middleware mounts, which are not doors: nothing is
       // served at `/*` and every request passes through them on its way to
       // whatever is.
-      if (door === "ALL /*") continue;
+      if (
+        [
+          "ALL /*",
+          "ALL /setup/*",
+          "ALL /owner/*",
+          "ALL /auth/owner/*",
+        ].includes(door)
+      )
+        continue;
       if (guarded.has(door)) continue;
       if (fenced.has(door)) continue;
       if (door in OPEN_DOORS) continue;

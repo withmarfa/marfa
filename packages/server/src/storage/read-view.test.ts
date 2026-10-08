@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { ApiKey } from "@withmarfa/shared";
+import { describe, expect, it } from "vitest";
 import { canonicalReadProjection } from "./read-view.js";
 const bound = { kind: "api_key" as const, id: "key", hash: "hash" };
 const key = {
@@ -7,7 +7,7 @@ const key = {
   label: "own.namespace",
   source: "origin",
   default_tier: "library",
-  is_operator: false,
+
   type_permissions: {},
   created_at: "2026-01-01T00:00:00Z",
   last_used_at: null,
@@ -57,7 +57,6 @@ describe("canonical effective read projection", () => {
         edge_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
         sources: ["claimed"],
-        is_operator: true,
       }),
     ).toEqual(
       projection({

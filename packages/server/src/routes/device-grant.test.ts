@@ -19,11 +19,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // Every case boots a server, registers a client, signs a person up and in
@@ -82,9 +78,8 @@ async function registerClient(
   return ((await res.json()) as { client_id: string }).client_id;
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Device Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -205,7 +200,7 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(early.status).toBe(400);
     expect(early.body.error).toBe("authorization_pending");
 
-    const cookie = await signInUser(c, "device-approve@example.com");
+    const cookie = await signInUser(c);
     const screen = await openConsent(c, init.user_code, cookie);
     expect(screen.status).toBe(200);
     const html = await screen.text();
@@ -264,7 +259,7 @@ describe("the device authorization grant through the provider plugin", () => {
   it("a client registered for the refresh grant is minted a refresh token on offline_access, and one that is not is not", async () => {
     ctx = await createTestContext({});
     const c = ctx;
-    const cookie = await signInUser(c, "device-refresh@example.com");
+    const cookie = await signInUser(c);
     const scope = "core.note:read offline_access";
 
     const withRefresh = await registerClient(c, [
@@ -328,7 +323,7 @@ describe("the device authorization grant through the provider plugin", () => {
       fields: { title: { type: "string", required: true } },
     });
     const init = await initiate(c, clientId, "user.*:read");
-    const cookie = await signInUser(c, "device-wildcard@example.com");
+    const cookie = await signInUser(c);
 
     const screen = await openConsent(c, init.user_code, cookie);
     expect(screen.status).toBe(200);
@@ -345,7 +340,7 @@ describe("the device authorization grant through the provider plugin", () => {
     const c = ctx;
     const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
     const init = await initiate(c, clientId, "core.note:read");
-    const cookie = await signInUser(c, "device-unverified@example.com");
+    const cookie = await signInUser(c);
 
     const screen = await openConsent(c, init.user_code, cookie);
     expect(screen.status).toBe(200);
@@ -374,7 +369,7 @@ describe("the device authorization grant through the provider plugin", () => {
       .update(schema.auth_oauth_client)
       .set({ public: false, tokenEndpointAuthMethod: "client_secret_basic" })
       .where(eq(schema.auth_oauth_client.clientId, clientId));
-    const cookie = await signInUser(c, "device-secret@example.com");
+    const cookie = await signInUser(c);
     const screen = await openConsent(c, init.user_code, cookie);
     expect(screen.status).toBe(200);
     const html = await screen.text();
@@ -388,7 +383,7 @@ describe("the device authorization grant through the provider plugin", () => {
     const c = ctx;
     const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
     const init = await initiate(c, clientId, "core.note:read");
-    const cookie = await signInUser(c, "device-deny@example.com");
+    const cookie = await signInUser(c);
     expect((await openConsent(c, init.user_code, cookie)).status).toBe(200);
 
     const denied = await decide(c, init.user_code, cookie, "deny", []);
@@ -409,7 +404,7 @@ describe("the device authorization grant through the provider plugin", () => {
     const c = ctx;
     const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
     const init = await initiate(c, clientId, "core.note:read core.note:write");
-    const cookie = await signInUser(c, "device-narrow@example.com");
+    const cookie = await signInUser(c);
     expect((await openConsent(c, init.user_code, cookie)).status).toBe(200);
 
     // Only the read ticked, and a scope the device never asked for, which
@@ -465,14 +460,28 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(res.body.error).toBe("authorization_pending");
   });
 
-  it("a code one person claimed is not another's to approve", async () => {
+  it("refuses a device code whose stored owner is not the signed-in owner", async () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
     const init = await initiate(c, clientId, "core.note:read");
-    const cookieA = await signInUser(c, "device-owner@example.com");
-    const cookieB = await signInUser(c, "device-other@example.com");
+    const cookieA = await signInUser(c);
+    const cookieB = await signInUser(c);
     expect((await openConsent(c, init.user_code, cookieA)).status).toBe(200);
+    // A deliberately corrupt code binding must not be adopted by the real owner.
+    const schema = await import("../storage/sqlite/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = c.storage.betterAuthDb as {
+      update: (table: unknown) => {
+        set: (values: Record<string, unknown>) => {
+          where: (condition: unknown) => Promise<unknown>;
+        };
+      };
+    };
+    await db
+      .update(schema.auth_oauth_device_code)
+      .set({ userId: "foreign-owner" })
+      .where(eq(schema.auth_oauth_device_code.deviceCode, init.device_code));
 
     const other = await openConsent(c, init.user_code, cookieB);
     expect(other.status).toBe(302);

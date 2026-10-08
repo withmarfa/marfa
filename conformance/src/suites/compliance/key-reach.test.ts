@@ -3,7 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -123,13 +123,11 @@ describe("a key reaches only the keys it could have minted", () => {
       minter.client,
     );
 
-    // The witness: the full key and the operator key are there to be listed,
-    // to a credential that reaches them.
-    const everything = await getOperatorClient().listKeys();
+    // The owner can see the full key that the narrower minter cannot.
+    const everything = await getOwnerClient().listKeys();
     expect(everything.ok).toBe(true);
     const all = everything.data.data.map((k) => k.id);
     expect(all).toContain(full.id);
-    expect(everything.data.data.some((k) => k.is_operator)).toBe(true);
 
     const listed = await minter.client.listKeys();
     expect(listed.ok).toBe(true);
@@ -137,7 +135,6 @@ describe("a key reaches only the keys it could have minted", () => {
     expect(ids).toContain(minter.id);
     expect(ids).toContain(narrower.id);
     expect(ids).not.toContain(full.id);
-    expect(listed.data.data.some((k) => k.is_operator)).toBe(false);
   });
 
   it("revokes and changes keys within its reach, a peer included, and revokes itself", async () => {
@@ -219,12 +216,12 @@ describe("a key reaches only the keys it could have minted", () => {
     expect((await extended.client.revokeKey(holder.id)).ok).toBe(true);
   });
 
-  it("no working key reaches an operator key, and the operator key reaches every key", async () => {
-    const operator = getOperatorClient();
+  it("a minter cannot reach a management key beyond its permissions; the owner can", async () => {
+    const operator = getOwnerClient();
     const spare = await operator.createKey({
       label: `kr-spare-operator-${ctx.runId}`,
       source: `${ctx.source}-kr-spare-operator`,
-      is_operator: true,
+      permissions: ["keys.manage"],
     });
     expect(spare.ok, JSON.stringify(spare.error)).toBe(true);
     try {
@@ -237,7 +234,6 @@ describe("a key reaches only the keys it could have minted", () => {
       expect(update.status).toBe(404);
       const listed = await client.listKeys();
       expect(listed.ok).toBe(true);
-      expect(listed.data.data.some((k) => k.is_operator)).toBe(false);
 
       const full = await mint("kr-operator-target");
       const renamed = await operator.updateKey(full.id, {

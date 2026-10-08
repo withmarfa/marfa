@@ -17,17 +17,16 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists.
  */
-import { itemWrites } from "../storage/item-writes.js";
+import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { createHmac } from "node:crypto";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
-  createTestAccount,
   request,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 
 // Every test here boots a server, signs a user up and in (two password
 // hashes), and drives at least one full device flow before it asserts
@@ -122,9 +121,8 @@ async function seedAccessToken(
 }
 
 /** Sign up + verify + sign in; returns the session cookie header value. */
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Tester");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -140,24 +138,6 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 /** The Better Auth user id for a signed-up email. */
-async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule = await import("../storage/sqlite/schema.js");
-  const { eq } = await import("drizzle-orm");
-  const db = c.storage.betterAuthDb as {
-    select: () => {
-      from: (t: unknown) => {
-        where: (w: unknown) => Promise<{ id: string }[]>;
-      };
-    };
-  };
-  const rows = await db
-    .select()
-    .from(schemaModule.auth_user)
-    .where(eq(schemaModule.auth_user.email, email));
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
-  return id;
-}
 
 /** Start a device-flow authorization. The `user_code` drives the consent
  *  screen and the `device_code` drives the poll, so both come back. */
@@ -294,7 +274,7 @@ describe("DELETE /auth/grants/:id — the record never overstates the revoke", (
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "revoke-cascade@example.com");
+    const cookie = await signInUser(c);
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
@@ -335,7 +315,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-vs-revoke@example.com");
+    const cookie = await signInUser(c);
 
     // A standing grant for the client, so there is something to revoke
     // and the second approval takes the update-in-place branch.
@@ -486,9 +466,8 @@ async function seedConsent(
 describe("revocation reaches outstanding authorization codes", () => {
   it("REGRESSION: revoking a grant deletes its outstanding codes", async () => {
     ctx = await createTestContext({});
-    const email = `codes-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    await signInUser(ctx, email);
-    const authUserId = await authUserIdFor(ctx, email);
+    await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const clientId = await seedClient(ctx);
     await seedConsent(ctx, clientId, authUserId);
     await seedAuthorizationCode(ctx, clientId, authUserId);
@@ -510,9 +489,8 @@ describe("revocation reaches outstanding authorization codes", () => {
 
   it("REGRESSION: a code whose grant is revoked cannot be redeemed", async () => {
     ctx = await createTestContext({});
-    const email = `exch-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    await signInUser(ctx, email);
-    const authUserId = await authUserIdFor(ctx, email);
+    await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const clientId = await seedClient(ctx);
     await seedConsent(ctx, clientId, authUserId);
     const code = await seedAuthorizationCode(ctx, clientId, authUserId);
@@ -550,9 +528,8 @@ describe("revocation reaches outstanding authorization codes", () => {
     // So this one drives the endpoint. The seeded identifier is the hashed
     // code, because that is what the guard looks up.
     ctx = await createTestContext({});
-    const email = `guard-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    await signInUser(ctx, email);
-    const authUserId = await authUserIdFor(ctx, email);
+    await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const clientId = await seedClient(ctx);
     await seedConsent(ctx, clientId, authUserId);
 
@@ -611,7 +588,7 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-poll-after-revoke@example.com");
+    const cookie = await signInUser(c);
 
     // A first device login, approved and polled. It mints, which is what
     // makes the refusal below mean anything: this fixture shape is one the
@@ -678,10 +655,7 @@ describe("revocation reaches outstanding device codes", () => {
 
     const pending = await deviceCodeRow(c, second.device_code);
     expect(pending?.status).toBe("pending");
-    const authUserId = await authUserIdFor(
-      c,
-      "device-poll-after-revoke@example.com",
-    );
+    const authUserId = c.owner.id;
     await approveCodeDirectly(c, second.device_code, authUserId);
 
     // The code the poll is about to present: approved for the person whose
@@ -716,7 +690,7 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-codes-swept@example.com");
+    const cookie = await signInUser(c);
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
@@ -745,8 +719,8 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookieA = await signInUser(c, "device-sweep-a@example.com");
-    const cookieB = await signInUser(c, "device-sweep-b@example.com");
+    const cookieA = await signInUser(c);
+    const cookieB = await signInUser(c);
 
     const flowA = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flowA, cookieA)).status).toBe(200);
@@ -791,7 +765,7 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-sweep-throws@example.com");
+    const cookie = await signInUser(c);
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
@@ -856,7 +830,7 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-grant-soft-deleted@example.com");
+    const cookie = await signInUser(c);
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
@@ -909,7 +883,7 @@ describe("revocation reaches outstanding device codes", () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "device-grant-purged@example.com");
+    const cookie = await signInUser(c);
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
     expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);

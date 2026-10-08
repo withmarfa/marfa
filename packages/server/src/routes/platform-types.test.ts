@@ -1,5 +1,5 @@
 /**
- * The operator surface for shipped types the build no longer carries.
+ * The management surface for shipped types the build no longer carries.
  *
  * Drift is derived at boot, so these tests set it directly rather than
  * booting an instance against a doctored database. What that leaves
@@ -58,7 +58,7 @@ describe("GET /platform-types/drift", () => {
     const id = await seedDriftedType(ctx);
 
     const res = await request(ctx.app, "GET", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -85,7 +85,7 @@ describe("GET /platform-types/drift", () => {
     });
 
     const res = await request(ctx.app, "GET", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const body = (await res.json()) as {
       data: { item_count: number; removable: boolean }[];
@@ -117,14 +117,14 @@ describe("DELETE /platform-types/{id}", () => {
     const id = await seedDriftedType(ctx);
 
     const res = await request(ctx.app, "DELETE", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("type_not_found");
 
     const listed = await request(ctx.app, "GET", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(listed.status).toBe(200);
     // The seeded row is the witness. An empty listing would satisfy the
@@ -139,7 +139,7 @@ describe("DELETE /platform-types/{id}", () => {
     const id = await seedDriftedType(ctx);
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
 
@@ -160,22 +160,22 @@ describe("DELETE /platform-types/{id}", () => {
     // The control: it resolves before the removal, so the assertions after
     // it are about the removal rather than about a type that never listed.
     const before = await request(ctx.app, "GET", `/types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(before.status).toBe(200);
 
     const removed = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(removed.status).toBe(200);
 
     const after = await request(ctx.app, "GET", `/types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(after.status).toBe(404);
 
     const listed = await request(ctx.app, "GET", "/types", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(listed.status).toBe(200);
     const ids = ((await listed.json()) as { data: { id: string }[] }).data.map(
@@ -196,7 +196,7 @@ describe("DELETE /platform-types/{id}", () => {
 
     const listedIds = async (): Promise<string[]> => {
       const res = await request(ctx.app, "GET", "/platform-types/drift", {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       });
       expect(res.status).toBe(200);
       return ((await res.json()) as { data: { id: string }[] }).data.map(
@@ -208,14 +208,14 @@ describe("DELETE /platform-types/{id}", () => {
     expect(await listedIds()).toEqual([id, other].sort());
 
     const removed = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(removed.status).toBe(200);
 
     expect(await listedIds()).toEqual([other]);
 
     const again = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(again.status).toBe(404);
     const body = (await again.json()) as { error: { code: string } };
@@ -233,12 +233,12 @@ describe("DELETE /platform-types/{id}", () => {
     });
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(409);
 
     const listed = await request(ctx.app, "GET", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const seen = (await listed.json()) as { data: { id: string }[] };
     expect(seen.data.map((t) => t.id)).toEqual([id]);
@@ -252,7 +252,7 @@ describe("DELETE /platform-types/{id}", () => {
     setPlatformDrift([]);
 
     const res = await request(ctx.app, "DELETE", "/platform-types/core.note", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code: string } };
@@ -283,7 +283,7 @@ describe("DELETE /platform-types/{id}", () => {
     );
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${parent}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(409);
 
@@ -306,7 +306,7 @@ describe("DELETE /platform-types/{id}", () => {
     );
 
     const res = await request(ctx.app, "GET", "/platform-types/drift", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const body = (await res.json()) as {
       data: { id: string; child_types: string[]; removable: boolean }[];
@@ -329,7 +329,7 @@ describe("DELETE /platform-types/{id}", () => {
     });
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(409);
 
@@ -373,7 +373,7 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
     };
 
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const created = await creating;
     items.countByType = count;
@@ -396,19 +396,19 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
     const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
-    const operator = (await ctx.storage.keys.list()).find(
-      (key) => key.is_operator,
+    const manager = (await ctx.storage.keys.list()).find((key) =>
+      key.permissions.includes("instance.maintain"),
     );
-    expect(operator).toBeDefined();
+    expect(manager).toBeDefined();
     const audit = await ctx.storage.audit.list({
       action: "platform_type.removed",
       resource_id: id,
     });
     expect(audit.data).toHaveLength(1);
-    expect(audit.data[0]?.key_id).toBe(operator?.id);
+    expect(audit.data[0]?.key_id).toBe(manager?.id);
   });
 });
 

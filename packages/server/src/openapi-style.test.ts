@@ -290,8 +290,13 @@ describe("the API description follows API-STYLE.md", () => {
       ["500", "InternalErrorRefusal"],
     ]);
     // A restore takes no body cap, so its 413 is a row larger than a write
-    // takes, and it carries its own text, as API-STYLE.md allows.
-    const ownMeaning = new Set(["POST /restore 413"]);
+    // takes. Claim checks machine-issued setup proof and its own persistent
+    // guessing allowance. Each carries its own text, as API-STYLE.md allows.
+    const ownMeaning = new Set([
+      "POST /restore 413",
+      "POST /owner 401",
+      "POST /owner 429",
+    ]);
     const texts = new Map<string, Set<string>>();
     for (const { key, operation } of operations()) {
       for (const [status, response] of Object.entries(

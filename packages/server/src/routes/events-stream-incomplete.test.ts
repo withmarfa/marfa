@@ -200,7 +200,7 @@ describe("live frames held past the limit while the catch-up runs", () => {
     const cursor = await latestEventId();
 
     const { storage, open } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage).request("/events", {
+    const res = await eventsAppWithKey(ctx, storage).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -259,9 +259,12 @@ describe("frames the subscriber would never receive", () => {
     const cursor = await latestEventId();
 
     const { storage, open } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(storage).request("/events?edges=none", {
-      headers: { "Last-Event-ID": String(cursor) },
-    });
+    const res = await eventsAppWithKey(ctx, storage).request(
+      "/events?edges=none",
+      {
+        headers: { "Last-Event-ID": String(cursor) },
+      },
+    );
     expect(res.status).toBe(200);
     await settle();
 
@@ -293,7 +296,7 @@ describe("frames the subscriber would never receive", () => {
     const { storage, open } = gatedEventLog(ctx.storage);
     // The permission map is what this probe is about, so it names one
     // narrower than the default rather than inheriting it.
-    const res = await eventsAppWithKey(storage, {
+    const res = await eventsAppWithKey(ctx, storage, {
       type_permissions: { "core.task": "read" },
     }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
     expect(res.status).toBe(200);

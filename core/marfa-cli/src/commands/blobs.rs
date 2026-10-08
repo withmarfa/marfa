@@ -38,7 +38,7 @@ pub enum BlobsCommand {
         ttl: Option<u64>,
     },
     /// Every store the instance has attached, and the copies a blob keeps
-    /// at the least. Operator key only.
+    /// at the least. Requires `blobs.manage`.
     Stores,
     /// The stores recorded as holding one blob's bytes, and when each copy
     /// was last found intact.
@@ -47,7 +47,7 @@ pub enum BlobsCommand {
         hash: String,
     },
     /// Remove one store's copy of a blob, where enough live copies remain.
-    /// Operator key only.
+    /// Requires `blobs.manage`.
     DeleteLocation {
         /// The blob hash, `sha256:<hex>`.
         hash: String,
@@ -55,8 +55,8 @@ pub enum BlobsCommand {
         #[arg(long, value_name = "STORE")]
         store: String,
     },
-    /// The blobs the last orphan sweep found nothing referencing. Operator
-    /// key only.
+    /// The blobs the last orphan sweep found nothing referencing. Requires
+    /// `blobs.manage`.
     Orphans,
 }
 

@@ -3,13 +3,13 @@
  * leaves every record as it was rather than some of them gone.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { hashApiKey } from "../../middleware/auth.js";
+import type { TestContext } from "../../test-utils.js";
 import {
   createTestContext,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../../test-utils.js";
-import type { TestContext } from "../../test-utils.js";
-import { hashApiKey } from "../../middleware/auth.js";
 import { SqliteOauthProviderStore } from "./oauth-provider-store.js";
 
 let ctx: TestContext | undefined;
@@ -23,9 +23,7 @@ afterEach(async () => {
 async function seedGrant(c: TestContext) {
   const oauth = c.storage.oauthProvider;
   if (!oauth) throw new Error("storage.oauthProvider missing");
-  const { token, clientId } = await seedOauthBearer(c.storage, [
-    "core.note:read",
-  ]);
+  const { token, clientId } = await seedOauthBearer(c, ["core.note:read"]);
   const accessHash = hashApiKey(
     token.slice("marfa_at_".length),
     TEST_API_KEY_SALT,

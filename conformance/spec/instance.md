@@ -188,31 +188,45 @@ When the server starts on a copy of the data directory that read the database fi
 
 ### `instance/salt-refuses-credentials`
 
-When the server starts on a data directory with an `API_KEY_SALT` other than the one its keys were minted under, the server MUST answer `401 unauthorized` to a request that carries a key, the operator key included, or an app's access token, minted under the original salt.
+When the server starts on a data directory with an `API_KEY_SALT` other than the one its keys were minted under, the server MUST answer `401 unauthorized` to a request that carries an ordinary key or an app's access token, minted under the original salt.
 
 **Reason:** the database holds a hash of each key, made with the salt, and the salt is a setting outside the data directory. A restore without it has every row and no credential that opens one.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the operator key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`, `compliance/backup-restore.test.ts › refuses a key it holds when started with a different API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`, `compliance/backup-restore.test.ts › refuses a key it holds when started with a different API_KEY_SALT`.
 
 ### `instance/salt-original-accepted`
 
-When the server starts again under the `API_KEY_SALT` that a key, the operator key or an app's access token was minted under, the server MUST accept that credential as it did before a start under another salt refused it.
+When the server starts again under the `API_KEY_SALT` that an ordinary key or an app's access token was minted under, the server MUST accept that credential as it did before a start under another salt refused it.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the operator key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`.
+**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`.
 
-### `instance/salt-no-bootstrap-secret`
+### `instance/salt-no-setup-proof`
 
-When the server starts on a database that has been bootstrapped, under an `API_KEY_SALT` other than the one its keys were minted under, the server MUST NOT print a bootstrap secret.
+When the server starts on a claimed database, under an `API_KEY_SALT` other than the one its keys were minted under, the server MUST NOT print a setup code.
 
-**Reason:** the database records that the first key was minted, so a restore under the wrong salt is not given a way to mint another.
+**Reason:** the completed claim is independent of key hashes, so an incorrect salt cannot reopen setup.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › offers no bootstrap secret and no unauthenticated way to mint a key when started under another API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT`.
 
 ### `instance/salt-no-unauthenticated-mint`
 
-When the server starts on a database that has been bootstrapped, under an `API_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
+When the server starts on a claimed database, under an `API_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › offers no bootstrap secret and no unauthenticated way to mint a key when started under another API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT`.
+
+### `instance/claim-survives-missing-credentials`
+
+When owner account rows or ordinary key rows disappear from a claimed database, the server MUST retain the completed claim after restart.
+
+**Reason:** Missing credentials do not establish authority to replace the owner.
+
+**Tests:** `compliance/instance-lifecycle.test.ts › does not reopen setup after deleting %s rows`.
+
+### `instance/claim-missing-owner-recovery`
+
+When a claimed instance's owner account is missing, the server MUST refuse local password recovery with `404 owner_not_found`.
+
+**Tests:** `compliance/instance-lifecycle.test.ts › does not reopen setup after deleting %s rows`.
 
 ## Health
 
@@ -328,33 +342,33 @@ When `GET /health` is called while no attempt of the `database_write` probe's wr
 
 **Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`.
 
-### `instance/health-error-operator`
+### `instance/health-error-authorized`
 
-While a component is `degraded` or `down` and the database can read the table of keys, when the operator key sends `GET /health`, the server MUST answer that component with an `error` that says why.
+While a component is `degraded` or `down` and the database can read the table of keys, when a credential holding `instance.read` sends `GET /health`, the server MUST answer that component with an `error` that says why.
 
-**Tests:** `compliance/health.test.ts › is given to the operator key and to no other caller`.
+**Tests:** `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
 
 ### `instance/health-error-others`
 
-When a request that carries no credential, or any credential other than the operator key, sends `GET /health`, the server MUST NOT answer an `error` on any component.
+When a request without direct owner/local authority or `instance.read` sends `GET /health`, the server MUST NOT answer an `error` on any component.
 
 **Reason:** the text is the database's or the operating system's own and carries paths and driver detail.
 
-**Tests:** `compliance/health.test.ts › is given to the operator key and to no other caller`.
+**Tests:** `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
 
 ### `instance/health-error-key-table`
 
-While the database cannot read the table of keys, the server MUST NOT answer an `error` on any component of `GET /health` to any caller, the operator key included.
+While the database cannot read the table of keys, the server MUST NOT answer an `error` on any component of `GET /health` to a request bearing an ordinary key that cannot be verified.
 
-**Reason:** a request the server cannot tell is from the operator key is not given the text.
+**Reason:** a bearer credential that the server cannot verify is not given the text.
 
-**Tests:** `compliance/health.test.ts › is given to no caller, the operator key included, while the database cannot look the key up`.
+**Tests:** `compliance/health.test.ts › is withheld from bearer credentials while the database cannot look keys up`.
 
 ### `instance/health-unknown-key`
 
 When a request that carries a credential the instance does not hold sends `GET /health`, the server MUST answer it as it answers a request that carries no credential.
 
-**Tests:** `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`, `compliance/health.test.ts › is given to the operator key and to no other caller`.
+**Tests:** `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`, `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
 
 ## Upgrading
 
@@ -622,13 +636,13 @@ When the server starts on a database that holds some of its own tables, lacks th
 
 **Reason:** nothing is written to the server's own tables before the last is made, so none holds a row, and refusing the database would send an owner looking for another build when no other build wrote it.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › creates the tables it lacks and starts, as it would on a new file`.
+**Tests:** `compliance/instance-lifecycle.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
 ### `instance/unfinished-ends-fresh`
 
-When the server completes an unfinished database, the server MUST leave it holding what a new database holds, with no key, no item and an `instance_id` of its own.
+When the server completes an unfinished database, the server MUST leave it holding what a new database holds, unclaimed, with no key, no item and an `instance_id` of its own.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › creates the tables it lacks and starts, as it would on a new file`.
+**Tests:** `compliance/instance-lifecycle.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
 ### `instance/unfinished-foreign-ignored`
 
@@ -654,13 +668,13 @@ If a request that carries no credential, or a credential the instance does not h
 
 **Tests:** `compliance/instance-config.test.ts › answers 401 unauthorized to both operations for no credential and for a key the instance does not hold`, `› asks for a credential, then config.manage, before it reads the body`.
 
-### `instance/config-operator-refused`
+### `instance/config-management-no-bypass`
 
-If the operator key sends `GET /config` or `PUT /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
+If a credential holding `instance.read` but not `config.manage` sends `GET /config` or `PUT /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
 
-**Reason:** the operator key runs the operator-only operations and holds no permission, `config.manage` included. The refusal for any other key without the permission is `types/config-permission`.
+**Reason:** `instance.read` does not imply configuration access; the general permission boundary is `types/config-permission`.
 
-**Tests:** `compliance/instance-config.test.ts › refuses both operations to the operator key, which holds no config.manage, and serves them to a key that does`.
+**Tests:** `compliance/instance-config.test.ts › refuses both operations without config.manage and serves them when it is granted`.
 
 ### `instance/config-permission-first`
 
@@ -893,6 +907,8 @@ The server reads each of these environment variables once, when it starts, and a
 | `NODE_ENV`                                  | `development`                 | `production`, `development` or `test`                              | The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.                                                                                                    |
 | `PORT`                                      | `8600`                        | Whole number, 1 to 65535                                           | The port the server listens on.                                                                                                                                                                                                                              |
 | `SQLITE_PATH`                               | `./data/marfa.db`             | Any text                                                           | The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.                                                                                                           |
+| `MARFA_CONTROL_SOCKET`                      | None                          | Any text                                                           | Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700. Linux requires getfacl.                                                                               |
+| `MARFA_CONTROL_ONLY`                        | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Start only the private control listener, without public HTTP or background jobs, for local recovery.                                                                                                                                                         |
 | `SQLITE_BUSY_BUDGET_MS`                     | `5000` ms                     | Whole number of milliseconds, 0 to 2147483647                      | How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.                                                                                                               |
 | `BLOB_PATH`                                 | `./data/blobs`                | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                      |
 | `MARFA_DISK_RESERVE_BYTES`                  | `134217728` bytes             | Whole number of bytes, 0 or more                                   | The free space on the disk store's volume that an upload or a restore must leave. A body that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                               |

@@ -1,10 +1,16 @@
+import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requirePermission, requireAuth } from "../middleware/auth.js";
+import {
+  requirePermission,
+  requireDirectAuthority,
+  requireRecentOwnerAuthentication,
+  authorityId,
+} from "../middleware/auth.js";
 import {
   appBehindReturnTo,
   buildScopeDescriptions,
@@ -263,6 +269,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }
     const session = await auth.getSession(c.req.raw.headers);
     if (session) {
+      requireDirectAuthority(c);
       return { kind: "session", session };
     }
     const url = new URL(c.req.url);
@@ -284,7 +291,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // Listing every app the owner authorized, and revoking one, are
     // operations on other principals' access — the same standing as the key
     // management routes beside them.
-    requireAuth(c);
     // Revoking another app's access is exactly the authority a person would
     // want to have been asked about, and `grants.manage` is the row they
     // tick to grant it. There is nothing else to reach this on: no door admits
@@ -334,7 +340,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 
   router.delete("/grants/:id", async (c) => {
     // The same axis as `GET /grants`: `grants.manage` to act at all.
-    requireAuth(c);
     requirePermission(c, "grants.manage");
     const id = c.req.param("id");
     const item = await storage.items.get(id);
@@ -361,7 +366,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       // keys the app minted survive unless this door was told to take them.
       revokeKeys: asksToRevokeKeys(c.req.query("revoke_keys")),
       audit: {
-        key_id: requireAuth(c).id,
+        key_id: authorityId(c),
         action: "auth.grant.revoked",
         resource_type: "oauth_grant",
         resource_id: clientId ?? id,
@@ -391,6 +396,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // forwarded intact onto the redirect response.
 
   router.get("/sign-in", async (c) => {
+    requireSecureOwnerTransport(auth ?? { baseURL: c.var.config.authBaseUrl });
     const url = new URL(c.req.url);
     const error = url.searchParams.get("error") ?? undefined;
 
@@ -430,7 +436,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const sentByAuthorization =
       new URL(returnTo, "http://localhost").pathname === "/auth/authorize";
     const session = auth ? await auth.getSession(c.req.raw.headers) : null;
-    if (session && !sentByAuthorization) {
+    if (
+      session &&
+      !sentByAuthorization &&
+      url.searchParams.get("prompt") !== "login"
+    ) {
       return c.html(
         renderSignedInPage({
           nonce: c.var.cspNonce,
@@ -458,6 +468,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   });
 
   router.post("/sign-in", async (c) => {
+    requireSecureOwnerTransport(auth ?? { baseURL: c.var.config.authBaseUrl });
     if (!auth) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
@@ -906,6 +917,24 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           async () => {
             const provider = storage.oauthProvider;
+            const prior =
+              (await provider?.getPriorConsent(
+                clientId,
+                sessionResult.session.user.id,
+              )) ?? [];
+            if (
+              approvedScopes.some(
+                (scope) =>
+                  [
+                    "instance.read",
+                    "instance.maintain",
+                    "connectors.manage",
+                    "blobs.manage",
+                    "keys.manage",
+                  ].includes(scope) && !prior.includes(scope),
+              )
+            )
+              requireRecentOwnerAuthentication(c);
             // The write the device's initiation could not make: nobody was
             // signed in then. Inside the approval's transaction, so an
             // approval that does not take writes nothing, and strict because
