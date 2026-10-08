@@ -930,7 +930,7 @@ When the server answers a write `409 version_conflict`, a device MUST block it `
 
 ## A renewal a drain meets
 
-A credential that renews, such as a token from a sign-in, is renewed when the server answers a write `401`, and the write is sent again under the renewed credential. These rules say what a drain does when the renewal fails.
+A token from a sign-in is renewed when the server answers a write `401` under it. These rules say what a drain does when that renewal fails.
 
 ### `queue-and-verdicts/renewal-environmental`
 
@@ -944,7 +944,7 @@ If renewing the credential after a write's `401` meets an environmental failure,
 
 If renewing the credential after a write's `401` fails other than by an environmental failure or a `401`, then a device MUST end the drain with that failure as its error.
 
-**Reason:** the person is signed out, or the credential cannot be read or renewed, and no write behind it could go under the same credential either.
+**Reason:** the person is signed out, or the credential cannot be read or renewed, and no write behind it could go under the same credential either. A renewal refused `401` leaves the write's own `401`, which `queue-and-verdicts/credential-blocks-queue` takes.
 
 **Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 
@@ -972,7 +972,7 @@ When a failed renewal ends a drain, the command MUST print the failure as its er
 
 When a drain ends because renewing the credential finds the person signed out, the command MUST report `signed_out` with `server` null and exit 5.
 
-**Reason:** the sign-in ended on this machine, so there is no server answer to report.
+**Reason:** the error says the sign-in on this machine has ended, which is not a server's answer to the write.
 
 **Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 
