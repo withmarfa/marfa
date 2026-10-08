@@ -167,7 +167,8 @@ describe("a folder's file whose tags would leave its item more than 100", () => 
       const path = join(f.dir, name);
       writeFileSync(path, change(readFileSync(path, "utf8")), "utf8");
     };
-    const lines = (tags: string[]) => tags.map((tag) => `  - ${tag}\n`).join("");
+    const lines = (tags: string[]) =>
+      tags.map((tag) => `  - ${tag}\n`).join("");
     edit("full.md", (text) => {
       expect(text).toContain("  - f0\n");
       return text.replace("  - f0\n", "  - swapped\n");
@@ -217,9 +218,7 @@ describe("a folder's file whose tags would leave its item more than 100", () => 
     ]);
 
     // Dropping the added tags takes the edit.
-    edit("held.md", (text) =>
-      text.replace(lines(named("added", 50)), ""),
-    );
+    edit("held.md", (text) => text.replace(lines(named("added", 50)), ""));
     const taken = await f.folder.scan();
     expect(taken.ok && taken.value.flagged).toEqual([]);
     const after = await f.folder.device().queue();
