@@ -1,4 +1,5 @@
-import { changeOwnerPassword } from "./instance-claim.js";
+import { rememberRecentAuthentication } from "./request-authority.js";
+import { changeOwnerPassword, requireOwnerSession } from "./instance-claim.js";
 import { requireOwnerOrigin } from "./owner-browser.js";
 import { withSessionEndAudit } from "./session-end-audit.js";
 import {
@@ -789,6 +790,44 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           { headers: { "cache-control": "no-store" } },
         );
       }
+      const browserSessionPaths = new Set([
+        "/get-session",
+        "/list-sessions",
+        "/sign-out",
+        "/revoke-session",
+        "/revoke-sessions",
+        "/revoke-other-sessions",
+        "/update-user",
+        "/change-email",
+        "/delete-user",
+        "/oauth2/authorize",
+        "/oauth2/consent",
+        "/oauth2/end-session",
+        "/device/approve",
+        "/device/deny",
+      ]);
+      if (browserSessionPaths.has(path) && request.headers.has("authorization"))
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "This operation requires an owner browser session.",
+        );
+      if (
+        options.storage &&
+        [
+          "/list-sessions",
+          "/revoke-session",
+          "/revoke-sessions",
+          "/revoke-other-sessions",
+          "/update-user",
+          "/change-email",
+          "/delete-user",
+        ].includes(path)
+      ) {
+        await requireOwnerSession(options.storage, facade, request.headers, {
+          recent: true,
+        });
+        rememberRecentAuthentication();
+      }
       const phase =
         ["/oauth2/token", "/oauth2/revoke"].includes(path) && options.storage
           ? new CredentialPersistencePhase(
@@ -857,7 +896,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     },
     api: instance.api,
     getSession: (headers: Headers, lookup = {}) =>
-      credentialOperation("/get-session", () =>
+      (lookup.readOnly
+        ? (work: () => Promise<MarfaAuthSession | null>) =>
+            // Revalidation runs while a provider persistence phase is opening.
+            // Its read must not wait for that same phase to finish opening.
+            withCredentialRequest(
+              { path: "/get-session", clientIp: null },
+              work,
+            )
+        : (work: () => Promise<MarfaAuthSession | null>) =>
+            credentialOperation("/get-session", work))(() =>
         api.getSession({
           headers,
           ...(lookup.readOnly

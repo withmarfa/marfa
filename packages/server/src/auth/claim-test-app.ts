@@ -1,3 +1,4 @@
+import { directAuthorityMiddleware } from "../middleware/direct-authority.js";
 import { loadConfig } from "../config.js";
 import { issueSetupCode } from "./instance-claim.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -35,6 +36,7 @@ export async function createClaimTestApp(baseURL = "http://localhost:8600") {
   app.use("*", pageSecurityPolicy);
   app.use("*", loggerMiddleware());
   app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+  app.use("*", directAuthorityMiddleware(storage, auth, baseURL));
   app.route("/setup", setupRoutes(storage, auth));
   app.route("/owner", ownerRoutes(storage, auth));
   app.route("/auth/owner", ownerPages(storage, auth));

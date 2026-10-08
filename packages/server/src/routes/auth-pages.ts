@@ -434,7 +434,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const sentByAuthorization =
       new URL(returnTo, "http://localhost").pathname === "/auth/authorize";
     const session = auth ? await auth.getSession(c.req.raw.headers) : null;
-    if (session && !sentByAuthorization) {
+    if (
+      session &&
+      !sentByAuthorization &&
+      url.searchParams.get("prompt") !== "login"
+    ) {
       return c.html(
         renderSignedInPage({
           nonce: c.var.cspNonce,

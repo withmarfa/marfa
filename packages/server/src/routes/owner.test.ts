@@ -52,7 +52,7 @@ describe("owner and setup routes", () => {
           headers: { cookie, authorization: "Bearer app-token" },
         })
       ).status,
-    ).toBe(403);
+    ).toBe(401);
   });
   it("spends handoff, protects cookie, keeps refresh usable, and refuses cross-origin requests", async () => {
     const { app, storage } = await fixture();
@@ -194,5 +194,71 @@ describe("owner and setup routes", () => {
     expect(
       await storage.__sqliteAll("SELECT id FROM auth_session"),
     ).toHaveLength(1);
+  });
+  it("refuses mixed browser credentials and requires recent session administration", async () => {
+    const { app, storage } = await fixture();
+    const { code } = await issueSetupCode(storage);
+    await app.request("/owner", json({ ...details, code }));
+    const login = await app.request(
+      `${origin}/auth/sign-in/email`,
+      json(details, { origin }),
+    );
+    const cookie = login.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    expect(
+      (
+        await app.request(`${origin}/auth/list-sessions`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(200);
+    for (const path of [
+      "/auth/list-sessions",
+      "/auth/get-session",
+      "/auth/oauth2/authorize?prompt=none",
+    ]) {
+      expect(
+        (
+          await app.request(`${origin}${path}`, {
+            headers: { cookie, authorization: "Bearer application-token" },
+          })
+        ).status,
+      ).toBe(403);
+    }
+    await storage.__sqliteRun(
+      "UPDATE auth_session SET created_at = created_at - 301",
+      [],
+    );
+    expect(
+      (
+        await app.request(`${origin}/auth/list-sessions`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await app.request(
+          `${origin}/auth/revoke-sessions`,
+          json({}, { cookie, origin }),
+        )
+      ).status,
+    ).toBe(401);
+    const page = await app.request(
+      `${origin}/auth/sign-in?prompt=login&return_to=/auth/owner/restore`,
+      { headers: { cookie } },
+    );
+    expect(await page.text()).toContain('type="password"');
+    // An old session can still end itself.
+    expect(
+      (
+        await app.request(
+          `${origin}/auth/sign-out`,
+          json({}, { cookie, origin }),
+        )
+      ).status,
+    ).toBe(200);
   });
 });

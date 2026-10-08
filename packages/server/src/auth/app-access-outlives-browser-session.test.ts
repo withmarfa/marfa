@@ -1,3 +1,4 @@
+import { recoverOwnerPassword } from "./instance-claim.js";
 /**
  * Ending a browser session ends that browser and nothing an app holds.
  *
@@ -17,10 +18,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  createTestContext,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -275,8 +273,7 @@ const DOORS: {
   },
   {
     name: "changing the password",
-    // The door replaces the session that asked with a new one.
-    survivor: false,
+    survivor: true,
     run: async (c, d) => {
       const res = await request(c.app, "POST", "/auth/change-password", {
         headers: { cookie: d.b, origin: ORIGIN },
@@ -290,11 +287,20 @@ const DOORS: {
     },
   },
   {
+    name: "local password recovery",
+    survivor: false,
+    run: async (c) => {
+      await recoverOwnerPassword(c.storage, c.auth, {
+        password: "recovered horse battery",
+      });
+    },
+  },
+  {
     name: "a session's expiry",
     survivor: true,
     run: async (c, d) => {
       await expireSession(c, d.a);
-      // The lookup of an expired session is what deletes it.
+      // Read-only lookup refuses an expired session without refreshing it.
       await request(c.app, "GET", "/auth/get-session", {
         headers: { cookie: d.a },
       });
@@ -306,10 +312,17 @@ describe("an app stays connected when a browser session ends", () => {
   it.each(DOORS)(
     "$name ends the browser and leaves the apps' access, refresh and consent",
     async ({ run, survivor }) => {
-      ctx = await createTestContext({}, { email: "browser-sessions@example.com", password: PASSWORD, name: "Browser Sessions" });
+      ctx = await createTestContext(
+        {},
+        {
+          email: "browser-sessions@example.com",
+          password: PASSWORD,
+          name: "Browser Sessions",
+        },
+      );
       const c = ctx;
       const email = "browser-sessions@example.com";
-      
+
       const a = await signIn(c, email);
       const b = await signIn(c, email);
       const refreshing = await seedClient(c, "Refreshing App");
@@ -343,10 +356,17 @@ describe("an app stays connected when a browser session ends", () => {
   );
 
   it("still refuses an authorization code once its browser has ended, and accepts one whose browser lives", async () => {
-    ctx = await createTestContext({}, { email: "browser-code@example.com", password: PASSWORD, name: "Browser Code" });
+    ctx = await createTestContext(
+      {},
+      {
+        email: "browser-code@example.com",
+        password: PASSWORD,
+        name: "Browser Code",
+      },
+    );
     const c = ctx;
     const email = "browser-code@example.com";
-    
+
     const a = await signIn(c, email);
     const clientId = await seedClient(c, "Code App");
     const live = await approve(c, clientId, a, "core.note:read");
