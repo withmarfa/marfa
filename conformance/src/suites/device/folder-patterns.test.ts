@@ -143,3 +143,25 @@ it("matches escaped brackets and Unicode literals without turning them into clas
     "witness.md",
   ]);
 });
+
+it.each([
+  { position: "letter", pattern: "\\J\u030c" },
+  { position: "combining mark", pattern: "J\\\u030c" },
+])(
+  "folds Unicode literals with an escape on the $position",
+  async ({ pattern }) => {
+    const names = ["ǰ.md", "witness.md"];
+    await witness(names);
+    expect(
+      await scanned(names, { include: [`${pattern}.md`, "witness.md"] }),
+    ).toEqual(["witness.md", "ǰ.md"]);
+    expect(await scanned(names, { ignore: [`${pattern}.md`] })).toEqual([
+      "witness.md",
+    ]);
+    const dotted = [".ǰ/inside.md", ".other/outside.md", "witness.md"];
+    await witness(dotted);
+    expect(
+      await scanned(dotted, { include: [`.${pattern}/**`, "witness.md"] }),
+    ).toEqual([".ǰ/inside.md", "witness.md"]);
+  },
+);

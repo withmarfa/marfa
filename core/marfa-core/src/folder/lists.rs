@@ -268,10 +268,20 @@ fn folded_pattern(pattern: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '\\' => {
-                flush(&mut result, &mut literal);
-                result.push(ch);
                 if let Some(escaped) = chars.next() {
-                    result.extend(escaped.to_lowercase());
+                    // An unnecessary escape must not split a combining
+                    // sequence. Keep only escapes that protect pattern syntax
+                    // or whitespace from the gitignore parser.
+                    if matches!(
+                        escaped,
+                        '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '/' | '#' | '!'
+                    ) || escaped.is_whitespace()
+                    {
+                        literal.push('\\');
+                    }
+                    literal.push(escaped);
+                } else {
+                    literal.push('\\');
                 }
             }
             '[' => {
@@ -514,6 +524,13 @@ mod tests {
             ("[CAFÉ.md", "[café.md"),
             (r"\[CAFÉ\].md", "[café].md"),
             (r"\?CAFÉ.md", "?café.md"),
+            (r"\!CAFÉ.md", "!café.md"),
+            (r"\#CAFÉ.md", "#café.md"),
+            (r"\{CAFÉ\}.md", "{café}.md"),
+            (r"\\CAFÉ.md", "\\café.md"),
+            (r"CAFÉ.md\ ", "café.md "),
+            ("\\J\u{30c}.md", "ǰ.md"),
+            ("J\\\u{30c}.md", "ǰ.md"),
             ("{CAFÉ,ÉTÉ}.md", "été.md"),
         ] {
             assert!(lists(&[pattern], &[]).takes(name), "{pattern:?}, {name:?}");
