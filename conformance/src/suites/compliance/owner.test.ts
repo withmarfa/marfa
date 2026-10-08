@@ -299,7 +299,9 @@ describe("claiming the one owner", () => {
       .join("; ");
     const read = await fetch(`${server.url}/owner`, { headers: { cookie } });
     expect(read.status).toBe(200);
-    expect(await read.json()).toEqual(owner);
+    const readOwner = await read.json();
+    await expectMatchesSchema("GET", "/owner", 200, readOwner);
+    expect(readOwner).toEqual(owner);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
     expect((await local("/_control/setup/code", {})).status).toBe(409);
   });
