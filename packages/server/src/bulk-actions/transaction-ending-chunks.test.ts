@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  causeMessages,
+  createTestContext,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 import {
   resolveLiveCredential,
   type LiveCredential,
@@ -109,7 +114,9 @@ describe("every bulk runner arm distinguishes row refusal from transaction loss"
       } catch (error) {
         thrown = error;
       }
-      expect((thrown as Error).message).toContain("original native refusal");
+      expect(causeMessages(thrown).join("\n")).toContain(
+        "original native refusal",
+      );
       expect(read.mock.calls.map(([id]) => id)).toContain(ids[1]);
       expect(read.mock.calls.map(([id]) => id)).not.toContain(ids[2]);
       expect(

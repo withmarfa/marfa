@@ -1,7 +1,11 @@
 import { DrizzleQueryError } from "drizzle-orm";
 import { createClient, LibsqlError } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { originalErrorMessage } from "./storage/sqlite/transaction-control.js";
+import {
+  originalErrorMessage,
+  TransactionControl,
+  TransactionFailure,
+} from "./storage/sqlite/transaction-control.js";
 import {
   DatabaseFailure,
   errorMessage,
@@ -286,6 +290,14 @@ describe("the original message a transaction failure reports", () => {
     const orphan = new DrizzleQueryError(STATEMENT, ["x", VALUE], undefined);
     expect(orphan.message).toContain(VALUE);
     expect(originalErrorMessage(orphan)).toBe(FIXED);
+  });
+
+  it("is what the failure itself carries, with the original error kept on its cause", () => {
+    const cause = failedQuery();
+    const failure = new TransactionFailure(cause, new TransactionControl());
+    expect(failure.message).toBe(`${FIXED} (SQLITE_FULL)`);
+    expect(failure.message).not.toContain(VALUE);
+    expect(failure.cause).toBe(cause);
   });
 });
 

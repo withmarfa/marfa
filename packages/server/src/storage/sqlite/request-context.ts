@@ -188,7 +188,6 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
                     "poisoned",
                     root.outcome === "rolled_back" ? "rolled_back" : "unknown",
                   );
-                if (callbackState.failed) root.diagnose(error);
               }
               root.assertUsable();
               throw error;

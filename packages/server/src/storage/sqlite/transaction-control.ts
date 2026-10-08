@@ -34,7 +34,6 @@ export class TransactionControl {
   outcome: TransactionOutcome = "active";
   callbackCause: unknown;
   private failure: TransactionFailure | undefined;
-  private pendingDiagnostics: string[] = [];
   private settled: Exclude<TransactionOutcome, "active"> | undefined;
   private readonly settlementCallbacks: ((
     outcome: Exclude<TransactionOutcome, "active">,
@@ -47,19 +46,7 @@ export class TransactionControl {
   ): void {
     this.state = state;
     this.outcome = outcome;
-    if (!this.failure) {
-      this.failure = new TransactionFailure(cause, this);
-      for (const diagnostic of this.pendingDiagnostics)
-        this.failure.addDiagnostic(diagnostic);
-      this.pendingDiagnostics = [];
-    } else if (cause !== this.failure && cause !== this.failure.cause)
-      this.failure.addDiagnostic(cause);
-  }
-
-  diagnose(cause: unknown): void {
-    if (this.failure) this.failure.addDiagnostic(cause);
-    else if (this.pendingDiagnostics.length < 4)
-      this.pendingDiagnostics.push(rootMessage(cause));
+    this.failure ??= new TransactionFailure(cause, this);
   }
 
   onReconciled(
@@ -87,25 +74,19 @@ export class TransactionControl {
 }
 
 /**
- * Internal only: the message and diagnostics are the original's, which a
- * caller may classify by, such as a duplicate key named in the driver's
- * text. Every report receives the database failure in its fixed form, from
- * {@link originalErrorMessage} or the sinks themselves.
+ * Internal only. Its message is the failure in the form every report
+ * receives, from {@link originalErrorMessage}; a caller that classifies reads
+ * the codes on `cause`.
  */
 export class TransactionFailure extends Error {
   readonly code = "TRANSACTION_CLOSED";
-  readonly diagnostics: string[] = [];
 
   constructor(
     cause: unknown,
     readonly control: TransactionControl,
   ) {
-    super(rootMessage(cause), { cause });
+    super(originalErrorMessage(cause), { cause });
     this.name = "TransactionFailure";
-  }
-
-  addDiagnostic(error: unknown): void {
-    if (this.diagnostics.length < 4) this.diagnostics.push(rootMessage(error));
   }
 }
 
