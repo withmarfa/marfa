@@ -3294,6 +3294,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
         of(write)?.depends_on,
       ]).toEqual(["blocked", "awaiting_dependency", [created.value.id]]);
     }
+    const listed = await device.text(["queue"]);
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    if (!listed.ok) return;
+    const heldLine = listed.value
+      .split("\n")
+      .find((text) => text.startsWith("update_item"));
+    expect(heldLine, listed.value).toContain(`waiting on ${created.value.id}`);
     readable = true;
     const third = await device.drain();
     expect(third.ok, JSON.stringify(third)).toBe(true);

@@ -40,9 +40,9 @@ A device MUST report its queue from a store that has never been hydrated.
 
 ### `queue-and-verdicts/unanswered-no-verdict`
 
-A device MUST report a write that no drain has sent, held or settled, or that went out and met an environmental failure, with no verdict and with no refusal counted against it.
+A device MUST report a write that no drain has sent, held or settled, or whose last attempt met an environmental failure, with no verdict.
 
-**Reason:** no verdict is the absence of one, not a seventh verdict.
+**Reason:** no verdict is the absence of one, not a seventh verdict; an environmental failure adds no refusal to the write's count (`queue-and-verdicts/environmental-uncounted`).
 
 **Tests:** `device/queue.test.ts › queues writes while the server is unreachable`, `device/classification.test.ts › retries an environmental failure past the ceiling without counting it`.
 
@@ -366,13 +366,13 @@ When the command queues a write that follows another and prints it as text, the 
 
 ### `queue-and-verdicts/command-queue-waiting`
 
-When the command prints the queue as text and exactly one of the writes a write depends on has no verdict or is `blocked`, the command MUST name that write after `waiting on`.
+When the command prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto a row its natural key names that no read has found yet, the command MUST name that write after `waiting on`.
 
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
+**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
 
 ### `queue-and-verdicts/command-queue-not-waiting`
 
-When the command prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, or is `dead`, the command MUST NOT print `waiting on` for it.
+When the command prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, or is `dead`, and none is a create refused onto a row that no read has found yet, the command MUST NOT print `waiting on` for it.
 
 **Reason:** a dependency with such a verdict no longer holds the write, though `depends_on` still names it.
 
@@ -830,7 +830,7 @@ When a drain counts a refusal against a write, a device MUST go on to the writes
 
 ### `queue-and-verdicts/store-failure-counted`
 
-If the store fails, other than by filling, as a device takes the answer to a write that has no verdict, then a device MUST count a refusal against the write and leave it with no verdict.
+If the store fails, other than by filling, as a device takes the answer to a write that has no verdict, then a device MUST count a refusal against the write and leave it with no verdict until the ceiling.
 
 **Reason:** a further attempt may clear it and nothing clears it on its own; ended there instead, the write would be retried uncounted for good, and every write behind it would wait on it.
 
@@ -1140,7 +1140,7 @@ When a catch-up brings a row while a withdraw's read of it is out, a device MUST
 
 ### `queue-and-verdicts/clear-answered`
 
-When a caller clears the answered writes, a device MUST take out of the queue each write answered `accepted`, `merged` or `conflicted`, and each write the server refused that carried no content and that no unanswered, `blocked`, `dead` or unsent `refused` write depends on, other than a write whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row.
+When a caller clears the answered writes, a device MUST take out of the queue each write that was answered `accepted`, `merged` or `conflicted`, or was refused carrying no content, and that no unanswered, `blocked`, `dead` or unsent `refused` write depends on, other than a write whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row.
 
 **Tests:** `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`, `device/classification.test.ts › clears with the answered rows those only a withdrawn write was keeping, but for one carrying content`.
 

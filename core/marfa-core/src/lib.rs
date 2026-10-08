@@ -631,6 +631,13 @@ impl Core {
         store::queued_writes(&conn)
     }
 
+    /// The refused creates whose move onto the row their natural key names
+    /// waits for a read that finds it. Each still holds the writes that depend
+    /// on it, whatever its verdict says.
+    pub fn pending_landings(&self) -> Result<std::collections::HashSet<String>> {
+        store::pending_landings(&*self.conn()?)
+    }
+
     /// One pass: every sendable row is attempted once, until the server
     /// cannot be reached. A drain called while another runs on this store
     /// waits for it to end, then sends only what is still unanswered.

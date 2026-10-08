@@ -198,7 +198,8 @@ export enum ErrorCode {
    *
    * `503` and not `409`. A conforming device retries a `5xx` without
    * counting it against the write (`queue-and-verdicts/environmental-uncounted`), while a
-   * `409` blocks that write outright (22, 23). Contention is the case
+   * `409` with this code is refused on the first answer
+   * (`queue-and-verdicts/refused-contract`). Contention is the case
    * the retry exists for, so a `409` would make every device give up on
    * a write that would have landed on the next try.
    */

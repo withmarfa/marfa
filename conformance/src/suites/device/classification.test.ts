@@ -461,7 +461,7 @@ describe("an environmental failure retries and is never counted", () => {
     );
     expect(
       reports[0]?.retry_after_seconds,
-      "the device passed on a wait of a day, so a caller that honours it is parked by one answer",
+      "the device passed on a wait of a day, so a caller that honors it is parked by one answer",
     ).toBe(300);
   });
 });
