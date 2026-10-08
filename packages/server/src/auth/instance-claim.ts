@@ -221,6 +221,21 @@ export const ownerDetailsSchema = z.object({
   password: z.string(),
   name: z.string().trim().max(200).optional(),
 });
+function validateClaimProof(state: ClaimState, proof: ClaimProof): void {
+  unclaimed(state);
+  if (
+    proof.kind === "code" &&
+    !matches(normalizedCode(proof.code), state.codeDigest)
+  )
+    invalidProof();
+  if (
+    proof.kind === "session" &&
+    !state.sessions.some(
+      (p) => p.expiresAt > Date.now() && matches(proof.token, p.digest),
+    )
+  )
+    invalidProof();
+}
 export async function claimOwner(
   storage: Storage,
   auth: MarfaAuth,
@@ -231,24 +246,18 @@ export async function claimOwner(
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid owner details.");
   const { proof } = input;
   if (proof.kind === "code") await countCodeAttempt(storage, proof.address);
+  validateClaimProof(await read(storage), proof);
+  const prepared = await auth.preparePassword(parsed.data.password);
   return runAuditedTransaction(
     storage,
     async () => {
       const state = await read(storage);
-      unclaimed(state);
-      if (
-        proof.kind === "code" &&
-        !matches(normalizedCode(proof.code), state.codeDigest)
-      )
-        invalidProof();
-      if (
-        proof.kind === "session" &&
-        !state.sessions.some(
-          (p) => p.expiresAt > Date.now() && matches(proof.token, p.digest),
-        )
-      )
-        invalidProof();
-      const result = await auth.createEmailAccount(parsed.data);
+      validateClaimProof(state, proof);
+      const result = await auth.createEmailAccount(
+        parsed.data,
+        undefined,
+        prepared,
+      );
       if (!result.ok) {
         if (result.reason === "email_exists")
           throw new MarfaError(
@@ -321,6 +330,7 @@ export async function recoverOwnerPassword(
   auth: MarfaAuth,
   input: { password: string },
 ): Promise<void> {
+  const prepared = await auth.preparePassword(input.password);
   await runAuditedTransaction(
     storage,
     async () => {
@@ -331,7 +341,7 @@ export async function recoverOwnerPassword(
           ErrorCode.OWNER_NOT_FOUND,
           "The claimed owner's account is unavailable.",
         );
-      await auth.resetEmailPassword(owner.id, input.password);
+      await auth.resetEmailPassword(owner.id, prepared);
       await storage.rateLimits.clearSignIn(owner.email);
     },
     { action: "owner.password.recovered", resource_type: "owner" },
@@ -343,25 +353,21 @@ export async function changeOwnerPassword(
   headers: Headers,
   input: { currentPassword: string; password: string },
 ): Promise<void> {
-  // Password verification itself is recent authentication. Recheck the session
-  // and current password under the writer lock, including a racing recovery.
+  const initial = await requireOwnerSession(storage, auth, headers);
+  const prepared = await auth.preparePasswordChange(
+    initial.user.id,
+    input.currentPassword,
+    input.password,
+  );
+  // Recheck the live session and previously verified password digest under the
+  // writer lock, so a recovery racing with slow password work wins safely.
   await runAuditedTransaction(
     storage,
     async () => {
       const session = await requireOwnerSession(storage, auth, headers);
-      if (
-        !(await auth.verifyEmailPassword(
-          session.user.id,
-          input.currentPassword,
-        ))
-      )
-        throw new MarfaError(
-          ErrorCode.UNAUTHORIZED,
-          "The current password is incorrect.",
-        );
       await auth.resetEmailPassword(
         session.user.id,
-        input.password,
+        prepared,
         session.session.id,
       );
       await storage.rateLimits.clearSignIn(session.user.email);

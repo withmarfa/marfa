@@ -251,3 +251,93 @@ describe("claim across real processes", () => {
     ).rejects.toMatchObject({ code: "owner_exists" });
   });
 });
+
+describe("claim expiry and recovery rollback", () => {
+  it("expires handoff after five minutes and setup session after fifteen", async () => {
+    const { storage, auth } = await fixture();
+    await issueSetupCode(storage);
+    const { ticket } = await issueSetupTicket(storage);
+    const now = Date.now(),
+      clock = vi.spyOn(Date, "now").mockReturnValue(now + 5 * 60_000);
+    await expect(exchangeSetupTicket(storage, ticket)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    clock.mockReturnValue(now);
+    const next = await issueSetupTicket(storage);
+    const { token } = await exchangeSetupTicket(storage, next.ticket);
+    clock.mockReturnValue(now + 15 * 60_000);
+    await expect(
+      claimOwner(storage, auth, {
+        ...details,
+        proof: { kind: "session", token },
+      }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+  it("keeps the password and lock counters on audit failure, then clears only the recovered account's lock", async () => {
+    const { storage, auth } = await fixture();
+    await claimOwner(storage, auth, { ...details, proof: { kind: "local" } });
+    const now = new Date().toISOString();
+    await storage.rateLimits.incrementWindow(
+      "sign-in-account",
+      details.email,
+      60_000,
+      now,
+    );
+    await storage.rateLimits.incrementWindow(
+      "sign-in-account-address",
+      details.email + "|192.0.2.1",
+      60_000,
+      now,
+    );
+    await storage.rateLimits.incrementWindow(
+      "sign-in-account",
+      "other@example.com",
+      60_000,
+      now,
+    );
+    const accounts = await storage.__sqliteAll(
+      "SELECT password FROM auth_account",
+    );
+    await storage.__sqliteRun(
+      "CREATE TRIGGER reject_recovery BEFORE INSERT ON audit_log WHEN NEW.action='owner.password.recovered' BEGIN SELECT RAISE(ABORT,'recovery audit failed'); END",
+      [],
+    );
+    await expect(
+      recoverOwnerPassword(storage, auth, { password: "replacement password" }),
+    ).rejects.toThrow();
+    expect(
+      await storage.__sqliteAll("SELECT password FROM auth_account"),
+    ).toEqual(accounts);
+    expect(
+      await storage.__sqliteAll("SELECT window_key FROM rate_limit_windows"),
+    ).toHaveLength(3);
+    await storage.__sqliteRun("DROP TRIGGER reject_recovery", []);
+    await recoverOwnerPassword(storage, auth, {
+      password: "replacement password",
+    });
+    expect(
+      await storage.__sqliteAll("SELECT window_key FROM rate_limit_windows"),
+    ).toEqual([{ window_key: "other@example.com" }]);
+  });
+});
+
+it("rechecks shared setup generation after slow password preparation", async () => {
+  const { storage, auth } = await fixture();
+  const { code } = await issueSetupCode(storage);
+  const prepare = auth.preparePassword.bind(auth);
+  const replaced = vi
+    .spyOn(auth, "preparePassword")
+    .mockImplementationOnce(async (password) => {
+      const prepared = await prepare(password);
+      await issueSetupCode(storage);
+      return prepared;
+    });
+  await expect(
+    claimOwner(storage, auth, {
+      ...details,
+      proof: { kind: "code", code, address: "127.0.0.1" },
+    }),
+  ).rejects.toMatchObject({ code: "unauthorized" });
+  expect(replaced).toHaveBeenCalledOnce();
+  expect(await storage.__sqliteAll("SELECT id FROM auth_user")).toHaveLength(0);
+});

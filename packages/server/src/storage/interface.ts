@@ -2297,20 +2297,9 @@ export interface SettingsStore {
   get(key: string): Promise<string | null>;
   /** Upsert — overwrites any existing value for the key. */
   set(key: string, value: string): Promise<void>;
-  /** Atomic insert-or-bail: returns true if this caller's INSERT created the
-   *  row, false if a row already existed. What lets exactly one of N
-   *  concurrent callers win a one-shot act: the bootstrap mint of the first
-   *  key, the instance id, the creation of the owner. */
+  /** Atomically set an absent key. Returns false when it already exists. */
   claim(key: string, value: string): Promise<boolean>;
-  /** Give a claim back. Removes the row if it exists and is a no-op if it
-   *  does not.
-   *
-   *  The claim has to come first, or two concurrent callers both act; but
-   *  everything after it can fail, and a burned claim with nothing behind
-   *  it is a door nobody can open again: the middleware admits an
-   *  unauthenticated mint only while the bootstrap sentinel is absent, and
-   *  the owner door creates only while its claim is free. Releasing on
-   *  failure makes the attempt retryable instead. */
+  /** Remove a setting if it exists. */
   release(key: string): Promise<void>;
 }
 

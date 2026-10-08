@@ -38,7 +38,7 @@ async function start(input: Input) {
       });
     } finally {
       await storage.close();
-      process.disconnect();
+      process.disconnect?.();
     }
   };
   process.once("message", () => {
@@ -51,6 +51,6 @@ async function start(input: Input) {
 process.once("message", (input: Input) => {
   void start(input).catch(() => {
     process.exitCode = 1;
-    process.disconnect();
+    process.disconnect?.();
   });
 });

@@ -391,12 +391,7 @@ export function withCredentialAudit<
         const run = () =>
           pair ? withConsentLock(pair.clientId, pair.userId, commit) : commit();
         try {
-          return await (request?.phase
-            ? request.phase.run(
-                request.path !== "/change-password" || args.model === "account",
-                run,
-              )
-            : run());
+          return await (request?.phase ? request.phase.run(true, run) : run());
         } catch (error) {
           if (request) request.failure ??= { error };
           throw error;
