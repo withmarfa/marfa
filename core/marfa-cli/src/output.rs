@@ -139,15 +139,15 @@ pub fn queued(
             .filter(|id| {
                 landing.contains(id.as_str())
                     || !matches!(
-                    verdicts.get(id.as_str()),
-                    Some(Some(
-                        marfa_core::Verdict::Accepted
-                            | marfa_core::Verdict::Merged
-                            | marfa_core::Verdict::Conflicted
-                            | marfa_core::Verdict::Refused
-                            | marfa_core::Verdict::Dead
-                    ))
-                )
+                        verdicts.get(id.as_str()),
+                        Some(Some(
+                            marfa_core::Verdict::Accepted
+                                | marfa_core::Verdict::Merged
+                                | marfa_core::Verdict::Conflicted
+                                | marfa_core::Verdict::Refused
+                                | marfa_core::Verdict::Dead
+                        ))
+                    )
             })
             .collect();
         let held = match pending.len() {
