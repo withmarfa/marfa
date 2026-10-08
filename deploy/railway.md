@@ -54,6 +54,18 @@ Railway [template updates](https://docs.railway.com/templates/updates) are opt-i
 
 Follow [the deployment upgrade procedure](README.md#upgrading): export with the running build, start the new build on a fresh volume and a new bucket, then restore the archive. Keep the old instance and export until the restore succeeds. Railway's rollback changes the deployment, not the database contents, so retain the build that can read your existing database.
 
+## Remove your instance
+
+Before removal, export any data you want to keep and verify that the archive unpacks. Keep the running build and instance secrets if you need to restore it later; see [the deployment upgrade procedure](README.md#upgrading).
+
+For a project created only for this instance:
+
+1. Download any bucket objects you want to retain. Open the **Backups** bucket, select **Settings**, and choose **Delete Bucket**. Deploy the staged deletion; see [bucket deletion](https://docs.railway.com/storage-buckets#deleting-a-bucket).
+2. Open the project's **Settings**, select **Danger**, and choose **Delete Project**. This removes the project's services, environments, and deployments; see [project deletion](https://docs.railway.com/projects#deleting-a-project).
+3. Return to the workspace dashboard and confirm that the instance project is gone.
+
+To keep the backup bucket for recovery, keep its project and delete only the Marfa service and its data volume. If the project also hosts other services, remove only this instance's service, volume, and bucket. Storage that you retain continues to be billed.
+
 ## Template configuration
 
 These are the intended settings for template maintenance. Verify them against the finished template before publishing this guide.
