@@ -159,6 +159,14 @@ fn every_leaf() -> Vec<Leaf> {
     found
 }
 
+/// These operations have no public HTTP transport to redirect.
+fn socket_only(words: &[String]) -> bool {
+    words == ["setup", "status"]
+        || words == ["setup", "code"]
+        || words == ["setup", "open"]
+        || words == ["owner", "recover"]
+}
+
 /// Where a command has no use: what is not a request to the server, what
 /// writes this machine's own state, or needs a person at a terminal. Each
 /// says why.
@@ -177,8 +185,10 @@ fn skipped(words: &[String]) -> bool {
             && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke")))
         // A browser and the keychain.
         || matches!(first, Some("login" | "logout"))
-        // A password, on a terminal.
-        || words == ["owner", "create"]
+        // Private transport is exercised independently of this HTTP walk.
+        || socket_only(words)
+        // Secret input needs a child process with its own stdin, driven below.
+        || words == ["setup", "claim"]
         // Removes this machine's stored key and sends nothing.
         || words == ["keys", "forget"]
 }
@@ -340,6 +350,109 @@ fn every_command_refuses_a_redirect_the_same_way() {
     assert!(
         driven > 60,
         "only {driven} commands were driven, which is too few to be every command"
+    );
+}
+
+#[test]
+fn socket_only_commands_require_a_socket_without_sending_http() {
+    let server = Server::answering(
+        "302 Found",
+        "Location: https://elsewhere.example/\r\n",
+        "",
+        false,
+    );
+    let (dir, file) = fixture("socket-only");
+    let commands: Vec<_> = every_leaf()
+        .into_iter()
+        .filter(|leaf| socket_only(&leaf.words))
+        .collect();
+    assert_eq!(
+        commands
+            .iter()
+            .map(|leaf| leaf.words.join(" "))
+            .collect::<Vec<_>>(),
+        ["setup status", "setup code", "setup open", "owner recover"]
+    );
+    for leaf in commands {
+        let argv = command_line(&server.url, &leaf.words, &[], &file).unwrap();
+        let result = crate::run(crate::Cli::try_parse_from(argv).unwrap());
+        assert!(
+            matches!(result, Err(crate::error::CliError::Usage(ref message)) if message.contains("requires --socket PATH"))
+        );
+    }
+    assert!(server.take().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn remote_claim_stdin_child() {
+    let Ok(url) = std::env::var("MARFA_TEST_REDIRECT_CLAIM_URL") else {
+        return;
+    };
+    let cli = crate::Cli::try_parse_from([
+        "marfa", "--json", "--url", &url, "setup", "claim", "--stdin",
+    ])
+    .unwrap();
+    match crate::run(cli) {
+        Err(crate::error::CliError::Redirected {
+            status: 302,
+            location,
+            ..
+        }) => assert_eq!(location.as_deref(), Some("https://elsewhere.example/")),
+        other => panic!("remote setup claim answered {:?}", other.map(|_| ())),
+    }
+}
+
+#[test]
+fn remote_setup_claim_refuses_a_redirect_and_sends_the_documented_body() {
+    use std::process::{Command, Stdio};
+    let server = Server::answering(
+        "302 Found",
+        "Location: https://elsewhere.example/\r\n",
+        "",
+        false,
+    );
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "commands::driven::remote_claim_stdin_child",
+            "--nocapture",
+        ])
+        .env_remove("MARFA_API_KEY")
+        .env_remove("MARFA_API_URL")
+        .env("MARFA_TEST_REDIRECT_CLAIM_URL", &server.url)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let body = serde_json::json!({"email":"owner@example.com", "password":"test-claim-password", "code":"TEST-SETUP-CODE"});
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(body.to_string().as_bytes())
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let requests = server.take();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method(), "POST");
+    assert_eq!(requests[0].path(), "/owner");
+    assert_eq!(requests[0].header("authorization"), None);
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[0].body).unwrap(),
+        body
+    );
+    assert!(
+        Document::read()
+            .held(&requests[0], true)
+            .unwrap()
+            .starts_with("createOwner (")
     );
 }
 
@@ -528,7 +641,7 @@ impl Document {
 const MISSED: &[&str] = &[
     // `login`: found by discovery and sent in a browser flow.
     "registerOAuthClient",
-    // `setup claim`: uses a hidden prompt or structured stdin, driven by device conformance.
+    // `setup claim`: secret input is driven by the child-process fixture above.
     "createOwner",
 ];
 
