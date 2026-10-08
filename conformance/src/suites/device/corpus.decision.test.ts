@@ -221,8 +221,14 @@ describe("every device statement is asserted by something", () => {
   });
 
   it("cites a fixture for every numbered statement", () => {
+    // A rule no fixture can assert yet names the issue that makes it
+    // testable instead (`spec/README.md`), which reads as waiting, not as
+    // asserted.
+    const WAITING = /\bwaiting on #\d+\.$/;
+    expect(WAITING.test("Some rule. waiting on #1444.")).toBe(true);
     const uncited = allStatements
       .filter((statement) => citationsIn(statement.text).length === 0)
+      .filter((statement) => !WAITING.test(statement.text.trim()))
       .map((statement) => `${statement.chapter} ${statement.number}`);
     expect(
       uncited,
