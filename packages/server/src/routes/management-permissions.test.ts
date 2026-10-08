@@ -18,8 +18,12 @@ beforeAll(async () => {
     firstRunDelayMs: 3_600_000,
     run: () => Promise.resolve({ runs: ++runs }),
   });
+  await ctx.housekeeping.start();
 });
-afterAll(async () => ctx.cleanup());
+afterAll(async () => {
+  await ctx.housekeeping.stop();
+  await ctx.cleanup();
+});
 
 async function credential(permission?: Permission): Promise<string> {
   return mintWorkingKey(ctx, {
@@ -36,7 +40,7 @@ describe("explicit management permissions", () => {
   it("separates instance inspection from running maintenance for keys and apps", async () => {
     for (const key of [
       await credential("instance.read"),
-      (await seedOauthBearer(ctx.storage, ["instance.read"])).token,
+      (await seedOauthBearer(ctx, ["instance.read"])).token,
     ]) {
       for (const path of [
         "/metrics",
@@ -132,10 +136,13 @@ describe("explicit management permissions", () => {
 
   it("allows broad blob access without granting content writes or archive restore", async () => {
     const key = await credential("blobs.manage");
-    const upload = await request(ctx.app, "POST", "/blobs", {
-      key,
+    const upload = await ctx.app.request("/blobs", {
+      method: "POST",
       body: new TextEncoder().encode("unreferenced management bytes"),
-      headers: { "Content-Type": "application/octet-stream" },
+      headers: {
+        "Content-Type": "application/octet-stream",
+        Authorization: `Bearer ${key}`,
+      },
     });
     expect(upload.status).toBe(201);
     const { hash } = (await upload.json()) as { hash: string };
@@ -173,7 +180,7 @@ describe("explicit management permissions", () => {
     });
     expect(registered.status).toBe(201);
     const { id } = (await registered.json()) as { id: string };
-    const { token: manager } = await seedOauthBearer(ctx.storage, [
+    const { token: manager } = await seedOauthBearer(ctx, [
       "connectors.manage",
     ]);
     const outsider = await credential();
