@@ -2874,6 +2874,56 @@ When a write takes a link out of a body, a device MUST NOT delete an edge of ano
 
 **Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`.
 
+### `device/body-edge-waits`
+
+When a body's change names an edge, a device MUST queue the edge's write to wait on the write that changed the body.
+
+**Reason:** what waits on a refused write is refused with it (`queue-and-verdicts.md` 16), so an edge never lands for a body the server refused.
+
+**Tests:** `device/body-edges-live.test.ts › queues a body's edge to wait on the write that changed the body`.
+
+### `device/body-retype`
+
+When an edit moves an item to another type, a device MUST read the body before the edit from the old type's body property and the body after it from the new type's.
+
+**Reason:** a body that a retype only moves makes no change to the item's edges.
+
+**Tests:** `device/body-edges-live.test.ts › reads a retyped item's body in the property its new type keeps it in`.
+
+### `device/body-older-version`
+
+When an edit based on a version older than the one the copy holds changes an item's body, a device MUST read the body's edges from the row the server answers the edit with, once it answers.
+
+**Reason:** the server merges such an edit (`queue-and-verdicts.md` 43), and the copy cannot tell what the merge makes of the body until it is answered.
+
+**Tests:** `device/body-edges-live.test.ts › reads an edit based on an older version once the server answers it, and sends its edges at the next drain`.
+
+### `device/body-link-renamed`
+
+While the edge a body's link made stands, a device MUST answer the link with the item it named, even after that item is renamed.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+
+### `device/body-link-renamed-removed`
+
+When a write takes out of a body a link to an item renamed since its edge was made, a device MUST queue the delete of that edge.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+
+### `device/body-name-dropped`
+
+If a body no longer carries a name that waits, whoever changed the body, then a device MUST NOT make the name's edge when an item it names arrives.
+
+**Tests:** `device/body-edges-live.test.ts › stops waiting on a name once another writer takes it out of the body`.
+
+### `device/embed-attached-first`
+
+When an embed's name answers to a file attached to the item and to other file items, a device MUST resolve the embed to the attached file.
+
+**Reason:** an embed is read against the item's attachments first, so an attach's embed text names the file it attached whatever else shares its name.
+
+**Tests:** `device/body-edges-live.test.ts › reads an embed as the file attached to the item before other file items of that name`.
+
 ### `device/attach-embed`
 
 When a device attaches a file to an item under a title that names it alone among the item's attachments, a device MUST answer the attach with the text that embeds it, `![[title]]`.
