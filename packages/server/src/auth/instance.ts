@@ -1,6 +1,9 @@
 import { rememberRecentAuthentication } from "./request-authority.js";
 import { changeOwnerPassword, requireOwnerSession } from "./instance-claim.js";
-import { requireOwnerOrigin } from "./owner-browser.js";
+import {
+  requireOwnerOrigin,
+  requireSecureOwnerTransport,
+} from "./owner-browser.js";
 import { withSessionEndAudit } from "./session-end-audit.js";
 import {
   CredentialPersistencePhase,
@@ -770,6 +773,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
       }
       const path = new URL(request.url).pathname.replace(/^\/auth/, "");
+      if (path.startsWith("/sign-in/") || path.startsWith("/sign-up/"))
+        requireSecureOwnerTransport(facade);
       if (
         path === "/change-password" &&
         request.method === "POST" &&

@@ -1,3 +1,4 @@
+import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -27,12 +28,14 @@ export function directAuthorityMiddleware(
     } else if (
       !c.req.header("authorization") &&
       auth &&
-      !c.req.path.startsWith("/setup")
+      !c.req.path.startsWith("/setup") &&
+      !["/auth/sign-in", "/auth/sign-in/email"].includes(c.req.path)
     ) {
       const session = await auth.getSession(c.req.raw.headers, {
         readOnly: true,
       });
       if (session && (await storage.owner?.find())?.id === session.user.id) {
+        requireSecureOwnerTransport(auth);
         if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
           const origin = c.req.header("origin");
           if (origin !== new URL(baseURL).origin) {
@@ -58,8 +61,7 @@ export function directAuthorityMiddleware(
           readOnly: true,
         });
         if (
-          !live ||
-          live.session.id !== admitted.sessionId ||
+          live?.session.id !== admitted.sessionId ||
           live.user.id !== admitted.userId ||
           (await storage.owner?.find())?.id !== admitted.userId
         ) {

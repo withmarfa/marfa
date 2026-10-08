@@ -1,3 +1,4 @@
+import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -395,6 +396,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // forwarded intact onto the redirect response.
 
   router.get("/sign-in", async (c) => {
+    requireSecureOwnerTransport(auth ?? { baseURL: c.var.config.authBaseUrl });
     const url = new URL(c.req.url);
     const error = url.searchParams.get("error") ?? undefined;
 
@@ -466,6 +468,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   });
 
   router.post("/sign-in", async (c) => {
+    requireSecureOwnerTransport(auth ?? { baseURL: c.var.config.authBaseUrl });
     if (!auth) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,

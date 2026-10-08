@@ -50,15 +50,16 @@ it.each(["recovery", "change"] as const)(
     const ctx = await createClaimTestApp();
     let resume: (() => void) | undefined;
     let signingIn: Promise<Response> | undefined;
-    const signIn = (password: string) =>
-      ctx.auth.handler(
-        new Request(`${origin}/auth/sign-in/email`, {
-          method: "POST",
-          headers: { "content-type": "application/json", origin },
-          body: JSON.stringify({ email: details.email, password }),
-        }),
-        "127.0.0.1",
-      );
+    const signIn = (password: string, cookie?: string) =>
+      ctx.app.request(`${origin}/auth/sign-in/email`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          ...(cookie ? { cookie } : {}),
+        },
+        body: JSON.stringify({ email: details.email, password }),
+      });
     try {
       await claimOwner(ctx.storage, ctx.auth, {
         ...details,
@@ -81,7 +82,7 @@ it.each(["recovery", "change"] as const)(
         verified();
         await resumed;
       };
-      signingIn = signIn(details.password);
+      signingIn = signIn(details.password, cookie);
       await atVerify;
       gate.pause = undefined;
       if (operation === "recovery") {
@@ -122,3 +123,69 @@ it.each(["recovery", "change"] as const)(
     }
   },
 );
+
+it("allows a verified sign-in when its incidental owner cookie ends before persistence", async () => {
+  const ctx = await createClaimTestApp();
+  let resume: (() => void) | undefined;
+  let signingIn: Promise<Response> | undefined;
+  const signIn = (cookie?: string) =>
+    ctx.app.request(`${origin}/auth/sign-in/email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        ...(cookie ? { cookie } : {}),
+      },
+      body: JSON.stringify(details),
+    });
+  try {
+    await claimOwner(ctx.storage, ctx.auth, {
+      ...details,
+      proof: { kind: "local" },
+    });
+    const before = await signIn();
+    expect(before.status).toBe(200);
+    const cookie = before.headers
+      .getSetCookie()
+      .map((part) => part.split(";")[0])
+      .join("; ");
+    let verified!: () => void;
+    const atVerify = new Promise<void>((resolve) => {
+      verified = resolve;
+    });
+    const resumed = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    gate.pause = async () => {
+      verified();
+      await resumed;
+    };
+    signingIn = signIn(cookie);
+    await atVerify;
+    gate.pause = undefined;
+    const ended = await ctx.app.request(`${origin}/auth/sign-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, origin },
+      body: "{}",
+    });
+    expect(ended.status).toBe(200);
+    expect(
+      await ctx.storage.__sqliteAll("SELECT id FROM auth_session"),
+    ).toHaveLength(0);
+    resume!();
+    const response = await signingIn;
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("session_token");
+    expect(
+      await ctx.auth.getSession(new Headers({ cookie }), { readOnly: true }),
+    ).toBeNull();
+    expect(
+      await ctx.storage.__sqliteAll("SELECT id FROM auth_session"),
+    ).toHaveLength(1);
+  } finally {
+    gate.pause = undefined;
+    resume?.();
+    await signingIn?.catch(() => undefined);
+    await ctx.cleanup();
+  }
+});
