@@ -48,3 +48,6 @@ overrides:
   # Remove this once every `minimatch` in the lockfile resolves a
   # `brace-expansion` at or above 5.0.12 without it.
   "brace-expansion@>=4.0.0 <5.0.12": "5.0.12"
+
+  # Keep build tooling above the indexed source-map denial-of-service fix.
+  "source-map-js@<1.2.2": "1.2.2"
