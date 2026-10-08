@@ -3554,6 +3554,64 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toContain("kept");
   });
 
+  it("moves the copy onto the row a create was answered with only at the read after it, though a catch-up brought that row first", async () => {
+    const LANDED = "01a00000-0000-7000-8000-0000000000f5";
+    harness = await startHarness("queue-landed-after-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: held() });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The hydration's head read answers once more, then `stream` does.
+    let stream: Answer = copyHeadRead("10");
+    server.copyAnswer("GET", "/events", () => stream);
+    expect((await device.catchUp()).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "caught.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const local = created.value.item_id ?? "";
+    const tagged = await device.addTag(local, "mine");
+    if (!tagged.ok) throw new Error(JSON.stringify(tagged));
+    const landed = wireItem({
+      id: LANDED,
+      version: 1,
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      source_id: "caught.md",
+    });
+    let readable = false;
+    scriptWrites(server, {
+      create: [answers.upserted(landed)],
+      read: [() => (readable ? answers.updated(landed) : answers.dropped())],
+      tags: [{ kind: "json", status: 200, body: {} }],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const { edges: _edges, ...row } = landed;
+    stream = copyReplay("11", [copyItemEvent("11", "item.created", row)]);
+    expect((await device.catchUp()).ok).toBe(true);
+    // The witness: the catch-up brought the row the create landed on.
+    expect((await device.get(LANDED)).ok).toBe(true);
+    expect(
+      (await device.get(local)).ok,
+      "a catch-up stood in for the read the create's answer waits on, and the copy moved without it",
+    ).toBe(true);
+    expect(
+      (await queueOf(device)).find((write) => write.id === tagged.value.id)
+        ?.item_id,
+    ).toBe(local);
+    readable = true;
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.get(local)).ok).toBe(false);
+    expect(
+      server.requests
+        .filter((request) => request.method === "POST")
+        .map((request) => request.pathname),
+      "the tag waiting on the create did not follow it onto the row it landed on",
+    ).toEqual(["/items", `/items/${LANDED}/tags`]);
+  });
+
   it("sends a create carrying a natural key without the id it minted, and holds the row the answer names", async () => {
     harness = await hydratedHarness("queue-keyed-create-id", { rows: held() });
     const { device, server } = harness;
