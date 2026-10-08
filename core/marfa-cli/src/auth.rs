@@ -458,7 +458,8 @@ fn resolved(store: &std::path::Path) -> Result<PathBuf, CliError> {
     if let Ok(found) = std::fs::canonicalize(&store) {
         return Ok(found);
     }
-    // A keychain file that is not there yet is made in its folder.
+    // A keychain file that is not there yet resolves through its folder, so
+    // it finds this lock once something makes it.
     let folder = store
         .parent()
         .and_then(|folder| std::fs::canonicalize(folder).ok());
