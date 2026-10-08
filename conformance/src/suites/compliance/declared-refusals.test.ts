@@ -7,7 +7,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackEdge,
   trackItem,
   trackKey,
@@ -332,7 +332,7 @@ describe("a malformed identifier", () => {
       "DELETE",
       "/blobs/{hash}/locations/{store}",
       await call("DELETE", `/blobs/${MALFORMED}/locations/disk`, {
-        key: process.env.MARFA_OPERATOR_KEY,
+        key: process.env.MARFA_MANAGEMENT_KEY,
       }),
       400,
       "validation_error",
@@ -426,7 +426,7 @@ describe("a core edge type", () => {
         body: `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
       },
     ]);
-    const restored = await getOperatorClient().restoreArchive(archive);
+    const restored = await getManagementClient().restoreArchive(archive);
     expect(restored.status).toBe(409);
     expect(restored.error?.error.code).toBe("conflict");
     await expectMatchesSchema("POST", "/restore", 409, restored.error);
@@ -757,8 +757,8 @@ describe("a query key no door declares", () => {
   }
 
   it("is refused 400 and named on every published door, the event stream included", async () => {
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
     // The witness that the doors can be served at all: the same requests
     // without the stray key answer, so what follows is the key's refusal and
@@ -797,7 +797,7 @@ describe("a query key no door declares", () => {
       // The credential that may use the door: the per-test key holds every
       // permission, and the operator key holds the instance routes it does not.
       let refused = false;
-      for (const key of [apiKey, operatorKey ?? ""]) {
+      for (const key of [apiKey, managementKey ?? ""]) {
         const { status, unknown } = await stray(
           door.method,
           door.path,
@@ -854,7 +854,7 @@ describe("a query key no door declares", () => {
     const bare = await fetch(`${apiUrl}${path}`);
     expect(bare.status).toBe(401);
     const operator = await fetch(`${apiUrl}${path}`, {
-      headers: { Authorization: `Bearer ${process.env.MARFA_OPERATOR_KEY}` },
+      headers: { Authorization: `Bearer ${process.env.MARFA_MANAGEMENT_KEY}` },
     });
     expect(operator.status).toBe(403);
     const reader = await fetch(`${apiUrl}${path}`, {

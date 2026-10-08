@@ -219,14 +219,14 @@ export interface CliContext {
 export async function cliContext(file: string): Promise<CliContext> {
   const { ctx, apiUrl, apiKey } = await createTestContext("cli", file);
   const binary = requireBinary();
-  const operatorKey = process.env.MARFA_OPERATOR_KEY;
-  if (operatorKey === undefined || operatorKey === "") {
-    throw new Error("MARFA_OPERATOR_KEY is unset; `pnpm marfa:up` writes it");
+  const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+  if (managementKey === undefined || managementKey === "") {
+    throw new Error("MARFA_MANAGEMENT_KEY is unset; `pnpm marfa:up` writes it");
   }
   return {
     ctx,
     cli: new Cli(binary, apiUrl, apiKey),
-    operator: new Cli(binary, apiUrl, operatorKey),
+    operator: new Cli(binary, apiUrl, managementKey),
     apiUrl,
     apiKey,
   };

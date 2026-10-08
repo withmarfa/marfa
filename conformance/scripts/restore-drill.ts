@@ -449,7 +449,7 @@ async function deletePrefix(prefix: string): Promise<number> {
 /** The operator's key and the url, from the env file a boot wrote. */
 function apiFor(state: string): Api {
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
-  return { url: env.MARFA_API_URL ?? "", key: env.MARFA_OPERATOR_KEY ?? "" };
+  return { url: env.MARFA_API_URL ?? "", key: env.MARFA_API_KEY ?? "" };
 }
 
 async function main(): Promise<void> {

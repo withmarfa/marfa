@@ -23,7 +23,7 @@ import {
   runJob,
   whenCopied,
 } from "../../utils/own-blob-server.js";
-import { getOperatorClient } from "../../utils/setup.js";
+import { getManagementClient } from "../../utils/setup.js";
 
 /**
  * The bounds of one run of `blob-replicate` and of `blob-integrity`, and the
@@ -175,7 +175,7 @@ describe("a replication run that is bounded by count", () => {
   it("leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off", async () => {
     // The witness: the run's own server, with the sweep on, lists it.
     const sharedNames = (
-      await getOperatorClient().listHousekeeping()
+      await getManagementClient().listHousekeeping()
     ).data.data.map((row) => row.name);
     expect(sharedNames).toContain("blob-orphans");
 

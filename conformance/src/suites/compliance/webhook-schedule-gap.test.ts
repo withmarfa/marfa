@@ -44,7 +44,7 @@ async function scheduled(): Promise<{
   run: "ok" | "error";
   listed: "ok" | "error" | null;
 }> {
-  const operator = client(server!.operatorKey);
+  const operator = client(server!.managementKey);
   const ran = await waitFor(
     "webhook-schedule to run",
     async () => {

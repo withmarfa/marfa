@@ -10,7 +10,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -29,7 +29,7 @@ const stateful: string[] = [];
 let ctx: TestContext;
 let client: MarfaClient;
 let apiUrl: string;
-const operator = () => getOperatorClient();
+const operator = () => getManagementClient();
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(

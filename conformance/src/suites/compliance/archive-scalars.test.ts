@@ -12,7 +12,7 @@ import {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackEdge,
   trackItem,
   trackType,
@@ -23,7 +23,7 @@ let operator: MarfaClient;
 let ctx: TestContext;
 beforeAll(async () => {
   ({ client, ctx } = await createTestContext("compliance", "archive-scalars"));
-  operator = getOperatorClient();
+  operator = getOwnerClient();
 });
 afterAll(async () => {
   await cleanup(ctx);

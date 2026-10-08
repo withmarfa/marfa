@@ -67,7 +67,7 @@ beforeAll(async () => {
   });
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -108,8 +108,8 @@ describe("a drifted platform type", () => {
     expect(again.status).toBe(404);
     expect(again.error?.error.code).toBe("type_not_found");
 
-    const operatorKey = await operator.getCurrentKey();
-    expect(operatorKey.status, JSON.stringify(operatorKey.error)).toBe(200);
+    const managementKey = await operator.getCurrentKey();
+    expect(managementKey.status, JSON.stringify(managementKey.error)).toBe(200);
     const audited = await working.listAudit({
       action: "platform_type.removed",
       resource_id: REMOVABLE,
@@ -117,7 +117,7 @@ describe("a drifted platform type", () => {
     expect(audited.status).toBe(200);
     expect(
       audited.data.data.map((row) => [row.resource_type, row.key_id]),
-    ).toEqual([["type", operatorKey.data.id]]);
+    ).toEqual([["type", managementKey.data.id]]);
   });
 
   it("refuses a replacement and a delete of a drifted platform type through the type registry", async () => {

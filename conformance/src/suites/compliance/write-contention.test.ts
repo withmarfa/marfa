@@ -201,7 +201,7 @@ describe("contention on the write lock", () => {
     // answers `503`.
     const operator = new MarfaClient({
       baseUrl: impatient!.apiUrl,
-      apiKey: impatient!.operatorKey,
+      apiKey: impatient!.managementKey,
     });
     const lock = await HeldLock.take(impatient!.sqlitePath);
     try {
@@ -231,7 +231,7 @@ describe("contention on the write lock", () => {
     const minted = await fetch(`${impatient!.apiUrl}/keys`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${impatient!.operatorKey}`,
+        Authorization: `Bearer ${impatient!.managementKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ label: "first-use", source: "first-use" }),
@@ -250,7 +250,7 @@ describe("contention on the write lock", () => {
       });
     const operator = new MarfaClient({
       baseUrl: impatient!.apiUrl,
-      apiKey: impatient!.operatorKey,
+      apiKey: impatient!.managementKey,
     });
     const readStamp = async () => {
       const listed = await operator.listKeys();

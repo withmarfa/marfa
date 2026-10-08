@@ -9,7 +9,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 
 /**
@@ -394,7 +394,7 @@ describe("a field the door does not declare, against the key and the fence", () 
       const refused = await answer(stranger, connectorId, call);
       expect(refused.status, `${label}: another key`).toBe(403);
       expect(refused.code, label).toBe("forbidden");
-      const operator = await answer(getOperatorClient(), connectorId, call);
+      const operator = await answer(getManagementClient(), connectorId, call);
       expect(operator.status, `${label}: operator`).toBe(reached ?? 403);
       expect(operator.code, `${label}: operator`).toBe(
         reached === undefined ? "forbidden" : "validation_error",
@@ -601,7 +601,7 @@ describe("a body the door refuses once the key is the connector's own, against a
 
       for (const [who, name] of [
         [stranger, "another key"],
-        [getOperatorClient(), "operator"],
+        [getManagementClient(), "operator"],
       ] as const) {
         const told = await answer(who, connectorId, call);
         expect(told.status, `${label}: ${name}`).toBe(403);
@@ -887,7 +887,7 @@ describe("a credential that is missing, against what the body would be refused f
   });
 
   it("answers the operator key 403 before a registration body it would be refused for", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     for (const body of [{ name: "" }, {}, { name: "n".repeat(201) }]) {
       const refused = await operator.rawRequest<unknown>("/connectors", {
         method: "POST",

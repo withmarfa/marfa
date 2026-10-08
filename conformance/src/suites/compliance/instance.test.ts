@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import {
   expectMatchesSchema,
@@ -582,7 +582,7 @@ describe("the instance", () => {
     // one is held to the keys written out below, which is the only place a
     // black-box caller's view of the body is pinned. `coverage.md` carries
     // the unpublished row that records the absence as a decision.
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const r = await operator.rawRequest<{
       items: { total: number; by_state: Record<string, number> };
       blobs: { count: number; total_bytes: number };

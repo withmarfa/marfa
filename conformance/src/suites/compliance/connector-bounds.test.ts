@@ -9,7 +9,7 @@ import {
   cleanup,
   createTestContext,
   getClientFromEnv,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -47,7 +47,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // A source's state outlives its registration, so it goes first.
   for (const mine of made) {
-    await getOperatorClient().deleteConnectorState(mine.id);
+    await getManagementClient().deleteConnectorState(mine.id);
   }
   await cleanup(ctx);
 });

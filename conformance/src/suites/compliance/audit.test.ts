@@ -559,7 +559,7 @@ describe("audit log", () => {
     expect(refusedEntries).toEqual([]);
 
     // Nor does a credential that reaches no type, turned away at the door.
-    const operator = process.env.MARFA_OPERATOR_KEY!;
+    const operator = process.env.MARFA_MANAGEMENT_KEY!;
     const turnedAway = await exportAs(operator, "");
     expect(turnedAway.status).toBe(403);
     await turnedAway.text();
@@ -704,7 +704,7 @@ describe("audit log", () => {
 
     const operator = new MarfaClient({
       baseUrl: apiUrl,
-      apiKey: process.env.MARFA_OPERATOR_KEY!,
+      apiKey: process.env.MARFA_MANAGEMENT_KEY!,
     });
     const refused = await operator.listAudit();
     expect(refused.status).toBe(403);

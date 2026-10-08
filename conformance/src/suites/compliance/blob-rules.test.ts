@@ -7,7 +7,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -143,7 +143,7 @@ async function uploadReferencedText(words: string) {
 
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("compliance", "blob-rules"));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {
@@ -1014,7 +1014,7 @@ describe("how the copies are placed and removed", () => {
       ((await response.json()) as { error: { code: string } }).error.code;
     const malformed = "not-a-hash";
     const unregistered = `sha256:${"0".repeat(64)}`;
-    const operatorKey = process.env.MARFA_OPERATOR_KEY!;
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY!;
     const working = await client.deleteBlobLocation(malformed, "no-such-store");
 
     // No credential first, then a credential that is not the operator key,
@@ -1027,18 +1027,18 @@ describe("how the copies are placed and removed", () => {
 
     // The operator key reaches the hash: malformed, then unregistered, then
     // the store, whatever the store is.
-    const bad = await drop(`${malformed}/locations/${s3.id}`, operatorKey);
+    const bad = await drop(`${malformed}/locations/${s3.id}`, managementKey);
     expect(bad.status).toBe(400);
     expect(await code(bad)).toBe("validation_error");
     const unknownBlob = await drop(
       `${unregistered}/locations/no-such-store`,
-      operatorKey,
+      managementKey,
     );
     expect(unknownBlob.status).toBe(404);
     expect(await code(unknownBlob)).toBe("blob_not_found");
     const unknownStore = await drop(
       `${hash}/locations/no-such-store`,
-      operatorKey,
+      managementKey,
     );
     expect(unknownStore.status).toBe(404);
     expect(await code(unknownStore)).toBe("blob_location_not_found");
@@ -1051,7 +1051,7 @@ describe("how the copies are placed and removed", () => {
     ]);
     const bare = await drop(
       `${hash.slice("sha256:".length)}/locations/${s3.id}`,
-      operatorKey,
+      managementKey,
     );
     expect(bare.status).toBe(200);
     expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
@@ -1059,7 +1059,7 @@ describe("how the copies are placed and removed", () => {
     ]);
     // Last, the minimum: every check above it passed for this copy too.
     const disk = stores.find((store) => store.kind === "disk")!;
-    const last = await drop(`${hash}/locations/${disk.id}`, operatorKey);
+    const last = await drop(`${hash}/locations/${disk.id}`, managementKey);
     expect(last.status).toBe(409);
     expect(await code(last)).toBe("copies_below_minimum");
     await replicateToZero();

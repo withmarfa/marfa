@@ -17,7 +17,7 @@ import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -33,7 +33,7 @@ beforeAll(async () => {
     "compliance",
     "blob-order",
   ));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {

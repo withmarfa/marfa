@@ -513,10 +513,10 @@ export async function removeTrackedRegistrations(
   ctx: TestContext,
 ): Promise<CleanupOutcome> {
   const kind = "Connector";
-  if (ctx.trackedKeys.length === 0 || !process.env.MARFA_OPERATOR_KEY) {
+  if (ctx.trackedKeys.length === 0 || !process.env.MARFA_MANAGEMENT_KEY) {
     return { kind, failed: 0, total: 0 };
   }
-  const operator = getOperatorClient();
+  const operator = getManagementClient();
   const listed = await operator.listConnectors();
   if (!listed.ok) {
     console.warn(
@@ -535,15 +535,24 @@ export async function removeTrackedRegistrations(
  * Required by the fixtures that call it; a missing variable is a failure,
  * not a skip.
  */
-export function getOperatorClient(): MarfaClient {
-  const key = process.env.MARFA_OPERATOR_KEY;
+export function getManagementClient(): MarfaClient {
+  const key = process.env.MARFA_MANAGEMENT_KEY;
+  if (!key)
+    throw new Error(
+      "MARFA_MANAGEMENT_KEY is required; boot the fixture server first",
+    );
+  return new MarfaClient({ baseUrl: requireApiUrl(), apiKey: key });
+}
+
+export function getOwnerClient(): MarfaClient {
+  const key = process.env.MARFA_OWNER_COOKIE;
   if (!key) {
     throw new Error(
-      "MARFA_OPERATOR_KEY is required for the operator-only fixtures. " +
+      "MARFA_OWNER_COOKIE is required for direct owner fixtures. " +
         "`pnpm marfa:up` writes it to its env file.",
     );
   }
-  return new MarfaClient({ baseUrl: requireApiUrl(), apiKey: key });
+  return new MarfaClient({ baseUrl: requireApiUrl(), ownerCookie: key });
 }
 
 /**

@@ -21,7 +21,7 @@ import {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -45,11 +45,11 @@ beforeAll(async () => {
     "compliance",
     "archive-history",
   ));
-  operator = getOperatorClient();
+  operator = getOwnerClient();
   fresh = await bootFreshServer("archive-history");
   freshOperator = new MarfaClient({
     baseUrl: fresh.apiUrl,
-    apiKey: fresh.operatorKey,
+    apiKey: fresh.managementKey,
   });
   freshReader = new MarfaClient({
     baseUrl: fresh.apiUrl,

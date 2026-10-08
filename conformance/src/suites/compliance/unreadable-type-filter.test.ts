@@ -485,8 +485,8 @@ describe("a map that reaches no type is refused on every door that takes a type 
     });
     expect(minted.ok).toBe(true);
     trackKey(ctx, minted.data.id);
-    const operator = process.env.MARFA_OPERATOR_KEY;
-    expect(operator, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const operator = process.env.MARFA_MANAGEMENT_KEY;
+    expect(operator, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
     // The witness: a key that reads some type is answered the wildcard on
     // each door, and the bulk action the type it reads.

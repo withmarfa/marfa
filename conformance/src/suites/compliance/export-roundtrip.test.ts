@@ -15,7 +15,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackItem,
   trackEdge,
   cleanup,
@@ -30,7 +30,7 @@ let ctx: TestContext;
 beforeAll(async () => {
   const setup = await createTestContext("compliance", "export-roundtrip");
   ({ ctx, client } = setup);
-  operator = getOperatorClient();
+  operator = getOwnerClient();
 });
 
 afterAll(async () => {

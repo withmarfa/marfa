@@ -5,7 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { referenceBlob, uploadReferenced } from "../../utils/blobs.js";
@@ -618,7 +618,7 @@ describe("blob correctness", () => {
     expect(refusedUpload.status).toBe(400);
     expect(refusedUpload.error?.code).toBe("validation_error");
     expect(refusedUpload.error?.details?.unknown_parameters).toEqual(["bogus"]);
-    expect((await getOperatorClient().headBlob(hashOf(fresh))).status).toBe(
+    expect((await getManagementClient().headBlob(hashOf(fresh))).status).toBe(
       404,
     );
     const accepted = await call("POST", `/blobs?${own}`, { body: fresh });

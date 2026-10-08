@@ -281,7 +281,7 @@ describe("the error text of GET /health", () => {
       // that there is text to leave out.
       const told = await until(
         (answer) => answer.httpStatus === 503,
-        server!.operatorKey,
+        server!.managementKey,
       );
       const text = told.body.components.database_write?.error;
       expect(text).toEqual(expect.any(String));
@@ -305,7 +305,7 @@ describe("the error text of GET /health", () => {
 
   it("is given to no caller, the operator key included, while the database cannot look the key up", async () => {
     const callers: [string, string | undefined][] = [
-      ["the operator key", server!.operatorKey],
+      ["the operator key", server!.managementKey],
       ["a working key", server!.workingKey],
       ["a key the instance does not hold", "marfa_a-key-no-instance-holds"],
       ["no credential", undefined],
@@ -318,7 +318,7 @@ describe("the error text of GET /health", () => {
       // told, so there is text to leave out below.
       const told = await until(
         (answer) => answer.httpStatus === 503,
-        server!.operatorKey,
+        server!.managementKey,
       );
       expect(told.body.components.database_write?.error).toEqual(
         expect.any(String),
@@ -347,7 +347,7 @@ describe("the error text of GET /health", () => {
 
       // With the key table back the operator key is told again, so what was
       // withheld was withheld for the lookup and not for the key.
-      const toldAgain = await health(server!.operatorKey);
+      const toldAgain = await health(server!.managementKey);
       expect(toldAgain.body.components.database_write?.error).toEqual(
         expect.any(String),
       );
@@ -373,7 +373,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
   async function ask(): Promise<Answer & { elapsedMs: number }> {
     const started = Date.now();
     const response = await fetch(`${patient.apiUrl}/health`, {
-      headers: { Authorization: `Bearer ${patient.operatorKey}` },
+      headers: { Authorization: `Bearer ${patient.managementKey}` },
     });
     return {
       httpStatus: response.status,
@@ -443,7 +443,7 @@ describe("GET /health when the free space cannot be read", () => {
 
   async function ask(): Promise<Answer> {
     const response = await fetch(`${own.apiUrl}/health`, {
-      headers: { Authorization: `Bearer ${own.operatorKey}` },
+      headers: { Authorization: `Bearer ${own.managementKey}` },
     });
     return {
       httpStatus: response.status,

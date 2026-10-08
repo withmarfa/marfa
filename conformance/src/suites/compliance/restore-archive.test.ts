@@ -28,7 +28,7 @@ import {
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getOwnerClient,
   trackEdgeType,
   trackItem,
   trackKey,
@@ -55,7 +55,7 @@ beforeAll(async () => {
   const setup = await createTestContext("compliance", "restore-archive");
   ({ ctx, client, apiUrl } = setup);
   fileKey = setup.apiKey;
-  operator = getOperatorClient();
+  operator = getOwnerClient();
 });
 
 afterAll(async () => {

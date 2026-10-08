@@ -5,7 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
@@ -341,7 +341,7 @@ describe("canonical instants on item writes and filters", () => {
     );
 
     const restoredId = generateId();
-    const restored = await getOperatorClient().restoreArchive(
+    const restored = await getManagementClient().restoreArchive(
       itemsArchive([
         {
           id: restoredId,

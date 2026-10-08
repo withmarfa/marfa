@@ -65,7 +65,7 @@ function owner(): MarfaClient {
 function operator(): MarfaClient {
   return new MarfaClient({
     baseUrl: server!.apiUrl,
-    apiKey: server!.operatorKey,
+    apiKey: server!.managementKey,
   });
 }
 

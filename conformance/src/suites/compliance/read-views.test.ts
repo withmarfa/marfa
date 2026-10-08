@@ -66,7 +66,7 @@ beforeAll(async () => {
   });
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
   ctx = {
     runId: newRunId(),

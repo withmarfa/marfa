@@ -117,7 +117,7 @@ describe("GET /events on an instance that caps its live viewers", () => {
         {
           name: "a credential that reads no type",
           query: [],
-          credential: server!.operatorKey,
+          credential: server!.managementKey,
           status: 403,
           code: "type_not_permitted",
         },

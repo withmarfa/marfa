@@ -45,7 +45,7 @@ afterAll(async () => {
 function operator(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
 }
 
@@ -480,7 +480,7 @@ describe("the cleanup job's interval", () => {
         const interval = async (): Promise<number | undefined> => {
           const listed = await new MarfaClient({
             baseUrl: own.apiUrl,
-            apiKey: own.operatorKey,
+            apiKey: own.managementKey,
           }).listHousekeeping();
           expect(listed.status).toBe(200);
           return listed.data.data.find(

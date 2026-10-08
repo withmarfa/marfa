@@ -65,7 +65,7 @@ async function run(name: string): Promise<void> {
   await waitFor(
     `${name} to run`,
     async () => {
-      const ran = await client(server!.operatorKey).runHousekeeping(name);
+      const ran = await client(server!.managementKey).runHousekeeping(name);
       if (ran.status === 409) return undefined;
       expect(ran.status, JSON.stringify(ran.error)).toBe(200);
       expect(ran.data.outcome, ran.data.error ?? "").toBe("ok");

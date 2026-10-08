@@ -8,7 +8,7 @@ import {
   createSecondClient,
   createTestContext,
   getClientFromEnv,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -52,7 +52,7 @@ const made: Connector[] = [];
 afterAll(async () => {
   // A source's state outlives its registration, so it goes first.
   for (const mine of made) {
-    await getOperatorClient().deleteConnectorState(mine.id);
+    await getManagementClient().deleteConnectorState(mine.id);
   }
   await cleanup(ctx);
 });
@@ -161,13 +161,13 @@ describe("the hold", () => {
     expect(window).toBeGreaterThanOrEqual(179_000);
     expect(window).toBeLessThanOrEqual(185_000);
 
-    const read = await getOperatorClient().getConnector(mine.id);
+    const read = await getManagementClient().getConnector(mine.id);
     expect(read.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, read.data);
     expect(read.data.hold_expires_at).toBe(taken.data.expires_at);
     // A hold stamps no heartbeat.
     expect(read.data.last_heartbeat_at).toBe(beat.data.last_heartbeat_at);
-    const listed = await getOperatorClient().listConnectors();
+    const listed = await getManagementClient().listConnectors();
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
     expect(
       listed.data.data.find((row) => row.id === mine.id)?.hold_expires_at,
@@ -182,7 +182,7 @@ describe("the hold", () => {
       Date.parse(taken.data.expires_at),
     );
     expect(
-      (await getOperatorClient().getConnector(mine.id)).data.hold_expires_at,
+      (await getManagementClient().getConnector(mine.id)).data.hold_expires_at,
     ).toBe(renewed.data.expires_at);
   });
 
@@ -308,7 +308,7 @@ describe("the hold", () => {
   it("holds for the connector's own key alone", async () => {
     const mine = await connector("hold-own");
     const process = randomUUID();
-    for (const c of [other, getOperatorClient()]) {
+    for (const c of [other, getManagementClient()]) {
       const taken = await c.holdConnector(mine.id, process);
       expect(taken.status).toBe(403);
       expect(taken.error?.error.code).toBe("forbidden");
@@ -318,7 +318,7 @@ describe("the hold", () => {
     ).toBeNull();
     const held = await mine.client.holdConnector(mine.id, process);
     expect(held.status).toBe(200);
-    for (const c of [other, getOperatorClient()]) {
+    for (const c of [other, getManagementClient()]) {
       const released = await c.releaseConnectorHold(mine.id, process);
       expect(released.status).toBe(403);
       expect(released.error?.error.code).toBe("forbidden");
@@ -1580,7 +1580,7 @@ describe("what a connector keeps on the instance", () => {
       ).status,
     ).toBe(200);
 
-    for (const c of [other, getOperatorClient()]) {
+    for (const c of [other, getManagementClient()]) {
       for (const [door, res] of [
         ["GET state", await c.getConnectorState(mine.id)],
         [
@@ -1675,11 +1675,11 @@ describe("what a connector keeps on the instance", () => {
     ).toEqual([]);
 
     await seed();
-    const current = await getOperatorClient().rawRequest<{ id: string }>(
+    const current = await getManagementClient().rawRequest<{ id: string }>(
       "/keys/current",
     );
     expect(current.status).toBe(200);
-    const operator = await getOperatorClient().deleteConnectorState(mine.id);
+    const operator = await getManagementClient().deleteConnectorState(mine.id);
     expect(operator.status).toBe(200);
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
@@ -1788,7 +1788,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("hands the state and the agreements to the next key with the same source", async () => {
     const source = `${ctx.source}-successor`;
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const process = randomUUID();
     const row = await note("handed on");
 
@@ -1871,7 +1871,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("clears what a removed registration left, through a later registration of its source", async () => {
     const source = `${ctx.source}-orphaned`;
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const process = randomUUID();
     const row = await note("left behind");
 

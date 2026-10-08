@@ -21,7 +21,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -531,7 +531,7 @@ describe("a bulk-action job", () => {
     const final = await client.pollBulkActionToTerminal(jobId);
     expect(final.status).toBe("completed");
 
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const read = await operator.bulkActionStatus(jobId);
     expect(read.status).toBe(200);
     expect(read.data).toEqual(final);

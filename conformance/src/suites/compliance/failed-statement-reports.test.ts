@@ -55,7 +55,7 @@ function operator(path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${server!.apiUrl}${path}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${server!.operatorKey}`,
+      Authorization: `Bearer ${server!.managementKey}`,
       ...init.headers,
     },
   });

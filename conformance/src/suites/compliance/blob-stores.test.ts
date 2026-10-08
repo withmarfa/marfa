@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
@@ -35,7 +35,7 @@ afterAll(async () => {
 
 describe("the stores an instance keeps bytes in", () => {
   it("lists the disk store and the object store to the operator key", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const stores = await operator.listBlobStores();
     expect(stores.status).toBe(200);
     await expectMatchesSchema("GET", "/blobs/stores", 200, stores.data);
@@ -64,20 +64,20 @@ describe("the stores an instance keeps bytes in", () => {
   });
 
   it("lists each store with the time it was first attached", async () => {
-    const stores = await getOperatorClient().listBlobStores();
+    const stores = await getManagementClient().listBlobStores();
     expect(stores.data.data.length).toBeGreaterThanOrEqual(1);
     for (const store of stores.data.data) {
       expect(Date.parse(store.attached_at)).not.toBeNaN();
       expect(Date.parse(store.attached_at)).toBeLessThanOrEqual(Date.now());
     }
-    const again = await getOperatorClient().listBlobStores();
+    const again = await getManagementClient().listBlobStores();
     expect(
       again.data.data.map((store) => [store.id, store.attached_at]),
     ).toEqual(stores.data.data.map((store) => [store.id, store.attached_at]));
   });
 
   it("refuses the listing to a working key", async () => {
-    expect((await getOperatorClient().listBlobStores()).status).toBe(200);
+    expect((await getManagementClient().listBlobStores()).status).toBe(200);
     const stores = await client.listBlobStores();
     expect(stores.status).toBe(403);
     expect(stores.error?.error.code).toBe("forbidden");
@@ -96,7 +96,7 @@ describe("the stores an instance keeps bytes in", () => {
       200,
       locations.data,
     );
-    const stores = await getOperatorClient().listBlobStores();
+    const stores = await getManagementClient().listBlobStores();
     const disk = stores.data.data.find((store) => store.kind === "disk");
     // The upload woke replication and the run's other files run the
     // integrity check, so with an object store attached its copy can land,

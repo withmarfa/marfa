@@ -7,7 +7,7 @@ import {
   trackItem,
   trackKey,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
 
@@ -1157,7 +1157,7 @@ describe("what a write may store", () => {
           },
         },
       ]);
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const refused = await operator.restoreArchive(
       archived(["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"]),
     );

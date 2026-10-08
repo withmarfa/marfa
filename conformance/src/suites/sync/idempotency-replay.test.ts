@@ -13,7 +13,7 @@ import type {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackEdge,
   trackEdgeType,
   trackFolder,
@@ -55,7 +55,7 @@ beforeAll(async () => {
   ));
   const caps = await detectSyncCapabilities({ client, ctx, apiUrl, apiKey });
   requireRule(caps, "idempotencyKeys");
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {

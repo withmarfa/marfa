@@ -1,3 +1,6 @@
+import { controlRequest } from "../src/utils/control-request.js";
+import { mkdtempSync, realpathSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
 /**
  * Boot the server in this repository on SQLite for the suite, mint its first
  * key, and write the env file the run sources. The restore drill imports
@@ -37,18 +40,18 @@ import {
   openSync,
   readFileSync,
   rmSync,
-  statSync,
+  lstatSync,
+  closeSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  chooseCredentials,
   maskInActions,
   parseEnvFile,
-  readBootstrapSecret,
-  redactBootstrapSecret,
+  redactSetupProof,
+  TEST_OWNER,
   renderEnvFile,
 } from "../src/utils/target.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
@@ -206,7 +209,7 @@ function alive(pid: number): boolean {
 /** The tail of the server's log, with the one-time secret taken out. */
 function logTail(log: string): string {
   return existsSync(log)
-    ? redactBootstrapSecret(
+    ? redactSetupProof(
         readFileSync(log, "utf8").split("\n").slice(-40).join("\n"),
       )
     : "(no log written)";
@@ -250,32 +253,14 @@ async function waitForHealth(
   );
 }
 
-async function mint(url: string, secret: string) {
-  const response = await fetch(`${url}/keys`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ label: "operator", source: "operator" }),
-  });
-  const body: unknown = await response.json();
-  if (!response.ok) {
-    throw new Error(
-      `bootstrap mint answered ${String(response.status)}: ${JSON.stringify(body)}`,
-    );
-  }
-  return body as Parameters<typeof chooseCredentials>[0];
-}
-
 /** A server started and not yet known to be up. */
 interface Started {
   child: ChildProcess;
   url: string;
   /** Where in the log this boot begins. */
-  logOffset: number;
   /** Whether the supervisor has ended, which it does when the server does. */
   ended: () => boolean;
+  controlSocket: string;
 }
 
 async function startServer(args: BootOptions): Promise<Started> {
@@ -286,6 +271,7 @@ async function startServer(args: BootOptions): Promise<Started> {
       `a server is already running from ${args.state} (pid ${String(existing)}); run down first`,
     );
   }
+  cleanupControlDirectory(args.state);
   mkdirSync(p.blobs, { recursive: true });
   // The folder holds the server's keys, and `--state` takes any name, so
   // it ignores itself rather than relying on the root `.gitignore` knowing
@@ -303,9 +289,18 @@ async function startServer(args: BootOptions): Promise<Started> {
   // needs either lever to avoid a collision.
   const port = args.port ?? envPort() ?? (await freePort());
   const url = `http://127.0.0.1:${String(port)}`;
+  const controlDir = realpathSync(
+    mkdtempSync(resolve(tmpdir(), "marfa-control-")),
+  );
+  chmodSync(controlDir, 0o700);
+  const controlSocket = resolve(controlDir, "control.sock");
+  writeFileSync(resolve(args.state, "control-directory"), controlDir, {
+    mode: 0o600,
+  });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
+    MARFA_CONTROL_SOCKET: controlSocket,
     MARFA_AUTH_SECRET:
       process.env.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
     SQLITE_PATH: p.db,
@@ -355,10 +350,6 @@ async function startServer(args: BootOptions): Promise<Started> {
     }
   }
 
-  // The log is appended to, so a boot against a state directory that was
-  // already bootstrapped would otherwise re-read the first boot's secret and
-  // spend a mint the server has already consumed.
-  const logOffset = existsSync(p.log) ? statSync(p.log).size : 0;
   rmSync(p.exit, { force: true });
   const logFd = openSync(p.log, "a");
   // The supervisor leads the group and the server joins it, so the group's
@@ -381,7 +372,9 @@ async function startServer(args: BootOptions): Promise<Started> {
       stdio: ["ignore", logFd, logFd],
     },
   );
+  closeSync(logFd);
   if (child.pid === undefined) {
+    cleanupControlDirectory(args.state);
     throw new Error("failed to spawn the server");
   }
   let ended = false;
@@ -393,50 +386,121 @@ async function startServer(args: BootOptions): Promise<Started> {
   console.log(
     `[marfa-server] started pid ${String(child.pid)} on ${url}; log at ${p.log}`,
   );
-  return { child, url, logOffset, ended: () => ended };
+  return { child, url, ended: () => ended, controlSocket };
+}
+
+/** Starts the real server without claiming it, for claim-operation tests. */
+export async function bootUnclaimedServer(
+  args: BootOptions,
+): Promise<{ url: string; controlSocket: string }> {
+  const started = await startServer(args);
+  await waitForHealth(started.url, paths(args.state), started.ended);
+  return { url: started.url, controlSocket: started.controlSocket };
 }
 
 export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const { url, logOffset, ended } = await startServer(args);
-
+  const { url, ended, controlSocket } = await startServer(args);
   await waitForHealth(url, p, ended);
-
-  const secret = readBootstrapSecret(
-    readFileSync(p.log).subarray(logOffset).toString("utf8"),
-  );
-  if (secret === undefined) {
-    if (!existsSync(p.env)) {
+  const status = await controlRequest(controlSocket, "/_control/setup/status");
+  if (status.status !== 200)
+    throw new Error(`Claim status answered ${status.status}`);
+  const previous = existsSync(p.env)
+    ? parseEnvFile(readFileSync(p.env, "utf8"))
+    : {};
+  let apiKey: string, managementKey: string;
+  if (status.body.claimed === true) {
+    apiKey = previous.MARFA_API_KEY ?? "";
+    managementKey = previous.MARFA_MANAGEMENT_KEY ?? "";
+    if (!apiKey || !managementKey)
       throw new Error(
-        `the server printed no bootstrap secret and ${p.env} does not exist; the state directory holds a database whose first key this script did not mint`,
+        "Claimed state has no retained ordinary credentials; use a fresh fixture directory",
       );
-    }
-    const previous = parseEnvFile(readFileSync(p.env, "utf8"));
-    maskInActions(
-      previous.MARFA_API_KEY ?? "",
-      previous.MARFA_OPERATOR_KEY ?? "",
+  } else {
+    const claimed = await controlRequest(
+      controlSocket,
+      "/_control/setup/claim",
+      { method: "POST", body: TEST_OWNER },
     );
-    writeFileSync(
-      p.env,
-      renderEnvFile(
-        url,
-        {
-          apiKey: previous.MARFA_API_KEY ?? "",
-          operatorKey: previous.MARFA_OPERATOR_KEY ?? "",
-        },
-        p.blobs,
-        p.statusLogs,
-      ),
-    );
-    console.log(`[marfa-server] already bootstrapped; env file at ${p.env}`);
-    return;
+    if (claimed.status !== 201)
+      throw new Error(`Production owner claim answered ${claimed.status}`);
+    const working = await controlRequest(controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "conformance",
+        source: "conformance",
+        permissions: [
+          "schema.write",
+          "grants.manage",
+          "items.purge",
+          "keys.mint",
+          "config.manage",
+          "audit.read",
+          "webhooks.manage",
+        ],
+        type_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+        profile_permissions: { "*": "write" },
+      },
+    });
+    const management = await controlRequest(controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "management",
+        source: "management",
+        permissions: [
+          "schema.write",
+          "grants.manage",
+          "items.purge",
+          "keys.mint",
+          "config.manage",
+          "audit.read",
+          "webhooks.manage",
+          "instance.read",
+          "instance.maintain",
+          "connectors.manage",
+          "blobs.manage",
+          "keys.manage",
+        ],
+      },
+    });
+    if (
+      working.status !== 201 ||
+      management.status !== 201 ||
+      typeof working.body.key !== "string" ||
+      typeof management.body.key !== "string"
+    )
+      throw new Error("Authorised fixture key creation failed");
+    apiKey = working.body.key;
+    managementKey = management.body.key;
   }
-
-  const response = await mint(url, secret);
-  const credentials = chooseCredentials(response);
-  maskInActions(credentials.apiKey, credentials.operatorKey);
-  writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs, p.statusLogs));
-  console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
+  const signIn = await fetch(`${url}/auth/sign-in/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: url },
+    body: JSON.stringify(TEST_OWNER),
+  });
+  if (!signIn.ok)
+    throw new Error(`Fixture owner sign-in answered ${signIn.status}`);
+  const ownerCookie =
+    signIn.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith("marfa.auth.session_token="))
+      ?.split(";")[0] ?? "";
+  if (!ownerCookie) throw new Error("Fixture owner sign-in set no cookie");
+  maskInActions(apiKey, managementKey, ownerCookie, TEST_OWNER.password);
+  writeFileSync(
+    p.env,
+    renderEnvFile(
+      url,
+      { apiKey, managementKey, controlSocket, ownerCookie },
+      p.blobs,
+      p.statusLogs,
+    ),
+    { mode: 0o600 },
+  );
+  console.log(`[marfa-server] claimed and provisioned; env file at ${p.env}`);
 }
 
 /**
@@ -466,6 +530,29 @@ export async function bootRefused(args: BootOptions): Promise<void> {
   );
 }
 
+function cleanupControlDirectory(state: string): void {
+  const marker = resolve(state, "control-directory");
+  if (!existsSync(marker)) return;
+  const directory = readFileSync(marker, "utf8");
+  const root = realpathSync(tmpdir());
+  if (
+    dirname(directory) !== root ||
+    !/^marfa-control-[A-Za-z0-9]+$/.test(basename(directory))
+  )
+    throw new Error("Fixture control directory marker is unsafe");
+  if (existsSync(directory)) {
+    const stat = lstatSync(directory);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid?.()
+    )
+      throw new Error("Fixture control directory ownership is unsafe");
+    rmSync(directory, { recursive: true });
+  }
+  rmSync(marker);
+}
+
 export async function stopServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -476,6 +563,7 @@ export async function stopServer(args: BootOptions): Promise<void> {
   if (!alive(pid)) {
     console.log(`[marfa-server] pid ${String(pid)} is not running`);
     rmSync(p.pid, { force: true });
+    cleanupControlDirectory(args.state);
     return;
   }
   // The server was spawned detached, so its pid is also its process group.
@@ -501,6 +589,7 @@ export async function stopServer(args: BootOptions): Promise<void> {
     }
   }
   rmSync(p.pid, { force: true });
+  cleanupControlDirectory(args.state);
   console.log(`[marfa-server] stopped pid ${String(pid)}`);
 }
 

@@ -28,7 +28,7 @@ afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 async function run(name: string): Promise<void> {
   const operator = new MarfaClient({
     baseUrl: server!.apiUrl,
-    apiKey: server!.operatorKey,
+    apiKey: server!.managementKey,
   });
   await waitFor(
     `${name} to run`,

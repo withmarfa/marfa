@@ -3,7 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   cleanup,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -18,7 +18,7 @@ beforeAll(async () => {
     "compliance",
     "platform-types",
   ));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {

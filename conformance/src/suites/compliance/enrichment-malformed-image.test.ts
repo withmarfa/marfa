@@ -44,7 +44,7 @@ beforeAll(async () => {
   });
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

@@ -52,7 +52,8 @@ import type {
 
 export interface MarfaClientOptions {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
+  ownerCookie?: string;
 }
 
 export interface CreateItemInput {
@@ -137,10 +138,18 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
+  private ownerCookie: string | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.apiKey = options.apiKey;
+    this.apiKey = options.apiKey ?? "";
+    this.ownerCookie = options.ownerCookie;
+  }
+
+  private authHeaders(): Record<string, string> {
+    return this.ownerCookie === undefined
+      ? { Authorization: `Bearer ${this.apiKey}` }
+      : { cookie: this.ownerCookie, origin: new URL(this.baseUrl).origin };
   }
 
   /**
@@ -442,7 +451,7 @@ export class MarfaClient {
     const url = `${this.baseUrl}/export?${params.toString()}`;
     try {
       const response = await ofetch.raw(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { ...this.authHeaders() },
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1027,7 +1036,7 @@ export class MarfaClient {
   ): Promise<Response> {
     return fetch(
       `${this.baseUrl}/connectors/${id}/deliveries/${deliveryId}/body`,
-      { headers: { Authorization: `Bearer ${this.apiKey}` } },
+      { headers: { ...this.authHeaders() } },
     );
   }
 
@@ -1432,7 +1441,7 @@ export class MarfaClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
+      ...this.authHeaders(),
       ...((options.headers as Record<string, string>) ?? {}),
     };
 
@@ -1488,7 +1497,7 @@ export class MarfaClient {
     try {
       const response = await ofetch.raw(url, {
         method,
-        headers: { Authorization: `Bearer ${this.apiKey}`, ...extraHeaders },
+        headers: { ...this.authHeaders(), ...extraHeaders },
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1537,7 +1546,7 @@ export class MarfaClient {
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { ...this.authHeaders() },
         responseType: "text",
         ignoreResponseError: true,
       });
@@ -1591,7 +1600,7 @@ export class MarfaClient {
       const response = await ofetch.raw(url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          ...this.authHeaders(),
           "Content-Type": contentType,
         },
         body,

@@ -10,7 +10,7 @@ import type {
 } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackKey,
   trackItem,
   cleanup,
@@ -249,7 +249,7 @@ describe("strict_mode lever", () => {
       },
     });
     const planted = uuidv7();
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const refused = await operator.restoreArchive(
       itemsArchive([
         {
@@ -576,7 +576,7 @@ describe("strict_mode lever", () => {
     // be a second rule wearing the first one's name.
     await setConfig({});
     const id = uuidv7();
-    const restored = await getOperatorClient().restoreArchive(
+    const restored = await getManagementClient().restoreArchive(
       itemsArchive([
         {
           id,
@@ -728,7 +728,7 @@ describe("source_allowlist lever", () => {
         source_allowlist: { types: ["core.note"], sources: [own] },
       },
     });
-    const minted = await getOperatorClient().createKey({
+    const minted = await getManagementClient().createKey({
       label: "allowlist-bulk",
       source: own,
       sources: [claimed],

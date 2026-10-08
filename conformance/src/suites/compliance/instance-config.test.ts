@@ -215,7 +215,7 @@ describe("the order PUT /config refuses in", () => {
   it("asks for a credential, then config.manage, before it reads the body", async () => {
     const operator = new MarfaClient({
       baseUrl: server!.apiUrl,
-      apiKey: server!.operatorKey,
+      apiKey: server!.managementKey,
     });
     const narrowed = await operator.createKey({
       label: "instance-config-narrowed",
@@ -298,7 +298,7 @@ describe("the order PUT /config refuses in", () => {
         );
       }
 
-      const forbidden = await asked(method, server!.operatorKey);
+      const forbidden = await asked(method, server!.managementKey);
       expect(forbidden.status, method).toBe(403);
       expect(forbidden.error.code, method).toBe("forbidden");
       expect(forbidden.error.details?.required_scope, method).toBe(
@@ -335,7 +335,7 @@ describe("GET /config and PUT /config", () => {
   function operatorClient(): MarfaClient {
     return new MarfaClient({
       baseUrl: server!.apiUrl,
-      apiKey: server!.operatorKey,
+      apiKey: server!.managementKey,
     });
   }
 

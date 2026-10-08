@@ -596,8 +596,8 @@ describe("an item the key cannot read answers as a missing one", () => {
   });
 
   it("a key reaching no type is refused a single row, whatever the id names", async () => {
-    const operator = process.env.MARFA_OPERATOR_KEY;
-    if (!operator) throw new Error("MARFA_OPERATOR_KEY is required");
+    const operator = process.env.MARFA_MANAGEMENT_KEY;
+    if (!operator) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const missing = generateId();
     const own = await note();
     const ownEdge = await edge(own, task);

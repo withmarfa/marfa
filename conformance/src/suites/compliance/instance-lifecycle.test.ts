@@ -709,7 +709,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
         {
           who: "operator key",
           path: "/keys",
-          credential: () => server.operatorKey,
+          credential: () => server.managementKey,
         },
         {
           who: "app token",
@@ -1072,7 +1072,7 @@ describe("starting on a database that holds some of the server's tables and no r
     "creates the tables it lacks and starts, as it would on a new file",
     async () => {
       const noteIds = await writeNotes(server, "lifecycle-unfinished", 3);
-      const operatorBefore = server.operatorKey;
+      const operatorBefore = server.managementKey;
       const instanceBefore = await rootInstanceId();
 
       await server.restart({
@@ -1094,7 +1094,7 @@ describe("starting on a database that holds some of the server's tables and no r
       expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
       // As on a new file: no key, no item, a name of its own, a first key
       // to mint.
-      expect(server.operatorKey).not.toBe(operatorBefore);
+      expect(server.managementKey).not.toBe(operatorBefore);
       expect(await rootInstanceId()).not.toBe(instanceBefore);
       expect((await client.getItem(noteIds[0] ?? "")).status).toBe(404);
       // The tables it made work.

@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -41,7 +41,7 @@ beforeAll(async () => {
     "compliance",
     "claimed-sources",
   ));
-  operator = getOperatorClient();
+  operator = getManagementClient();
   folder = `${ctx.source}-folder`;
   elsewhere = `${ctx.source}-elsewhere`;
 });
@@ -1501,7 +1501,7 @@ describe("a key's claims", () => {
         });
         const own = new MarfaClient({
           baseUrl: server.apiUrl,
-          apiKey: server.operatorKey,
+          apiKey: server.managementKey,
         });
 
         const appKey = await app.createKey({

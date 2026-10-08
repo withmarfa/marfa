@@ -158,8 +158,8 @@ describe("a door that takes a JSON body", () => {
   });
 
   it("refuses a body that is missing or not sent as JSON with 400 validation_error on every such door", async () => {
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
     const unrefused: string[] = [];
     for (const door of await jsonDoors()) {
@@ -169,7 +169,7 @@ describe("a door that takes a JSON body", () => {
       for (const way of WAYS) {
         let res = await send(door, way, apiKey, options);
         if (res.status === 403) {
-          res = await send(door, way, operatorKey ?? "", options);
+          res = await send(door, way, managementKey ?? "", options);
         }
         const body = (await res.json().catch(() => ({}))) as {
           error?: { code?: string };
@@ -330,8 +330,8 @@ describe("a door that does not take its body as JSON", () => {
 
   it("takes an archive sent under text/plain, which a JSON door refuses when sent that way", async () => {
     await expectRefusedAsNotJson();
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
     const id = uuidv7();
     const archive = itemsArchive([
@@ -346,7 +346,7 @@ describe("a door that does not take its body as JSON", () => {
     const res = await fetch(`${apiUrl}/restore`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${operatorKey}`,
+        Authorization: `Bearer ${managementKey}`,
         "Content-Type": "text/plain",
       },
       body: Buffer.from(archive),
@@ -444,8 +444,8 @@ describe("a request the door would refuse before it reads the body", () => {
   }
 
   it("answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal", async () => {
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
     const way = plainTextWay();
 
     const wrong: string[] = [];
@@ -473,7 +473,7 @@ describe("a request the door would refuse before it reads the body", () => {
       // body, so the 401 above was the credential's absence and nothing else.
       let reached = await send(door, way, apiKey, options);
       if (reached.status === 403) {
-        reached = await send(door, way, operatorKey ?? "", options);
+        reached = await send(door, way, managementKey ?? "", options);
       }
       if (reached.status !== 400) {
         wrong.push(`${door} with a credential: ${String(reached.status)}`);
@@ -511,8 +511,8 @@ describe("a request the door would refuse before it reads the body", () => {
   });
 
   it("answers 403 forbidden on the operator's own door to a key that is not the operator key, where the operator key is answered 400", async () => {
-    const operatorKey = process.env.MARFA_OPERATOR_KEY;
-    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
+    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
     const way = plainTextWay();
 
     const refused = await send("POST /owner", way, apiKey);
@@ -521,7 +521,7 @@ describe("a request the door would refuse before it reads the body", () => {
       ((await refused.json()) as { error: { code: string } }).error.code,
     ).toBe("forbidden");
 
-    const answered = await send("POST /owner", way, operatorKey ?? "");
+    const answered = await send("POST /owner", way, managementKey ?? "");
     expect(answered.status).toBe(400);
     expect(
       ((await answered.json()) as { error: { code: string } }).error.code,

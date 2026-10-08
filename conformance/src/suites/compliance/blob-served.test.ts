@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
 } from "../../utils/setup.js";
 import { uploadReferenced } from "../../utils/blobs.js";
 import { readTarGzEntry } from "../../utils/archive.js";
@@ -15,7 +15,7 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("compliance", "blob-served"));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {

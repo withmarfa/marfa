@@ -5,7 +5,7 @@ import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
   trackFolder,
   trackItem,
   trackKey,
@@ -24,7 +24,7 @@ beforeAll(async () => {
     "compliance",
     "blob-reach",
   ));
-  operator = getOperatorClient();
+  operator = getManagementClient();
 });
 
 afterAll(async () => {

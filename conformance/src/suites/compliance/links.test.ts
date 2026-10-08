@@ -10,7 +10,7 @@ import type {
 import {
   cleanup,
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackEdge,
   trackFolder,
   trackItem,
@@ -496,7 +496,7 @@ describe("a type's link", () => {
 
   it("stops a restore registering a link the rows a forced delete left share", async () => {
     const { id, fields } = await leftBehind("left-restore");
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const refused = await operator.restoreArchive(
       itemsArchive([], [], [{ id, fields, link_field: "vendor_id" }]),
     );
@@ -915,7 +915,7 @@ describe("a link is one row's", () => {
   });
 
   it("counts an archived row whose link another row holds as a duplicate", async () => {
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const taken = v("archive-held");
     const holder = await row({ vendor_id: taken, title: "the live row" });
     const duplicate = uuidv7();
@@ -1386,7 +1386,7 @@ describe("POST /items/tombstones", () => {
       tombstone,
     ]);
 
-    const claimant = await keyFor(getOperatorClient(), "claimant", [
+    const claimant = await keyFor(getManagementClient(), "claimant", [
       ctx.source,
     ]);
     const moved = await claimant.settleTombstones({
@@ -1639,7 +1639,7 @@ describe("POST /items/lookup", () => {
     const folderKey = v("nk-system-folder");
     const noteKey = v("nk-system-note");
     const folderId = uuidv7();
-    const restored = await getOperatorClient().restoreArchive(
+    const restored = await getManagementClient().restoreArchive(
       itemsArchive([
         {
           id: folderId,
@@ -1766,7 +1766,7 @@ describe("POST /items/lookup", () => {
     }
 
     // A key whose map reaches no type is refused rather than answered empty.
-    const operator = getOperatorClient();
+    const operator = getManagementClient();
     const none = await operator.lookupItems(byLink);
     expect(none.status).toBe(403);
     expect(none.error?.error.code).toBe("type_not_permitted");

@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   cleanup,
-  getOperatorClient,
+  getManagementClient,
   trackItem,
 } from "../../utils/setup.js";
 
@@ -212,7 +212,7 @@ describe("the version policy a type inherits", () => {
       unconstrained: await itemWithSnapshots(unconstrained),
     };
 
-    const run = await getOperatorClient().runHousekeeping("version-thinning");
+    const run = await getManagementClient().runHousekeeping("version-thinning");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("ok");
 
@@ -250,7 +250,7 @@ describe("the version policy a type inherits", () => {
   }
 
   async function runThinning(): Promise<void> {
-    const run = await getOperatorClient().runHousekeeping("version-thinning");
+    const run = await getManagementClient().runHousekeeping("version-thinning");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("ok");
   }

@@ -28,7 +28,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
-const operatorKey = process.env.MARFA_OPERATOR_KEY ?? "";
+const managementKey = process.env.MARFA_MANAGEMENT_KEY ?? "";
 
 let itemId: string;
 let targetId: string;
@@ -194,7 +194,7 @@ describe("one envelope for every list and search", () => {
     for (const door of whole) {
       const body = (await read(
         door.path(),
-        door.operator ? operatorKey : apiKey,
+        door.operator ? managementKey : apiKey,
       )) as Record<string, unknown>;
       expect(body.next_cursor, door.template).toBeNull();
     }
@@ -228,7 +228,7 @@ describe("one envelope for every list and search", () => {
     async (_template, door) => {
       const body = (await read(
         door.path(),
-        door.operator ? operatorKey : apiKey,
+        door.operator ? managementKey : apiKey,
       )) as Record<string, unknown>;
       await expectMatchesSchema("GET", door.template, 200, body);
       // The occurrence door adds its diagnostics only when there are any,

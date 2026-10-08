@@ -33,7 +33,7 @@ beforeAll(async () => {
   server = await bootFreshServer("idempotency-signed-in");
   const operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
+    apiKey: server.managementKey,
   });
   expect((await operator.createOwner(OWNER)).status).toBe(201);
   const discovery = await fetch(

@@ -210,7 +210,6 @@ export interface ApiKeyRequest {
   permissions?: readonly string[];
   default_tier?: "library" | "feed";
   /** Only an operator key can mint another, and it holds no permissions. */
-  is_operator?: boolean;
   /** The sources the key may name on a write besides its own; omitted
    *  claims none when a permission or a map is named, and takes the
    *  creator's when none is. */
@@ -239,7 +238,6 @@ export interface ApiKeyResponse {
   profile_permissions?: Record<string, string>;
   permissions?: string[];
   default_tier?: "library" | "feed";
-  is_operator?: boolean;
   sources?: string[];
   oauth_client_id?: string;
   enforcement_override?: EnforcementOverride;

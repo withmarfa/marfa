@@ -4,7 +4,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext, WebhookDelivery } from "../../client/types.js";
 import {
   createTestContext,
-  getOperatorClient,
+  getManagementClient,
   trackEdge,
   trackEdgeType,
   trackItem,
@@ -199,7 +199,7 @@ async function deliveryOf(
  * holds it answers 409 and is run again.
  */
 async function runRetriesUntil(done: () => boolean, what: string) {
-  const operator = getOperatorClient();
+  const operator = getManagementClient();
   await waitFor(
     what,
     async () => {

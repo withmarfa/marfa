@@ -256,8 +256,8 @@ describe("every refusal's code", () => {
     const table = tableCodes();
     expect(table.size).toBeGreaterThan(40);
 
-    const operator = process.env.MARFA_OPERATOR_KEY;
-    expect(operator, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+    const operator = process.env.MARFA_MANAGEMENT_KEY;
+    expect(operator, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
     const narrowed = await client.createKey({
       label: `${ctx.source}-narrowed`,
       source: `${ctx.source}-narrowed`,
