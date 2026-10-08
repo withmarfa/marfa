@@ -24,6 +24,7 @@ import {
   type SseEvent,
 } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
@@ -55,7 +56,7 @@ interface CopyItem {
 let server: FreshServer;
 let appToken: Promise<string> | undefined;
 let client: MarfaClient;
-let operator: MarfaClient;
+let owner: MarfaClient;
 let ctx: TestContext;
 
 beforeAll(async () => {
@@ -64,9 +65,10 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  operator = new MarfaClient({
+  owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    apiKey: server.managementKey,
+    ownerCookie: server.ownerCookie,
+    ownerCredentials: TEST_OWNER,
   });
   ctx = {
     runId: newRunId(),
@@ -79,7 +81,7 @@ beforeAll(async () => {
     trackedWebhooks: [],
     trackedTypes: [],
     client,
-    provisioningClient: operator,
+    provisioningClient: owner,
   };
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -129,7 +131,7 @@ async function changed(response: Response) {
 }
 
 async function mint(label: string, body: Partial<ApiKeyRequest> = {}) {
-  const result = await operator.createKey({
+  const result = await owner.createKey({
     label,
     source: `${ctx.source}-${label}-${ctx.runId}`,
     ...body,
@@ -584,7 +586,7 @@ describe("conditional working-copy read views", () => {
       ).ok,
     ).toBe(true);
     expect((await client.addTags(row.id, ["changed-metadata"])).ok).toBe(true);
-    const widenedWrites = await operator.updateKey(key.id, {
+    const widenedWrites = await owner.updateKey(key.id, {
       type_permissions: { "core.note": "write" },
       permissions: ["keys.mint"],
       sources: [ctx.source],
@@ -732,9 +734,9 @@ describe("conditional working-copy read views", () => {
       await request(`/items/${note.id}`, before.read_view, key.key),
       before.read_view,
     );
-    expect(
-      (await operator.updateKey(key.id, { type_permissions: {} })).ok,
-    ).toBe(true);
+    expect((await owner.updateKey(key.id, { type_permissions: {} })).ok).toBe(
+      true,
+    );
     await changed(
       await request("/items?include=metadata", before.read_view, key.key),
     );
@@ -963,7 +965,7 @@ describe("what a read view is bound to", () => {
     });
     const middle = await bootstrap(key.key);
     const update = async (edge_permissions: Record<string, string>) => {
-      const result = await operator.updateKey(key.id, { edge_permissions });
+      const result = await owner.updateKey(key.id, { edge_permissions });
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
     };
     await update({});
@@ -985,7 +987,7 @@ describe("what a read view is bound to", () => {
     });
     const middle = await bootstrap(key.key);
     const update = async (metadata_permissions: Record<string, string>) => {
-      const result = await operator.updateKey(key.id, { metadata_permissions });
+      const result = await owner.updateKey(key.id, { metadata_permissions });
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
     };
     await update({});
@@ -1007,7 +1009,7 @@ describe("what a read view is bound to", () => {
     });
     const middle = await bootstrap(key.key);
     const update = async (extension_permissions: Record<string, string>) => {
-      const result = await operator.updateKey(key.id, {
+      const result = await owner.updateKey(key.id, {
         extension_permissions,
       });
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
@@ -1045,7 +1047,7 @@ describe("what a read view is bound to", () => {
     };
     expect(await listedUnder(open)).toBe(true);
     const update = async (sources: string[]) => {
-      const result = await operator.updateKey(key.id, {
+      const result = await owner.updateKey(key.id, {
         enforcement_override: {
           source_filter: { types: ["core.note"], sources },
         },
@@ -1059,7 +1061,7 @@ describe("what a read view is bound to", () => {
     const widened = await moves(narrowed, key.key);
     expect(await listedUnder(widened)).toBe(true);
     expect(widened.read_view).not.toBe(open.read_view);
-    const cleared = await operator.updateKey(key.id, {
+    const cleared = await owner.updateKey(key.id, {
       enforcement_override: null,
     });
     expect(cleared.ok, JSON.stringify(cleared.error)).toBe(true);

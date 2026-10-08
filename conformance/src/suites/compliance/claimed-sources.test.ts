@@ -4,7 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   cleanup,
   createTestContext,
-  getManagementClient,
+  getOwnerClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -15,6 +15,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key may claim sources besides its own, and a write may name one it
@@ -30,7 +31,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
-let operator: MarfaClient;
+let owner: MarfaClient;
 /** The source the keys below share, which no key holds as its own. */
 let folder: string;
 /** A second source nothing in this file is given, for the refusals. */
@@ -41,7 +42,7 @@ beforeAll(async () => {
     "compliance",
     "claimed-sources",
   ));
-  operator = getManagementClient();
+  owner = getOwnerClient();
   folder = `${ctx.source}-folder`;
   elsewhere = `${ctx.source}-elsewhere`;
 });
@@ -51,8 +52,8 @@ afterAll(async () => {
 });
 
 /**
- * A key the operator mints with write on notes, `keys.mint`, and the claims
- * named. The operator may grant any source, which is how a claim reaches a
+ * A key the owner mints with write on notes, `keys.mint`, and the claims
+ * named. The owner may grant any source, which is how a claim reaches a
  * key in this file at all.
  */
 async function claimingKey(
@@ -60,7 +61,7 @@ async function claimingKey(
   sources: readonly string[],
 ): Promise<{ client: MarfaClient; id: string; source: string }> {
   const source = `${ctx.source}-${label}`;
-  const minted = await operator.createKey({
+  const minted = await owner.createKey({
     label,
     source,
     sources,
@@ -69,7 +70,7 @@ async function claimingKey(
   });
   expect(
     minted.status,
-    `the operator could not mint a key claiming [${sources.join(", ")}], so nothing below holds the claim it writes under`,
+    `the owner could not mint a key claiming [${sources.join(", ")}], so nothing below holds the claim it writes under`,
   ).toBe(201);
   trackKey(ctx, minted.data.id);
   return {
@@ -322,13 +323,13 @@ describe("a write naming a source", () => {
     // A key writing bookmarks and notes under the shared source, and one
     // writing notes alone under it: the second reaches the first's rows
     // through the source they share, whatever their types.
-    const minted = await operator.createKey({
+    const minted = await owner.createKey({
       label: "trashed-writer",
       source: `${ctx.source}-trashed-writer`,
       sources: [folder],
       type_permissions: { "core.note": "write", "core.bookmark": "write" },
     });
-    expect(minted.status, "the operator could not mint the bookmark key").toBe(
+    expect(minted.status, "the owner could not mint the bookmark key").toBe(
       201,
     );
     trackKey(ctx, minted.data.id);
@@ -452,13 +453,13 @@ describe("a write naming a source", () => {
       label: string,
       type_permissions: Record<string, string>,
     ): Promise<MarfaClient> => {
-      const minted = await operator.createKey({
+      const minted = await owner.createKey({
         label,
         source: `${ctx.source}-${label}`,
         sources: [folder],
         type_permissions,
       });
-      expect(minted.status, `the operator could not mint ${label}`).toBe(201);
+      expect(minted.status, `the owner could not mint ${label}`).toBe(201);
       trackKey(ctx, minted.data.id);
       return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
     };
@@ -608,13 +609,13 @@ describe("a write naming a source", () => {
       label: string,
       type_permissions: Record<string, string>,
     ): Promise<MarfaClient> => {
-      const minted = await operator.createKey({
+      const minted = await owner.createKey({
         label,
         source: `${ctx.source}-${label}`,
         sources: [folder],
         type_permissions,
       });
-      expect(minted.status, `the operator could not mint ${label}`).toBe(201);
+      expect(minted.status, `the owner could not mint ${label}`).toBe(201);
       trackKey(ctx, minted.data.id);
       return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
     };
@@ -988,8 +989,8 @@ describe("a write naming a source", () => {
     ).toBe(201);
     trackItem(ctx, created.data.item.id);
 
-    const narrowed = await operator.updateKey(writer.id, { sources: [] });
-    expect(narrowed.status, "the operator could not narrow the key").toBe(200);
+    const narrowed = await owner.updateKey(writer.id, { sources: [] });
+    expect(narrowed.status, "the owner could not narrow the key").toBe(200);
     expect(narrowed.data.sources).toEqual([]);
 
     const refusedCreate = await writer.client.createItem(
@@ -1056,14 +1057,12 @@ describe("a write naming a source", () => {
 
 describe("a key's claims", () => {
   it("answers a key's claims on the mint, the listing and the update", async () => {
-    const minted = await operator.createKey({
+    const minted = await owner.createKey({
       label: "doors",
       source: `${ctx.source}-doors`,
       sources: [folder, elsewhere],
     });
-    expect(minted.status, "the operator could not mint a claiming key").toBe(
-      201,
-    );
+    expect(minted.status, "the owner could not mint a claiming key").toBe(201);
     trackKey(ctx, minted.data.id);
     expect(
       minted.data.sources,
@@ -1071,7 +1070,7 @@ describe("a key's claims", () => {
     ).toEqual([folder, elsewhere]);
     await expectMatchesSchema("POST", "/keys", 201, minted.data);
 
-    const listed = await operator.listKeys();
+    const listed = await owner.listKeys();
     expect(listed.ok, "the key listing failed").toBe(true);
     await expectMatchesSchema("GET", "/keys", 200, listed.data);
     const row = listed.data.data.find((k) => k.id === minted.data.id);
@@ -1079,7 +1078,7 @@ describe("a key's claims", () => {
       [folder, elsewhere],
     );
 
-    const renamed = await operator.updateKey(minted.data.id, {
+    const renamed = await owner.updateKey(minted.data.id, {
       label: "doors-renamed",
     });
     expect(renamed.status, "an update naming only a label failed").toBe(200);
@@ -1099,14 +1098,12 @@ describe("a key's claims", () => {
   });
 
   it("holds a claim named twice once, on the mint and on the update", async () => {
-    const minted = await operator.createKey({
+    const minted = await owner.createKey({
       label: "twice",
       source: `${ctx.source}-twice`,
       sources: [folder, folder],
     });
-    expect(minted.status, "the operator could not mint a claiming key").toBe(
-      201,
-    );
+    expect(minted.status, "the owner could not mint a claiming key").toBe(201);
     trackKey(ctx, minted.data.id);
     expect(
       minted.data.sources,
@@ -1115,7 +1112,7 @@ describe("a key's claims", () => {
 
     // Two distinct claims beside a repeat: both are held, in the order first
     // named, so a list of one is the repeat folded and not a list cut short.
-    const updated = await operator.updateKey(minted.data.id, {
+    const updated = await owner.updateKey(minted.data.id, {
       sources: [elsewhere, folder, elsewhere],
     });
     expect(updated.status, "an update naming claims failed").toBe(200);
@@ -1123,7 +1120,7 @@ describe("a key's claims", () => {
       updated.data.sources,
       "the update held a claim named twice twice",
     ).toEqual([elsewhere, folder]);
-    const listed = await operator.listKeys();
+    const listed = await owner.listKeys();
     expect(listed.ok, "the key listing failed").toBe(true);
     expect(
       listed.data.data.find((k) => k.id === minted.data.id)?.sources,
@@ -1201,17 +1198,17 @@ describe("a key's claims", () => {
     ).toBe(folder);
     await expectMatchesSchema("PATCH", "/keys/{id}", 403, refusedUpdate.error);
 
-    // The witness. The operator may grant any source, and the same update
+    // The witness. The owner may grant any source, and the same update
     // from it lands and reads back on the listing.
-    const operatorUpdate = await operator.updateKey(ownGrant.data.id, {
+    const ownerUpdate = await owner.updateKey(ownGrant.data.id, {
       sources: [folder],
     });
     expect(
-      operatorUpdate.status,
-      "the operator could not grant a source, so the refusal above may be every update",
+      ownerUpdate.status,
+      "the owner could not grant a source, so the refusal above may be every update",
     ).toBe(200);
-    expect(operatorUpdate.data.sources).toEqual([folder]);
-    const listed = await operator.listKeys();
+    expect(ownerUpdate.data.sources).toEqual([folder]);
+    const listed = await owner.listKeys();
     expect(
       listed.data.data.find((k) => k.id === ownGrant.data.id)?.sources,
       "an update's claims did not read back on the listing",
@@ -1302,32 +1299,32 @@ describe("a key's claims", () => {
 
   it("refuses a reserved prefix, even to the owner", async () => {
     for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
-      const refused = await operator.createKey({
+      const refused = await owner.createKey({
         label: "reserved",
         source: `${ctx.source}-reserved`,
         sources: [reserved],
       });
       expect(
         refused.status,
-        `the operator granted ${reserved}, so a key's rows can read as an app's`,
+        `the owner granted ${reserved}, so a key's rows can read as an app's`,
       ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
     }
 
     // The witness. The same caller grants an ordinary source on both doors,
     // so the refusals are the prefix and not the caller.
-    const target = await operator.createKey({
+    const target = await owner.createKey({
       label: "reserved-target",
       source: `${ctx.source}-reserved-target`,
       sources: [folder],
     });
     expect(
       target.status,
-      "the operator could not grant an ordinary source, so the refusals above may be every claim",
+      "the owner could not grant an ordinary source, so the refusals above may be every claim",
     ).toBe(201);
     trackKey(ctx, target.data.id);
 
-    const refusedUpdate = await operator.updateKey(target.data.id, {
+    const refusedUpdate = await owner.updateKey(target.data.id, {
       sources: [folder, "oauth:client:person"],
     });
     expect(
@@ -1335,12 +1332,12 @@ describe("a key's claims", () => {
       "an update granted a reserved prefix the mint refuses",
     ).toBe(400);
     expect(refusedUpdate.error?.error.code).toBe("validation_error");
-    const kept = await operator.updateKey(target.data.id, {
+    const kept = await owner.updateKey(target.data.id, {
       sources: [folder, elsewhere],
     });
     expect(
       kept.status,
-      "the operator could not update a key to ordinary claims",
+      "the owner could not update a key to ordinary claims",
     ).toBe(200);
     expect(kept.data.sources).toEqual([folder, elsewhere]);
   });
@@ -1350,7 +1347,7 @@ describe("a key's claims", () => {
     // a key like any other writer, so its source is the key's own choice.
     const own = `connector:${ctx.source}`;
     const claim = `connector:${ctx.source}-claim`;
-    const minted = await operator.createKey({
+    const minted = await owner.createKey({
       label: "connector-prefix",
       source: own,
       sources: [claim],
@@ -1363,7 +1360,7 @@ describe("a key's claims", () => {
 
   it("refuses a claim that is empty or longer than a source may be, and trims one", async () => {
     for (const bad of ["", "   ", "x".repeat(201)]) {
-      const refused = await operator.createKey({
+      const refused = await owner.createKey({
         label: "bounded",
         source: `${ctx.source}-bounded`,
         sources: [bad],
@@ -1378,7 +1375,7 @@ describe("a key's claims", () => {
     // The witness. A claim at the bound is granted, and one padded with
     // spaces is stored as a key's own source would be.
     const atBound = `${ctx.source}-`.padEnd(200, "x");
-    const granted = await operator.createKey({
+    const granted = await owner.createKey({
       label: "bounded",
       source: `${ctx.source}-bounded`,
       sources: [atBound, `  ${folder}  `],
@@ -1400,7 +1397,7 @@ describe("a key's claims", () => {
 
     // The witness. A key claiming exactly the cap is granted, so the
     // refusals below are the count and not the claims themselves.
-    const atCap = await operator.createKey({
+    const atCap = await owner.createKey({
       label: "many",
       source: `${ctx.source}-many`,
       sources: claims(1000),
@@ -1412,7 +1409,7 @@ describe("a key's claims", () => {
     trackKey(ctx, atCap.data.id);
     expect(atCap.data.sources).toHaveLength(1000);
 
-    const refusedMint = await operator.createKey({
+    const refusedMint = await owner.createKey({
       label: "too-many",
       source: `${ctx.source}-too-many`,
       sources: claims(1001),
@@ -1423,7 +1420,7 @@ describe("a key's claims", () => {
     ).toBe(400);
     expect(refusedMint.error?.error.code).toBe("validation_error");
 
-    const refusedUpdate = await operator.updateKey(atCap.data.id, {
+    const refusedUpdate = await owner.updateKey(atCap.data.id, {
       sources: claims(1001),
     });
     expect(
@@ -1432,7 +1429,7 @@ describe("a key's claims", () => {
     ).toBe(400);
     expect(refusedUpdate.error?.error.code).toBe("validation_error");
 
-    const listed = await operator.listKeys();
+    const listed = await owner.listKeys();
     expect(listed.ok, "the key listing failed").toBe(true);
     expect(
       listed.data.data.find((k) => k.id === atCap.data.id)?.sources,
@@ -1501,7 +1498,8 @@ describe("a key's claims", () => {
         });
         const own = new MarfaClient({
           baseUrl: server.apiUrl,
-          apiKey: server.managementKey,
+          ownerCookie: server.ownerCookie,
+          ownerCredentials: TEST_OWNER,
         });
 
         const appKey = await app.createKey({
@@ -1523,16 +1521,16 @@ describe("a key's claims", () => {
           "a key an app made claims a source, though an app claims none to give it",
         ).toEqual([]);
 
-        // The witness. The operator widens a key it made itself to the same
+        // The witness. The owner widens a key it made itself to the same
         // source, so the refusal below is the key and not the caller.
         const plain = await own.createKey({ label: "plain", source: "plain" });
-        expect(plain.status, "the operator could not mint a key").toBe(201);
+        expect(plain.status, "the owner could not mint a key").toBe(201);
         const widened = await own.updateKey(plain.data.id, {
           sources: ["shared-folder"],
         });
         expect(
           widened.status,
-          "the operator could not widen a key it made, so the refusal below may be every update",
+          "the owner could not widen a key it made, so the refusal below may be every update",
         ).toBe(200);
         expect(widened.data.sources).toEqual(["shared-folder"]);
 
