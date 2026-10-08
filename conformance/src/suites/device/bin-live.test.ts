@@ -143,6 +143,34 @@ it("refuses to pin a row in the bin, saying so", async () => {
   expect(value(await copy.status()).pinned).not.toContain(doomed.id);
 });
 
+it("refuses a pin of a row in the bin of a type the key may not read as one that is gone", async () => {
+  const unread = await client.createItem({
+    type: "core.task",
+    source: ctx.source,
+    tier: "library",
+    properties: { title: "a task the key may not read" },
+  });
+  expect(unread.ok, JSON.stringify(unread.error)).toBe(true);
+  trackItem(ctx, unread.data.item.id);
+  expect((await client.deleteItem(unread.data.item.id)).ok).toBe(true);
+  const readable = await trashedNote("a note the key may read");
+  const copy = await device("pin-unread", "feed");
+  // The witness: a row in the bin the key may read is refused as one.
+  const binned = await copy.pin(readable.id);
+  expect(!binned.ok && binned.refusal.raw).toContain("trashed");
+
+  const refused = await copy.pin(unread.data.item.id);
+  expect(refused.ok, "a row the key may not read was pinned").toBe(false);
+  if (!refused.ok) {
+    expect(refused.refusal.code).toBe("not_found");
+    expect(
+      refused.refusal.raw,
+      "the copy told a key that may not read a row that it is in the bin",
+    ).not.toContain("trashed");
+  }
+  expect(value(await copy.status()).pinned).not.toContain(unread.data.item.id);
+});
+
 it("keeps a row it holds in the bin when a pin of it is refused", async () => {
   const trashed = await trashedNote("held in the bin");
   const copy = await device("pin-held", "library");

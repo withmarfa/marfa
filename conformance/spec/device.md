@@ -2624,6 +2624,14 @@ If a pin of a row is refused because the server holds the row in the bin, then a
 
 **Tests:** `device/bin-live.test.ts › keeps a row it holds in the bin when a pin of it is refused`.
 
+### `device/pin-trashed-unread`
+
+If a caller pins a row the server holds in the bin, of a type the key may not read, then a device MUST refuse it `not_found` without the code `trashed`.
+
+**Reason:** the server answers a row of a type the key may not read as a missing one, in the bin too (`keys-and-oauth.md` 20), so the copy tells the key nothing more of it.
+
+**Tests:** `device/bin-live.test.ts › refuses a pin of a row in the bin of a type the key may not read as one that is gone`.
+
 ## A slice of both tiers
 
 ### `device/tier-all-hydrate`
