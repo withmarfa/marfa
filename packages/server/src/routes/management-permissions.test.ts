@@ -72,6 +72,49 @@ describe("explicit management permissions", () => {
     ).toBe(403);
   });
 
+  it("separates reading and cancelling another credential's bulk job", async () => {
+    const writer = await mintWorkingKey(ctx, { permissions: [] });
+    const created = await request(ctx.app, "POST", "/items", {
+      key: writer,
+      body: {
+        type: "core.note",
+        tags: ["management-job"],
+        properties: { body: "before" },
+      },
+    });
+    expect(created.status).toBe(201);
+    const queued = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key: writer,
+      body: {
+        action: "update_properties",
+        filter: { type: "core.note", tags: ["management-job"] },
+        patch: { body: "after" },
+      },
+    });
+    expect(queued.status).toBe(202);
+    const { id } = (await queued.json()) as { id: string };
+    const path = `/items/bulk-actions/jobs/${id}`;
+    const reader = await credential("instance.read");
+    const maintainer = await credential("instance.maintain");
+    expect((await request(ctx.app, "GET", path, { key: writer })).status).toBe(
+      200,
+    );
+    expect((await request(ctx.app, "GET", path, { key: reader })).status).toBe(
+      200,
+    );
+    expect(
+      (await request(ctx.app, "GET", path, { key: maintainer })).status,
+    ).toBe(403);
+    expect(
+      (await request(ctx.app, "POST", `${path}/cancel`, { key: reader }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(ctx.app, "POST", `${path}/cancel`, { key: maintainer }))
+        .status,
+    ).toBe(200);
+  });
+
   it("does not infer management access from wildcard content maps", async () => {
     const key = await mintWorkingKey(ctx, { permissions: [] });
     for (const path of [
