@@ -147,6 +147,46 @@ describe("a working copy checks the fields its catalog holds", () => {
     expect(server.requests.length).toBe(calls);
   });
 
+  it("judges an inherited field as the nearest type in the chain declares it", async () => {
+    harness = await startHarness("property-validation-inherited");
+    // The child redeclares the parent's field as required, which is the one
+    // change a subtype may make to it (`types.md`); the grandchild declares
+    // nothing of its own.
+    const code = { type: "string", maxLength: 3 };
+    scriptHydration(harness.server, {
+      head: "10",
+      catalog: typeCatalog([
+        { id: "fixture.parent", fields: { code } },
+        {
+          id: "fixture.child",
+          parent: "fixture.parent",
+          fields: { code: { ...code, required: true } },
+        },
+        { id: "fixture.grandchild", parent: "fixture.child", fields: {} },
+      ]),
+      rows: {},
+    });
+    expect(
+      (await harness.device.hydrate(["fixture.parent"], "library")).ok,
+    ).toBe(true);
+    const { device } = harness;
+    expect(
+      (await device.create({ type: "fixture.parent", properties: {} })).ok,
+      "the parent, which does not require the field, was refused without it",
+    ).toBe(true);
+    for (const type of ["fixture.child", "fixture.grandchild"]) {
+      invalid(await device.create({ type, properties: {} }), "code");
+      invalid(
+        await device.create({ type, properties: { code: "abcd" } }),
+        "code",
+      );
+      expect(
+        (await device.create({ type, properties: { code: "abc" } })).ok,
+        `${type} refused a value every declaration in its chain takes`,
+      ).toBe(true);
+    }
+  });
+
   it("judges current merge, replace, retype and version zero while leaving stale results to the server", async () => {
     const { device } = await hydrated();
     const before = await device.get(ROW);
