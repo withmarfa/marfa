@@ -25,8 +25,7 @@ export const INSTANCE_ID_KEY = "instance.id";
  * Idempotent, and that is the whole contract: every caller gets the value
  * that is stored, and what is stored never changes once written.
  *
- * **Claimed rather than set**, for the reason the bootstrap secret is: two
- * replicas booting against one database both see no row, both generate one,
+ * **Claimed rather than set**: two replicas booting against one database both see no row, both generate one,
  * and a read-then-write lets the second overwrite the first — after which
  * the instance has answered two different names for itself and whichever an
  * archive recorded is wrong. `claim` is an atomic insert-or-bail, so the
@@ -43,7 +42,7 @@ export async function ensureInstanceId(
   const stored = await settings.get(INSTANCE_ID_KEY);
   if (stored === null) {
     // Unreachable through any door: no route and no job removes this key,
-    // unlike the bootstrap secret the first mint consumes. It is a throw
+    // so it is a throw
     // rather than a return of the unpersisted value because an instance that
     // answers a name its database does not hold is the one outcome worth
     // refusing — an archive would record it and nothing could resolve it

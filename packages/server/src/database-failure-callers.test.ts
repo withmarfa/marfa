@@ -19,12 +19,7 @@ import { createErrorHandler } from "./middleware/error-handler.js";
 import * as logger from "./middleware/logger.js";
 import { afterCommit } from "./storage/commit-hooks.js";
 import { itemWrites } from "./storage/item-writes.js";
-import {
-  createTestAccount,
-  createTestContext,
-  request,
-  type TestContext,
-} from "./test-utils.js";
+import { createTestContext, request, type TestContext } from "./test-utils.js";
 
 vi.mock("./middleware/logger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof logger>();
@@ -134,14 +129,13 @@ describe("a failed statement Better Auth meets", () => {
   }
 
   it("answers a failed sign-in lookup through the server's error handler, with the fixed database failure on every sink", async () => {
-    ctx = await createTestContext();
+    ctx = await createTestContext({}, { email: EMAIL, password: PASSWORD });
     const raised: unknown[] = [];
     const handler = createErrorHandler({ errorWebhookUrl: "" });
     ctx.app.onError((err, c) => {
       raised.push(err);
       return handler(err, c);
     });
-    await createTestAccount(ctx, EMAIL, PASSWORD);
     expect((await signIn(ctx)).status).toBe(200);
 
     const db = native(ctx);
@@ -188,8 +182,7 @@ describe("a failed statement Better Auth meets", () => {
   });
 
   it("logs a failed session delete through its logger bridge as the fixed database failure", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext({}, { email: EMAIL, password: PASSWORD });
     const signedIn = await signIn(ctx);
     expect(signedIn.status).toBe(200);
     const cookie = signedIn.headers
@@ -197,10 +190,8 @@ describe("a failed statement Better Auth meets", () => {
       .map((value) => value.split(";")[0])
       .join("; ");
     const db = native(ctx);
-    const [session] = (await db.__sqliteAll(
-      "SELECT token FROM auth_session",
-    )) as { token: string }[];
-    const token = session!.token;
+    const { token } = (await signedIn.json()) as { token: string };
+    expect(token).toBeTruthy();
     await db.__sqliteRun(
       `CREATE TRIGGER refuse_session_delete BEFORE DELETE ON auth_session BEGIN SELECT RAISE(ABORT, '${REASON}'); END`,
       [],
@@ -329,10 +320,10 @@ describe("a housekeeping run whose write fails", () => {
           context.app,
           "POST",
           "/housekeeping/fixture-write/run",
-          { key: context.operatorKey },
+          { key: context.managementKey },
         );
         listed = await request(context.app, "GET", "/housekeeping", {
-          key: context.operatorKey,
+          key: context.managementKey,
         });
       } finally {
         sinks.restore();
@@ -369,7 +360,7 @@ describe("a housekeeping run whose write fails", () => {
         context.app,
         "POST",
         "/housekeeping/fixture-write/run",
-        { key: context.operatorKey },
+        { key: context.managementKey },
       );
       expect(((await again.json()) as { outcome: string }).outcome).toBe("ok");
     } finally {

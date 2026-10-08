@@ -104,7 +104,7 @@ export interface LogOptions {
    * rewrites attributes and deliberately leaves the body alone, on the
    * reasoning that a message string is Marfa-controlled and so safe by
    * construction. A line whose message *is* a credential breaks that
-   * reasoning, and there is exactly one: the bootstrap secret, which has to
+   * reasoning, and there is exactly one: the setup code, which has to
    * be readable by whoever runs the instance and by nobody further. Exporting
    * it would make "can read the log" mean "can read the observability
    * stack", which is a much larger set than "runs this server".

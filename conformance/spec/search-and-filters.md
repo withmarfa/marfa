@@ -204,7 +204,7 @@ If a credential whose type map reaches no type sends a request to an operation t
 
 **Reason:** an empty answer would say that the instance holds nothing for the credential to read, rather than that it may read nothing (`keys-and-oauth.md` 1).
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 type_not_permitted whatever the filter names, to a working key and to the operator key`, `› a key whose map reaches no type is refused a wildcard too`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 type_not_permitted whatever the filter names, to a working key and to a management key`, `› a key whose map reaches no type is refused a wildcard too`.
 
 ### `search-and-filters/type-map-narrows`
 

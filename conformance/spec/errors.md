@@ -138,11 +138,11 @@ When a request to an operation other than `POST /auth/oauth2/register` that take
 
 ### `errors/json-order`
 
-When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
+When a request to an operation requiring a credential, other than `POST /auth/oauth2/register`, that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
 
 **Reason:** a caller that may not use the operation learns that first, whatever it sent. The grant on an item's type is checked against the stored item after the body is read, so a key without it is answered `400` for a body that is not JSON, which tells it nothing about the item.
 
-**Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› answers 403 forbidden on the operator's own door to a key that is not the operator key, where the operator key is answered 400`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
+**Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
 
 ## Registration, which the sign-in library answers
 
@@ -624,7 +624,7 @@ When the server logs a fault in which a database statement failed in work no req
 
 ### `errors/report-health`
 
-While the write probe of `GET /health` fails on a database statement, when the operator key sends `GET /health`, the server MUST give the `database_write` component an `error` that carries `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the probe write was bound to.
+While the write probe of `GET /health` fails on a database statement, when a credential with `instance.read` sends `GET /health`, the server MUST give the `database_write` component an `error` that carries `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the probe write was bound to.
 
 **Reason:** the answer has room for one line, and the code is the part its reader needs.
 

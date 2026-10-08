@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import type {
   MarfaItem,
   MarfaVersion,
@@ -37,7 +38,7 @@ let ctx: TestContext;
 let apiUrl: string;
 /** A server that has never seen the rows, to restore into. */
 let fresh: FreshServer | undefined;
-let freshOperator: MarfaClient;
+let freshOwner: MarfaClient;
 let freshReader: MarfaClient;
 
 beforeAll(async () => {
@@ -47,9 +48,11 @@ beforeAll(async () => {
   ));
   ownerClient = getOwnerClient();
   fresh = await bootFreshServer("archive-history");
-  freshOperator = new MarfaClient({
+  freshOwner = new MarfaClient({
     baseUrl: fresh.apiUrl,
-    apiKey: fresh.managementKey,
+    apiKey: "",
+    ownerCookie: fresh.ownerCookie,
+    ownerCredentials: TEST_OWNER,
   });
   freshReader = new MarfaClient({
     baseUrl: fresh.apiUrl,
@@ -303,7 +306,7 @@ describe("the history a restore writes", () => {
     );
 
     const archive = await client.exportArchive({ source: ctx.source });
-    const restored = await freshOperator.restoreArchive(archive.data);
+    const restored = await freshOwner.restoreArchive(archive.data);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBeGreaterThanOrEqual(1);
 
@@ -348,7 +351,7 @@ describe("the history a restore writes", () => {
     expect(history[0]?.properties).toEqual({ label: "kept as written" });
 
     const archive = await client.exportArchive({ source: ctx.source });
-    const restored = await freshOperator.restoreArchive(archive.data);
+    const restored = await freshOwner.restoreArchive(archive.data);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(await allVersions(freshReader, made.data.item.id)).toEqual(history);
   });
