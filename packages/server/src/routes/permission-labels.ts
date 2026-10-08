@@ -49,13 +49,13 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
  * entries where the comma is load-bearing.
  */
 export const PERMISSION_SHORT: Record<Permission, string> = {
-  "keys.manage": "see, narrow and revoke any API key",
+  "keys.manage": "view key details and narrow or revoke any key",
   "blobs.manage": "read all files and manage their stored copies",
   "connectors.manage":
     "manage all connectors and their incoming data endpoints",
   "instance.maintain":
     "run maintenance that can permanently delete eligible data",
-  "instance.read": "read server health, storage and maintenance reports",
+  "instance.read": "read detailed server reports",
   "webhooks.manage": "set up webhooks that send your data elsewhere",
   "schema.write": "replace and remove definitions of the types it can write",
   "config.manage": "read and change the server configuration",
