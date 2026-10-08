@@ -135,6 +135,15 @@ pub(crate) fn land(
     target_os = "redox"
 ))]
 pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    if crate::fault::named("rename-new-unsupported").is_some_and(|name| {
+        to.file_name()
+            .is_some_and(|file| file.to_string_lossy() == name)
+    }) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no-replace publication unavailable in fixture",
+        ));
+    }
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         from,
