@@ -47,7 +47,7 @@ const BODY = "x".repeat(2_000);
 
 function appWith(options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(ctx.storage));
+  app.use("*", storedViewerKey(ctx));
   app.route("/events", eventRoutes(ctx.storage, options));
   return app;
 }
@@ -239,7 +239,7 @@ describe("a replay to a slow reader", () => {
         edge_permissions: {},
         metadata_permissions: {},
         permissions: [],
-        is_operator: false,
+
       },
       "paced-narrowed-hash",
     );

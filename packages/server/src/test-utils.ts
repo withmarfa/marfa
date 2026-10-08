@@ -953,26 +953,24 @@ export function gatedEventLog(base: Storage): {
  * Reads every type and no edge type unless `maps` says otherwise.
  */
 export function storedViewerKey(
-  storage: Storage,
+  ctx: TestContext,
   maps: Partial<CreateKeyInput> = {},
 ): MiddlewareHandler<AppEnv> {
   let minted: Promise<ApiKey> | undefined;
   return async (c, next) => {
     minted ??= (async () => {
-      const suffix = Math.random().toString(36).slice(2, 14);
-      return storage.keys.create(
-        {
-          label: `events-viewer-${suffix}`,
-          source: `events-viewer-${suffix}`,
-          type_permissions: { "*": "read" },
-          extension_permissions: {},
-          edge_permissions: {},
-          metadata_permissions: {},
-          permissions: [],
-          ...maps,
-        },
-        hashApiKey(`marfa_k1_events_viewer_${suffix}`, SALT),
-      );
+      const raw = await mintWorkingKey(ctx, {
+        type_permissions: { "*": "read" },
+        extension_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        profile_permissions: {},
+        permissions: [],
+        ...maps,
+      });
+      const row = await ctx.storage.keys.validate(hashApiKey(raw, SALT));
+      if (!row) throw new Error("The owner-issued event viewer key is missing");
+      return row;
     })();
     c.set("apiKey", await minted);
     await next();
@@ -986,11 +984,12 @@ export function storedViewerKey(
  * grants them.
  */
 export function eventsAppWithKey(
+  ctx: TestContext,
   storage: Storage,
   maps: Partial<CreateKeyInput> = {},
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", storedViewerKey(storage, maps));
+  app.use("*", storedViewerKey(ctx, maps));
   app.route("/events", eventRoutes(storage));
   return app;
 }
