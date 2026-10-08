@@ -1,11 +1,12 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { getCookie, deleteCookie } from "hono/cookie";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import { requireDirectAuthority } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OwnerRecord, Storage } from "../storage/interface.js";
-import { claimOwner, requireOwnerSession } from "../auth/instance-claim.js";
+import { claimOwner } from "../auth/instance-claim.js";
 import { requireOwnerOrigin } from "../auth/owner-browser.js";
 import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
@@ -102,7 +103,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     await next();
   });
   router.openapi(getOwnerRoute, async (c) => {
-    await requireOwnerSession(storage, auth, c.req.raw.headers);
+    requireDirectAuthority(c);
     const owner = await storage.owner?.find();
     if (!owner)
       throw new MarfaError(

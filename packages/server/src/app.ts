@@ -1,3 +1,5 @@
+import { setupRoutes } from "./routes/setup.js";
+import { ownerPages } from "./routes/owner-pages.js";
 import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
@@ -505,60 +507,67 @@ export function createApp(
   // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
   if (config.rateLimitEnabled && !options.localAuthority) {
-    app.use(
-      "*",
-      rateLimitMiddleware({
-        defaultLimit: config.rateLimitDefaultLimit,
-        windowMs: config.rateLimitWindowMs,
-        pathLimits: {
-          // The one cap an instance can name for itself
-          // (`RATE_LIMIT_KEYS_REQUESTS`), on every door under `/keys`:
-          // minting is how a caller widens its own reach, so the doors
-          // that do it are held well under the default, and a deployment
-          // whose callers legitimately mint more needs a number rather
-          // than a fork. A key reading itself shares the allowance.
-          "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
-          // Insertion order matters: the middleware iterates and
-          // takes the FIRST `path.startsWith(prefix)` match, so
-          // place more-specific prefixes ahead of broader siblings
-          // (e.g. `/auth/device/code` MUST precede `/auth/device`).
-          //
-          // Auth-endpoint caps calibrated for realistic human retry
-          // patterns plus iterative smoke testing. The global default
-          // (1000/window) bounds anything else.
-          //
-          // Device-flow polling goes to `/auth/oauth2/token` with the
-          // device grant and shares that endpoint's budget: RFC 8628's
-          // default 5-second poll interval means one in-flight device flow
-          // burns 12 calls/minute.
-          "/auth/device/code": 30,
-          "/auth/device": 30,
-          "/auth/sign-in/email": 30,
-          "/auth/sign-in": 30,
-          // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
-          // this, every plugin endpoint inherits the global default
-          // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
-          // which is unauthenticated. Specific prefixes appear BEFORE
-          // broader siblings per the insertion-order match rule.
-          //
-          // `/auth/authorize/decision` (Marfa proxy) precedes
-          // `/auth/authorize` (Marfa consent render).
-          "/auth/oauth2/register": 10,
-          "/auth/oauth2/token": 60,
-          "/auth/oauth2/introspect": 60,
-          "/auth/oauth2/revoke": 30,
-          "/auth/oauth2/authorize": 30,
-          "/auth/authorize/decision": 30,
-          "/auth/authorize": 60,
-        },
-        storage,
-        // Aggregate per-identifier cap (defaultLimit × multiplier),
-        // keyed on the identifier with no path split, so a key's budget
-        // can't multiply across path groups and an unattributed identifier
-        // still hits a ceiling. `0` disables it.
-        aggregateMultiplier: config.rateLimitAggregateMultiplier,
-      }),
-    );
+    const requestLimiter = rateLimitMiddleware({
+      defaultLimit: config.rateLimitDefaultLimit,
+      windowMs: config.rateLimitWindowMs,
+      pathLimits: {
+        // The one cap an instance can name for itself
+        // (`RATE_LIMIT_KEYS_REQUESTS`), on every door under `/keys`:
+        // minting is how a caller widens its own reach, so the doors
+        // that do it are held well under the default, and a deployment
+        // whose callers legitimately mint more needs a number rather
+        // than a fork. A key reading itself shares the allowance.
+        "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
+        // Insertion order matters: the middleware iterates and
+        // takes the FIRST `path.startsWith(prefix)` match, so
+        // place more-specific prefixes ahead of broader siblings
+        // (e.g. `/auth/device/code` MUST precede `/auth/device`).
+        //
+        // Auth-endpoint caps calibrated for realistic human retry
+        // patterns plus iterative smoke testing. The global default
+        // (1000/window) bounds anything else.
+        //
+        // Device-flow polling goes to `/auth/oauth2/token` with the
+        // device grant and shares that endpoint's budget: RFC 8628's
+        // default 5-second poll interval means one in-flight device flow
+        // burns 12 calls/minute.
+        "/auth/device/code": 30,
+        "/auth/device": 30,
+        "/auth/sign-in/email": 30,
+        "/auth/sign-in": 30,
+        // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
+        // this, every plugin endpoint inherits the global default
+        // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
+        // which is unauthenticated. Specific prefixes appear BEFORE
+        // broader siblings per the insertion-order match rule.
+        //
+        // `/auth/authorize/decision` (Marfa proxy) precedes
+        // `/auth/authorize` (Marfa consent render).
+        "/auth/oauth2/register": 10,
+        "/auth/oauth2/token": 60,
+        "/auth/oauth2/introspect": 60,
+        "/auth/oauth2/revoke": 30,
+        "/auth/oauth2/authorize": 30,
+        "/auth/authorize/decision": 30,
+        "/auth/authorize": 60,
+      },
+      storage,
+      // Aggregate per-identifier cap (defaultLimit × multiplier),
+      // keyed on the identifier with no path split, so a key's budget
+      // can't multiply across path groups and an unattributed identifier
+      // still hits a ceiling. `0` disables it.
+      aggregateMultiplier: config.rateLimitAggregateMultiplier,
+    });
+    app.use("*", (c, next) => {
+      // Setup has its own durable guessing limit. A valid handoff is not a guess.
+      if (
+        c.req.path === "/setup" ||
+        c.req.path.startsWith("/setup/") ||
+        (c.req.path === "/owner" && c.req.method === "POST")
+      )
+        return next();
+      return requestLimiter(c, next);
+    });
   }
 
   // `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`, so a client that
@@ -725,7 +734,11 @@ export function createApp(
   app.route("/platform-types", platformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
-  if (auth) app.route("/owner", ownerRoutes(storage, auth));
+  if (auth) {
+    app.route("/owner", ownerRoutes(storage, auth));
+    app.route("/setup", setupRoutes(storage, auth));
+    app.route("/auth/owner", ownerPages(storage, auth));
+  }
   app.route("/export", exportRoutes(storage, blobs, instanceId));
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
