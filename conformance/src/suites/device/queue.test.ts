@@ -3110,6 +3110,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
             : refusal(404, "item_not_found", "Item not found"),
       ],
       tags: [{ kind: "json", status: 200, body: {} }],
+      edges: [edgeCreateDoor(server)],
     });
     const first = await device.drain();
     expect(first.ok, JSON.stringify(first)).toBe(true);
@@ -3122,7 +3123,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
       version: 0,
     });
     expect(edited.ok, JSON.stringify(edited)).toBe(true);
-    if (!tagged.ok || !edited.ok) return;
+    const linked = await device.createEdge({
+      source: HELD.id,
+      target: local,
+      type: "references",
+    });
+    expect(linked.ok, JSON.stringify(linked)).toBe(true);
+    if (!tagged.ok || !edited.ok || !linked.ok) return;
     const second = await device.drain();
     expect(second.ok, JSON.stringify(second)).toBe(true);
     expect(
@@ -3133,7 +3140,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toEqual(["POST /items"]);
     let queue = await queueOf(device);
     const of = (id: string) => queue.find((row) => row.id === id);
-    for (const write of [tagged.value.id, edited.value.id]) {
+    for (const write of [tagged.value.id, edited.value.id, linked.value.id]) {
       expect([
         of(write)?.verdict,
         of(write)?.reason,
@@ -3145,14 +3152,22 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(third.ok, JSON.stringify(third)).toBe(true);
     queue = await queueOf(device);
     expect(
-      [of(tagged.value.id)?.verdict, of(edited.value.id)?.verdict],
-      "once the row was found, the tag did not go to it, or the edit made against the row this device created did",
-    ).toEqual(["accepted", "refused"]);
+      [
+        of(tagged.value.id)?.verdict,
+        of(edited.value.id)?.verdict,
+        of(linked.value.id)?.verdict,
+      ],
+      "once the row was found, the tag or the edge did not go to it, or the edit made against the row this device created did",
+    ).toEqual(["accepted", "refused", "accepted"]);
     expect(
       server.requests
         .filter((request) => request.method !== "GET")
         .map((request) => `${request.method} ${request.pathname}`),
-    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`]);
+    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`, "POST /edges"]);
+    const edge = server.requests.find(
+      (request) => request.method === "POST" && request.pathname === "/edges",
+    );
+    expect(JSON.parse(edge?.body ?? "{}").target_id).toBe(THEIRS);
   });
 
   it("reads the row a create landed on again after a failure that clears on its own", async () => {

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   answers,
+  refusal,
   wireEdge,
+  wireItem,
   writeAnswers,
   type WireEdgeOptions,
 } from "../../device/marfa-answers.js";
@@ -178,6 +180,84 @@ describe("an edit that moves an edge's end", () => {
       [OLDEST, 2],
     ]);
     expect(await drawnTo(device, OLDER)).toEqual([]);
+  });
+
+  it("holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found", async () => {
+    harness = await hydrated("edge-move-onto-landing");
+    const { server, device } = harness;
+    const THEIRS = "01a00000-0000-7000-8000-0000000000f4";
+    const created = value(
+      await device.create({
+        type: "core.note",
+        properties: { title: "mine", body: "mine" },
+        source: "notes",
+        sourceId: "moved-onto.md",
+        version: 0,
+      }),
+    );
+    const local = created.item_id ?? "";
+    const theirs = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "moved-onto.md",
+      type: "core.note",
+    };
+    let found = false;
+    server.answer("POST", "/items", answers.ancestorUnavailable(theirs, 0));
+    server.copyAnswer("GET", `/items/${THEIRS}`, () =>
+      found
+        ? answers.updated(
+            wireItem({
+              id: THEIRS,
+              version: 1,
+              properties: theirs.properties,
+              source: "notes",
+              source_id: "moved-onto.md",
+            }),
+          )
+        : refusal(404, "item_not_found", "Item not found"),
+    );
+    let stands: WireEdgeOptions = { ...succession, version: 1 };
+    scriptSuccession(
+      harness,
+      () => stands,
+      () => {
+        stands = { ...succession, target_id: THEIRS, version: 2 };
+        return writeAnswers.edge(stands, 200);
+      },
+    );
+    expect(value(await device.drain()).verdicts[0]?.verdict).toBe("refused");
+    const moved = value(
+      await device.updateEdge(SUCCESSION, {
+        properties: {},
+        version: 1,
+        target_id: local,
+      }),
+    );
+    expect(
+      moved.depends_on,
+      "a move onto the row of a create refused onto a row no read has found did not wait on that create",
+    ).toEqual([created.id]);
+    value(await device.drain());
+    const patches = () =>
+      server.requests.filter(
+        (request) =>
+          request.pathname === `/edges/${SUCCESSION}` &&
+          request.method === "PATCH",
+      );
+    expect(
+      patches(),
+      "the move went to the server naming an id the server never held",
+    ).toEqual([]);
+    found = true;
+    value(await device.drain());
+    expect(
+      patches().map((request) => JSON.parse(request.body).target_id),
+      "once the row was found, the move did not go naming it",
+    ).toEqual([THEIRS]);
   });
 
   it("shows a waiting move at its new end from both ends, over the answer to the edit ahead of it", async () => {
