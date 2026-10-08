@@ -111,7 +111,9 @@ export function requestBlobProof(
     // proof there too, rather than retain a grant read before the write lock.
     const { key, kind } = requestCredential(c);
     const permissions =
-      kind === "oauth" ? (c.get("oauthGrant")?.scopes ?? []) : key.permissions;
+      kind === "oauth"
+        ? (c.get("oauthGrant")?.scopes ?? [])
+        : (key.permissions ?? []);
     if (permissions.includes("blobs.manage"))
       requirePermission(c, "blobs.manage");
     return blobProof(storage, key, kind, permissions)(hash);

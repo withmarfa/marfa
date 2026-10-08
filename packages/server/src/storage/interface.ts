@@ -776,7 +776,7 @@ export interface ItemStore {
   /**
    * How many items carry this exact type identifier.
    *
-   * The only caller is the operator surface that decides whether a retired
+   * The maintenance operation decides whether a retired
    * shipped type can be removed: a row kept because items of it still exist
    * is kept for everyone, since the row is what makes those items resolve.
    *
@@ -1157,10 +1157,8 @@ export interface SearchStore {
 /**
  * What a revoke did, rather than whether it did anything.
  *
- * A revoke has three outcomes and a boolean carries two of them, which is
- * how a route came to answer `{ ok: true }` for an id that matched no row at
- * all: the operator key had nothing else left to ask. `"already_revoked"` and `"not_found"` are both misses and both refuse,
- * but they are different mistakes to have made and the answer says which.
+ * A caller must distinguish a successful revocation from an already revoked
+ * key or an unknown id; both misses are refused without reporting success.
  */
 export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
 
@@ -2684,10 +2682,8 @@ export interface BulkActionJobStore {
     limit: number,
     cursor?: string,
   ): Promise<{ patches: unknown[]; cursor: string | null }>;
-  /** Fetch by id. The store returns the row regardless of caller; the route
-   *  handler enforces auth: the credential that created the job, or the
-   *  operator key, and nothing else. No permission says "read another
-   *  credential's bulk jobs". */
+  /** Fetch by id. The route admits the credential that created the job,
+   *  a caller holding instance.read, or direct owner or local authority. */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
    * Atomically claim the next queued job: a plain
