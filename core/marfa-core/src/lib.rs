@@ -828,20 +828,20 @@ impl Core {
         Ok(queued)
     }
 
-    /// Destroys a row in the bin on the server at once, and takes it, its
-    /// edges and its pin out of the copy once the server accepts it
-    /// (`device/purge-not-held` to `device/purge-unanswered`). Never queued. Sent at `version`, the version
-    /// the caller was shown, or else the version the copy holds; refused,
-    /// before anything is sent, `NotFound` with `not_held` for a row the copy
-    /// does not hold where no version is named, `Validation` with
+    /// Destroys a row in the bin on the server at once, and takes it, its edges
+    /// and its pin out of the copy once the server accepts it (the device
+    /// chapter's section "Purging"). Never queued. Sent at `version`, the
+    /// version the caller was shown, or else the version the copy holds;
+    /// refused, before anything is sent, `NotFound` with `not_held` for a row
+    /// the copy does not hold where no version is named, `Validation` with
     /// `invalid_transition` for one the copy shows outside the bin, and
-    /// `Invalid` while a write to it waits; then `NoServer` for a copy with
-    /// no server. The root confirms the copy's instance first, which expires
-    /// the copy where another answers. Otherwise it is refused with what the
-    /// server or the network answered, the copy and the queue as they were:
-    /// `version_conflict` for a row that moved since it was read. A
-    /// `Network` failure after the request went out may follow a purge the
-    /// server made, which its `item.purged` event then shows.
+    /// `Invalid` while a write to it waits; then `NoServer` for a copy with no
+    /// server. The root confirms the copy's instance first, which expires the
+    /// copy where another answers. Otherwise it is refused with what the server
+    /// or the network answered, the copy and the queue as they were:
+    /// `version_conflict` for a row that moved since it was read. A `Network`
+    /// failure after the request went out may follow a purge the server made,
+    /// which its `item.purged` event then shows.
     pub fn purge_item(&self, id: &str, version: Option<i64>) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let (held, waiting) = {

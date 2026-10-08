@@ -588,7 +588,7 @@ If a `GET /items` request sends a `cursor` that another listing or another order
 
 ## Search
 
-`GET /search?q=` matches full text. A device matches the same way, by `device/search-stem` to `device/excerpt-markup`.
+`GET /search?q=` matches full text. A device matches the same way, as the device chapter's section "Search, matched as the server matches" says.
 
 ### `search-and-filters/search-q-required`
 

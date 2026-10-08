@@ -10,8 +10,10 @@ import { scriptHydration, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
 
 /**
- * A purge through a working copy against a scripted server (`device/purge-not-held` to `device/purge-unanswered`): the refusals the copy makes before sending anything, the instance
- * it confirms first, and a purge whose answer never comes.
+ * A purge through a working copy against a scripted server (the device
+ * chapter's section "Purging"): the refusals the copy makes before sending
+ * anything, the instance it confirms first, and a purge whose answer never
+ * comes.
  */
 
 let harness: Harness | undefined;

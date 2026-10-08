@@ -1,9 +1,9 @@
 /**
- * The corpus and the queries the server's search fixtures and the device's
- * hold to one answer (`search-and-filters/search-stem` to `search-and-filters/excerpt-markup`, and `device/search-stem` to `device/excerpt-markup`). Both halves create
- * these rows under a type of their own and search that type, so a case names
- * the rows it expects by key and the other rows on the server cannot change
- * the answer.
+ * The corpus and the queries the server's search fixtures and the device's hold
+ * to one answer (the sections on search in `search-and-filters.md` and
+ * `device.md`). Both halves create these rows under a type of their own and
+ * search that type, so a case names the rows it expects by key and the other
+ * rows on the server cannot change the answer.
  */
 
 export interface MatchingRow {

@@ -14,9 +14,9 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A working copy reads a folder's settings, answers its search, and writes
- * its settings through the folder door (`device/folder-system-tier` to `device/folder-write-accepted`), against the
- * real server and the real binary.
+ * A working copy reads a folder's settings, answers its search, and writes its
+ * settings through the folder door (the device chapter's section "Folders, read
+ * and written from a copy"), against the real server and the real binary.
  */
 
 const FOLDER_TYPE = "system.folder";
