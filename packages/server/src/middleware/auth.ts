@@ -102,7 +102,9 @@ export function requireDirectAuthority(c: Context<AppEnv>): void {
 
 export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
   requireDirectAuthority(c);
-  const authority = c.get("authority")!;
+  const authority = c.get("authority");
+  if (!authority)
+    throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
   if (
     authority.kind === "owner" &&
     (Date.now() - authority.authenticatedAt > 300_000 ||
@@ -810,7 +812,9 @@ export const keysOnly = standingRule("a key, not a signed-in app", (c) => {
 export function standingPermission(
   permission: Permission,
 ): MiddlewareHandler<AppEnv> {
-  return standingRule(permission, (c) => requirePermission(c, permission));
+  return standingRule(permission, (c) => {
+    requirePermission(c, permission);
+  });
 }
 
 export const requireDeclaredCredential = createMiddleware<AppEnv>(

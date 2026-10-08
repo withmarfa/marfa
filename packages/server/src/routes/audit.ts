@@ -111,7 +111,7 @@ const listAuditRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it.",
+        "- `forbidden`: you don't hold `audit.read`. `details.required_scope` names it.",
     },
     400: {
       content: {

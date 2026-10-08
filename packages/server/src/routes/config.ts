@@ -142,7 +142,7 @@ const InstanceConfigWriteSchema = z.strictObject({
 const managesConfig = standingPermission("config.manage");
 
 const CONFIG_MANAGE_REFUSAL =
-  "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.";
+  "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.";
 
 const getConfigRoute = createRoute({
   operationId: "getConfig",

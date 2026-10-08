@@ -590,7 +590,7 @@ function mintDetails(
         }
       : {}),
     ...(c.get("apiKey")?.oauth_client_id
-      ? { client_id: c.get("apiKey")!.oauth_client_id }
+      ? { client_id: c.get("apiKey")?.oauth_client_id }
       : {}),
   };
 }
@@ -817,7 +817,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         if (!direct) {
           if (fromApp)
             refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
-          else refuseKeyReachAboveCreator(callerKey!, requested);
+          else refuseKeyReachAboveCreator(requireAuth(c), requested);
           const beyond = requestedPermissions?.find(
             (permission) => !held.includes(permission),
           );

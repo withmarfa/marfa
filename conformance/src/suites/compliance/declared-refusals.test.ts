@@ -7,7 +7,7 @@ import {
   cleanup,
   createSecondClient,
   createTestContext,
-  getManagementClient,
+  getOwnerClient,
   trackEdge,
   trackItem,
   trackKey,
@@ -426,7 +426,7 @@ describe("a core edge type", () => {
         body: `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
       },
     ]);
-    const restored = await getManagementClient().restoreArchive(archive);
+    const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.status).toBe(409);
     expect(restored.error?.error.code).toBe("conflict");
     await expectMatchesSchema("POST", "/restore", 409, restored.error);
@@ -734,6 +734,18 @@ describe("a query key no door declares", () => {
     id: string = UNKNOWN,
   ): Promise<{ status: number; unknown: unknown }> {
     const path = template.replace(/\{[^}]+\}/g, id);
+    if (template === "/owner" || template === "/restore") {
+      const response = await getOwnerClient().rawRequest(`${path}?${STRAY}=1`, {
+        method: method as "GET" | "POST",
+        headers: { "Content-Type": "application/json" },
+        ...(method === "POST" ? { body: "{}" } : {}),
+      });
+      return {
+        status: response.status,
+        unknown: response.error?.error.details?.unknown_parameters,
+      };
+    }
+
     const response = await fetch(`${apiUrl}${path}?${STRAY}=1`, {
       method,
       headers: {

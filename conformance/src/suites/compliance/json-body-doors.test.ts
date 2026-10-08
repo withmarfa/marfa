@@ -6,6 +6,7 @@ import type { TestContext } from "../../client/types.js";
 import { itemsArchive } from "../../utils/archive.js";
 import {
   createSecondClient,
+  getOwnerClient,
   createTestContext,
   trackItem,
   trackKey,
@@ -343,17 +344,17 @@ describe("a door that does not take its body as JSON", () => {
         properties: { body: "restored under text/plain" },
       },
     ]);
-    const res = await fetch(`${apiUrl}/restore`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${managementKey}`,
-        "Content-Type": "text/plain",
+    const res = await getOwnerClient().rawRequest<{ imported: number }>(
+      "/restore",
+      {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: Buffer.from(archive),
       },
-      body: Buffer.from(archive),
-    });
+    );
     trackItem(ctx, id);
-    expect(res.status, await res.clone().text()).toBe(200);
-    expect(((await res.json()) as { imported: number }).imported).toBe(1);
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    expect(res.data.imported).toBe(1);
   });
 
   it("takes a delivery to an inbound address sent under text/plain, which a JSON door refuses when sent that way", async () => {
@@ -449,7 +450,7 @@ describe("a request the door would refuse before it reads the body", () => {
     const way = plainTextWay();
 
     const wrong: string[] = [];
-    const doors = await jsonDoors();
+    const doors = (await jsonDoors()).filter((door) => door !== "POST /owner");
     expect(doors.length).toBeGreaterThan(30);
     for (const door of doors) {
       const options = door.startsWith("PUT /types/")
@@ -510,22 +511,15 @@ describe("a request the door would refuse before it reads the body", () => {
     }
   });
 
-  it("answers 403 forbidden on the operator's own door to a key that is not the operator key, where the operator key is answered 400", async () => {
-    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
-    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
+  it("checks a public claim body's format without treating a key as setup proof", async () => {
     const way = plainTextWay();
-
-    const refused = await send("POST /owner", way, apiKey);
-    expect(refused.status).toBe(403);
-    expect(
-      ((await refused.json()) as { error: { code: string } }).error.code,
-    ).toBe("forbidden");
-
-    const answered = await send("POST /owner", way, managementKey ?? "");
-    expect(answered.status).toBe(400);
-    expect(
-      ((await answered.json()) as { error: { code: string } }).error.code,
-    ).toBe("validation_error");
+    for (const key of [apiKey, process.env.MARFA_MANAGEMENT_KEY ?? ""]) {
+      const response = await send("POST /owner", way, key);
+      expect(response.status).toBe(400);
+      expect(
+        ((await response.json()) as { error: { code: string } }).error.code,
+      ).toBe("validation_error");
+    }
   });
 
   it("answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON", async () => {

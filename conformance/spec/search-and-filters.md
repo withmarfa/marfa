@@ -1082,7 +1082,7 @@ When the rows of a page fill it exactly and it holds the last row, the server MU
 
 ## Export
 
-`GET /export` answers the items the credential may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. The operator key reads no content, so it is refused (`blobs/export-operator-refused`).
+`GET /export` answers the items the credential may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
 
 ### `search-and-filters/export-lines`
 
@@ -1288,19 +1288,19 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 
 ## Restore
 
-`POST /restore` takes an archive that `GET /export?format=archive` wrote, with the operator key, and answers counts of what it wrote and skipped.
+`POST /restore` takes an archive that `GET /export?format=archive` wrote, with direct owner or local authority, and answers counts of what it wrote and skipped.
 
 ### `search-and-filters/restore-operator`
 
 If a working key sends `POST /restore`, then the server MUST answer `403 forbidden`.
 
-**Reason:** running the instance is fenced outside the permission model, so a credential holding write on every type is still not the operator key.
+**Reason:** full restoration can write server-managed records, so ordinary app and key permissions cannot authorize it.
 
-**Tests:** `compliance/restore-archive.test.ts › requires the operator key`.
+**Tests:** `compliance/restore-archive.test.ts › requires direct owner authority`.
 
 ### `search-and-filters/restore-roundtrip`
 
-When the operator key sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
+When direct owner or local authority sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
 
 **Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
 
@@ -1570,7 +1570,7 @@ If an archive carries `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.nd
 
 ### `search-and-filters/restore-no-count-limit`
 
-When the operator key restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
+When direct owner or local authority restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
 
 **Reason:** an export that the same build cannot restore is not a usable backup.
 

@@ -271,6 +271,13 @@ async function startServer(args: BootOptions): Promise<Started> {
       `a server is already running from ${args.state} (pid ${String(existing)}); run down first`,
     );
   }
+  if (
+    existing === undefined &&
+    existsSync(resolve(args.state, "control-directory"))
+  )
+    throw new Error(
+      "A control directory exists without its process record; verify the server has stopped before removing it",
+    );
   cleanupControlDirectory(args.state);
   mkdirSync(p.blobs, { recursive: true });
   // The folder holds the server's keys, and `--state` takes any name, so

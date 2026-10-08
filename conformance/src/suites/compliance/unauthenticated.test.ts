@@ -14,14 +14,12 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/**
- * Two doors are open by design. Dynamic client registration, because RFC
- * 7591 lets a client register before it holds anything; and the root,
- * because a caller with no credential yet reads there which instance
- * answers and which contract it speaks. Every other published door must
- * turn a bare request away.
- */
-const OPEN_DOORS = new Set(["POST /auth/oauth2/register", "GET /"]);
+/** Registration and discovery precede authentication; claim carries its own machine proof. */
+const OPEN_DOORS = new Set([
+  "POST /auth/oauth2/register",
+  "GET /",
+  "POST /owner",
+]);
 
 /**
  * Nothing about these requests is well formed, which is the point. The

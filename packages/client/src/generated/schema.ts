@@ -273,7 +273,7 @@ export interface paths {
         };
         /**
          * Get a bulk-action job
-         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.
+         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.
          */
         get: operations["getBulkActionJob"];
         put?: never;
@@ -709,7 +709,7 @@ export interface paths {
         };
         /**
          * List orphaned blobs
-         * @description Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires the operator key.
+         * @description Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.
          */
         get: operations["listBlobOrphans"];
         put?: never;
@@ -729,7 +729,7 @@ export interface paths {
         };
         /**
          * List blob stores
-         * @description Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires the operator key.
+         * @description Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.
          */
         get: operations["listBlobStores"];
         put?: never;
@@ -812,7 +812,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a blob's copy in a store
-         * @description Deletes the copy of a blob that one store holds, and its row in the location log. Requires the operator key.
+         * @description Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.
          */
         delete: operations["deleteBlobLocation"];
         options?: never;
@@ -829,7 +829,7 @@ export interface paths {
         };
         /**
          * List housekeeping jobs
-         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.
+         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires instance.read.
          */
         get: operations["listHousekeeping"];
         put?: never;
@@ -851,7 +851,7 @@ export interface paths {
         put?: never;
         /**
          * Run a housekeeping job
-         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.
+         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.
          */
         post: operations["runHousekeeping"];
         delete?: never;
@@ -869,7 +869,7 @@ export interface paths {
         };
         /**
          * List connectors
-         * @description Returns your registration, or every registration if you use the operator key, newest first.
+         * @description Returns your registration, or every registration if you hold connectors.manage, newest first.
          */
         get: operations["listConnectors"];
         put?: never;
@@ -1221,7 +1221,7 @@ export interface paths {
         };
         /**
          * List API keys
-         * @description Returns the API keys you could have created, your own included, without their plaintext. The operator key gets every key. Requires `keys.mint` or the operator key.
+         * @description Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
          */
         get: operations["listKeys"];
         put?: never;
@@ -1268,14 +1268,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint` or the operator key.
+         * @description Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
          */
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint` or the operator key.
+         * @description Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1315,7 +1315,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.
+         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires direct owner or local authority. The owner must have authenticated within five minutes.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -1333,7 +1333,7 @@ export interface paths {
         };
         /**
          * List stale platform types
-         * @description Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.
+         * @description Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.
          */
         get: operations["listPlatformTypeDrift"];
         put?: never;
@@ -1356,7 +1356,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a stale platform type
-         * @description Deletes one platform type that this build no longer ships. The type stops resolving at once. Operator key only.
+         * @description Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.
          */
         delete: operations["deletePlatformType"];
         options?: never;
@@ -1373,13 +1373,13 @@ export interface paths {
         };
         /**
          * Get the owner
-         * @description Returns the owner: the one account that can sign in to the instance and approve apps. A new instance has no owner until `POST /owner` creates one. Requires the operator key.
+         * @description Returns the owner of the claimed instance. Requires a direct owner sign-in or local process authority.
          */
         get: operations["getOwner"];
         put?: never;
         /**
-         * Create the owner
-         * @description Creates the owner, the one account that can sign in to the instance, and returns it. The owner can sign in at once with the email address and password. No other route creates an account. Requires the operator key.
+         * Claim the instance
+         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.
          */
         post: operations["createOwner"];
         delete?: never;
@@ -3658,11 +3658,9 @@ export interface components {
             sources: string[];
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
-            /** @description The `client_id` of the app whose sign-in token created this key. Absent on every other key. */
+            /** @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin. */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"] & unknown;
-            /** @description `true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items. */
-            is_operator: boolean;
             /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
@@ -3693,7 +3691,7 @@ export interface components {
          * @description A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access.
          * @enum {string}
          */
-        Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage";
+        Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
         /**
          * @description What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach.
          * @enum {string}
@@ -3723,11 +3721,9 @@ export interface components {
             sources: string[];
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
-            /** @description The `client_id` of the app whose sign-in token created this key. Absent on every other key. */
+            /** @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin. */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"] & unknown;
-            /** @description `true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items. */
-            is_operator: boolean;
             /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
@@ -3880,15 +3876,10 @@ export interface components {
                 };
             };
         };
-        /** @description The owner is the one person who can sign in to the instance. */
         Owner: {
-            /** @description Unique identifier for the owner's account. */
             id: string;
-            /** @description The owner's email address, in lowercase. */
             email: string;
-            /** @description The owner's name. */
             name: string;
-            /** @description When the owner was created, in UTC. */
             created_at: string;
         };
         /** @description An error response. */
@@ -3917,6 +3908,23 @@ export interface components {
                  * @enum {string}
                  */
                 code: "owner_exists";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        RateLimitedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "rate_limited";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4025,23 +4033,6 @@ export interface components {
             /** @description More about the action. What it holds depends on `action`. */
             details: {
                 [key: string]: unknown;
-            };
-        };
-        /** @description An error response. */
-        RateLimitedRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "rate_limited";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
             };
         };
         /** @description An error response. */
@@ -7814,7 +7805,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours isn't the operator key. */
+            /** @description - `forbidden`: another credential queued the job, and yours lacks instance.read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7963,7 +7954,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: another credential queued the job, and yours isn't the operator key. */
+            /** @description - `forbidden`: another credential queued the job, and yours lacks instance.maintain. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12782,7 +12773,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Caller lacks the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12913,7 +12904,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Caller lacks the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12996,7 +12987,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
@@ -13197,7 +13188,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
@@ -13351,7 +13342,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob. */
                 hash: string;
             };
             cookie?: never;
@@ -13553,7 +13544,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Caller lacks the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13717,7 +13708,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Caller lacks the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13851,7 +13842,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Caller lacks the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14166,7 +14157,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is an app's session token, not a key, or the operator key, which runs the instance and can't register as a connector. */
+            /** @description - `forbidden`: your credential is an app's session token, not a key, or direct owner or local authority. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14312,7 +14303,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14446,7 +14437,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14610,7 +14601,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14776,7 +14767,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14931,7 +14922,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15092,7 +15083,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15250,7 +15241,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15428,7 +15419,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15601,7 +15592,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15752,7 +15743,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15922,7 +15913,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16103,7 +16094,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16285,7 +16276,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16446,7 +16437,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16616,7 +16607,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16792,7 +16783,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16960,7 +16951,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17139,7 +17130,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17328,7 +17319,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
+            /** @description - `forbidden`: your credential isn't the connector's own key. Management permission does not authorize connector activity. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18140,7 +18131,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it. */
+            /** @description - `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18232,13 +18223,11 @@ export interface operations {
                     label: string;
                     /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later. */
                     source: string;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any. */
                     sources?: string[];
                     /** @description The permissions to give the key, such as `audit.read`. */
                     permissions?: components["schemas"]["Permission"][];
                     default_tier?: components["schemas"]["Tier"] & unknown;
-                    /** @description `true` to create another operator key, which holds no permissions, maps or claimed sources. Only the operator key can create one. */
-                    is_operator?: boolean;
                     /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
@@ -18264,7 +18253,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items. */
+            /** @description Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18311,7 +18300,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it gives an operator key any reach; or it asks for an operator key and you aren't one. `details.required_scope` or `details.source` names what you lack. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant. `details.required_scope` or `details.source` names what you lack. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18623,7 +18612,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it. */
+            /** @description - `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18638,7 +18627,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The operator key's message says when the key was already revoked. */
+            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The owner or local command's message says when the key was already revoked. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18744,7 +18733,7 @@ export interface operations {
                     /** @description A name for the key, to tell it apart from your other keys. */
                     label?: string;
                     default_tier?: components["schemas"]["Tier"] & unknown;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any. */
                     sources?: string[];
                     /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
@@ -18823,7 +18812,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body gives the key a permission, map entry or source you don't hold; it gives an operator key any reach; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19312,7 +19301,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description Requires direct owner or local authority and recent owner authentication. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19473,7 +19462,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: you aren't using the operator key. */
+            /** @description `forbidden`: you lack the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19611,7 +19600,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: you aren't using the operator key. */
+            /** @description `forbidden`: you lack the required management permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19743,7 +19732,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the owner. */
+            /** @description The owner. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19787,22 +19776,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description - `owner_not_found`: the instance has no owner yet. */
+            /** @description The owner is unavailable. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19890,20 +19864,16 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /**
-                     * Format: email
-                     * @description The owner's email address, which they sign in with. Marfa stores it in lowercase.
-                     */
+                    /** Format: email */
                     email: string;
-                    /** @description The password the owner signs in with. */
                     password: string;
-                    /** @description The owner's name. Leave it out or blank to use the part of `email` before the `@`. */
                     name?: string;
+                    code?: string;
                 };
             };
         };
         responses: {
-            /** @description Returns the new owner. */
+            /** @description The new owner can sign in. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19917,10 +19887,7 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /**
-             * @description - `missing_required_field`: `email` or `password` is missing.
-             *     - `validation_error`: a field is invalid, such as an `email` that isn't an email address or a `password` shorter or longer than sign-in allows. For `password`, the message names the limit.
-             */
+            /** @description Owner details are invalid. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19935,7 +19902,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description Setup proof is invalid, expired, or replaced. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19950,7 +19917,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your key isn't an operator key. */
+            /** @description The browser origin or transport is not permitted. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19965,7 +19932,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `owner_exists`: the instance already has an owner. */
+            /** @description The instance has already been claimed. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20021,36 +19988,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
             };
         };

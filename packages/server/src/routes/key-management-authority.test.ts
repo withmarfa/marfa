@@ -149,13 +149,13 @@ describe("management key authority", () => {
       const app = await seedOauthBearer(ctx, ["keys.mint", "instance.read"]);
       const parent = await mint(
         ctx,
-        `parent-${revokeKeys}`,
+        `parent-${String(revokeKeys)}`,
         ["keys.mint", "instance.read"],
         app.token,
       );
       const child = await mint(
         ctx,
-        `child-${revokeKeys}`,
+        `child-${String(revokeKeys)}`,
         ["instance.read"],
         parent.key,
       );

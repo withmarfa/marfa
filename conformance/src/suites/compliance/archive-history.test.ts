@@ -32,7 +32,7 @@ import {
  * built by hand, because no export writes a snapshot whose date is no date.
  */
 let client: MarfaClient;
-let operator: MarfaClient;
+let ownerClient: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 /** A server that has never seen the rows, to restore into. */
@@ -45,7 +45,7 @@ beforeAll(async () => {
     "compliance",
     "archive-history",
   ));
-  operator = getOwnerClient();
+  ownerClient = getOwnerClient();
   fresh = await bootFreshServer("archive-history");
   freshOperator = new MarfaClient({
     baseUrl: fresh.apiUrl,
@@ -374,7 +374,7 @@ describe("the history a restore writes", () => {
     const history = await allVersions(client, item.id);
     expect(history).toHaveLength(2);
 
-    const restored = await operator.restoreArchive(archive.data);
+    const restored = await ownerClient.restoreArchive(archive.data);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.duplicates).toBeGreaterThanOrEqual(1);
     const after = await client.getItem(item.id);
@@ -558,7 +558,7 @@ describe("an archive's dates and history, refused before anything is written", (
     "refuses a row whose %s is malformed, and writes the row ahead of it nowhere",
     async (_label, path, edit) => {
       const bad = twoRows(edit);
-      const refused = await operator.restoreArchive(bad.archive);
+      const refused = await ownerClient.restoreArchive(bad.archive);
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       expect(refused.error?.error.message).toContain(bad.second);
@@ -568,7 +568,7 @@ describe("an archive's dates and history, refused before anything is written", (
 
       // The witness: the same two rows with nothing malformed restore.
       const good = twoRows(() => undefined);
-      const accepted = await operator.restoreArchive(good.archive);
+      const accepted = await ownerClient.restoreArchive(good.archive);
       expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
       expect(accepted.data.imported).toBe(2);
       trackItem(ctx, good.first);
@@ -578,12 +578,12 @@ describe("an archive's dates and history, refused before anything is written", (
 
   it("refuses a malformed date or history even when the row is one the instance already holds", async () => {
     const good = twoRows(() => undefined);
-    const accepted = await operator.restoreArchive(good.archive);
+    const accepted = await ownerClient.restoreArchive(good.archive);
     expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
     trackItem(ctx, good.first);
     trackItem(ctx, good.second);
     // Both rows exist now, so each would be counted a duplicate.
-    const again = await operator.restoreArchive(good.archive);
+    const again = await ownerClient.restoreArchive(good.archive);
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
     expect(again.data).toMatchObject({ imported: 0, duplicates: 2 });
 
@@ -595,7 +595,7 @@ describe("an archive's dates and history, refused before anything is written", (
         (line.versions as Record<string, unknown>[])[0]!.tier = "other";
       },
     ]) {
-      const refused = await operator.restoreArchive(
+      const refused = await ownerClient.restoreArchive(
         withItemLines(good.archive, (lines) => {
           damage(lines[1]!);
           return lines;
@@ -639,13 +639,13 @@ describe("an archive's dates and history, refused before anything is written", (
 
     // The witness: with readable dates the edge is skipped for its missing
     // endpoint, and the row ahead of it is written.
-    const skipped = await operator.restoreArchive(archive({}));
+    const skipped = await ownerClient.restoreArchive(archive({}));
     expect(skipped.ok, JSON.stringify(skipped.error)).toBe(true);
     trackItem(ctx, first);
     expect(skipped.data).toMatchObject({ imported: 1, edges_skipped: 1 });
 
     for (const field of ["created_at", "updated_at"]) {
-      const refused = await operator.restoreArchive(
+      const refused = await ownerClient.restoreArchive(
         archive({ [field]: invalidInstant }),
       );
       expect(refused.status, field).toBe(400);
@@ -667,7 +667,7 @@ describe("an archive's dates and history, refused before anything is written", (
         occurred_at: spelled,
       });
     });
-    const restored = await operator.restoreArchive(archive);
+    const restored = await ownerClient.restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
     const row = await client.getItem(id);
@@ -688,7 +688,7 @@ describe("an archive's dates and history, refused before anything is written", (
     const clash = twoRows(({ secondVersions }) => {
       secondVersions[0]!.id = heldId;
     });
-    const refused = await operator.restoreArchive(clash.archive);
+    const refused = await ownerClient.restoreArchive(clash.archive);
     expect(refused.status, JSON.stringify(refused.error)).toBe(409);
     expect(refused.error?.error.code).toBe("conflict");
     expect(await allVersions(client, owner.id)).toEqual(held);
@@ -697,7 +697,7 @@ describe("an archive's dates and history, refused before anything is written", (
 
     // The witness: the same archive under a snapshot ID nothing holds.
     const free = twoRows(() => undefined);
-    const accepted = await operator.restoreArchive(free.archive);
+    const accepted = await ownerClient.restoreArchive(free.archive);
     expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
     trackItem(ctx, free.first);
     trackItem(ctx, free.second);

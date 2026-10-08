@@ -29,7 +29,7 @@ describe("management permissions", () => {
       "instance.*",
       "keys.mint",
     ]) {
-      expect(scopeCovers(broad, permission)).toBe(false);
+      expect(scopeCovers([broad], permission, "read")).toBe(false);
       expect(hasPermission([broad], permission)).toBe(false);
     }
   });

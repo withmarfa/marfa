@@ -19,11 +19,11 @@ import {
 } from "../../utils/setup.js";
 
 let client: MarfaClient;
-let operator: MarfaClient;
+let owner: MarfaClient;
 let ctx: TestContext;
 beforeAll(async () => {
   ({ client, ctx } = await createTestContext("compliance", "archive-scalars"));
-  operator = getOwnerClient();
+  owner = getOwnerClient();
 });
 afterAll(async () => {
   await cleanup(ctx);
@@ -97,7 +97,7 @@ describe("archived row scalars", () => {
       const f = fixture();
       if (field === "edge.version") f.edge.version = value;
       else f.rows[1]![field.split(".")[1]!] = value;
-      const response = await operator.restoreArchive(f.archive());
+      const response = await owner.restoreArchive(f.archive());
       const id = field.startsWith("edge") ? f.edgeId : f.last;
       expect(response.status).toBe(400);
       expect(response.error?.error.code).toBe("validation_error");
@@ -107,12 +107,12 @@ describe("archived row scalars", () => {
         expect((await client.getItem(item)).status).toBe(404);
       expect((await client.getEdge(f.edgeId)).status).toBe(404);
       expect((await client.getType(f.typeId)).status).toBe(404);
-      expect((await operator.downloadBlob(f.hash)).status).toBe(404);
+      expect((await owner.downloadBlob(f.hash)).status).toBe(404);
 
       f.rows[1]!.version = 7;
       f.rows[1]!.tier = "feed";
       f.edge.version = 9;
-      const accepted = await operator.restoreArchive(f.archive());
+      const accepted = await owner.restoreArchive(f.archive());
       expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
       expect(accepted.data).toMatchObject({
         imported: 2,
@@ -134,11 +134,11 @@ describe("archived row scalars", () => {
     "refuses invalid %s even when the row already exists",
     async (field) => {
       const f = fixture();
-      expect((await operator.restoreArchive(f.archive())).ok).toBe(true);
+      expect((await owner.restoreArchive(f.archive())).ok).toBe(true);
       if (field === "item.tier") f.rows[1]!.tier = "invalid";
       else if (field === "item.version") f.rows[1]!.version = 0;
       else f.edge.version = 0;
-      const refused = await operator.restoreArchive(f.archive());
+      const refused = await owner.restoreArchive(f.archive());
       expect(refused.status).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       expect((await client.getItem(f.last)).data.item).toMatchObject({
@@ -153,14 +153,14 @@ describe("archived row scalars", () => {
     const f = fixture();
     f.edge.target_id = uuidv7();
     f.edge.version = 0;
-    const refused = await operator.restoreArchive(f.archive());
+    const refused = await owner.restoreArchive(f.archive());
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect((await client.getItem(f.first)).status).toBe(404);
     expect((await client.getType(f.typeId)).status).toBe(404);
-    expect((await operator.downloadBlob(f.hash)).status).toBe(404);
+    expect((await owner.downloadBlob(f.hash)).status).toBe(404);
     f.edge.version = 9;
-    const accepted = await operator.restoreArchive(f.archive());
+    const accepted = await owner.restoreArchive(f.archive());
     expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
     expect(accepted.data).toMatchObject({
       imported: 2,
@@ -188,7 +188,7 @@ describe("archived row scalars", () => {
         row.tier = tier;
       }
       f.edge.version = version;
-      const result = await operator.restoreArchive(f.archive());
+      const result = await owner.restoreArchive(f.archive());
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
       for (const id of [f.first, f.last])
         expect((await client.getItem(id)).data.item).toMatchObject({

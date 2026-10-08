@@ -409,13 +409,3 @@ export const OkResponseSchema = z
   })
   .describe("Confirms that the request succeeded.")
   .openapi("Ok");
-
-/** The 403 of a door behind `operatorOnly`. */
-export const OPERATOR_ONLY_RESPONSE = {
-  content: {
-    "application/json": {
-      schema: makeErrorResponseSchema(["forbidden"]),
-    },
-  },
-  description: "- `forbidden`: your key isn't an operator key.",
-};

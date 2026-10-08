@@ -559,16 +559,19 @@ export function createApp(
       // still hits a ceiling. `0` disables it.
       aggregateMultiplier: config.rateLimitAggregateMultiplier,
     });
-    app.use("*", (c, next) => {
-      // Setup has its own durable guessing limit. A valid handoff is not a guess.
-      if (
-        c.req.path === "/setup" ||
-        c.req.path.startsWith("/setup/") ||
-        (c.req.path === "/owner" && c.req.method === "POST")
-      )
-        return next();
-      return requestLimiter(c, next);
-    });
+    app.use(
+      "*",
+      createMiddleware<AppEnv>((c, next) => {
+        // Setup has its own durable guessing limit. A valid handoff is not a guess.
+        if (
+          c.req.path === "/setup" ||
+          c.req.path.startsWith("/setup/") ||
+          (c.req.path === "/owner" && c.req.method === "POST")
+        )
+          return next();
+        return requestLimiter(c, next);
+      }),
+    );
   }
 
   // `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`, so a client that

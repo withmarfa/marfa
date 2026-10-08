@@ -41,6 +41,10 @@ const getOwnerRoute = createRoute({
       description: "The owner.",
     },
     401: failure(["unauthorized"], "Sign in as the owner."),
+    403: failure(
+      ["forbidden"],
+      "This operation requires direct owner or local authority.",
+    ),
     404: failure(["owner_not_found"], "The owner is unavailable."),
   },
 });

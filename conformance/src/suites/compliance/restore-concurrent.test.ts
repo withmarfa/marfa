@@ -52,7 +52,7 @@ function archiveOf(count: number): { ids: string[]; bytes: Uint8Array } {
   };
 }
 
-function operatorOf(server: FreshServer): MarfaClient {
+function ownerOf(server: FreshServer): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
     ownerCookie: server.ownerCookie,
@@ -117,7 +117,7 @@ describe("a restore that commits", () => {
         "the marker write to reach the stream",
       );
 
-      const restoring = operatorOf(ordered).restoreArchive(restore.bytes);
+      const restoring = ownerOf(ordered).restoreArchive(restore.bytes);
       // A write the restore holds past the busy budget is refused
       // `write_contention` and writes nothing (`search-and-filters/restore-writers-wait`);
       // only the writes that committed have events to order.
@@ -176,7 +176,7 @@ describe("a write that meets a restore", () => {
       baseUrl: impatient.apiUrl,
       apiKey: impatient.workingKey,
     });
-    const restoring = operatorOf(impatient).restoreArchive(
+    const restoring = ownerOf(impatient).restoreArchive(
       archiveOf(RESTORED).bytes,
     );
     const answers = await writesWhile(restoring, () =>
