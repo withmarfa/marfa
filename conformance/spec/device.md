@@ -2312,19 +2312,19 @@ When a stop ends a hydration, a catch-up or a drain while its first request stil
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata merge or replace, or a file added with tags adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
-**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`.
+**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
 
 ### `device/tag-count`
 
-If a create, a tag add, a metadata merge or replace, or a file added with tags names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
 
-**Tests:** `device/name-bounds-live.test.ts › refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`.
+**Tests:** `device/name-bounds-live.test.ts › refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
 
 ### `device/tag-bound-nothing-saved`
 
@@ -2340,11 +2340,11 @@ When a write adds a tag the server takes, a device MUST take it and queue it, a 
 
 ### `device/property-name-empty`
 
-If a create or an edit names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, an edit or a folder's scan of a document (`folders.md` 55) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server refuses such a name on every write (`items/property-name-empty`), and a device that took it would hold a row the server never will.
 
-**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`.
+**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
 
 ### `device/property-name-nothing-saved`
 

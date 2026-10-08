@@ -117,11 +117,11 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 ## Names a document carries
 
-55. WHEN a document's tag or property name is one the server refuses (`items/tag-text` and `items/property-name-empty`), the folder MUST flag the file with the refusal, naming the file and the reason, retain its bytes, queue none of that file's writes, and continue scanning other files.
+55. WHEN a document's tag or property name is one the server refuses (`items/tag-text` and `items/property-name-empty`), or its tags would leave its item more tags than the server takes (`items/tags-count`), the folder MUST flag the file with the refusal, naming the file and the reason, retain its bytes, queue none of that file's writes, and continue scanning other files.
 
-**Reason:** one file must not stop the files sorting after it, nor the pull and the drain, on every scan. An edit that changed the body and added a refused tag would otherwise queue the body edit and fail on the tag, leaving the file half sent and unbound. A later scan retries the file, so correcting the tag or the property name sends it. This is the rule of 53 for the names the copy holds to the server's bounds (`device/tag-bound` and `device/property-name-empty`).
+**Reason:** one file must not stop the files sorting after it, nor the pull and the drain, on every scan. An edit that changed the body and added a refused tag would otherwise queue the body edit and fail on the tag, leaving the file half sent and unbound. A later scan retries the file, so correcting the tag or the property name sends it. This is the rule of 53 for the names the copy holds to the server's bounds (`device/tag-bound`, `device/tag-count` and `device/property-name-empty`).
 
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `› queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `› queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`, `› is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
 
 56. WHEN a folder's saved settings hold a default tag or default property name the server refuses, or a search filter that compares with `null` (`search-and-filters/filter-null-refused`), the folder MUST refuse to read the settings, name the setting, say what is refused and say that `marfa folders change` changes it.
 

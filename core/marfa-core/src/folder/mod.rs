@@ -2325,7 +2325,20 @@ impl Folder {
             }
             // The tags are checked before the edit is queued, so a tag the
             // server would refuse leaves no write of the file half queued.
-            if let Err(error) = crate::validation::tags(&changes.added) {
+            // The server takes tag writes one at a time in queue order, which
+            // queues a file's removals ahead of its adds, so its count is
+            // checked as those writes will leave the item.
+            let kept: HashSet<&str> = held
+                .tags
+                .iter()
+                .map(String::as_str)
+                .filter(|tag| !changes.removed.iter().any(|removed| removed == tag))
+                .collect();
+            let mut after = kept.clone();
+            after.extend(changes.added.iter().map(String::as_str));
+            if let Err(error) = crate::validation::tags(&changes.added)
+                .and_then(|()| crate::validation::tag_count(kept.len(), after.len()))
+            {
                 let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                 flagged.push(Flagged::of(&file.key, &held_for));
                 return self
@@ -2378,11 +2391,11 @@ impl Folder {
                 };
                 queued.push((id, Some(file.line.unwrap_or(0))));
             }
-            for tag in &changes.added {
-                queued.push((self.core.add_tag(item_id, tag)?.id, None));
-            }
             for tag in &changes.removed {
                 queued.push((self.core.remove_tag(item_id, tag)?.id, None));
+            }
+            for tag in &changes.added {
+                queued.push((self.core.add_tag(item_id, tag)?.id, None));
             }
             if let Some(state) = changes.state {
                 queued.push((self.core.transition_item(item_id, state)?.id, None));
