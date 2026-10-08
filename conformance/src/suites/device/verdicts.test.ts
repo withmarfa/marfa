@@ -328,6 +328,49 @@ describe("the server took the write", () => {
     ).toBe(true);
   });
 
+  it.each(["an upsert under another id", "a repeat acknowledged in its body"])(
+    "accepted: takes %s as accepted",
+    async (shape) => {
+      harness = await hydratedHarness("verdicts-upsert-alone", {
+        rows: held(),
+      });
+      const keyed = shape === "an upsert under another id";
+      const created = await harness.device.create({
+        type: "core.note",
+        properties: { title: "made", body: "made" },
+        ...(keyed ? { source: "folder", sourceId: "alone.md" } : {}),
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+      const id = keyed
+        ? "01a00000-0000-7000-8000-0000000000cd"
+        : (created.value.item_id ?? "");
+      const row = wireItem({ id, version: keyed ? 5 : 1 });
+      scriptWrites(harness.server, {
+        create: [
+          {
+            kind: "json",
+            status: 200,
+            body: {
+              ...bodyOf(answers.created(row)),
+              ...(keyed ? {} : { acknowledged: true }),
+            },
+          },
+        ],
+        read: [answers.updated(row)],
+      });
+      const drained = await harness.device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        [
+          drained.value.verdicts[0]?.verdict,
+          drained.value.verdicts[0]?.replayed,
+        ],
+        `${shape} was not taken as accepted`,
+      ).toEqual(["accepted", !keyed]);
+    },
+  );
+
   it("merged: adopts the row a resolution returned", async () => {
     harness = await hydratedHarness("verdicts-merged", { rows: held() });
     const report = await updateAndDrain(

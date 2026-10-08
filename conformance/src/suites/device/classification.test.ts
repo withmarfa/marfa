@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { describe, it, expect, afterEach } from "vitest";
 import {
   answers,
@@ -757,6 +758,40 @@ describe("the class that is neither retries and is counted", () => {
     ]);
   });
 
+  it("counts a write whose request cannot be made, and makes it dead at the ceiling", async () => {
+    harness = await hydratedHarness("class-unmade", { rows: held() });
+    const { device, server } = harness;
+    const path = `${device.store}.unmade`;
+    writeFileSync(path, "bytes");
+    // A MIME type no header can carry, so the request is never made.
+    const queued = await device.putBlob(path, "text/plain\ninvalid");
+    if (!queued.ok) throw new Error(JSON.stringify(queued));
+    const reports: DrainReport[] = [];
+    for (let pass = 0; pass < 5; pass += 1) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (drained.ok) reports.push(drained.value);
+    }
+    expect(
+      reports.map((report) => [
+        report.unmade,
+        report.verdicts[0]?.verdict,
+        report.verdicts[0]?.refusals,
+      ]),
+      "a request that could not be made was not counted, so it would be tried forever",
+    ).toEqual([
+      [1, null, 1],
+      [1, null, 2],
+      [1, null, 3],
+      [1, null, 4],
+      [1, "dead", 5],
+    ]);
+    expect(
+      server.requests.filter((request) => request.pathname === "/blobs"),
+      "the request went to the server, so nothing here is about one that could not be made",
+    ).toEqual([]);
+  });
+
   it("retries an answer it cannot read, and counts it", async () => {
     harness = await hydratedHarness("class-unreadable", { rows: held() });
     const reports = await drainAgainst(
@@ -1294,6 +1329,49 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (dead === undefined) return;
     const byId = await device.release({ id: dead.id });
     expect(byId.ok && byId.value).toBe(1);
+  });
+
+  it("keeps a create blocked for its source, and the writes queued on it before the drain", async () => {
+    harness = await hydratedHarness("class-unclaimed-kept", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const local = created.value.item_id ?? "";
+    const tagged = await device.addTag(local, "waiting");
+    if (!tagged.ok) throw new Error(JSON.stringify(tagged));
+    scriptWrites(server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await device.queue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue));
+    const of = (id: string) => queue.value.find((row) => row.id === id);
+    expect([
+      of(created.value.id)?.verdict,
+      of(created.value.id)?.reason,
+    ]).toEqual(["blocked", "credential_refused"]);
+    expect(
+      [of(tagged.value.id)?.verdict, of(tagged.value.id)?.reason],
+      "the tag queued on the create before the drain was refused with it, so a claim granted later sends nothing",
+    ).toEqual(["blocked", "awaiting_dependency"]);
+    const shown = await device.get(local);
+    expect(
+      shown.ok && shown.value.properties.title,
+      "the row the create shows was forgotten",
+    ).toBe("mine");
   });
 
   it("holds a write behind a create blocked with another for a source its key does not claim", async () => {
