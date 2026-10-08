@@ -351,7 +351,7 @@ describe("the server took the write", () => {
             kind: "json",
             status: 200,
             body: {
-              ...bodyOf(answers.created(row)),
+              ...(bodyOf(answers.created(row)) as Record<string, unknown>),
               ...(keyed ? {} : { acknowledged: true }),
             },
           },
@@ -990,13 +990,14 @@ describe("the server did not take the write", () => {
     expect(await harness.device.queue()).toMatchObject({ ok: true, value: [] });
   });
 
-  it.each([
+  const goneReads = [
     ["404 item_not_found", refusal(404, "item_not_found", "Item not found")],
     [
       "403 type_not_permitted",
       refusal(403, "type_not_permitted", "this key may not read core.note"),
     ],
-  ])(
+  ] as const;
+  it.each(goneReads)(
     "refused: lets the row go where the read-back is answered %s",
     async (_status, read) => {
       harness = await hydratedHarness("verdicts-refused-read-gone", {

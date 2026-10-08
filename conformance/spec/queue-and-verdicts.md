@@ -40,7 +40,7 @@ A device MUST report its queue from a store that has never been hydrated.
 
 ### `queue-and-verdicts/unanswered-no-verdict`
 
-A device MUST report a write the server has not answered with no verdict and with no refusal counted against it.
+A device MUST report a write that no drain has sent, held or settled, or that went out and met an environmental failure, with no verdict and with no refusal counted against it.
 
 **Reason:** no verdict is the absence of one, not a seventh verdict.
 
@@ -78,11 +78,11 @@ When a drain sends a create whose caller named tags, a device MUST send the crea
 
 ### `queue-and-verdicts/door-answer-read`
 
-When the server answers a write with the success its own operation gives, whether a row, an edge, the tags or extensions it changed, `{"ok": true}` or a blob's hash, a device MUST give the write a verdict without counting a refusal against it.
+When the server answers a write with the success its own operation gives, whether a row, an edge, the tags or extensions it changed, `{"ok": true}` or the hash of the bytes an upload sent, a device MUST give the write a verdict without counting a refusal against it.
 
 **Reason:** a tag, a metadata write, an extension, an edge or a delete read against an item's shape would be counted as an answer the device cannot read, sent again, and made `dead` at the ceiling, although the server took it.
 
-**Tests:** `device/queue.test.ts › reads the answer its own door gives, not an item's`.
+**Tests:** `device/queue.test.ts › reads the answer its own door gives, not an item's`, `› queues an upload and sends its bytes when it drains`.
 
 ### `queue-and-verdicts/whole-values-sent`
 
@@ -116,7 +116,7 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 **Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key (`queue-and-verdicts/release-fresh-key`).
 
-**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`.
+**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`.
 
 ### `queue-and-verdicts/sent-write-unchanged`
 
@@ -224,13 +224,13 @@ When a drain sends an update that carries a null, a device MUST send the null as
 
 **Reason:** the server judges the value, so the queued request keeps what the caller gave rather than what the copy shows.
 
-**Tests:** `device/versioned-deletes-live.test.ts › guards a queued delete through %s`.
+**Tests:** `device/queue.test.ts › sends a null an update carries as its caller gave it`.
 
 ### `queue-and-verdicts/update-asks-auto`
 
 When a drain sends an update of an item, a device MUST send it with `conflict=auto`.
 
-**Reason:** a device resolves nothing itself (`device.md` 21); the flag asks the server to resolve inside its own transaction rather than refuse.
+**Reason:** a device resolves nothing itself (`device.md` 21); the flag asks the server to resolve in the same write rather than refuse.
 
 **Tests:** `device/queue.test.ts › sends every update with the server asked to resolve`.
 
@@ -240,17 +240,17 @@ A write depends on the create of the row or edge it names, and follows the write
 
 ### `queue-and-verdicts/depends-on-create`
 
-When a caller queues a write to a row whose create from this device has no verdict, or is `blocked` or `dead`, a device MUST name that create in the write's `depends_on`.
+When a caller queues a write to a row whose create from this device has no verdict, is `blocked` or `dead`, or was refused onto a row its natural key names that no read has found yet, a device MUST name that create in the write's `depends_on`.
 
 **Reason:** the server holds no such row yet. A write sent past a blocked create is refused `item_not_found`, after which the copy forgets the row the write was queued against.
 
-**Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
+**Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
 
 ### `queue-and-verdicts/edge-depends-on-ends`
 
-When a caller queues an edge create, a device MUST name in its `depends_on` the create from this device of each of its ends that has no verdict, or is `blocked` or `dead`.
+When a caller queues an edge create, a device MUST name in its `depends_on` the create from this device of each of its ends that has no verdict, is `blocked` or `dead`, or was refused onto a row its natural key names that no read has found yet.
 
-**Tests:** `device/queue.test.ts › waits for the creates of both ends of an edge it creates`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
+**Tests:** `device/queue.test.ts › waits for the creates of both ends of an edge it creates`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
 
 ### `queue-and-verdicts/edge-write-depends-on`
 
@@ -262,13 +262,21 @@ When a caller queues an update or a delete of an edge whose create from this dev
 
 While a write names in `depends_on` a write that has no verdict or is `blocked`, or a create refused onto a row its natural key names that no read has found yet, a device MUST NOT send it in a drain.
 
-**Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `› goes on with the queue while a refused create's natural-key target cannot be read`, `device/classification.test.ts › releases a held write when its dependency is answered`.
+**Tests:** `device/queue.test.ts › waits for the creates of both ends of an edge it creates`, `› goes on with the queue while a refused create's natural-key target cannot be read`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
 
 ### `queue-and-verdicts/held-reason`
 
-When a drain does not send a write because of a write it depends on or the write it follows, and does not refuse it under `queue-and-verdicts/dependency-refused`, a device MUST give it the verdict `blocked` with the reason `awaiting_dependency`.
+When a drain comes to a write whose `follows` names a write the drain held, or sent without an answer, in that pass, or whose first write in `depends_on` not answered `accepted`, `merged` or `conflicted` has no verdict, is `blocked`, is missing from the queue, or is a create refused onto a row its natural key names that no read has found yet, a device MUST give it the verdict `blocked` with the reason `awaiting_dependency`.
 
 **Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `› holds an edit behind one that went out unanswered, and sends it on that answer`, `› sends a delete of a row only once the edits of it ahead are answered`.
+
+### `queue-and-verdicts/binding-shows-waiting`
+
+Where an app reads the queue through a binding, a device MUST present a write blocked `awaiting_dependency` as waiting, with no verdict.
+
+**Reason:** nothing outside the queue has to change for such a write to go, and an app showing each verdict would show an ordinary wait as a stop.
+
+**Tests:** waiting on #1890.
 
 ### `queue-and-verdicts/held-released-same-pass`
 
@@ -280,7 +288,7 @@ When the last write a held write depends on is answered `accepted`, `merged` or 
 
 ### `queue-and-verdicts/dependency-refused`
 
-When a drain comes to a write that the write it follows does not hold, and every write it depends on has a verdict other than `blocked`, one of them `refused` or `dead` and none a create refused onto a row no read has found yet, a device MUST give it the verdict `refused` without sending it, with a reason naming the kind of the write it waited for and that write's verdict.
+When a drain that has not ended and has confirmed the server's instance comes to a write that the write it follows does not hold, and the first write in its `depends_on` not answered `accepted`, `merged` or `conflicted` is `refused` or `dead` and is not a create refused onto a row its natural key names that no read has found yet, a device MUST give it the verdict `refused` without sending it, with a reason naming the kind of the write it waited for and that write's verdict.
 
 **Reason:** nothing that depended on a row the server never took is sent.
 
@@ -292,7 +300,7 @@ When a caller queues a write to a row or an edge, a device MUST name in the writ
 
 **Reason:** a refused write counts, because one the drain refused without sending can still be released.
 
-**Tests:** `device/queue.test.ts › sends a delete of a row only once the edits of it ahead are answered`, `› sends an edge edit behind a blocked or refused one as it stands`.
+**Tests:** `device/queue.test.ts › names in follows the write ahead that was refused, and none that was accepted`, `› sends a delete of a row only once the edits of it ahead are answered`, `› holds an edit behind one the server failed to answer, even one queued while that was blocked`, `› sends an edge edit behind a blocked or refused one as it stands`.
 
 ### `queue-and-verdicts/held-behind-ahead`
 
@@ -300,7 +308,7 @@ While the write a write follows has no verdict, or is `blocked` with the reason 
 
 **Reason:** sent beside an edit that had no answer, an edit would go on the version both were queued against, and a body sent under its key is never moved afterwards; a delete would put the row in the bin before the edits ahead of it reached it. A credential refusal can hide the answer to a write the server already committed, so the write behind it keeps its body unsent until that answer arrives.
 
-**Tests:** `device/queue.test.ts › holds an edit behind one that went out unanswered, and sends it on that answer`, `› holds an edit behind one the server failed to answer, even one queued while that was blocked`, `› sends a delete of a row only once the edits of it ahead are answered`, `› holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer`, `› holds an edit behind a dead one released and sent again without an answer`, `device/grant-recovery.test.ts › holds a later edit while an earlier receipt lacks a grant after catch-up to %s`, `device/edge-replay.test.ts › keeps an edge receipt safe with grant blocked $grantBlocked and catch-up version $caughtUpVersion`, `device/folders.test.ts › holds a file's second move behind its first, which had no answer, though the bytes between them are refused`, `› holds a file's move behind an edit of its bytes that waits on their upload`, `› holds a file's move behind an edit of its bytes that cannot be opened for now`.
+**Tests:** `device/queue.test.ts › holds an edit behind one that went out unanswered, and sends it on that answer`, `› holds an edit behind one the server failed to answer, even one queued while that was blocked`, `› sends a delete of a row only once the edits of it ahead are answered`, `› holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer`, `› holds an edit behind a dead one released and sent again without an answer`, `device/grant-recovery.test.ts › holds a later edit while an earlier receipt lacks a grant after catch-up to %s`, `device/edge-replay.test.ts › keeps an edge receipt safe with grant blocked $grantBlocked and catch-up version $caughtUpVersion`, `device/folders.test.ts › holds a file's second move behind its first, which had no answer, though the bytes between them are refused`, `› holds a file's move behind an edit of its bytes that waits on their upload`, `› holds a file's move behind an edit of its bytes that cannot be opened for now`, `device/classification.test.ts › holds a write behind a create blocked with another for a source its key does not claim`.
 
 ### `queue-and-verdicts/answer-frees-follower`
 
@@ -346,13 +354,19 @@ When a write a queued write depends on is answered, a device MUST keep it in the
 
 ### `queue-and-verdicts/command-queued-holds`
 
-When the command queues a write that depends on or follows another, the command MUST print how many writes it depends on after `waiting on`, and the write it follows after `after`.
+When the command queues a write that depends on others and prints it as text, the command MUST print how many writes it depends on after `waiting on`.
+
+**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
+
+### `queue-and-verdicts/command-queued-after`
+
+When the command queues a write that follows another and prints it as text, the command MUST print the write it follows after `after`.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
 ### `queue-and-verdicts/command-queue-waiting`
 
-When the command prints the queue as text and a write depends on exactly one write that has no verdict or is `blocked`, the command MUST name that write after `waiting on`.
+When the command prints the queue as text and exactly one of the writes a write depends on has no verdict or is `blocked`, the command MUST name that write after `waiting on`.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
@@ -378,7 +392,7 @@ A drain is one pass over the queue. Its report says what became of each write th
 
 When a drain sends a write, a device MUST report an entry for it in `verdicts` with its id, its kind, its verdict or none, the refusals counted against it, and the row it names in `item_id`, which for an edge write is the edge's source.
 
-**Tests:** `device/queue.test.ts › reports a verdict for every write it sent`, `› names the edge in the verdict of an edge write`.
+**Tests:** `device/queue.test.ts › reports a verdict for every write it sent`, `› names the edge in the verdict of an edge write`, `device/classification.test.ts › retries an environmental failure past the ceiling without counting it`.
 
 ### `queue-and-verdicts/report-edge-id`
 
@@ -388,7 +402,7 @@ When a drain reports an entry for an edge write, a device MUST name the edge in 
 
 ### `queue-and-verdicts/report-unsent-verdicts`
 
-When a drain gives a write a verdict without sending it, a device MUST report an entry for that write in `verdicts`.
+When a drain gives a write a verdict without sending it, other than a write it holds or a refused credential parks, a device MUST report an entry for that write in `verdicts`.
 
 **Reason:** a write refused for a write it waited for, or settled by another write's answer, is one a caller has to hear of as much as one the server answered.
 
@@ -402,7 +416,7 @@ When a drain holds a write, a device MUST NOT report an entry for it in `verdict
 
 ### `queue-and-verdicts/report-agrees-with-queue`
 
-When a drain ends, a device MUST report in the queue the same verdict for each write as the drain reported.
+When a drain ends, a device MUST report in the queue the same verdict for each write as the drain reported, other than a write a refused credential parked later in the pass.
 
 **Tests:** `device/queue.test.ts › reports a verdict for every write it sent`.
 
@@ -422,15 +436,15 @@ A device MUST count in a drain's `held` each write the drain held for a write it
 
 ### `queue-and-verdicts/count-undelivered`
 
-A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after that failure, and each write from the one at which the drain failed to confirm the server's instance, but a write it held.
+A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after a write or a read met an environmental failure, each write from the one at which the drain failed to confirm the server's instance, and an upload whose bytes could not be opened, but a write it held.
 
-**Tests:** `device/classification.test.ts › ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`, `› counts only the writes the server answered, and says why the rest were not delivered`, `device/queue.test.ts › sends nothing while the server cannot say which instance it is`.
+**Tests:** `device/classification.test.ts › ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`, `› counts only the writes the server answered, and says why the rest were not delivered`, `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› leaves an upload whose held bytes cannot be opened unanswered, and says why`.
 
 ### `queue-and-verdicts/count-unsent`
 
-A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it.
+A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held or a refused credential parked.
 
-**Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/folders.test.ts › folder rebase accounts for writes refused in its later pass`.
+**Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/queue.test.ts › refuses an upload whose bytes are no longer held`, `device/folders.test.ts › folder rebase accounts for writes refused in its later pass`.
 
 ### `queue-and-verdicts/count-unmade`
 
@@ -442,7 +456,7 @@ A device MUST count in a drain's `unmade` each write whose request the device co
 
 A device MUST count each write a drain comes to in exactly one of `answered`, `held`, `undelivered`, `unsent` and `unmade`, but a write that a refused credential parks.
 
-**Reason:** the writes a refused credential parks are counted in `stopped` (`queue-and-verdicts/credential-stops-drain`).
+**Reason:** the writes a refused credential parks are counted in the sentence `stopped` gives (`queue-and-verdicts/credential-stop-said`).
 
 **Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `› ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`.
 
@@ -454,11 +468,11 @@ When a drain ends early because of an environmental failure, or cannot confirm t
 
 ### `queue-and-verdicts/report-retry-after`
 
-When a write or a read in a drain is answered `429` with `Retry-After`, a device MUST report that wait in the report's `retry_after_seconds`.
+When the server answers a write in a drain with `Retry-After`, or answers a read the drain makes `429` with `Retry-After`, a device MUST report in `retry_after_seconds` the longest such wait of the pass, and no more than 300 seconds.
 
-**Reason:** a caller draining in a loop would otherwise ask again at once.
+**Reason:** a caller draining in a loop would otherwise ask again at once, and a wait without a bound would let one answer park a client for good.
 
-**Tests:** `device/classification.test.ts › retries a 5xx and a 429 without counting them`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`, `device/queue.test.ts › reads the row a create landed on again after a failure that clears on its own`.
+**Tests:** `device/classification.test.ts › retries a 5xx and a 429 without counting them`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`, `device/queue.test.ts › reads the row a create landed on again after a failure that clears on its own`, `device/classification.test.ts › passes on at most 300 seconds of the wait a write was asked for`.
 
 ## The command's drain
 
@@ -466,7 +480,7 @@ What the command prints and exits with for a drain.
 
 ### `queue-and-verdicts/command-drain-report`
 
-When a drain ends with a report, the command MUST print the whole report on standard output and nothing on standard error.
+When a drain ends with a report and the command prints JSON, the command MUST print the whole report on standard output and nothing on standard error.
 
 **Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
 
@@ -480,7 +494,7 @@ When a drain stops because a refused credential parked the queue, the command MU
 
 When a drain that a refused credential did not stop reports `unavailable` or a write `undelivered`, the command MUST exit 3.
 
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
+**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`, `› exits 3 for a pass the server could not finish that left nothing undelivered`, `› exits 3 for a write left undelivered by a pass the server finished`.
 
 ### `queue-and-verdicts/command-exit-done`
 
@@ -496,7 +510,7 @@ When a drain refuses writes and the command prints its report as text, the comma
 
 ## The six verdicts
 
-Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. A verdict is reported, never acted on: a device that meets `conflicted`, `blocked` or `refused` does not write a resolution of its own (`device.md` 21).
+Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. What a device does not do on meeting one is `device.md` 21.
 
 ### `queue-and-verdicts/verdicts-six`
 
@@ -504,11 +518,11 @@ A device MUST give every write it settles exactly one of the verdicts `accepted`
 
 **Reason:** an answer a device cannot classify is a defect in the device, not a seventh verdict.
 
-**Tests:** `device/verdicts.test.ts › answers every write with one of the six verdicts`, `device/queue.test.ts › reads the answer its own door gives, not an item's`.
+**Tests:** `device/verdicts.test.ts › answers every write with one of the six verdicts`.
 
 ### `queue-and-verdicts/success-no-resolution`
 
-When the server answers a write `2xx` with no `conflict_resolution`, a device MUST give it the verdict `accepted`.
+When the server answers a write `2xx` with a body the device reads as its operation's answer and no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `queue-and-verdicts/upload-named-by-hash` or `queue-and-verdicts/trashed-ack-refused` says otherwise.
 
 **Reason:** the three verdicts a success can carry are told apart by what the answer reports about resolving, never by comparing the row that came back with the row sent: every answer carries fields the server stamps.
 
@@ -530,11 +544,11 @@ When the server answers a write `2xx` with a `conflict_resolution` that names a 
 
 ### `queue-and-verdicts/upsert-repeat-accepted`
 
-When the server answers a create as a natural-key upsert onto a row it holds, or as a repeat it answers from its record, with no `conflict_resolution`, a device MUST give it the verdict `accepted`.
+When the server answers a create as a natural-key upsert onto a row it holds, or as a repeat it answers from its record, with no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `queue-and-verdicts/trashed-ack-refused` says otherwise.
 
 **Reason:** the server took the write. What the row now holds is read again (`queue-and-verdicts/success-read-again`), since the answer does not prove the key may still read the row.
 
-**Tests:** `device/verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted`.
+**Tests:** `device/verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted`, `› accepted: takes %s as accepted`.
 
 ### `queue-and-verdicts/success-not-resent`
 
@@ -548,11 +562,11 @@ When the server answers a write to a row or an edge `2xx`, a device MUST read th
 
 **Reason:** a receipt settles the write, not what the key may read now (`device.md` 54).
 
-**Tests:** `device/verdicts.test.ts › accepted: adopts the row the server returned`, `› merged: adopts the row a resolution returned`, `› holds the row a fresh read returns where it differs from the row the answer carried`.
+**Tests:** `device/verdicts.test.ts › holds the row a fresh read returns where it differs from the row the answer carried`, `device/queue.test.ts › holds the edge a fresh read returns where it differs from the edge the answer carried`, `› keeps the later row a catch-up brought over an older answer replayed after it`, `› keeps the later edge a catch-up brought over an older edge answer replayed after it`.
 
 ### `queue-and-verdicts/success-read-fails`
 
-If the read after a `2xx` cannot reach the server, then a device MUST keep the write's verdict as recorded, counting no refusal against it.
+If the read after a `2xx` meets an environmental failure, then a device MUST keep the write's verdict as recorded, counting no refusal against it.
 
 **Reason:** the verdict is recorded before the read, so a read that fails, or a process that ends before the read, never sends the write a second time.
 
@@ -560,11 +574,11 @@ If the read after a `2xx` cannot reach the server, then a device MUST keep the w
 
 ### `queue-and-verdicts/owed-read-first`
 
-When a drain starts while a read after an earlier answer is owed, a device MUST make that read before it sends any write.
+When a drain starts after the read that follows a write's answer has failed, a device MUST make that read again before it sends any write.
 
 **Reason:** a write sent before it would be based on a copy that still shows what the earlier answer settled, and a retried read never sends the settled write again.
 
-**Tests:** `device/verdicts.test.ts › keeps an accepted write accepted, counts nothing and reads it again at the next drain when the read after it fails`, `› refused: preserves the local row until a fresh read succeeds at the next drain`, `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › reads the row a create landed on again after a failure that clears on its own`.
+**Tests:** `device/verdicts.test.ts › keeps an accepted write accepted, counts nothing and reads it again at the next drain when the read after it fails`, `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`.
 
 ### `queue-and-verdicts/later-row-kept`
 
@@ -572,7 +586,7 @@ When a read after an answer returns a row or an edge older than the one the copy
 
 **Reason:** a catch-up can bring a later version before the answer to a repeat arrives, and adopting the older one would take the copy back under the writes since and base the next edit on a version the row has left.
 
-**Tests:** `device/queue.test.ts › keeps the later row a catch-up brought over an older answer replayed after it`, `› keeps the later edge a catch-up brought over an older edge answer replayed after it`, `device/verdicts.test.ts › refused: keeps the row the copy holds where the read-back answers an older one`.
+**Tests:** `device/queue.test.ts › keeps the later row a catch-up brought where the read after an answer returns an older one`, `› keeps the later edge a catch-up brought where the read after an edge answer returns an older one`, `device/verdicts.test.ts › refused: keeps the row the copy holds where the read-back answers an older one`.
 
 ### `queue-and-verdicts/sibling-from-stream`
 
@@ -592,11 +606,11 @@ When the working copy holds a copy the server set aside, a device MUST hold its 
 
 ### `queue-and-verdicts/refused-contract`
 
-When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks` and `queue-and-verdicts/in-flight-counted` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason.
+When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks` and `queue-and-verdicts/in-flight-counted` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
 
 **Reason:** the same request sent again is the same request: a device that retried it would spend the ceiling on identical refusals.
 
-**Tests:** `device/classification.test.ts › refuses a contract failure on the first answer`, `› refuses on the first answer a %i %s that names the contract`, `device/verdicts.test.ts › refused: carries the server's code and is not sent again`, `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`.
+**Tests:** `device/classification.test.ts › refuses a contract failure on the first answer`, `› refuses on the first answer a %i %s that names the contract`, `device/verdicts.test.ts › refused: carries the server's code and is not sent again`.
 
 ### `queue-and-verdicts/refused-not-resent`
 
@@ -610,31 +624,39 @@ When a write is `refused`, a device MUST NOT send it again unless a caller relea
 
 When the server refuses a write, a device MUST keep its answer whole in the queue as the write's `answer`.
 
-**Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`.
+**Tests:** `device/verdicts.test.ts › refused: carries the server's code and is not sent again`.
 
 ### `queue-and-verdicts/refused-read-again`
 
-When the server refuses a write to a row or an edge, a device MUST hold what a fresh read of that row or edge returns once the refusal is recorded, with the writes still waiting laid over it.
+When the server refuses a write to a row or an edge, a device MUST hold what a fresh read of that row or edge returns once the refusal is recorded, where the copy's slice or a pin takes it, with the writes still waiting laid over it.
 
 **Reason:** a refused write produces no event, so a copy that kept the edit would answer a change that never happened on every later read.
 
-**Tests:** `device/verdicts.test.ts › refused: carries the server's code and is not sent again`, `device/queue.test.ts › keeps a waiting write through the reconcile of a refused one`.
+**Tests:** `device/verdicts.test.ts › refused: preserves the local row until a fresh read succeeds at the next drain`, `device/queue.test.ts › keeps a waiting write through the reconcile of a refused one`.
 
 ### `queue-and-verdicts/refused-read-fails`
 
-If the read after a refusal cannot reach the server, then a device MUST keep the row as the copy showed it and the refusal as recorded.
+If the read after a refusal meets an environmental failure, then a device MUST keep the row as the copy showed it and the refusal as recorded.
 
 **Reason:** the refusal is recorded before the read, so a read that fails never sends the write again, and the copy changes only on a read the server answered (`device.md` 54).
 
-**Tests:** `device/verdicts.test.ts › refused: preserves the local row until a fresh read succeeds at the next drain`, `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`.
+**Tests:** `device/verdicts.test.ts › refused: preserves the local row until a fresh read succeeds at the next drain`.
 
 ### `queue-and-verdicts/refused-row-absent`
 
-When the read after a refusal is answered `404` or `400 invalid_id`, a device MUST let go of the row, unless something wrote the row in the copy while the read was out.
+When the read after a refusal is answered `403`, `404` or `400 invalid_id`, a device MUST let go of the row or edge, where nothing wrote it in the copy while the read was out.
 
 **Reason:** the server holds no such row, as a create the server refused leaves it.
 
-**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`.
+**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`, `› refused: lets the row go where the read-back is answered %s`.
+
+### `queue-and-verdicts/absent-read-keeps-written`
+
+When a read after an answer or a refusal finds no row or edge, and something wrote that row or edge in the copy while the read was out, a device MUST keep the row or edge as it was written.
+
+**Reason:** what was written while the read was out is later than the read, so letting it go would take the copy back under a change already applied.
+
+**Tests:** waiting on #1890.
 
 ### `queue-and-verdicts/refusal-parts`
 
@@ -646,7 +668,7 @@ When a device reports a refusal, whether the server refused a write or blocked i
 
 ### `queue-and-verdicts/refusal-in-bin`
 
-When the server refuses a write `404 item_not_found` with `details.trashed` true, a device MUST report the refusal as about a row in the bin.
+When the server's refusal of a write carries `details.trashed` true, a device MUST report the refusal with `trashed` true.
 
 **Reason:** an app can then offer to restore the row with the edit, which a `404` naming no bin cannot offer.
 
@@ -657,6 +679,22 @@ When the server refuses a write `404 item_not_found` with `details.trashed` true
 A device MUST report a refusal in the queue as the drain reported it.
 
 **Tests:** `device/verdicts.test.ts › refused: reads the server's code, message, fields and missing grant into the refusal`.
+
+### `queue-and-verdicts/refusal-part-absent`
+
+When the server's envelope does not carry a part of a refusal that `queue-and-verdicts/refusal-parts` names, or carries it in another shape, a device MUST report that part as absent.
+
+**Reason:** an app reads a part it is given, and never one guessed from a shape the contract does not name.
+
+**Tests:** `device/verdicts.test.ts › refused: reads the server's code, message, fields and missing grant into the refusal`, `device/grant-recovery.test.ts › keeps a permanent fence terminal when its details are %j`.
+
+### `queue-and-verdicts/refusal-drain-made`
+
+When a drain refuses a write without sending it, a device MUST report the refusal with its reason and with no code, message, fields, bin or grant.
+
+**Reason:** the server said nothing about the write, so only the drain's reason is known.
+
+**Tests:** `device/verdicts.test.ts › refuses the writes that were waiting on a create the server refused`.
 
 ### `queue-and-verdicts/blocked-reasons-five`
 
@@ -692,7 +730,7 @@ When a drain starts, a device MUST take every write blocked `credential_refused`
 
 When a write is blocked, a device MUST keep it laid over the row or edge it names, without reading that row or edge again.
 
-**Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`.
+**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`.
 
 ### `queue-and-verdicts/ceiling-five`
 
@@ -712,11 +750,11 @@ While a write is `dead`, a device MUST NOT send it in a drain.
 
 A device MUST report a `dead` write with no reason.
 
-**Tests:** `device/classification.test.ts › releases by reason the rows blocked for it, and never a dead one`.
+**Tests:** `device/classification.test.ts › releases by reason the rows blocked for it, and never a dead one`, `› reports a write the store failed to record at the ceiling dead, with no reason`.
 
 ### `queue-and-verdicts/count-refusals-only`
 
-A device MUST count against a write only the failures `queue-and-verdicts/counted-failures` names, never an attempt that met an environmental failure.
+A device MUST count against a write only the failures `queue-and-verdicts/counted-failures`, `queue-and-verdicts/in-flight-counted` and `queue-and-verdicts/store-failure-counted` name, never an attempt that met an environmental failure.
 
 **Reason:** a device that could not ask has not been refused, so a week offline does not exhaust the ceiling.
 
@@ -762,9 +800,9 @@ When a write meets an environmental failure, a device MUST send no write after i
 
 When a read a drain makes after an answer meets an environmental failure, a device MUST send no write after it in that drain.
 
-**Reason:** the read a refusal is reconciled against, owed from an earlier drain or made in this one, and the read of the row a create landed on, are asked of the same server as the writes.
+**Reason:** the read a refusal is reconciled against, made again from an earlier drain or made in this one, and the read of the row a create landed on, are asked of the same server as the writes.
 
-**Tests:** `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`.
+**Tests:** `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`.
 
 ### `queue-and-verdicts/counted-failures`
 
@@ -772,7 +810,7 @@ When a write is answered `2xx` with a body the device cannot read as its operati
 
 **Reason:** each is a failure a further attempt might clear and nothing clears on its own, and this is the class the ceiling exists for: without it `dead` is a verdict nothing reaches.
 
-**Tests:** `device/classification.test.ts › retries an answer it cannot read, and counts it`, `› counts a write whose answer the copy cannot take, and goes on to the next`, `device/folders.test.ts › folder rebase accounts for every unmade request`.
+**Tests:** `device/classification.test.ts › retries an answer it cannot read, and counts it`, `› counts a write whose answer the copy cannot take, and goes on to the next`, `› counts a write whose request cannot be made, and makes it dead at the ceiling`.
 
 ### `queue-and-verdicts/in-flight-counted`
 
@@ -788,7 +826,23 @@ When a drain counts a refusal against a write, a device MUST go on to the writes
 
 **Reason:** ended there, the write would be retried uncounted for good, and every write behind it would wait on it.
 
-**Tests:** `device/classification.test.ts › counts a write whose answer the copy cannot take, and goes on to the next`.
+**Tests:** `device/classification.test.ts › counts a write whose answer the copy cannot take, and goes on to the next`, `› counts a write whose answer the store failed to record, and goes on to the next`.
+
+### `queue-and-verdicts/store-failure-counted`
+
+If the store fails, other than by filling, as a device takes the answer to a write that has no verdict, then a device MUST count a refusal against the write and leave it with no verdict.
+
+**Reason:** a further attempt may clear it and nothing clears it on its own; ended there instead, the write would be retried uncounted for good, and every write behind it would wait on it.
+
+**Tests:** `device/classification.test.ts › counts a write whose answer the store failed to record, and goes on to the next`.
+
+### `queue-and-verdicts/store-full-ends-drain`
+
+If the store is full as a device takes the answer to a write, before the write has a verdict, then a device MUST end the drain `storage_full`, leaving the write with no verdict and no refusal counted.
+
+**Reason:** a full store says nothing of the write and clears once there is room, when the write goes again under its key.
+
+**Tests:** `device/classification.test.ts › ends the drain storage_full when the store fills as it takes an answer, counting nothing`.
 
 ## Refusals that park a write
 
@@ -870,9 +924,57 @@ When the server answers a write `409 ancestor_unavailable`, a device MUST block 
 
 When the server answers a write `409 version_conflict`, a device MUST block it `conflict_unresolved`, unless it is a create carrying a natural key whose answer names another row.
 
-**Reason:** the server resolves a colliding update inside its own transaction (`versions/auto-resolved`) but for one that also moves the type (`versions/auto-type-move`), and refuses a delete of a row that has moved; a device cannot resolve it itself and the same request is refused the same way. A delete blocked so keeps the newer row intact.
+**Reason:** the server resolves a colliding update in the same write (`versions/auto-resolved`) but for one that also moves the type (`versions/auto-type-move`), and refuses a delete of a row that has moved; a device cannot resolve it itself and the same request is refused the same way. A delete blocked so keeps the newer row intact.
 
 **Tests:** `device/classification.test.ts › blocks a conflict the server declined to resolve`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/versioned-deletes-live.test.ts › guards a queued delete through %s`, `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`.
+
+## A renewal a drain meets
+
+A credential that renews, such as a token from a sign-in, is renewed when the server answers a write `401`, and the write is sent again under the renewed credential. These rules say what a drain does when the renewal fails.
+
+### `queue-and-verdicts/renewal-environmental`
+
+If renewing the credential after a write's `401` meets an environmental failure, then a device MUST take the write's answer as that environmental failure.
+
+**Reason:** a token endpoint that cannot be reached for now says nothing of the write or the key, so the write waits, uncounted, for the next drain (`queue-and-verdicts/environmental-uncounted`).
+
+**Tests:** `device/cli-outcomes.test.ts › takes a renewal the network stopped as an environmental failure, counting nothing`.
+
+### `queue-and-verdicts/renewal-ends-drain`
+
+If renewing the credential after a write's `401` fails other than by an environmental failure or a `401`, then a device MUST end the drain with that failure as its error.
+
+**Reason:** the person is signed out, or the credential cannot be read or renewed, and no write behind it could go under the same credential either.
+
+**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
+
+### `queue-and-verdicts/renewal-keeps-answers`
+
+When a failed renewal ends a drain, a device MUST keep the verdict of every write the drain answered before it.
+
+**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
+
+### `queue-and-verdicts/renewal-write-untouched`
+
+When a failed renewal ends a drain, a device MUST leave the write whose `401` started the renewal with no verdict, no refusal counted, and the body and idempotency key it had.
+
+**Reason:** the server refused the credential, not the write, so nothing is known of the write that a verdict could say.
+
+**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
+
+### `queue-and-verdicts/command-renewal-error`
+
+When a failed renewal ends a drain, the command MUST print the failure as its error on standard error and nothing on standard output.
+
+**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
+
+### `queue-and-verdicts/command-renewal-signed-out`
+
+When a drain ends because renewing the credential finds the person signed out, the command MUST report `signed_out` with `server` null and exit 5.
+
+**Reason:** the sign-in ended on this machine, so there is no server answer to report.
+
+**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 
 ## A source the credential's key does not claim
 
@@ -894,7 +996,7 @@ When a create is blocked for an unclaimed source, a device MUST block with it ev
 
 ### `queue-and-verdicts/unclaimed-goes-on`
 
-When a create is blocked for an unclaimed source, a device MUST go on in that drain to the writes that name no source or another.
+When a create is blocked for an unclaimed source, a device MUST go on in that drain to the writes that do not wait for it and name no source or another.
 
 **Tests:** `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
 
@@ -904,7 +1006,7 @@ When a create is blocked for an unclaimed source, a device MUST keep the row the
 
 **Reason:** refused instead, the row would be forgotten, and a claim granted afterwards would send nothing.
 
-**Tests:** `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
+**Tests:** `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`, `› keeps a create blocked for its source, and the writes queued on it before the drain`.
 
 ### `queue-and-verdicts/unclaimed-reported`
 
@@ -938,7 +1040,7 @@ When a caller releases a write, a device MUST clear the refusals counted against
 
 **Reason:** kept, the next counted failure of a released `dead` write would make it `dead` again at once.
 
-**Tests:** `device/classification.test.ts › sends a released row again under a fresh key`.
+**Tests:** `device/classification.test.ts › sends a released row again under a fresh key`, `› releases by reason the rows blocked for it, and never a dead one`.
 
 ### `queue-and-verdicts/release-by-reason`
 
@@ -950,7 +1052,7 @@ When a caller releases by a blocked reason, a device MUST release every write bl
 
 ### `queue-and-verdicts/release-unsent-refused`
 
-When a caller releases a write the drain refused without sending it, for a write it waited for or for bytes no longer held, a device MUST release it as it releases a `blocked` write.
+When a caller releases a write the drain refused without sending it, other than one refused because a write it waited for was withdrawn, a device MUST take it back to no verdict so the next drain sends it.
 
 **Tests:** `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`.
 
@@ -1000,7 +1102,7 @@ When a caller withdraws a write blocked `ancestor_unavailable` or `conflict_unre
 
 ### `queue-and-verdicts/withdraw-puts-back`
 
-When a caller withdraws a write, a device MUST hold the row or edge it names as a fresh read of the server returns it, with the writes still waiting laid over it.
+When a caller withdraws a write, a device MUST hold the row or edge it names as a fresh read of the server returns it, where the read finds it and the copy's slice or a pin takes it, with the writes still waiting laid over it.
 
 **Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`, `› lays a write still waiting back over the row a withdraw puts back`.
 
@@ -1034,11 +1136,11 @@ When a catch-up brings a row while a withdraw's read of it is out, a device MUST
 
 **Reason:** the row a catch-up brought is later than the read, and put back over it the read would take the copy back under a change whose event is already behind the cursor.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #1890.
 
 ### `queue-and-verdicts/clear-answered`
 
-When a caller clears the answered writes, a device MUST take out of the queue each write answered `accepted`, `merged` or `conflicted`, and each write the server refused that carried no content, that no unanswered, `blocked`, `dead` or unsent `refused` write depends on and that owes no read.
+When a caller clears the answered writes, a device MUST take out of the queue each write answered `accepted`, `merged` or `conflicted`, and each write the server refused that carried no content and that no unanswered, `blocked`, `dead` or unsent `refused` write depends on, other than a write whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row.
 
 **Tests:** `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`, `device/classification.test.ts › clears with the answered rows those only a withdrawn write was keeping, but for one carrying content`.
 
@@ -1072,7 +1174,7 @@ A device MUST report in the queue the body each write carries, as it was or will
 
 ### `queue-and-verdicts/discard-refused`
 
-When a caller discards a `refused` write that no write still waiting depends on and whose read after the refusal is not owed, a device MUST take it out of the queue, changing nothing in the copy.
+When a caller discards a `refused` write that no unsent write with no verdict, or `blocked`, depends on, other than one whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row, a device MUST take it out of the queue, changing nothing in the copy.
 
 **Reason:** the refusal already put the copy back.
 
@@ -1083,6 +1185,14 @@ When a caller discards a `refused` write that no write still waiting depends on 
 If a caller discards a write that is not `refused`, then a device MUST answer that nothing was discarded and keep the write.
 
 **Tests:** `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`.
+
+### `queue-and-verdicts/discard-waited-kept`
+
+If a caller discards a `refused` write that an unsent write with no verdict, or `blocked`, depends on, then a device MUST answer that nothing was discarded and keep the write.
+
+**Reason:** discarded, it would leave that write waiting on a write the queue no longer holds.
+
+**Tests:** `device/queue.test.ts › keeps a refused write a write still waiting depends on through a discard`.
 
 ## Offline, reconnect and hydrating again
 
@@ -1140,21 +1250,21 @@ When a copy is hydrated again, a device MUST lay every write still waiting back 
 
 ### `queue-and-verdicts/rehydrated-own-create`
 
-When a copy is hydrated again, a device MUST hold again the row or edge of each of its own creates still waiting, unless it is an edge whose source the slice no longer takes.
+When a copy is hydrated again, a device MUST hold again the row or edge of each of its own creates still waiting, unless it is an edge of a type the slice does not hold whole whose source the copy no longer holds.
 
 **Tests:** `device/queue.test.ts › keeps the writes it has not had answered through a re-hydration`, `› keeps a blocked write through a re-hydration`, `device/waiting-projections.test.ts › keeps a dead create visible through hydration`.
 
 ### `queue-and-verdicts/rehydrated-create-time`
 
-When a hydration holds again a row of this device's own create still waiting, a device MUST give it the time the create was queued as its `created_at`.
+When a hydration holds again a row of this device's own create still waiting that names no `occurred_at`, a device MUST give it the time the create was queued as its `created_at`.
 
 **Tests:** `device/queue.test.ts › keeps the writes it has not had answered through a re-hydration`.
 
 ### `queue-and-verdicts/waiting-edge-outside-slice`
 
-When a hydration leaves outside the slice the source of an edge create still waiting, of a type the slice does not hold whole, a device MUST NOT hold the edge again, nor its answer.
+When a hydration leaves the copy without the source of an edge create still waiting, of a type the slice does not hold whole, a device MUST NOT hold the edge again, nor its answer.
 
-**Reason:** the copy never holds an edge whose source it does not hold (`device.md` 44). The write stays queued and is sent, because the caller was told it was queued.
+**Reason:** the copy never holds an edge whose source it does not hold (`device.md` 44).
 
 **Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
 
@@ -1172,7 +1282,7 @@ When this device's create of a row or an edge is answered, a device MUST send ea
 
 ### `queue-and-verdicts/create-merged-over`
 
-When a create carrying a version above 0 is answered more than one version past it, a device MUST send each later unsent edit of the row based on version 0 on the version the create carried, unless the answer holds, for every property the edit changed, what the copy held when the edit was made.
+When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, a device MUST send each later unsent edit of the row based on version 0 on the version the create carried, unless the answer holds, for every property the edit changed, what the copy held when the edit was made.
 
 **Reason:** the server merged the create over another device's write (`versions/create-stale-merges`), which an edit made from the copy never read; on the version the create read, the server merges or conflicts on the edit as the type's policy says.
 
@@ -1180,7 +1290,7 @@ When a create carrying a version above 0 is answered more than one version past 
 
 ### `queue-and-verdicts/create-merged-over-apart`
 
-When a create carrying a version above 0 is answered more than one version past it, with an answer holding, for every property a later unsent edit based on version 0 changed, what the copy held when the edit was made, a device MUST send that edit on the version of the answer.
+When a create carrying a version above 0 is answered more than one version past it, and not as a repeat, with an answer holding, for every property a later unsent edit based on version 0 changed, what the copy held when the edit was made, a device MUST send that edit on the version of the answer.
 
 **Reason:** there it changes what the person changed, and the other device's write stands.
 
@@ -1258,13 +1368,21 @@ When an earlier edit of a row or an edge is answered, blocked for a reason other
 
 **Tests:** `device/queue.test.ts › sends an edit made after a catch-up back onto the base of the edit it was made against where that one conflicted`, `device/edge-replay.test.ts › keeps an edge receipt safe with grant blocked $grantBlocked and catch-up version $caughtUpVersion`, `device/grant-recovery.test.ts › holds a later edit while an earlier receipt lacks a grant after catch-up to %s`.
 
+### `queue-and-verdicts/edit-apart-as-stands`
+
+When an earlier edit of a row is answered `conflicted` or `refused`, blocked for a reason other than `credential_refused`, or made `dead`, a device MUST NOT move the version of a later unsent edit of the row that carries no property the earlier one carries.
+
+**Reason:** such an edit read the server's value of everything it carries, so its own base is what it was made against.
+
+**Tests:** `device/queue.test.ts › sends an edit made after a catch-up that shares no property with a conflicted one ahead of it on its own base`, `› sends the edit behind a refused or blocked one on its own base`.
+
 ## An edit made against an earlier read
 
 An editor holding a row while the copy takes in another device's write has what its person read, not what the copy has caught up to. Based on the version the copy holds, its save would carry every value it read as current, and the server would apply them over that write without a word (`versions/update-step`).
 
 ### `queue-and-verdicts/as-read-sent-on-read`
 
-When a caller queues an update said to be read at a version above 0 and earlier than the one the copy holds, a device MUST send it on the version it was read at.
+When a caller queues an update said to be read at a version above 0 and earlier than the one the copy holds, a device MUST send it on the version it was read at, but where `queue-and-verdicts/edit-back-to-base` sends it on an earlier one.
 
 **Reason:** the server then merges it against that version (`versions/merge-stale`): a property only this edit changed lands, one only the other write changed stands, and one both changed goes as its merge policy says.
 
@@ -1272,7 +1390,7 @@ When a caller queues an update said to be read at a version above 0 and earlier 
 
 ### `queue-and-verdicts/as-read-bounds`
 
-If a caller queues an update said to be read at version 0, or at a version later than the one the copy holds, then a device MUST refuse it `invalid`, queueing nothing.
+If a caller queues an update said to be read at version 0 while the copy holds a later version, or at a version later than the one the copy holds, then a device MUST refuse it `invalid`, queueing nothing.
 
 **Reason:** no server mints 0 (`versions/create-claim-none`), and a version the copy has not reached was not read.
 
@@ -1310,7 +1428,7 @@ When a caller queues an update that sends its properties whole, a device MUST se
 
 ### `queue-and-verdicts/whole-shows-clear`
 
-While an update that sends its properties whole, based on the version the copy holds, waits, a device MUST show the row with each property the update changed set as it sets it, each property it leaves out that it read cleared, and every other property as the row holds it.
+While an update that sends its properties whole, queued on the version the copy held, waits, a device MUST show the row with each property the update changed set as it sets it, each property it leaves out that it read cleared, and every other property as the row holds it.
 
 **Reason:** a property another device added since the edit was made stays showing through a catch-up.
 
@@ -1362,33 +1480,17 @@ When a move is answered, or refused and read back, a device MUST hold the row as
 
 ### `queue-and-verdicts/move-out-lets-go`
 
-When an answer to a move, or the read back after its refusal, puts the row outside the copy's slice, a device MUST let the row go, with the edges it draws but those of a type the slice holds whole, unless the row is pinned or a write to it still waits.
+When the read after an answer or a refusal returns a row outside the copy's slice, a device MUST let the row go, with the edges it draws but those of a type the slice holds whole, unless the row is pinned or a write to it still waits.
 
-**Reason:** the copy lets the row go as a catch-up would on the same row (`device.md` 14).
+**Reason:** the copy lets the row go as a catch-up would on the same row (`device.md` 14); an attachment's file item, held outside the slice, is pinned when it is made, so an edit of it keeps it.
 
-**Tests:** `device/queue.test.ts › lets a row go once its retype out of the slice is answered`, `› keeps a pinned row its own answered move takes out of the slice`, `› keeps a pinned row outside the slice when its refused move is read back`, `› keeps the edges of a type held whole on a row its answered move lets go`, `› keeps the edges of a type held whole on a row its refused move, read back, lets go`.
+**Tests:** `device/queue.test.ts › lets a row go once its retype out of the slice is answered`, `› keeps a pinned row its own answered move takes out of the slice`, `› keeps a pinned row outside the slice when its refused move is read back`, `› keeps the edges of a type held whole on a row its answered move lets go`, `› keeps the edges of a type held whole on a row its refused move, read back, lets go`, `› keeps a row held outside the slice when an edit to it is answered`, `› sends no tier naming the tier the row already has, and keeps a row held outside the slice`.
 
 ### `queue-and-verdicts/move-out-stays-out`
 
 When a move ahead has let a row go, a device MUST NOT hold the row again for the answer to, or the refusal of, an edit behind the move.
 
 **Tests:** `device/queue.test.ts › does not put back a row a move answered ahead let go, when an edit behind it is refused`, `› does not put back a row a move answered ahead let go, when an edit behind it is answered`.
-
-### `queue-and-verdicts/no-move-keeps-held`
-
-When an edit that moves nothing is answered for a row the copy holds outside its slice, a device MUST keep the row.
-
-**Reason:** an attachment of a row in the slice is held outside it, and an edit of it is no move out.
-
-**Tests:** `device/queue.test.ts › keeps a row held outside the slice when an edit to it is answered`, `› sends no tier naming the tier the row already has, and keeps a row held outside the slice`.
-
-### `queue-and-verdicts/move-collision-blocked`
-
-When the server refuses a move `409 version_conflict` because it collides with a write it did not read (`versions/auto-type-move`), a device MUST block it `conflict_unresolved`, still shown and still queued.
-
-**Reason:** its person makes the move again on the row as it now stands.
-
-**Tests:** `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`.
 
 ## A create that lands on a row the server holds
 
@@ -1418,6 +1520,14 @@ When a create is answered with a row under another id than the one it was queued
 
 **Tests:** `device/queue.test.ts › sends a create carrying a natural key without the id it minted, and holds the row the answer names`, `› moves the copy onto the row a create lands on, with every write waiting on it`, `device/verdicts.test.ts › accepted: takes an upsert and a replayed repeat as accepted`.
 
+### `queue-and-verdicts/landed-not-on-catch-up`
+
+While the read that follows a create's answer naming another row has not succeeded, a device MUST keep the row under the minted id and every write that names it, whatever a catch-up brings.
+
+**Reason:** only that read says the key may read the row now; a catch-up that brought the row says nothing of the writes still naming the minted id.
+
+**Tests:** `device/queue.test.ts › moves the copy onto the row a create was answered with only at the read after it, though a catch-up brought that row first`.
+
 ### `queue-and-verdicts/landed-reported-row`
 
 When a create's answer moves the copy onto another row, a device MUST report the create's entry with that row in `item_id`.
@@ -1440,17 +1550,17 @@ When a create carrying a natural key is refused naming another row, a device MUS
 
 ### `queue-and-verdicts/landed-adds-follow`
 
-When a create carrying a natural key is refused naming another row, a device MUST send onto that row each write waiting on the create that only adds to it: a tag added, and an edge made or moved to or from it.
+When a create carrying a natural key is refused naming another row and a fresh read of that row succeeds, a device MUST send onto that row each write waiting on the create that only adds to it: a tag added, an edge made to or from it, and an edge's end moved to it.
 
-**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› refuses a create whose natural key names a row, and moves the copy onto that row`.
+**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› refuses a create whose natural key names a row, and moves the copy onto that row`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `device/edge-move.test.ts › holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found`.
 
 ### `queue-and-verdicts/landed-takes-refused`
 
-When a create carrying a natural key is refused naming another row, a device MUST refuse without sending each write waiting on the create that replaces, removes or moves the row's state: an update, a delete, a restore or a transition, a metadata write, a tag removed, and an extension written or deleted.
+When a create carrying a natural key is refused naming another row and a fresh read of that row succeeds, a device MUST refuse without sending each write waiting on the create that replaces, removes or moves the row's state: an update, a delete, a restore or a transition, a metadata write, a tag removed, and an extension written or deleted.
 
 **Reason:** each was made against the row this device created; sent to the server's row it would do to another device's item, one this device never read, what was meant for this one.
 
-**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› refuses a create whose natural key names a row, and moves the copy onto that row`.
+**Tests:** `device/queue.test.ts › refuses the writes behind a landed create that would take from the row, and sends those that add`, `› refuses a create whose natural key names a row, and moves the copy onto that row`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
 
 ### `queue-and-verdicts/landed-ancestor-read`
 
@@ -1458,19 +1568,19 @@ When a create carrying a natural key is refused `409 ancestor_unavailable` namin
 
 **Reason:** the version the create read, if any, is one the server no longer holds, which is as good as never read: a write made from the row next replaces content this device never read as the last writer, and nothing here protects that content. Kept as the base instead, a thinned version would have every edit of the row refused the same way.
 
-**Tests:** `device/queue.test.ts › refuses a create whose natural key names a row, and moves the copy onto that row`.
+**Tests:** `device/queue.test.ts › refuses a create whose natural key names a row, and moves the copy onto that row`, `› holds the row a read returns after a create refused ancestor_unavailable, not the row the envelope named`.
 
 ### `queue-and-verdicts/landed-target-unreadable`
 
-When the read of the row a refused create's natural key names says the row is absent, a device MUST keep the refusal, the row under the minted id and the writes waiting on the create as they are, reading the row again at each later drain.
+When the read of the row a refused create's natural key names finds no row the key reads, a device MUST keep the refusal, the row under the minted id and the writes waiting on the create as they are, reading the row again at each later drain.
 
 **Reason:** whether what waits on the create goes to that row or is refused is not known until a read finds the row.
 
-**Tests:** `device/queue.test.ts › preserves a refused create while its natural-key target cannot be read`, `› goes on with the queue while a refused create's natural-key target cannot be read`.
+**Tests:** `device/queue.test.ts › preserves a refused create while its natural-key target cannot be read`, `› goes on with the queue while a refused create's natural-key target cannot be read`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
 
 ### `queue-and-verdicts/landed-absent-goes-on`
 
-When the read of the row a refused create's natural key names says the row is absent, a device MUST go on to the writes that do not wait on the create, in that drain and in every later one.
+When the read of the row a refused create's natural key names finds no row the key reads, a device MUST go on to the writes that do not wait on the create, in that drain and in every later one.
 
 **Reason:** a row in the bin, or one the key no longer reads, may never be found again, and the rest of the queue does not wait on it.
 
@@ -1490,9 +1600,17 @@ If the server answers the read of the row a create landed on `401` naming its co
 
 ### `queue-and-verdicts/landed-waiting-laid-over`
 
-When the copy moves onto the row a create landed on, a device MUST lay each write still waiting that moved with it over that row.
+When the copy moves onto the row a refused create's natural key names, a device MUST lay each write still waiting that moved with it over that row.
 
 **Tests:** `device/queue.test.ts › holds a write still waiting behind a landed create on the row it landed on`.
+
+### `queue-and-verdicts/landed-pin-moves`
+
+When the copy moves onto the row a refused create's natural key names, a device MUST move the pin the create's row held onto that row.
+
+**Reason:** the pin follows the row a create of a row the slice does not take is answered with (`device.md` 1), and a refusal naming the row is that answer; left on the minted id, it would hold nothing and the landed row would go at its next event.
+
+**Tests:** `device/queue.test.ts › moves the pin of a create the slice does not hold onto the row a refusal names its natural key under`.
 
 ### `queue-and-verdicts/trashed-ack-refused`
 
@@ -1508,11 +1626,19 @@ When a create is refused `trashed`, a device MUST let go of the row the create w
 
 **Tests:** `device/queue.test.ts › refuses a create whose natural key names a row somebody trashed, and forgets its row`.
 
+### `queue-and-verdicts/trashed-ack-in-bin`
+
+When a create is refused `trashed`, a device MUST report the refusal as about a row in the bin.
+
+**Reason:** an app can then offer to restore the row, as it can for an edit refused for a row in the bin (`queue-and-verdicts/refusal-in-bin`).
+
+**Tests:** `device/queue.test.ts › refuses a create whose natural key names a row somebody trashed, and forgets its row`.
+
 ## The tier of a create
 
 ### `queue-and-verdicts/create-slice-tier`
 
-When a caller creates an item naming no tier, and its natural key names no row the copy holds, a device MUST send and show the create at the tier the copy's slice holds, `library` for a slice of both tiers.
+When a caller creates an item naming no tier, and its natural key names neither a row the copy holds from the server nor this device's own create still waiting, a device MUST send and show the create at the tier the copy's slice holds, `library` for a slice of both tiers.
 
 **Reason:** left out, the server gives the create its credential's `default_tier` (`items/tier-new`), which need not be the slice's, and the copy would show the row at one tier and get it back at another. In a slice of both, `library` is the tier a create naming none takes on the server.
 
@@ -1530,7 +1656,15 @@ When a caller creates an item naming no tier whose natural key names a row the c
 
 **Reason:** the server leaves the tier of a row a key resolves as it stands (`items/tier-upsert`), so a row a person moved to the feed stays there through the next re-save, where a tier sent would move it back.
 
-**Tests:** `device/slice-tiers-live.test.ts › re-saves a feed row by its natural key in a slice of both without moving it`.
+**Tests:** `device/queue.test.ts › sends no tier with a create whose natural key names a row the copy holds, and shows it at that row's tier`, `device/slice-tiers-live.test.ts › re-saves a feed row by its natural key in a slice of both without moving it`.
+
+### `queue-and-verdicts/keyed-create-own-tier`
+
+When a caller creates an item naming no tier whose natural key names this device's own create still waiting, a device MUST send and show the create at that create's tier.
+
+**Reason:** if the create ahead is refused, this one makes the row, and left out its tier would be the credential's default.
+
+**Tests:** `device/queue.test.ts › sends a create naming no tier whose natural key names its own create still waiting at that create's tier`.
 
 ### `queue-and-verdicts/create-outside-pinned`
 
@@ -1538,7 +1672,7 @@ When a caller creates an item the copy's slice does not take, by its type or its
 
 **Reason:** the copy then holds what it shows through the answer and the event that follow, an attachment's file item of a type outside the slice among them; the pin follows the row as `device.md` 1 says. A create the copy showed and then let go at its own event reads as saved and then lost.
 
-**Tests:** `device/queue.test.ts › holds a create the slice does not hold through its answer and its event`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`.
+**Tests:** `device/queue.test.ts › holds a create the slice does not hold through its answer and its event`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› pins a create of a type the slice does not take when it is queued`.
 
 ## Uploads
 
@@ -1566,7 +1700,7 @@ When a drain is asked for in a process while another runs on the same store, a d
 
 **Reason:** two drains at once, an app's after a write and its timer's, would each send every unanswered write: the server answers the repeats from its record, so the data comes out right, but every write costs a request per drain and every drain reports writes another sent.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #1890.
 
 ## Local checks of an item's properties
 
@@ -1576,13 +1710,21 @@ A device checks an item write against the type catalog the copy holds before it 
 
 If a caller queues an item create or update that leaves out a property its type requires, or carries a value a field of its type refuses, as the held catalog declares the type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
 
-**Tests:** `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+**Tests:** `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`, `device/property-validation.test.ts › judges current merge, replace, retype and version zero while leaving stale results to the server`.
 
 ### `queue-and-verdicts/check-as-server`
 
 When a device judges a property value against a field of the held catalog, a device MUST judge the field's kind, enum membership, length in UTF-16 code units, array length, a NUL in a bounded string, and the `url`, `email`, `date`, `datetime` and `thumbnail` rules as the server does (`types.md`).
 
 **Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`, `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`.
+
+### `queue-and-verdicts/check-inherited-nearest`
+
+When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it.
+
+**Reason:** a subtype may redeclare an inherited field required (`types.md`), and a grandchild that declares nothing of its own takes that.
+
+**Tests:** `device/property-validation.test.ts › judges an inherited field as the nearest type in the chain declares it`.
 
 ### `queue-and-verdicts/check-accepts`
 
@@ -1616,7 +1758,7 @@ When a caller queues a create carrying no natural key, a device MUST judge every
 
 When a caller queues a create whose natural key names a row the copy holds from the server, of the same type, with no version or the version the copy holds, a device MUST judge that row's properties with the create's laid over them.
 
-**Tests:** `device/property-validation.test.ts › checks known upserts and supplied values on unresolved or stale targets`.
+**Tests:** `device/property-validation.test.ts › checks known upserts and supplied values on unresolved or stale targets`, `› judges a known upsert by the row it leaves, and a stale or other-type one by what it supplies`.
 
 ### `queue-and-verdicts/check-unknown-target`
 
@@ -1624,7 +1766,7 @@ When a caller queues a create carrying a natural key that does not name a row of
 
 **Reason:** a row the copy has not seen may hold every field the create leaves out.
 
-**Tests:** `device/property-validation.test.ts › checks known upserts and supplied values on unresolved or stale targets`, `› keeps repeated creates and edits to an unanswered keyed placeholder unresolved`.
+**Tests:** `device/property-validation.test.ts › checks known upserts and supplied values on unresolved or stale targets`, `› keeps repeated creates and edits to an unanswered keyed placeholder unresolved`, `› judges a known upsert by the row it leaves, and a stale or other-type one by what it supplies`.
 
 ### `queue-and-verdicts/catalog-change-kept`
 
@@ -1656,7 +1798,7 @@ When a create carrying no natural key carries a null for a property its type doe
 
 ### `queue-and-verdicts/folder-gives-way`
 
-When a folder gives way to another machine's placement of a file (`folders.md` 19), a device MUST take out of the queue every write of the folder's to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard.
+When a folder gives way to another machine's placement of a file (`folders.md` 19), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard.
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 
@@ -1730,19 +1872,19 @@ When the server takes a move of an edge's source, a device MUST expire the copy 
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 
-When a caller moves an edge's end to a row of this device's own create that has no verdict, or is `blocked` or `dead`, a device MUST name that create in the move's `depends_on`.
+When a caller moves an edge's end to a row of this device's own create that has no verdict, is `blocked` or `dead`, or was refused onto a row its natural key names that no read has found yet, a device MUST name that create in the move's `depends_on`.
 
 **Reason:** the server holds no such row and would refuse the move `404 item_not_found`; a refused create refuses the move with it, and the edge stays at its old end.
 
-**Tests:** `device/edge-move-live.test.ts › holds a move onto its own unanswered create, and sends it naming the row the create landed on`.
+**Tests:** `device/edge-move-live.test.ts › holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `device/edge-move.test.ts › holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found`.
 
 ### `queue-and-verdicts/edge-move-names-landed`
 
-When the create a waiting move names as its new end is answered with another row, a device MUST send the move naming that row.
+When the create a waiting move names as its new end is answered with another row, or is refused onto another row its natural key names that a read then finds, a device MUST send the move naming that row.
 
 **Reason:** a create carrying a natural key lands on the row its key resolves, whose id is not the one the device minted, and a move still naming the minted id would be refused for a row the server never made.
 
-**Tests:** `device/edge-move-live.test.ts › holds a move onto its own unanswered create, and sends it naming the row the create landed on`.
+**Tests:** `device/edge-move-live.test.ts › holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `device/edge-move.test.ts › holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found`.
 
 ### `queue-and-verdicts/edge-move-always-refused`
 
