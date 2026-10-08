@@ -1,14 +1,9 @@
 /** A failed grant event refuses the consent unit, including its provider code. */
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  createTestAccount,
-  createTestContext,
-  request,
-  settle,
-} from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initEventLog } from "../pubsub.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext, request, settle } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -23,9 +18,8 @@ afterEach(async () => {
   ctx = undefined;
 });
 
-async function signIn(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Test User");
+async function signIn(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const res = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -52,7 +46,7 @@ describe("a consent whose event cannot be written", () => {
         ...c.storage.eventLog,
         append: () => Promise.reject(new Error("the event log is unwritable")),
       });
-      const cookie = await signIn(c, "announce@example.com");
+      const cookie = await signIn(c);
       const register = async (clientId: string): Promise<void> => {
         await c.storage.oauthProvider?.createClient({
           clientId,

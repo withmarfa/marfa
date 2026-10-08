@@ -189,7 +189,12 @@ export async function seedOauthBearer(
   ctx: TestContext,
   scopes: string[],
   opts: { clientName?: string; authUserId?: string } = {},
-): Promise<{ token: string; grantId: string; clientId: string }> {
+): Promise<{
+  token: string;
+  grantId: string;
+  clientId: string;
+  refreshToken?: string;
+}> {
   if (opts.authUserId !== undefined && opts.authUserId !== ctx.owner.id) {
     throw new Error("An app grant belongs to this instance's claimed owner");
   }
@@ -278,7 +283,12 @@ export async function seedOauthBearer(
     authUserId: ctx.owner.id,
   });
   if (!grantId) throw new Error("App consent did not create its grant");
-  return { token: exchanged.access_token as string, grantId, clientId };
+  return {
+    token: exchanged.access_token as string,
+    grantId,
+    clientId,
+    refreshToken: exchanged.refresh_token as string | undefined,
+  };
 }
 
 /**

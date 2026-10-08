@@ -1,10 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import {
-  createTestAccount,
-  createTestContext,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import {
   DEVICE_CODE_ADDRESS_LIMIT,
   DEVICE_CODE_INSTANCE_LIMIT,
@@ -109,9 +105,12 @@ describe("device code entry limits", () => {
   });
 
   it("counts the consent screen's lookups and its decision's in the same limit", async () => {
-    ctx = await createTestContext();
+    ctx = await createTestContext(undefined, {
+      email: "owner@example.com",
+      password: "correct horse battery",
+    });
     const c = ctx;
-    await createTestAccount(c, "owner@example.com", "correct horse battery");
+
     const signedIn = await request(c.app, "POST", "/auth/sign-in/email", {
       body: { email: "owner@example.com", password: "correct horse battery" },
       headers: { origin: ORIGIN },

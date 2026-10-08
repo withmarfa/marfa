@@ -23,13 +23,9 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { describe, it, expect, afterEach, vi } from "vitest";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 // Each case signs a user up and in and drives a full grant before it asserts
 // anything, which is real work to fit inside the default budget with the rest
@@ -48,9 +44,8 @@ const ORIGIN = "http://localhost:0";
 const CALLBACK = "http://localhost:0/callback";
 const SCOPE = "core.note:read";
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Resource Param User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -164,11 +159,14 @@ async function signedInClient(
   base: string,
   email: string,
 ): Promise<{ context: TestContext; clientId: string; cookie: string }> {
-  const context = await createTestContext({
-    authBaseUrl: base,
-  });
+  const context = await createTestContext(
+    {
+      authBaseUrl: base,
+    },
+    { email, password: "test resource owner password", name: "Resource Owner" },
+  );
   ctx = context;
-  const cookie = await signInUser(context, email);
+  const cookie = await signInUser(context);
   return { context, clientId: await registerClient(context, cookie), cookie };
 }
 

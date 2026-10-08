@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { createTestAccount, createTestContext } from "../test-utils.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../test-utils.js";
 import { renderSignedOutPage } from "./test-render.js";
 
 /**
@@ -64,8 +64,11 @@ describe("GET /auth/oauth2/end-session", () => {
   });
 
   it("shows a signed-in browser the provider's confirmation page, not its JSON", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "hana@example.com", "correct horse", "Hana");
+    ctx = await createTestContext(
+      {},
+      { email: "hana@example.com", password: "correct horse", name: "Hana" },
+    );
+
     const signIn = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/sign-in/email`, {
         method: "POST",

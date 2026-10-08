@@ -1,124 +1,21 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { PERMISSIONS } from "@withmarfa/shared";
-import { createApp } from "../app.js";
-import { ensureInstanceId } from "../storage/instance-id.js";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createBlobLayer } from "../storage/blob-layer.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
-import { hashApiKey } from "./auth.js";
-import { seedOauthBearer } from "../test-utils.js";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { Storage } from "../storage/interface.js";
-import type { Hono } from "hono";
-import type { AppEnv } from "./auth.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createTestContext,
+  seedOauthBearer,
+  type TestContext,
+} from "../test-utils.js";
 
-const SALT = "test-salt";
+type Ctx = TestContext;
 
-interface Ctx {
-  app: Hono<AppEnv>;
-  storage: Storage;
-  /** An ordinary working key — the shape an operator is handed, and the
-   *  only shape that carries content reach. */
-  workingKey: string;
-  cleanup: () => Promise<void>;
-}
-
-// Build an app with rate limiting ENABLED and an intentionally tiny
-// per-window limit, so we can observe per-credential isolation in a
-// handful of requests rather than thousands.
-async function buildCtx(
-  /** The `/keys` cap, when a case is about one. Left out, the path table's
-   *  own default stands and the key doors are far above this context's
-   *  tiny global cap. */
-  keysLimit?: number,
-): Promise<Ctx> {
-  // Rate-limit values flow through AppConfig, set on the literal below;
-  // the middleware reads nothing from the environment.
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
-  const storage = await createSqliteStorage(join(tmpDir, "test.db"));
-  const instanceId = await ensureInstanceId(storage.settings);
-  const blobs = await createBlobLayer(storage, {
-    blobPath: join(tmpDir, "blobs"),
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
+// Exercise production provisioning with deliberately small HTTP limits.
+async function buildCtx(keysLimit?: number): Promise<Ctx> {
+  return createTestContext({
+    rateLimitEnabled: true,
+    rateLimitDefaultLimit: 2,
+    rateLimitKeysLimit: keysLimit,
+    rateLimitWindowMs: 60_000,
+    rateLimitAggregateMultiplier: 0,
   });
-  const app = createApp(
-    storage,
-    blobs,
-    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
-    {
-      port: 0,
-      sqlitePath: "",
-      blobPath: join(tmpDir, "blobs"),
-      maxRequestBytes: 1_048_576,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-      apiKeySalt: SALT,
-      corsOrigins: [],
-      rateLimitEnabled: true,
-      enableHsts: false,
-      auditRetentionDays: 90,
-      auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
-      versionThinningIntervalMs: 3_600_000,
-      versionRecentDays: 30,
-      versionDailySnapshotDays: 90,
-      versionWeeklySnapshotDays: 365,
-      versionMaxVersions: 500,
-      trashRetentionDays: 60,
-      trashPurgeIntervalMs: 3_600_000,
-      errorWebhookUrl: "",
-      trustedProxyCidrs: [],
-      authBaseUrl: "http://localhost:0",
-      authSecret: "test-auth-secret",
-      rateLimitDefaultLimit: 2,
-      rateLimitKeysLimit: keysLimit,
-      rateLimitWindowMs: 60_000,
-      // Disable the aggregate per-identifier window for the per-path /
-      // per-credential isolation tests below — several reuse one shared
-      // (unauthenticated) IP identifier across many paths in a single
-      // window, which the aggregate cap would otherwise trip. The
-      // aggregate window has its own dedicated test context.
-      rateLimitAggregateMultiplier: 0,
-    },
-    instanceId,
-  );
-
-  const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_rl_working_${suffix}`;
-  await storage.keys.create(
-    {
-      label: "rl-working",
-      source: `rl-working-${suffix}`,
-      is_operator: false,
-      permissions: [...PERMISSIONS],
-      type_permissions: { "*": "write" },
-      default_tier: "feed",
-    },
-    hashApiKey(rawKey, SALT),
-  );
-  await storage.settings.set("bootstrapped", "true");
-
-  return {
-    app,
-    storage,
-    workingKey: rawKey,
-    cleanup: async () => {
-      try {
-        await storage.close();
-      } catch {
-        // Best-effort.
-      }
-    },
-  };
 }
 
 async function makeWorkingKey(ctx: Ctx, label: string): Promise<string> {
@@ -186,21 +83,22 @@ describe("rate-limit keying", () => {
   });
 
   it("limits a signed-in app by its grant, so a refreshed token does not start a fresh window", async () => {
-    const first = await seedOauthBearer(ctx.storage, ["core.note:read"]);
-    const row = await ctx.storage.oauthProvider?.validateAccessToken(
-      hashApiKey(first.token.slice("marfa_at_".length), SALT),
-    );
-    expect(row?.userId).toBeTruthy();
-    // What a refresh hands back: a new access-token row under the same
-    // client and the same person.
-    const refreshed = `marfa_at_refreshed_${Math.random().toString(36).slice(2)}`;
-    await ctx.storage.oauthProvider?.mintTokenPair({
-      accessTokenHash: hashApiKey(refreshed.slice("marfa_at_".length), SALT),
-      clientId: first.clientId,
-      authUserId: row!.userId!,
-      scopes: ["core.note:read"],
-      accessTtlMs: 3600_000,
+    const first = await seedOauthBearer(ctx, [
+      "core.note:read",
+      "offline_access",
+    ]);
+    const refresh = await ctx.app.request("/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: first.clientId,
+        refresh_token: first.refreshToken!,
+      }).toString(),
     });
+    expect(refresh.status).toBe(200);
+    const refreshed = ((await refresh.json()) as { access_token: string })
+      .access_token;
     const hit = (token: string) =>
       ctx.app.request("/items?type=core.note", {
         headers: { Authorization: `Bearer ${token}` },
@@ -212,7 +110,7 @@ describe("rate-limit keying", () => {
     expect((await hit(refreshed)).status).toBe(429);
 
     // The witness: another app's token is not in the same window.
-    const other = await seedOauthBearer(ctx.storage, ["core.note:read"]);
+    const other = await seedOauthBearer(ctx, ["core.note:read"]);
     expect((await hit(other.token)).status).toBe(200);
   });
 
@@ -310,89 +208,12 @@ describe("rate-limit per-path caps for /auth/oauth2/*", () => {
 // multiplier, so a handful of requests across two path groups crosses the
 // aggregate cap without exhausting either per-path window.
 async function buildAggCtx(): Promise<Ctx> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-agg-"));
-  const storage = await createSqliteStorage(join(tmpDir, "test.db"));
-  const instanceId = await ensureInstanceId(storage.settings);
-  const blobs = await createBlobLayer(storage, {
-    blobPath: join(tmpDir, "blobs"),
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
+  return createTestContext({
+    rateLimitEnabled: true,
+    rateLimitDefaultLimit: 2,
+    rateLimitWindowMs: 60_000,
+    rateLimitAggregateMultiplier: 2,
   });
-  const app = createApp(
-    storage,
-    blobs,
-    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
-    {
-      port: 0,
-      sqlitePath: "",
-      blobPath: join(tmpDir, "blobs"),
-      maxRequestBytes: 1_048_576,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-      apiKeySalt: SALT,
-      corsOrigins: [],
-      rateLimitEnabled: true,
-      enableHsts: false,
-      auditRetentionDays: 90,
-      auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
-      versionThinningIntervalMs: 3_600_000,
-      versionRecentDays: 30,
-      versionDailySnapshotDays: 90,
-      versionWeeklySnapshotDays: 365,
-      versionMaxVersions: 500,
-      trashRetentionDays: 60,
-      trashPurgeIntervalMs: 3_600_000,
-      errorWebhookUrl: "",
-      trustedProxyCidrs: [],
-      authBaseUrl: "http://localhost:0",
-      authSecret: "test-auth-secret",
-      // defaultLimit 2 → GET path window resolves to 4. Aggregate
-      // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
-      // identifier alone.
-      rateLimitDefaultLimit: 2,
-      rateLimitWindowMs: 60_000,
-      rateLimitAggregateMultiplier: 2,
-    },
-    instanceId,
-  );
-
-  const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_rl_agg_${suffix}`;
-  await storage.keys.create(
-    {
-      label: "rl-agg-working",
-      source: `rl-agg-working-${suffix}`,
-      is_operator: false,
-      permissions: [...PERMISSIONS],
-      type_permissions: { "*": "write" },
-      default_tier: "feed",
-    },
-    hashApiKey(rawKey, SALT),
-  );
-  await storage.settings.set("bootstrapped", "true");
-
-  return {
-    app,
-    storage,
-    workingKey: rawKey,
-    cleanup: async () => {
-      try {
-        await storage.close();
-      } catch {
-        // Best-effort.
-      }
-      // The directory holds this file's sqlite database and blob
-      // root; nothing else removes it.
-      rmSync(tmpDir, { recursive: true, force: true });
-    },
-  };
 }
 
 describe("rate-limit aggregate per-identifier window", () => {

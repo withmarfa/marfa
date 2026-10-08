@@ -9,14 +9,10 @@
  * driven from a foreign origin, which is what the classification alone cannot
  * prove.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import { BROWSER_FORM_DOORS } from "./_cross-origin.js";
 
 vi.setConfig({ testTimeout: 45_000 });
@@ -53,9 +49,8 @@ function marfaAuthDoors(c: TestContext): string[] {
   ].sort();
 }
 
-async function signIn(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password);
+async function signIn(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const res = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -83,7 +78,7 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
 
     it(`${door} refuses a foreign Origin, and a foreign Referer when Origin is absent`, async () => {
       ctx = await createTestContext();
-      const cookie = await signIn(ctx, "guard@example.com");
+      const cookie = await signIn(ctx);
       const foreign: Record<string, string>[] = [
         { origin: FOREIGN },
         { referer: `${FOREIGN}/page` },
@@ -129,7 +124,7 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
       headers: { origin: ORIGIN },
     });
     const { user_code } = (await init.json()) as { user_code: string };
-    const cookie = await signIn(c, "owner@example.com");
+    const cookie = await signIn(c);
     // Opening the consent screen claims the code for the signed-in person,
     // which is what a foreign page would be riding on.
     const screen = await request(

@@ -11,15 +11,11 @@
  * and the authorization-code flow completes with it, which is what a
  * registered client is for.
  */
-import { createHash, randomBytes } from "node:crypto";
-import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { createHash, randomBytes } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -58,9 +54,8 @@ async function register(
   };
 }
 
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Registration Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -181,7 +176,7 @@ describe("POST /auth/oauth2/register through the provider plugin", () => {
       token_endpoint_auth_method: "none",
     });
     const clientId = registered.client_id!;
-    const cookie = await signInUser(c, "registered-flow@example.com");
+    const cookie = await signInUser(c);
     const { verifier, challenge } = pkcePair();
     const params = new URLSearchParams({
       response_type: "code",

@@ -6,13 +6,13 @@
  * person is left with once the page's own script has run, such as a form's
  * "already submitting" mark after Back.
  */
-import { createHash, randomBytes } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { Browser, Page } from "playwright-core";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import { createTestAccount, createTestContext } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { createHash, randomBytes } from "node:crypto";
+import type { Browser, Page } from "playwright-core";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../test-utils.js";
 
 const launched = await launchTestBrowser();
 const browser: Browser | null = launched instanceof Error ? null : launched;
@@ -45,8 +45,11 @@ function callback(request: Request): Response | undefined {
 beforeAll(async () => {
   const reserved = await reserveOrigin();
   origin = reserved.origin;
-  ctx = await createTestContext({ authBaseUrl: origin });
-  await createTestAccount(ctx, EMAIL, PASSWORD, "Pages Tester");
+  ctx = await createTestContext(
+    { authBaseUrl: origin },
+    { email: EMAIL, password: PASSWORD, name: "Pages Tester" },
+  );
+
   server = listen(ctx.app, reserved.port, callback);
 });
 

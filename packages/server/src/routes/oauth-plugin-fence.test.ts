@@ -1,14 +1,10 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   oauthDeviceAuthorization,
   oauthProvider,
 } from "@better-auth/oauth-provider";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import {
   FENCED_PLUGIN_ENDPOINTS,
   REACHABLE_PLUGIN_ENDPOINTS,
@@ -84,9 +80,8 @@ function pluginEndpoints(): PluginEndpoint[] {
 }
 
 /** Sign up + verify + sign in; returns the session cookie (`name=value`). */
-async function signInUser(c: TestContext, email: string): Promise<string> {
-  const password = "correct horse battery";
-  await createTestAccount(c, email, password, "Fence Test User");
+async function signInUser(c: TestContext): Promise<string> {
+  const { email, password } = c.owner;
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -115,25 +110,6 @@ interface InsertingDb {
       execute?: () => Promise<unknown>;
     };
   };
-}
-
-async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema();
-  const { eq } = await import("drizzle-orm");
-  const db = c.storage.betterAuthDb as {
-    select: () => {
-      from: (t: unknown) => {
-        where: (w: unknown) => Promise<{ id: string }[]>;
-      };
-    };
-  };
-  const rows = await db
-    .select()
-    .from(schema.auth_user)
-    .where(eq(schema.auth_user.email, email));
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
-  return id;
 }
 
 /** A client row for the consent row to point at, and something a successful
@@ -335,8 +311,8 @@ describe("the plugin's management endpoints are fenced", () => {
 
   it("a signed-in session gets the Marfa 404 on every fenced path in both spellings, and neither its consent row nor the client table moves", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "fence@example.com");
-    const authUserId = await authUserIdFor(ctx, "fence@example.com");
+    const cookie = await signInUser(ctx);
+    const authUserId = ctx.owner.id;
     const clientId = await seedClient(ctx);
     const consentId = await seedConsent(ctx, clientId, authUserId);
     const clientsBefore = await countClients(ctx);
@@ -365,7 +341,7 @@ describe("the plugin's management endpoints are fenced", () => {
 
   it("the signature is the fence's alone, and every reachable path answers as itself", async () => {
     ctx = await createTestContext({});
-    const cookie = await signInUser(ctx, "control@example.com");
+    const cookie = await signInUser(ctx);
 
     // An unknown `/auth/*` path is refused by the catch-all with a bare 404
     // and no header. That difference is what the driven case keys on, so a

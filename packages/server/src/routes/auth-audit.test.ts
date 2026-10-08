@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { createTestAccount, createTestContext } from "../test-utils.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 
@@ -30,8 +30,10 @@ async function postForm(
 
 describe("auth audit-row hardening", () => {
   it("sign-in success writes an `auth.sign_in.success` audit row", async () => {
-    ctx = await createTestContext({});
-    await createTestAccount(ctx, "bob@example.com", "correct horse", "Bob");
+    ctx = await createTestContext(
+      {},
+      { email: "bob@example.com", password: "correct horse", name: "Bob" },
+    );
 
     const res = await postForm(ctx, "/auth/sign-in", {
       mode: "password",
