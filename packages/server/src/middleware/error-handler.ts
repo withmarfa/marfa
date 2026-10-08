@@ -5,7 +5,7 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { formatErrorSummary, log, serializeError } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
-import { errorStack } from "../error-text.js";
+import { errorStack, reportableError } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { diskFull } from "../storage/disk-space.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
@@ -115,9 +115,8 @@ export function createErrorHandler(config: {
    * needs a person, and which the refusal's own text says nothing of.
    */
   const report = (err: unknown, c: Context<AppEnv>): void => {
-    // The summary walks the cause chain, so a failed query reads as its
-    // statement and the driver's reason, with the values it was bound to out.
-    const summary = formatErrorSummary(err);
+    const reported = reportableError(err);
+    const summary = formatErrorSummary(reported);
 
     // `request_id` is the join key to the access-log line for the same
     // request, and the path and method say where it was.
@@ -126,11 +125,11 @@ export function createErrorHandler(config: {
       method: c.req.method,
       path: loggablePath(c.req.path),
       error: summary,
-      error_detail: serializeError(err),
-      stack: errorStack(err),
+      error_detail: serializeError(reported),
+      stack: errorStack(reported),
     });
 
-    globalThis.__marfaReportException?.(err, {
+    globalThis.__marfaReportException?.(reported, {
       request_id: c.get("requestId"),
       method: c.req.method,
       path: loggablePath(c.req.path),
@@ -140,11 +139,11 @@ export function createErrorHandler(config: {
     // API-only + null-guarded — no-op when OTel is off.
     const span = trace.getActiveSpan();
     if (span) {
-      if (err instanceof Error) {
+      if (reported instanceof Error) {
         span.recordException({
-          name: err.name,
+          name: reported.name,
           message: summary,
-          stack: errorStack(err),
+          stack: errorStack(reported),
         });
       }
       span.setStatus({ code: SpanStatusCode.ERROR });

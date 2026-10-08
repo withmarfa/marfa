@@ -33,7 +33,7 @@ describe("WriteTracker", () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 
-  it("logs a failed query's statement and not the values it was bound to", async () => {
+  it("logs a failed query as the fixed database failure, and not its statement or the values it was bound to", async () => {
     const tracker = new WriteTracker("last-used");
     const warn = vi.spyOn(console, "warn").mockImplementation(vi.fn());
     const value = "bound-value-3e9d51c0";
@@ -48,8 +48,8 @@ describe("WriteTracker", () => {
     await tracker.track(() => Promise.reject(failed));
 
     const printed = inspect(warn.mock.calls[0], { depth: 8 });
-    expect(printed).toContain("Failed query: update oauth_grants");
-    expect(printed).toContain("SQLITE_BUSY");
+    expect(printed).toContain("Database operation failed");
+    expect(printed).not.toContain("oauth_grants");
     expect(printed).not.toContain(value);
   });
 

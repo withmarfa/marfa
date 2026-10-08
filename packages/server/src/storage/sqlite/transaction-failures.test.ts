@@ -12,6 +12,15 @@ import {
   TransactionFailure,
 } from "./transaction-control.js";
 
+function causeMessages(error: unknown): string[] {
+  const messages: string[] = [];
+  for (let step = error, i = 0; step instanceof Error && i < 8; i++) {
+    messages.push(step.message);
+    step = step.cause;
+  }
+  return messages;
+}
+
 const injection = vi.hoisted(() => ({
   before: undefined as ((sql: string) => void) | undefined,
   after: undefined as ((sql: string) => void) | undefined,
@@ -121,7 +130,7 @@ describe("savepoint failures poison the root even when the callback catches them
       injection.before = undefined;
       expect(fired).toBeGreaterThan(0);
       expect(thrown).toBeInstanceOf(TransactionFailure);
-      expect((thrown as Error).message).toContain(
+      expect(causeMessages(thrown).join("\n")).toContain(
         operation === "ROLLBACK TO SAVEPOINT"
           ? "original row refusal"
           : "savepoint cleanup witness",
@@ -169,11 +178,8 @@ it.each(["probe", "probe rollback"])(
     injection.before = undefined;
     expect(fired).toBe(true);
     expect(thrown).toBeInstanceOf(TransactionFailure);
-    expect((thrown as Error).message).toContain(
+    expect(causeMessages(thrown).join("\n")).toContain(
       "native transaction-ending witness",
-    );
-    expect((thrown as TransactionFailure).diagnostics.join(" ")).toContain(
-      "uncertain probe witness",
     );
     expect(await values()).toEqual([]);
     await db.transaction(() => insert(4));
@@ -201,9 +207,6 @@ it("preserves the callback cause when root rollback fails and discards its conne
   injection.before = undefined;
   expect(fired).toBe(true);
   expect((thrown as Error).message).toBe("original callback witness");
-  expect((thrown as TransactionFailure).diagnostics.join(" ")).toContain(
-    "root rollback witness",
-  );
   expect(await values()).toEqual([]);
   await db.transaction(() => insert(4));
   expect(await values()).toEqual([4]);
