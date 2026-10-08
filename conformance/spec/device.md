@@ -2562,11 +2562,11 @@ If a purge cannot be sent, then a device MUST refuse it `network` and leave the 
 
 ### `device/purge-accepted`
 
-When the server accepts a purge, a device MUST take the row and its pin out of the copy.
+When the server accepts a purge, a device MUST take the row, the edges at both its ends and its pin out of the copy.
 
 **Reason:** the acceptance is the server's word that the row is gone.
 
-**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`.
+**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, `› takes the edges at both ends of a purged row out of the copy`, `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`.
 
 ### `device/purge-event-after`
 

@@ -12,8 +12,8 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A purge through a working copy (`device/purge-not-held` to `device/purge-unanswered`), run against a real
- * server and the real binary: sent at once and never queued, refused with the
+ * A purge through a working copy, as the chapter's Purging section says, run
+ * against a real server and the real binary: sent at once and never queued, refused with the
  * copy and the queue left as they were, and the row, its edges and its pin
  * taken out once the server answers.
  */
@@ -34,13 +34,24 @@ function value<T>(answer: Outcome<T>): T {
   return answer.value;
 }
 
-async function key(label: string, permissions: string[]): Promise<string> {
+async function key(
+  label: string,
+  permissions: string[],
+  edgeTypes: string[] = [],
+): Promise<string> {
   const minted = await client.createKey({
     label: `${ctx.source}-${label}`,
     source: `${ctx.source}-${label}`,
     default_tier: "library",
     permissions,
     type_permissions: { "core.note": "write" },
+    ...(edgeTypes.length > 0
+      ? {
+          edge_permissions: Object.fromEntries(
+            edgeTypes.map((type) => [type, "read"]),
+          ),
+        }
+      : {}),
   });
   expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
   trackKey(ctx, minted.data.id);
@@ -58,14 +69,18 @@ async function note(title: string, tier: "library" | "feed" = "library") {
   return created.data.item;
 }
 
-async function hydrated(label: string, permissions: string[]) {
+async function hydrated(
+  label: string,
+  permissions: string[],
+  edgeTypes: string[] = [],
+) {
   const device = new CliDevice({
     binary: requireBinary(),
     store: newStore(`purge-${label}`),
     url: apiUrl,
-    key: await key(label, permissions),
+    key: await key(label, permissions, edgeTypes),
   });
-  value(await device.hydrate(["core.note"], "library"));
+  value(await device.hydrate(["core.note"], "library", { edgeTypes }));
   return device;
 }
 
@@ -136,6 +151,34 @@ it("takes the row and its pin out once the server accepts, and the event after c
     before.pinned,
   ]);
   expect(value(await device.queue())).toEqual([]);
+});
+
+it("takes the edges at both ends of a purged row out of the copy", async () => {
+  const doomed = await note("Purged with its edges");
+  const other = await note("At the far end of both edges");
+  trackItem(ctx, other.id);
+  for (const [source_id, target_id] of [
+    [other.id, doomed.id],
+    [doomed.id, other.id],
+  ] as const) {
+    const made = await client.createEdge({
+      source_id,
+      target_id,
+      edge_type: "references",
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  }
+  const device = await hydrated("edges", ["items.purge"], ["references"]);
+  expect((await client.deleteItem(doomed.id)).ok).toBe(true);
+  value(await device.catchUp());
+  // The witness: the copy holds both edges while the row is in the bin.
+  expect(value(await device.status()).edges).toBe(2);
+  value(await device.purgeItem(doomed.id));
+  expect(
+    value(await device.status()).edges,
+    "the copy kept an edge at an end of the purged row",
+  ).toBe(0);
+  expect(value(await device.get(other.id)).id).toBe(other.id);
 });
 
 it("refuses a purge of a row not in the bin, keeping it", async () => {
