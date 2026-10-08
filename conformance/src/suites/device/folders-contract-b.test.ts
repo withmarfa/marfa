@@ -6,8 +6,19 @@ import {
   mkdirSync,
   renameSync,
   symlinkSync,
+  chmodSync,
+  statSync,
+  realpathSync,
+  cpSync,
+  mkdtempSync,
 } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { CliFolder } from "../../device/cli-adapter.js";
+import { keychainEnv } from "../../utils/keychain.js";
+const execute = promisify(execFile);
 import { afterEach, expect, it } from "vitest";
 import {
   copyItemEvent,
@@ -16,11 +27,25 @@ import {
   wireItem,
   wireEdge,
   answers,
+  typeCatalog,
+  wireType,
+  itemsPage,
 } from "../../device/marfa-answers.js";
-import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
+import {
+  folderHarness,
+  scriptWrites,
+  scriptBlob,
+  hashOf,
+  KEY,
+  requireBinary,
+  type FolderHarness,
+} from "./harness.js";
 
 let harness: FolderHarness | undefined;
+let second: FolderHarness | undefined;
 afterEach(async () => {
+  await second?.stop();
+  second = undefined;
   await harness?.stop();
   harness = undefined;
 });
@@ -314,21 +339,33 @@ it("reports every built-in package extension without scanning its contents", asy
   ).toEqual(packages.map((p) => [p, "package"]).sort());
 });
 
-it("does not send a placement for a rename changing only case", async () => {
-  harness = await folderHarness("contract-b-case-rename", {
-    rows: { "core.note": [row(0)] },
-  });
-  expect((await harness.folder.pull()).ok).toBe(true);
-  const before = await harness.folder.device().queue();
-  expect(before.ok).toBe(true);
-  renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "note 0.md"));
-  const scan = await harness.folder.scan();
-  expect(scan.ok).toBe(true);
-  const after = await harness.folder.device().queue();
-  expect(after.ok && after.value.map((r) => r.id)).toEqual(
-    before.ok && before.value.map((r) => r.id),
-  );
-});
+it.each(["CAFÉ.md", "Cafe\u0301.md"])(
+  "does not send a placement for an equivalent rename to %s",
+  async (name) => {
+    harness = await folderHarness("contract-b-case-rename", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              ...row(0).item,
+              properties: { ...row(0).item.properties, title: "Café" },
+            },
+          },
+        ],
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const before = await harness.folder.device().queue();
+    expect(before.ok).toBe(true);
+    renameSync(join(harness.dir, "Café.md"), join(harness.dir, name));
+    const scan = await harness.folder.scan();
+    expect(scan.ok).toBe(true);
+    const after = await harness.folder.device().queue();
+    expect(after.ok && after.value.map((r) => r.id)).toEqual(
+      before.ok && before.value.map((r) => r.id),
+    );
+  },
+);
 
 it("does not scan a symlinked file or directory even when included", async () => {
   harness = await folderHarness("contract-b-links", {
@@ -559,5 +596,518 @@ it.each(["create", "edit"] as const)(
           (f) => f.path === (kind === "edit" ? "Note 0.md" : "new.md"),
         )?.flag,
     ).toBe(kind === "edit" ? "refused" : "lost");
+  },
+);
+
+it("warns at the exact JSON-encoded size boundary including escaped text", async () => {
+  const prefix = "---\ntype: user.large_text\n---\n";
+  const limit = 943718;
+  const plain = (size: number) =>
+    prefix + "x".repeat(size - JSON.stringify(prefix).length);
+  const escapedCount = Math.floor((limit - JSON.stringify(prefix).length) / 2);
+  const escaped =
+    prefix +
+    '"'.repeat(escapedCount) +
+    "x".repeat((limit - JSON.stringify(prefix).length) % 2);
+  expect(JSON.stringify(plain(limit - 1)).length).toBe(limit - 1);
+  expect(JSON.stringify(plain(limit)).length).toBe(limit);
+  expect(JSON.stringify(escaped).length).toBe(limit);
+  harness = await folderHarness("contract-b-size-boundary", {
+    settings: { search: { types: ["user.large_text"] } },
+    catalog: typeCatalog([
+      wireType("user.large_text", {
+        bodyField: "body",
+        fields: {
+          title: { type: "string" },
+          body: { type: "string", maxLength: 1_000_000 },
+        },
+      }),
+    ]),
+  });
+  writeFileSync(join(harness.dir, "below.md"), plain(limit - 1));
+  writeFileSync(join(harness.dir, "at.md"), plain(limit));
+  writeFileSync(join(harness.dir, "escaped.md"), escaped);
+  const scanned = await harness.folder.scan();
+  expect(scanned.ok && scanned.value.created).toBe(3);
+  expect(
+    scanned.ok && scanned.value.warnings.map((f) => f.path).sort(),
+  ).toEqual(["at.md", "escaped.md"]);
+  if (scanned.ok)
+    for (const warning of scanned.value.warnings)
+      expect(warning.reason).toContain(`${String(limit)} bytes`);
+  const status = await harness.folder.status();
+  expect(
+    status.ok &&
+      status.value.files
+        .filter((f) => f.warning !== undefined)
+        .map((f) => f.path)
+        .sort(),
+  ).toEqual(["at.md", "escaped.md"]);
+});
+
+it("keeps confirmed missing files unsure while another registered folder is unavailable", async () => {
+  harness = await folderHarness("contract-b-confirm-unsure", {
+    rows: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  second = await folderHarness("contract-b-confirm-peer", {
+    sharing: { server: harness.server, key: KEY },
+    registry: harness.registry,
+    settings: { search: { types: ["core.bookmark"] } },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  for (const n of [0, 1, 2]) rmSync(join(harness.dir, `Note ${String(n)}.md`));
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  const away = second.dir + "-away";
+  renameSync(second.dir, away);
+  try {
+    const result = await harness.folder.device().root<{
+      deleted: number;
+      unsure: Array<{ path: string; reason: string }>;
+    }>(["folders", "confirm", harness.dir]);
+    expect(result.ok && result.value.deleted).toBe(0);
+    expect(result.ok && result.value.unsure.map((f) => f.path).sort()).toEqual([
+      "Note 0.md",
+      "Note 1.md",
+      "Note 2.md",
+    ]);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((r) => r.kind === "delete_item"),
+    ).toEqual([]);
+  } finally {
+    renameSync(away, second.dir);
+  }
+  const confirmed = await harness.folder.confirm();
+  expect(confirmed.ok).toBe(true);
+  // Once the folder can be checked, ordinary scans can settle the deletion.
+  await new Promise((resolve) => setTimeout(resolve, 6000));
+  const rescanned = await harness.folder.scan();
+  expect(rescanned.ok && rescanned.value.paused).toBe(3);
+  const released = await harness.folder.confirm();
+  expect(released.ok && released.value.deleted).toBe(3);
+});
+
+it("registers the resolved directory, followed folder and store identity", async () => {
+  harness = await folderHarness("contract-b-registry-store");
+  const registry = JSON.parse(readFileSync(harness.registry, "utf8")) as {
+    folders: Array<{ dir: string; folder: string; store: string }>;
+  };
+  expect(registry.folders).toHaveLength(1);
+  expect(registry.folders[0]).toMatchObject({
+    dir: realpathSync(harness.dir),
+    folder: harness.settings.id,
+    store: expect.any(String),
+  });
+  expect(registry.folders[0]!.store.length).toBeGreaterThan(0);
+});
+
+async function fileHarness(label: string) {
+  const bytes = Buffer.from("file bytes");
+  const item = {
+    id: row(0).item.id,
+    type: "core.file",
+    version: 1,
+    properties: {
+      title: "file.bin",
+      blob_ref: hashOf(bytes),
+      mime_type: "application/octet-stream",
+      executable: false,
+    },
+  };
+  const made = await folderHarness(label, {
+    settings: { search: { types: ["core.file", "core.note"] } },
+    rows: { "core.file": [{ item }], "core.note": [row(1)] },
+    events: [
+      copyReplay("3", [
+        copyItemEvent(
+          "2",
+          "item.updated",
+          wireItem({
+            ...item,
+            version: 2,
+            properties: { ...item.properties, executable: true },
+          }),
+        ),
+        copyItemEvent("3", "item.created", wireItem(row(2).item)),
+      ]),
+    ],
+  });
+  scriptBlob(made.server, bytes);
+  return made;
+}
+
+it("applies execute bits only where each read bit is set", async () => {
+  harness = await fileHarness("contract-b-execute-bits");
+  expect((await harness.folder.pull()).ok).toBe(true);
+  chmodSync(join(harness.dir, "file.bin"), 0o640);
+  expect((await harness.folder.scan()).ok).toBe(true);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect(statSync(join(harness.dir, "file.bin")).mode & 0o777).toBe(0o750);
+});
+
+it("leaves executable permissions alone when its permission probe fails", async () => {
+  harness = await fileHarness("contract-b-no-permissions");
+  expect((await harness.folder.pull()).ok).toBe(true);
+  mkdirSync(join(harness.dir, ".marfa", ".permission-probe"));
+  chmodSync(join(harness.dir, "file.bin"), 0o640);
+  expect((await harness.folder.scan()).ok).toBe(true);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect(statSync(join(harness.dir, "file.bin")).mode & 0o777).toBe(0o640);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok && queued.value.filter((r) => r.kind === "update_item"),
+  ).toEqual([]);
+});
+
+async function fault<T>(name: string, action: () => Promise<T>): Promise<T> {
+  const previous = process.env.MARFA_TEST_FAULT;
+  process.env.MARFA_TEST_FAULT = name;
+  try {
+    return await action();
+  } finally {
+    if (previous === undefined) delete process.env.MARFA_TEST_FAULT;
+    else process.env.MARFA_TEST_FAULT = previous;
+  }
+}
+
+it.skipIf(process.platform !== "darwin")(
+  "refuses a new downloaded file when quarantine marking fails and retries it",
+  async () => {
+    harness = await fileHarness("contract-b-quarantine-fails");
+    const failed = await fault("quarantine-fails", () =>
+      harness!.folder.pull(),
+    );
+    expect(failed.ok && [failed.value.unwritten, failed.value.written]).toEqual(
+      [1, 1],
+    );
+    expect(existsSync(join(harness.dir, "file.bin"))).toBe(false);
+    expect(existsSync(join(harness.dir, "Note 1.md"))).toBe(true);
+    const recovered = await harness.folder.pull();
+    expect(recovered.ok && recovered.value.written).toBe(1);
+    expect(readFileSync(join(harness.dir, "file.bin"), "utf8")).toBe(
+      "file bytes",
+    );
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "keeps an existing file nonexecutable when quarantine marking fails",
+  async () => {
+    harness = await fileHarness("contract-b-quarantine-existing");
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    expect(
+      (await fault("quarantine-fails", () => harness!.folder.pull())).ok,
+    ).toBe(true);
+    expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0o111);
+  },
+);
+
+it("keeps a file's permissions when a permission change is refused and continues pulling", async () => {
+  harness = await fileHarness("contract-b-permission-fails");
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect((await harness.folder.scan()).ok).toBe(true);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  const failed = await fault("permission-change-fails", () =>
+    harness!.folder.pull(),
+  );
+  expect(failed.ok && failed.value.written).toBe(1);
+  expect(existsSync(join(harness.dir, "Note 2.md"))).toBe(true);
+  expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0o111);
+});
+
+it("chooses a bound path before path order when names compare equal", async () => {
+  harness = await folderHarness("contract-b-case-sensitive");
+  const scratch = mkdtempSync(join(tmpdir(), "marfa-case-sensitive-"));
+  const mount = join(scratch, "volume");
+  mkdirSync(mount);
+  let attached = false;
+  try {
+    if (process.platform === "darwin") {
+      const image = join(scratch, "case.sparseimage");
+      await execute("hdiutil", [
+        "create",
+        "-size",
+        "256m",
+        "-type",
+        "SPARSE",
+        "-fs",
+        "Case-sensitive APFS",
+        "-volname",
+        "conformance",
+        image,
+      ]);
+      await execute("hdiutil", [
+        "attach",
+        image,
+        "-mountpoint",
+        mount,
+        "-nobrowse",
+        "-noautoopen",
+      ]);
+      attached = true;
+    }
+    const dir = join(mount, "notes");
+    cpSync(harness.dir, dir, { recursive: true });
+    rmSync(harness.dir, { recursive: true });
+    harness.dir = dir;
+    harness.folder = new CliFolder(dir, {
+      binary: requireBinary(),
+      url: harness.server.url,
+      key: KEY,
+      registry: harness.registry,
+    });
+    writeFileSync(join(dir, "alpha.md"), "already bound\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    writeFileSync(join(dir, "Alpha.md"), "unbound earlier path\n");
+    writeFileSync(join(dir, "BETA.md"), "unbound earlier beta\n");
+    writeFileSync(join(dir, "beta.md"), "unbound later beta\n");
+    expect(statSync(join(dir, "alpha.md")).ino).not.toBe(
+      statSync(join(dir, "Alpha.md")).ino,
+    );
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.created).toBe(1);
+    expect(
+      scanned.ok && scanned.value.flagged.map((f) => [f.path, f.flag]).sort(),
+    ).toEqual([
+      ["Alpha.md", "name"],
+      ["beta.md", "name"],
+    ]);
+    renameSync(join(dir, "Alpha.md"), join(dir, "distinct.md"));
+    const renamed = await harness.folder.scan();
+    expect(renamed.ok && renamed.value.created).toBe(1);
+  } finally {
+    if (attached) await execute("hdiutil", ["detach", mount]);
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+it.each(["yes", "no"])(
+  "asks before first sync at a terminal and obeys %s",
+  async (answer) => {
+    harness = await folderHarness("contract-b-terminal", {
+      rows: { "core.note": [row(0)] },
+      confirm: false,
+    });
+    const args = [
+      requireBinary(),
+      "folders",
+      "add",
+      harness.dir,
+      "--folder",
+      harness.settings.id,
+      "--url",
+      harness.server.url,
+      "--key",
+      KEY,
+    ];
+    const terminal = String.raw`
+import errno, os, pty, select, signal, sys, time
+answer = sys.argv[1]
+pid, master = pty.fork()
+if pid == 0:
+    os.execv(sys.argv[2], sys.argv[2:])
+output = b""
+answered = False
+finished = False
+try:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if not select.select([master], [], [], 0.1)[0]:
+            continue
+        try:
+            chunk = os.read(master, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        output += chunk
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+        if not answered and b"Go ahead? [y/N]" in output:
+            os.write(master, (answer + "\n").encode())
+            answered = True
+    else:
+        raise RuntimeError("terminal command did not finish")
+    _, status = os.waitpid(pid, 0)
+    finished = True
+    sys.exit(os.waitstatus_to_exitcode(status))
+finally:
+    if not finished:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    os.close(master)
+`;
+    const { stdout: output } = await execute(
+      "python3",
+      ["-c", terminal, answer, ...args],
+      {
+        env: {
+          ...process.env,
+          ...keychainEnv(),
+          MARFA_FOLDER_REGISTRY: harness.registry,
+        },
+      },
+    );
+    expect(output).toContain("Go ahead? [y/N]");
+    const status = await harness.folder.status();
+    expect(status.ok).toBe(true);
+    if (status.ok)
+      expect(status.value.first_sync !== undefined).toBe(answer === "no");
+  },
+);
+
+it("keeps first sync confirmed after a failed landing and after adding the folder again", async () => {
+  harness = await folderHarness("contract-b-confirm-persist", {
+    rows: { "core.note": [row(0)] },
+    confirm: false,
+  });
+  expect((await harness.folder.confirm()).ok).toBe(true);
+  const failed = await fault("sync-failure=Note 0.md", () =>
+    harness!.folder.pull(),
+  );
+  expect(failed.ok && failed.value.unwritten).toBe(1);
+  const status = await harness.folder.status();
+  expect(status.ok && status.value.first_sync).toBeUndefined();
+  const added = await harness.folder.add(harness.settings.id, {
+    confirm: false,
+  });
+  expect(added.ok && added.value.first_sync.waiting).toBe(false);
+  const recovered = await harness.folder.pull();
+  expect(recovered.ok && recovered.value.written).toBe(1);
+});
+
+it("writes an archived embedded file anew without counting it as put back", async () => {
+  const bytes = Buffer.from("embedded bytes");
+  const host = row(0).item;
+  host.properties.body = "![](file.bin)\n";
+  const file = {
+    id: row(1).item.id,
+    type: "core.file",
+    version: 1,
+    properties: {
+      title: "file.bin",
+      blob_ref: hashOf(bytes),
+      mime_type: "application/octet-stream",
+    },
+  };
+  harness = await folderHarness("contract-b-restore-embed", {
+    settings: {
+      search: { types: ["core.note"], state: ["active"] },
+      removal_threshold: { files: 0, fraction: 0 },
+    },
+    rows: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
+    edges: {
+      "attached-to": [
+        {
+          id: "01a00000-0000-7000-8000-000000008888",
+          source_id: file.id,
+          target_id: host.id,
+          edge_type: "attached-to",
+        },
+      ],
+    },
+    events: [
+      copyReplay("2", [
+        copyItemEvent(
+          "2",
+          "item.state_changed",
+          wireItem({ ...file, state: "archived" }),
+        ),
+      ]),
+    ],
+  });
+  let archived = false;
+  harness.server.copyAnswer("GET", `/items/${file.id}`, () =>
+    answers.updated(
+      wireItem({ ...file, state: archived ? "archived" : "active" }),
+    ),
+  );
+  scriptBlob(harness.server, bytes);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
+  rmSync(join(harness.dir, "file.bin"));
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(1);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  archived = true;
+  const restored = await harness.folder.restore();
+  expect(restored.ok && restored.value.put_back).toBe(0);
+  expect(readFileSync(join(harness.dir, "file.bin"))).toEqual(bytes);
+  const scan = await harness.folder.scan();
+  expect(scan.ok && scan.value.missing).toBe(0);
+});
+
+it("matches include names in NFC regardless of case and asks server names in both forms", async () => {
+  harness = await folderHarness("contract-b-unicode-list", {
+    settings: { search: { types: ["core.note"] }, include: ["CAFÉ.md"] },
+  });
+  writeFileSync(join(harness.dir, "Cafe\u0301.md"), "unicode note\n");
+  writeFileSync(join(harness.dir, "other.md"), "other\n");
+  const scan = await harness.folder.scan();
+  expect(scan.ok && scan.value.created).toBe(1);
+  await harness.stop();
+  harness = undefined;
+  const looked: string[] = [];
+  harness = await folderHarness("contract-b-unicode-lookup", {
+    lookup: (text) => {
+      looked.push(text);
+      return itemsPage([]);
+    },
+  });
+  writeFileSync(join(harness.dir, "source.md"), "[[Café]]\n");
+  scriptWrites(harness.server, {
+    create: [refusal(413, "request_too_large", "fixture refuses create")],
+    read: [refusal(404, "item_not_found", "fixture holds no item")],
+  });
+  harness.server.copyAnswer(
+    "GET",
+    /^\/edges\/[^/]+$/,
+    refusal(404, "edge_not_found", "no edge"),
+  );
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(looked).toContain("Café");
+  expect(looked).toContain("Cafe\u0301");
+});
+
+it.each(["ignore", "dot directory"])(
+  "matches Unicode %s patterns with the folder name equivalence",
+  async (kind) => {
+    harness = await folderHarness("contract-b-unicode-other-lists", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: kind === "ignore" ? ["*"] : [".CAFÉ/**"],
+        ignore: kind === "ignore" ? ["CAFÉ.md"] : [],
+      },
+    });
+    if (kind === "ignore") {
+      writeFileSync(join(harness.dir, "Cafe\u0301.md"), "excluded\n");
+      writeFileSync(join(harness.dir, "witness.md"), "included\n");
+    } else {
+      mkdirSync(join(harness.dir, ".Cafe\u0301"));
+      writeFileSync(
+        join(harness.dir, ".Cafe\u0301", "inside.md"),
+        "included\n",
+      );
+      mkdirSync(join(harness.dir, ".other"));
+      writeFileSync(join(harness.dir, ".other", "outside.md"), "excluded\n");
+    }
+    const scan = await harness.folder.scan();
+    expect(scan.ok && scan.value.created).toBe(1);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.files.map((file) => file.path)).toEqual([
+      kind === "ignore" ? "witness.md" : ".Cafe\u0301/inside.md",
+    ]);
   },
 );

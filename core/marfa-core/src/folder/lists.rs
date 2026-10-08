@@ -2,7 +2,6 @@ use std::path::Path;
 
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::Result;
 use crate::error::CoreError;
@@ -142,7 +141,7 @@ impl Lists {
     /// Whether the folder takes the file at `relative`, a path inside it
     /// with `/` between its names.
     pub fn takes(&self, relative: &str) -> bool {
-        let path: String = relative.nfc().collect();
+        let path = crate::names::folded(relative);
         if [&self.machine, &self.secrets, &self.ignore]
             .into_iter()
             .any(|list| hit(list, &path, false))
@@ -168,14 +167,14 @@ impl Lists {
     }
 
     pub(super) fn secret(&self, relative: &str) -> bool {
-        let path: String = relative.nfc().collect();
+        let path = crate::names::folded(relative);
         hit(&self.secrets, &path, false)
     }
 
     /// A secret's name is refused file by file, so a package named like one is
     /// still reported.
     pub(super) fn enters(&self, relative: &str) -> bool {
-        let path: String = relative.nfc().collect();
+        let path = crate::names::folded(relative);
         if hit(&self.machine, &path, true) || hit(&self.ignore, &path, true) {
             return false;
         }
@@ -194,10 +193,10 @@ fn built(list: &str, lines: &[String]) -> Result<Gitignore> {
         .case_insensitive(true)
         .map_err(|error| refused(list, "", &error.to_string()))?;
     for line in lines {
-        let line: String = line.nfc().collect();
+        let pattern = crate::names::folded(line);
         builder
-            .add_line(None, &line)
-            .map_err(|error| refused(list, &line, &error.to_string()))?;
+            .add_line(None, &pattern)
+            .map_err(|error| refused(list, line, &error.to_string()))?;
     }
     builder
         .build()
@@ -213,8 +212,7 @@ fn refused(list: &str, line: &str, why: &str) -> CoreError {
 fn dot_names(line: &str) -> Vec<String> {
     let line = line.trim();
     let line = line.strip_prefix('!').unwrap_or(line);
-    line.nfc()
-        .collect::<String>()
+    crate::names::folded(line)
         .split('/')
         .filter(|name| name.starts_with('.') && *name != "." && *name != "..")
         .map(str::to_string)

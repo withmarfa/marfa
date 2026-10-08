@@ -49,6 +49,9 @@ pub fn kept(_dir: &Path) -> bool {
 
 #[cfg(unix)]
 pub fn set(path: &Path, executable: bool) -> std::io::Result<()> {
+    if crate::fault::named("permission-change-fails").is_some() {
+        return Err(std::io::Error::other("permission change refused"));
+    }
     use std::os::unix::fs::PermissionsExt;
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.is_file() {
@@ -81,6 +84,9 @@ pub const QUARANTINE: &str = "com.apple.quarantine";
 /// last field names no download event.
 #[cfg(target_os = "macos")]
 pub fn quarantine(path: &Path) -> std::io::Result<()> {
+    if crate::fault::named("quarantine-fails").is_some() {
+        return Err(std::io::Error::other("quarantine marking refused"));
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
