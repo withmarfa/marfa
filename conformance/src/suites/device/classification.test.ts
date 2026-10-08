@@ -700,6 +700,33 @@ describe("the class that is neither retries and is counted", () => {
     expect(queue.value.find((row) => row.id === edit)?.refusals).toBe(1);
   });
 
+  it("reports a write the store failed to record at the ceiling dead, with no reason", async () => {
+    const { device, edit } = await storeFaulted(
+      "class-store-fails-dead",
+      "store-fails-at-answer",
+    );
+    process.env.MARFA_TEST_FAULT = `store-fails-at-answer=${edit}`;
+    let last: DrainReport | undefined;
+    try {
+      for (let pass = 1; pass < 5; pass += 1) {
+        const drained = await device.drain();
+        expect(drained.ok, JSON.stringify(drained)).toBe(true);
+        if (drained.ok) last = drained.value;
+      }
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+    const entry = last?.verdicts.find((verdict) => verdict.id === edit);
+    expect(
+      [entry?.verdict, entry?.refusals],
+      "the fifth answer the store could not record did not make the write dead",
+    ).toEqual(["dead", 5]);
+    expect(
+      entry?.reason,
+      "the drain reported a dead write with a reason the queue does not hold",
+    ).toBeNull();
+  });
+
   it("ends the drain storage_full when the store fills as it takes an answer, counting nothing", async () => {
     const { server, device, edit, drained } = await storeFaulted(
       "class-store-full",

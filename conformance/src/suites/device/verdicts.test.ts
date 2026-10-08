@@ -822,6 +822,18 @@ describe("the server did not take the write", () => {
       report.verdicts[0]?.reason,
       "the verdict does not carry the server's own code, so a caller is told the write failed and not what the server said",
     ).toBe("type_forbidden");
+    const queued = await harness.device.queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    expect(
+      JSON.parse(queued.value[0]?.answer ?? "null"),
+      "the queue does not keep the server's refusal whole",
+    ).toEqual({
+      error: {
+        code: "type_forbidden",
+        message: "this key may not write core.note",
+      },
+    });
 
     // Not sent again, and the copy is put back to what the server holds.
     const sentBefore = harness.server.requests.filter(
@@ -935,6 +947,40 @@ describe("the server did not take the write", () => {
     expect(await harness.device.queue()).toMatchObject({ ok: true, value: [] });
   });
 
+  it.each([
+    ["404 item_not_found", refusal(404, "item_not_found", "Item not found")],
+    [
+      "403 type_not_permitted",
+      refusal(403, "type_not_permitted", "this key may not read core.note"),
+    ],
+  ])(
+    "refused: lets the row go where the read-back is answered %s",
+    async (_status, read) => {
+      harness = await hydratedHarness("verdicts-refused-read-gone", {
+        rows: held(),
+      });
+      const created = await harness.device.create({
+        type: "core.note",
+        properties: { title: "never lands", body: "never lands" },
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+      const id = created.value.item_id ?? "";
+      // The witness: the row was shown before the drain.
+      expect((await harness.device.get(id)).ok).toBe(true);
+      scriptWrites(harness.server, {
+        create: [refusal(400, "invalid_properties", "body is required")],
+        read: [read],
+      });
+      const drained = await harness.device.drain();
+      expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+      const gone = await harness.device.get(id);
+      expect(
+        gone.ok ? "held" : gone.refusal.code,
+        "a read-back saying the server holds no row the key reads left the refused create's row in the copy",
+      ).toBe("not_held");
+    },
+  );
+
   it("refused: keeps the row the copy holds where the read-back answers an older one", async () => {
     // The copy holds the row as a later write stamped it, which a follow on
     // the same core can bring between the read-back and its write. The
@@ -1035,9 +1081,13 @@ describe("the server did not take the write", () => {
     expect(queue.ok).toBe(true);
     if (!queue.ok) return;
     expect(
-      queue.value.map((row) => row.refusal?.code),
+      queue.value.map((row) => row.refusal),
       "the queue does not read the refusal it holds the way the drain reported it",
-    ).toEqual(["invalid_properties", "type_not_permitted"]);
+    ).toEqual(drained.value.verdicts.map((verdict) => verdict.refusal));
+    expect(queue.value.map((row) => row.refusal?.code)).toEqual([
+      "invalid_properties",
+      "type_not_permitted",
+    ]);
   });
 
   it("refused: says when the row a write named is in the bin", async () => {

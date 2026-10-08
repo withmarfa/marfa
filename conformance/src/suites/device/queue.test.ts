@@ -6418,6 +6418,138 @@ describe("an edit behind an edit of the same row", () => {
     ).toEqual([3, { weight: 2, color: "red" }]);
   });
 
+  it("keeps the later edge a catch-up brought where the read after an edge answer returns an older one", async () => {
+    harness = await startHarness("edge-read-older-than-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("12", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          edgeRow(EDGE, HELD.id, QUIET.id, 2, { weight: 2 }),
+        ),
+        edgeEvent(
+          "12",
+          "edge.updated",
+          edgeRow(EDGE, HELD.id, QUIET.id, 3, { weight: 2, color: "red" }),
+        ),
+      ]),
+    );
+    const atTwo = writeAnswers.edge(
+      {
+        id: EDGE,
+        source_id: HELD.id,
+        target_id: QUIET.id,
+        version: 2,
+        properties: { weight: 2 },
+      },
+      200,
+    );
+    // A read that lags the stream answers the edge as it was at 2.
+    server.copyAnswer("GET", `/edges/${EDGE}`, atTwo);
+    let sends = 0;
+    server.answer("PATCH", /^\/edges\/[^/]+$/, () => {
+      sends += 1;
+      return sends === 1 ? answers.dropped() : atTwo;
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await editEdge(device, { weight: 2 }, 1);
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const edges = await device.edgesFrom(HELD.id);
+    const stored = edges.ok
+      ? edges.value.find((row) => row.id === EDGE)
+      : undefined;
+    expect(
+      [stored?.version, stored?.properties],
+      "the copy took an edge read at 2 over the edge at 3 the stream had brought",
+    ).toEqual([3, { weight: 2, color: "red" }]);
+  });
+
+  it("holds the edge a fresh read returns where it differs from the edge the answer carried", async () => {
+    harness = await startHarness("edge-fresh-read");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const edge = (version: number, properties: Record<string, unknown>) =>
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version,
+          properties,
+        },
+        200,
+      );
+    server.answer("PATCH", `/edges/${EDGE}`, edge(2, { weight: 2 }));
+    // Another device wrote between the answer and the read.
+    server.copyAnswer(
+      "GET",
+      `/edges/${EDGE}`,
+      edge(3, { weight: 2, color: "red" }),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await editEdge(device, { weight: 2 }, 1);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const edges = await device.edgesFrom(HELD.id);
+    const stored = edges.ok
+      ? edges.value.find((row) => row.id === EDGE)
+      : undefined;
+    expect(
+      [stored?.version, stored?.properties],
+      "the copy took the edge the answer carried over the edge the read after it returned",
+    ).toEqual([3, { weight: 2, color: "red" }]);
+  });
+
+  it("keeps the later row a catch-up brought where the read after an answer returns an older one", async () => {
+    harness = await startHarness("read-older-than-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const atFour = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "first" },
+    });
+    const { edges: _four, ...four } = atFour;
+    const { edges: _five, ...five } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 2,
+      properties: { title: "elsewhere", body: "first" },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("12", [
+        copyItemEvent("11", "item.updated", four),
+        copyItemEvent("12", "item.updated", five),
+      ]),
+    );
+    // A read that lags the stream answers the row as it was at 4.
+    server.copyAnswer("GET", `/items/${HELD.id}`, answers.updated(atFour));
+    let sends = 0;
+    server.answer("PATCH", /^\/items\/[^/]+$/, () => {
+      sends += 1;
+      return sends === 1 ? answers.dropped() : answers.updated(atFour);
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await edit(device, HELD.id, { body: "first" }, HELD.version);
+    expect((await device.drain()).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const report = await drained(device);
+    expect(report.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+    const read = await device.get(HELD.id);
+    expect(
+      read.ok ? [read.value.version, read.value.properties.title] : [],
+      "the copy took a row read at 4 over the row at 5 the stream had brought",
+    ).toEqual([HELD.version + 2, "elsewhere"]);
+  });
+
   it("never changes the body of an edit that went out unanswered when a write ahead of it lands", async () => {
     harness = await hydratedHarness("sent-body-kept", { rows: rows() });
     const { device, server } = harness;
