@@ -1,8 +1,8 @@
 /**
  * Every state-changing door Marfa serves under `/auth` refuses a request from
- * another origin, or is named here as one no browser cookie reaches.
+ * another origin when it carries an owner browser cookie.
  *
- * **A census, because the guard is one middleware registered per door.** A
+ * **A census, because guards are registered per door or owner context.** A
  * door added under `/auth` without it reads as finished from every angle a
  * test of that door alone can see. So the doors are read out of the app's own
  * route table and each has to be classified, and every guarded door is then
@@ -27,11 +27,12 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 const FOREIGN = "https://foreign.example";
 
-/** Doors no browser cookie reaches, each with why. */
-const BEARER_ONLY: Record<string, string> = {
-  "DELETE /auth/grants/:id":
-    "takes a bearer credential with grants.manage; the credential middleware reads no cookie",
-};
+/** Browser doors guarded by owner authority or their own origin check. */
+const OWNER_COOKIE_DOORS = [
+  "POST /auth/owner/password",
+  "DELETE /auth/grants/:id",
+];
+const COOKIE_DOORS = [...BROWSER_FORM_DOORS, ...OWNER_COOKIE_DOORS];
 
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -68,12 +69,10 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
     ctx = await createTestContext();
     const doors = marfaAuthDoors(ctx);
     expect(doors.length).toBeGreaterThan(3);
-    expect(doors).toEqual(
-      [...BROWSER_FORM_DOORS, ...Object.keys(BEARER_ONLY)].sort(),
-    );
+    expect(doors).toEqual([...COOKIE_DOORS].sort());
   });
 
-  for (const door of BROWSER_FORM_DOORS) {
+  for (const door of COOKIE_DOORS) {
     const [method, path] = door.split(" ") as [string, string];
 
     it(`${door} refuses a foreign Origin, and a foreign Referer when Origin is absent`, async () => {

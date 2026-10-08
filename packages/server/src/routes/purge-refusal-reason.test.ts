@@ -63,7 +63,9 @@ describe("purging a row a working credential may not write", () => {
     // alone, because the code is what a machine reads and the message is
     // what sent somebody to the wrong place.
     expect(body.error.message).toContain("system.*");
-    expect(body.error.message).toContain("no credential writes");
+    expect(body.error.message).toContain(
+      "credentials cannot write them directly",
+    );
     // And it does NOT say the thing that misdirected: a caller told to trash
     // first will try, be refused there too, and learn nothing either time.
     expect(body.error.message).not.toContain("trashed");

@@ -101,12 +101,11 @@ describe("a bulk-action job queued by a signed-in app", () => {
     );
     expect(cancel.status).toBe(200);
 
-    // The witness: another person signed in to the same app is not its owner.
-    const someoneElse = await seedOauthBearer(ctx, SCOPES);
-    const elsewhere = await refreshed(
-      first.clientId,
-      await personOf(someoneElse.grantId),
-    );
+    // Another app signed in as this owner does not own the first app's job.
+    const anotherApp = await seedOauthBearer(ctx, SCOPES);
+    expect(await personOf(anotherApp.grantId)).toBe(person);
+    expect(anotherApp.clientId).not.toBe(first.clientId);
+    const elsewhere = await refreshed(anotherApp.clientId, person);
     const refused = await request(
       ctx.app,
       "GET",
