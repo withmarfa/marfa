@@ -30,7 +30,7 @@ async function storeKey(): Promise<string> {
       source: `expiring-${suffix}`,
       type_permissions: { "core.note": "read" },
       default_tier: "library",
-      is_operator: false,
+
     },
     hashApiKey(`marfa_k1_expiring_${suffix}`, TEST_API_KEY_SALT),
   );
@@ -64,7 +64,7 @@ describe("a key past its expiry", () => {
     await stampExpiry(live, FUTURE);
     expect(await listed(live)).toBe(true);
     const renamed = await request(ctx.app, "PATCH", `/keys/${live}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { label: "still here" },
     });
     expect(renamed.status).toBe(200);
@@ -77,7 +77,7 @@ describe("a key past its expiry", () => {
       ["DELETE", undefined],
     ] as const) {
       const res = await request(ctx.app, method, `/keys/${gone}`, {
-        key: ctx.operatorKey,
+        headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
         body,
       });
       expect(res.status, method).toBe(404);
@@ -87,7 +87,7 @@ describe("a key past its expiry", () => {
     }
 
     const revoked = await request(ctx.app, "DELETE", `/keys/${live}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(revoked.status).toBe(200);
   });

@@ -31,7 +31,7 @@ async function storeKey(
       source: `reach-${suffix}`,
       type_permissions: {},
       default_tier: "library",
-      is_operator: false,
+
       ...input,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
@@ -56,7 +56,7 @@ describe("the keys a signed-in app reaches", () => {
   const scopes = ["openid", "keys.mint", "core.note:read"];
 
   it("revokes, changes and lists a key its grant covers", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+    const { token } = await seedOauthBearer(ctx, scopes, {});
     const target = await storeKey({
       type_permissions: { "core.note": "read" },
     });
@@ -81,7 +81,7 @@ describe("the keys a signed-in app reaches", () => {
   });
 
   it("is answered as for no key on one its grant does not cover", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+    const { token } = await seedOauthBearer(ctx, scopes, {});
     const wider = await storeKey({ type_permissions: { "*": "write" } });
     // The grant carries `keys.mint`, which the target holds as well, so the
     // only thing beyond the grant is the type map.
@@ -115,7 +115,7 @@ describe("the keys a signed-in app reaches", () => {
 
   it("does not reach a key holding any extension reach, which no grant names", async () => {
     const { token } = await seedOauthBearer(
-      ctx.storage,
+      ctx,
       ["openid", "keys.mint", "*:write"],
       {},
     );
@@ -143,7 +143,7 @@ describe("the keys a signed-in app reaches", () => {
   });
 
   it("does not reach a key holding a permission the grant lacks", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+    const { token } = await seedOauthBearer(ctx, scopes, {});
     const auditor = await storeKey({
       type_permissions: { "core.note": "read" },
       permissions: ["audit.read"],
@@ -155,9 +155,9 @@ describe("the keys a signed-in app reaches", () => {
   });
 
   it("never reaches an operator key, though it holds nothing", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+    const { token } = await seedOauthBearer(ctx, scopes, {});
     const operator = await request(ctx.app, "GET", "/keys/current", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     const { id } = (await operator.json()) as { id: string };
 
@@ -268,7 +268,7 @@ describe("the keys a working key reaches", () => {
     );
 
     const operator = await request(ctx.app, "DELETE", `/keys/${target.id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(operator.status).toBe(404);
     const err = (await operator.json()) as { error: { message: string } };
@@ -285,7 +285,7 @@ describe("the key an app mints naming no reach", () => {
   ])(
     "is within the reach of the app that minted it, granted %j",
     async (scopes) => {
-      const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+      const { token } = await seedOauthBearer(ctx, scopes, {});
       const minted = await request(ctx.app, "POST", "/keys", {
         key: token,
         body: {

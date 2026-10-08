@@ -45,7 +45,7 @@ beforeAll(async () => {
     sources: [],
   });
   appHoldingEverything = (
-    await seedOauthBearer(ctx.storage, buildAllowedScopes())
+    await seedOauthBearer(ctx, buildAllowedScopes())
   ).token;
 });
 

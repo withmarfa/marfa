@@ -40,7 +40,7 @@ async function dropRefusal() {
 }
 async function mint() {
   const response = await request(ctx.app, "POST", "/keys", {
-    key: ctx.operatorKey,
+    headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     body: { label: "subject", source: "audit-subject" },
   });
   expect(response.status).toBe(201);
@@ -58,7 +58,7 @@ it("rolls key permissions and subscription retirement back when update or revoke
   await refuse("key.update");
   const patch = () =>
     request(ctx.app, "PATCH", `/keys/${subject.id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { type_permissions: { "core.note": "read" } },
     });
   expect((await patch()).status).toBe(500);
@@ -107,7 +107,7 @@ it("rolls key permissions and subscription retirement back when update or revoke
   expect(
     (
       await request(ctx.app, "DELETE", `/keys/${subject.id}`, {
-        key: ctx.operatorKey,
+        headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       })
     ).status,
   ).toBe(404);

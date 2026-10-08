@@ -37,12 +37,12 @@ interface MintedKey {
 }
 
 async function mint(
-  minter: string,
+  minter: string | undefined,
   body: Record<string, unknown>,
 ): Promise<MintedKey> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const res = await request(ctx.app, "POST", "/keys", {
-    key: minter,
+    ...(minter ? { key: minter } : { headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin } }),
     body: { label: `named-${suffix}`, source: `named-${suffix}`, ...body },
   });
   expect(res.status, JSON.stringify(await res.clone().json())).toBe(201);
@@ -64,7 +64,7 @@ const NOTE = {
 
 const minters = [
   ["a full key", () => ctx.workingKey],
-  ["the operator key", () => ctx.operatorKey],
+  ["the direct owner", () => undefined],
 ] as const;
 
 describe("a mint naming only permissions", () => {
@@ -138,7 +138,7 @@ describe("a mint naming only permissions", () => {
   });
 
   it("takes nothing from a creator that claims sources and holds maps", async () => {
-    const creator = await mint(ctx.operatorKey, {
+    const creator = await mint(undefined, {
       permissions: ["audit.read", "keys.mint"],
       type_permissions: { "core.note": "write" },
       edge_permissions: { "*": "read" },
@@ -172,7 +172,7 @@ describe("a mint naming only permissions", () => {
 
   it("gives a signed-in app's key the permissions it names and none of the grant's reach", async () => {
     const { token } = await seedOauthBearer(
-      ctx.storage,
+      ctx,
       ["openid", "keys.mint", "audit.read", "core.note:write"],
       {},
     );
@@ -187,7 +187,7 @@ describe("a mint naming only permissions", () => {
 
 describe("a mint naming no family", () => {
   it("takes the creator's whole set", async () => {
-    const creator = await mint(ctx.operatorKey, {
+    const creator = await mint(undefined, {
       permissions: ["audit.read", "keys.mint"],
       type_permissions: { "core.note": "read" },
       metadata_permissions: { types: "write" },
@@ -200,8 +200,8 @@ describe("a mint naming no family", () => {
     expect(minted.sources).toEqual(["named-whole"]);
   });
 
-  it("takes every permission and every family from the operator key", async () => {
-    const minted = await mint(ctx.operatorKey, {});
+  it("takes every permission and every family from the direct owner", async () => {
+    const minted = await mint(undefined, {});
     expect([...minted.permissions].sort()).toEqual([...PERMISSIONS].sort());
     for (const map of MAPS) expect(minted[map]).toEqual({ "*": "write" });
   });
@@ -224,7 +224,7 @@ describe("a mint naming permissions and one other family", () => {
   }
 
   it("gives a key naming permissions and sources the claims and no map", async () => {
-    const minted = await mint(ctx.operatorKey, {
+    const minted = await mint(undefined, {
       permissions: ["audit.read"],
       sources: ["named-both"],
     });

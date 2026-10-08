@@ -52,7 +52,7 @@ async function seedKey(
       metadata_permissions: {},
       profile_permissions: {},
       default_tier: "library",
-      is_operator: false,
+
       ...overrides,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
@@ -196,7 +196,7 @@ describe("editing a key an app made", () => {
       sources: ["notes-folder"],
     });
     const widened = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { sources: ["notes-folder", "elsewhere"] },
     });
     expect(widened.status).toBe(403);
@@ -207,7 +207,7 @@ describe("editing a key an app made", () => {
     expect(body.error.details?.source).toBe("elsewhere");
 
     const narrowed = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { sources: [] },
     });
     expect(narrowed.status).toBe(200);
@@ -223,7 +223,7 @@ describe("editing a key an app made", () => {
     // skips the fence that stops every other caller addressing a key outside
     // nothing else. So it is the one that would lift the rule quietly.
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { type_permissions: { "*": "write" } },
     });
     expect(res.status).toBe(403);

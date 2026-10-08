@@ -66,7 +66,7 @@ async function mintFullWorkingKey(): Promise<string> {
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
       permissions: [...PERMISSIONS],
       type_permissions: { "*": "write" },
-      is_operator: false,
+
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );
@@ -171,7 +171,7 @@ const DOORS: MintDoor[] = [
     specRoute: "post /keys",
     forgedSource: async () => {
       const { token } = await seedOauthBearer(
-        ctx.storage,
+        ctx,
         ["openid", "keys.mint"],
         {},
       );
@@ -189,7 +189,7 @@ const DOORS: MintDoor[] = [
 
       // Over the ceiling: no permission, so the door does not open at
       // all.
-      const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {});
+      const ungranted = await seedOauthBearer(ctx, ["openid"], {});
       const refused = await request(ctx.app, "POST", "/keys", {
         key: ungranted.token,
         body: { label: "no cap", source: "oauth-no-cap" },
@@ -198,7 +198,7 @@ const DOORS: MintDoor[] = [
 
       // Over the ceiling: reach the grant does not cover. `core.note:read`
       // does not cover `core.note:write` — the verb ranks.
-      const granted = await seedOauthBearer(ctx.storage, scopes, {});
+      const granted = await seedOauthBearer(ctx, scopes, {});
       const wider = await request(ctx.app, "POST", "/keys", {
         key: granted.token,
         body: {

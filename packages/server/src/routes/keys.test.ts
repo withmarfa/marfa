@@ -176,7 +176,7 @@ describe("PATCH /keys/{id}", () => {
         permissions: [],
         type_permissions: { "*": "read" },
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(narrow, TEST_API_KEY_SALT),
     );
@@ -379,7 +379,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
   /** A spare credential at the instance tier, holding nothing. */
   async function mintOperatorKey(suffix: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: {
         label: `operator-patch-${suffix}`,
         source: `operator-patch-${suffix}`,
@@ -400,7 +400,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
     const id = await mintOperatorKey(suffix);
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { type_permissions: { "core.note": "read" } },
     });
     expect(res.status).toBe(403);
@@ -424,7 +424,7 @@ describe("PATCH /keys/{id} — an operator target", () => {
     const id = await mintOperatorKey(suffix);
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: {
         label: `renamed-${suffix}`,
         type_permissions: { "core.note": "none" },
@@ -462,7 +462,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const unknown = generateId();
 
     const res = await request(ctx.app, "DELETE", `/keys/${unknown}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(
       res.status,
@@ -484,14 +484,14 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const { id } = await createKey();
 
     const first = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(first.status).toBe(200);
 
     expect(await revokeAudits(id)).toBe(1);
 
     const second = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(
       second.status,
@@ -518,7 +518,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const { id } = await createKey();
 
     const res = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -1162,7 +1162,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("refuses every keys door to a session that was not granted the permission", async () => {
-    const { token } = await seedOauthBearer(oauthCtx.storage, ["openid"], {});
+    const { token } = await seedOauthBearer(oauthCtx, ["openid"], {});
     const doors: [string, string, unknown?][] = [
       ["GET", "/keys"],
       ["POST", "/keys", { label: "x", source: "x" }],
@@ -1187,7 +1187,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("refuses a session reading itself as a key, whatever it was granted", async () => {
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("types:*:write"),
       {},
     );
@@ -1202,7 +1202,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session mint, and the key matches the session's own reach", async () => {
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1225,7 +1225,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("refuses reach the grant does not cover, and names the literal", async () => {
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1251,7 +1251,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // the case that would pass a naive membership test is the one worth
     // pinning.
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.*:write"),
       {},
     );
@@ -1268,7 +1268,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("never mints an operator key from a session, whatever the body asks", async () => {
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes(),
       {},
     );
@@ -1294,7 +1294,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("records the grant on the audit row, so a revoked app leads to its keys", async () => {
     const { token, clientId } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1322,7 +1322,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session read, revoke and rename", async () => {
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes(),
       {},
     );
@@ -1333,7 +1333,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "target-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1362,7 +1362,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // produces has to carry the session's own bounds — otherwise the refusals
     // above last exactly until the app mints its way past them.
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1403,13 +1403,13 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "victim-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
 
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1433,7 +1433,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // reach — the extension read door consults this map alone, with no
     // type-permission check beside it.
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read"),
       {},
     );
@@ -1455,7 +1455,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "ext-target-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1473,7 +1473,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // whether or not the condition were right, which is what the first
     // version of it did.
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read", "edge.about:read"),
       {},
     );
@@ -1517,7 +1517,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // stop the type map deriving too, or a caller asking for a narrow key
     // silently receives the session's own reach instead.
     const { token } = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("core.note:read", "edge.about:read"),
       {},
     );
@@ -1545,7 +1545,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // used — and `"*"` is the ordinary key, since it is what a bare
     // `metadata:<verb>` grant projects to.
     const contentOnly = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("content:write"),
       {},
     );
@@ -1566,7 +1566,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // And the honest holder is not refused, which the broken literal also got
     // wrong — in the other direction.
     const metaHolder = await seedOauthBearer(
-      oauthCtx.storage,
+      oauthCtx,
       grantScopes("metadata:write"),
       {},
     );
@@ -1593,7 +1593,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1628,11 +1628,11 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a working key holding everything when the body names nothing", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `seeded-${suffix}`,
         source: `seeded-${suffix}`,
-        is_operator: false,
+
       },
     });
     expect(res.status).toBe(201);
@@ -1650,7 +1650,7 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a working key holding only what the body names", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `narrow-${suffix}`,
         source: `narrow-${suffix}`,
@@ -1697,7 +1697,7 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a key naming only claimed sources with no permissions", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `claims-${suffix}`,
         source: `claims-${suffix}`,
@@ -1713,7 +1713,7 @@ describe("POST /keys — what an operator key mints", () => {
   it("lets a key holding nothing read itself, and nothing else of the keys", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const minted = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `self-${suffix}`,
         source: `self-${suffix}`,
@@ -1742,7 +1742,7 @@ describe("POST /keys — what an operator key mints", () => {
 
   it("answers the operator key its own row", async () => {
     const res = await request(oauthCtx.app, "GET", "/keys/current", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
     });
     expect(res.status).toBe(200);
     const row = (await res.json()) as { is_operator: boolean };
@@ -1761,7 +1761,7 @@ describe("POST /keys — what an operator key mints", () => {
     // against.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `operator-narrow-${suffix}`,
         source: `operator-narrow-${suffix}`,
@@ -1781,7 +1781,7 @@ describe("POST /keys — what an operator key mints", () => {
     // key at the same tier, carrying the same nothing.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `operator-spare-${suffix}`,
         source: `operator-spare-${suffix}`,
@@ -1815,7 +1815,7 @@ describe("POST /keys — what an operator key mints", () => {
     // to do; this is the case where it does the work.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `operator-denials-${suffix}`,
         source: `operator-denials-${suffix}`,
@@ -1876,7 +1876,7 @@ describe("POST /keys — what an operator key mints", () => {
     // And the operator key the instance really holds mints a credential that
     // inherits nothing, which is what the forcing is for.
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      key: oauthCtx.operatorKey,
+      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
       body: {
         label: `inherits-nothing-${suffix}`,
         source: `inherits-nothing-${suffix}`,
@@ -1931,7 +1931,7 @@ describe("POST /keys — what an operator key mints", () => {
         permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-        is_operator: false,
+
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );

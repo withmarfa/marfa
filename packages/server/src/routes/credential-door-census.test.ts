@@ -22,7 +22,7 @@ import { FENCED_PLUGIN_ENDPOINTS } from "./oauth-plugin-fence.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import {
   createTestContext,
-  createUnbootstrappedTestApp,
+  createUnclaimedTestApp,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -289,7 +289,7 @@ describe("the credential gate", () => {
     // would close the first mint on a fresh instance if it read the
     // declaration alone. Bootstrap presents the boot log's one-time secret
     // instead, and the gate steps aside for it.
-    const fresh = await createUnbootstrappedTestApp();
+    const fresh = await createUnclaimedTestApp();
     try {
       const secret = await ensureBootstrapSecret(fresh.storage);
       const res = await fresh.app.request("/keys", {

@@ -45,7 +45,7 @@ async function seedKey(
       permissions: ["keys.mint"],
       type_permissions: { "core.note": "write" },
       default_tier: "library",
-      is_operator: false,
+
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );
@@ -166,7 +166,7 @@ describe("minting a key", () => {
 
   it("trims a claim as it trims a key's own source, and refuses one left empty", async () => {
     const trimmed = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: mintBody({ sources: ["  padded-folder  "] }),
     });
     expect(trimmed.status).toBe(201);
@@ -175,7 +175,7 @@ describe("minting a key", () => {
     ]);
 
     const blank = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: mintBody({ sources: ["   "] }),
     });
     expect(blank.status).toBe(400);
@@ -185,7 +185,7 @@ describe("minting a key", () => {
     // under it would collide instead of upserting.
     const suffix = Math.random().toString(36).slice(2, 10);
     const padded = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { label: `padded-${suffix}`, source: `  padded-own-${suffix}  ` },
     });
     expect(padded.status).toBe(201);
@@ -193,7 +193,7 @@ describe("minting a key", () => {
       `padded-own-${suffix}`,
     );
     const emptyOwn = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { label: `empty-own-${suffix}`, source: "   " },
     });
     expect(emptyOwn.status).toBe(400);
@@ -201,7 +201,7 @@ describe("minting a key", () => {
 
   it("lets the operator key grant any source", async () => {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: mintBody({ sources: ["anything-at-all"] }),
     });
     expect(res.status).toBe(201);
@@ -213,7 +213,7 @@ describe("minting a key", () => {
   it("refuses a reserved prefix to every caller, the operator key included", async () => {
     for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
       const res = await request(ctx.app, "POST", "/keys", {
-        key: ctx.operatorKey,
+        headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
         body: mintBody({ sources: [reserved] }),
       });
       expect(res.status).toBe(400);
@@ -227,7 +227,7 @@ describe("minting a key", () => {
     // Running the instance is not a permission and writes nothing, so a
     // claim on the tier that runs it would be reach nothing uses.
     const refused = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: mintBody({ is_operator: true, sources: ["shared-folder"] }),
     });
     expect(refused.status).toBe(403);
@@ -235,7 +235,7 @@ describe("minting a key", () => {
     expect(body.error.details?.source).toBe("shared-folder");
 
     const bare = await request(ctx.app, "POST", "/keys", {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: mintBody({ is_operator: true }),
     });
     expect(bare.status).toBe(201);
@@ -243,7 +243,7 @@ describe("minting a key", () => {
   });
 
   it("holds a signed-in app to what its token claims, which is nothing", async () => {
-    const { token } = await seedOauthBearer(ctx.storage, [
+    const { token } = await seedOauthBearer(ctx, [
       "keys.mint",
       "content:write",
     ]);
@@ -296,7 +296,7 @@ describe("editing a key's claims", () => {
   it("refuses a reserved prefix on an edit", async () => {
     const target = await seedKey("reserved-edit", []);
     const res = await request(ctx.app, "PATCH", `/keys/${target.id}`, {
-      key: ctx.operatorKey,
+      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
       body: { sources: ["oauth:client:person"] },
     });
     expect(res.status).toBe(400);
@@ -315,7 +315,7 @@ describe("editing a key's claims", () => {
       ctx.app,
       "PATCH",
       `/keys/${operatorRow!.id}`,
-      { key: ctx.operatorKey, body: { sources: ["shared-folder"] } },
+      { headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin }, body: { sources: ["shared-folder"] } },
     );
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as RefusalBody).error.details?.source).toBe(
@@ -326,7 +326,7 @@ describe("editing a key's claims", () => {
       ctx.app,
       "PATCH",
       `/keys/${operatorRow!.id}`,
-      { key: ctx.operatorKey, body: { sources: [] } },
+      { headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin }, body: { sources: [] } },
     );
     expect(emptied.status).toBe(200);
     expect(((await emptied.json()) as KeyBody).sources).toEqual([]);
