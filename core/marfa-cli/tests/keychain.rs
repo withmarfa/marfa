@@ -103,6 +103,50 @@ fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
 }
 
 #[test]
+fn a_named_keychain_keeps_its_credential_locks_beside_it_and_none_in_the_home() {
+    let keychain = Isolated::new("locks");
+    let origin = format!("https://locks-{}.invalid", std::process::id());
+    let forgot = keychain
+        .marfa()
+        .args(["--json", "--url", &origin, "keys", "forget"])
+        .output()
+        .unwrap();
+    assert!(
+        forgot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forgot.stderr)
+    );
+    let mut beside = keychain.keychain_path().into_os_string();
+    beside.push(".locks");
+    let taken: Vec<_> = std::fs::read_dir(&beside)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    // The witness: `keys forget` took one lock, beside the keychain it names.
+    assert_eq!(taken.len(), 1, "{taken:?}");
+    assert!(
+        !users_home()
+            .join(".marfa-credential-locks")
+            .join(&taken[0])
+            .exists(),
+        "a run under a named keychain took a lock in the home directory"
+    );
+}
+
+/// From the operating system's record, as the binary finds it, not `HOME`.
+fn users_home() -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    // Safe: the record is copied out before any other call can replace it.
+    unsafe {
+        let entry = libc::getpwuid(libc::geteuid());
+        assert!(!entry.is_null() && !(*entry).pw_dir.is_null());
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+            std::ffi::CStr::from_ptr((*entry).pw_dir).to_bytes(),
+        ))
+    }
+}
+
+#[test]
 fn the_environment_wins_over_a_kept_key() {
     let keychain = Isolated::new("environment");
     let (url, bearers) = server();
