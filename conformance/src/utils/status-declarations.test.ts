@@ -257,6 +257,81 @@ describe("the status checker", () => {
     expect(report.unexplained).toEqual(["GET /unlisted"]);
   });
 
+  it("counts a published owner refusal reached through local authority", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "GET",
+          path: "/owner",
+          route: "/owner",
+          status: 404,
+          transport: "local_socket",
+          error_code: "owner_not_found",
+        }),
+      ),
+      {
+        paths: {
+          "/owner": {
+            get: { responses: { "404": { description: "Owner not found" } } },
+          },
+        },
+      },
+    );
+    expect(report.observed.get("GET /owner")?.get(404)).toEqual(
+      new Set(["owner_not_found"]),
+    );
+    expect(report.unanswered).not.toContain("GET /owner 404");
+    expect(report.local.size).toBe(0);
+  });
+
+  it("validates local published statuses and refusal codes against their declarations", () => {
+    const lines = parseRequestLines(
+      [
+        logLine({
+          method: "GET",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 403,
+          error_code: "unexpected_refusal",
+          transport: "local_socket",
+        }),
+        logLine({
+          method: "GET",
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 418,
+          transport: "local_socket",
+        }),
+      ].join("\n"),
+    );
+    const report = reportStatuses(
+      lines,
+      documentRefusing({ 403: ["type_not_permitted"] }),
+    );
+    expect(report.undeclared).toEqual([
+      { operation: "GET /items/{id}", status: 418, codes: [], declared: [403] },
+    ]);
+    expect(report.undeclaredCodes).toEqual([
+      "GET /items/{id} 403 unexpected_refusal",
+    ]);
+  });
+
+  it("does not exempt an unexplained local route outside the private control namespace", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "GET",
+          path: "/unlisted",
+          route: "/unlisted",
+          status: 200,
+          transport: "local_socket",
+        }),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.unexplained).toEqual(["GET /unlisted"]);
+  });
+
   it("separates real startup socket log shapes from public HTTP operations", () => {
     const local = [
       logLine({
@@ -291,7 +366,14 @@ describe("the status checker", () => {
     ];
     const report = reportStatuses(
       parseRequestLines([...local, OBSERVED_200].join("\n")),
-      documentDeclaring([200]),
+      {
+        paths: {
+          ...documentDeclaring([200]).paths,
+          "/keys": {
+            post: { responses: { "201": { description: "Key created" } } },
+          },
+        },
+      },
     );
     expect(
       [...report.local].map(([operation, statuses]) => [
@@ -301,9 +383,11 @@ describe("the status checker", () => {
     ).toEqual([
       ["GET /_control/setup/status", [200]],
       ["POST /_control/setup/claim", [201, 409]],
-      ["POST /keys", [201]],
     ]);
-    expect([...report.observed.keys()]).toEqual(["GET /items/{id}"]);
+    expect([...report.observed.keys()]).toEqual([
+      "POST /keys",
+      "GET /items/{id}",
+    ]);
     expect(report.unpublished.size).toBe(0);
     expect(report.unexplained).toEqual([]);
     expect(report.lines).toBe(5);

@@ -47,7 +47,7 @@ export interface StatusReport {
    * server serves and neither publishes nor says why.
    */
   unexplained: string[];
-  /** Private socket operations, outside the public HTTP contract. */
+  /** Unpublished private control operations, outside the HTTP contract. */
   local: Map<string, Set<number>>;
   undeclared: UndeclaredStatus[];
   /**
@@ -316,13 +316,6 @@ export function reportStatuses(
   const local = new Map<string, Set<number>>();
 
   for (const line of lines) {
-    if (line.transport === "local_socket") {
-      const operation = `${line.method} ${line.route}`;
-      const statuses = local.get(operation) ?? new Set<number>();
-      statuses.add(line.status);
-      local.set(operation, statuses);
-      continue;
-    }
     // HEAD is answered by the GET handler unless the document gives it an
     // operation of its own, so it is held to what GET declares.
     const method =
@@ -338,6 +331,16 @@ export function reportStatuses(
       !declared.has(byRoute) && line.route.includes("*") && declared.has(byPath)
         ? byPath
         : byRoute;
+    if (
+      !declared.has(operation) &&
+      line.transport === "local_socket" &&
+      line.path.startsWith("/_control/")
+    ) {
+      const statuses = local.get(operation) ?? new Set<number>();
+      statuses.add(line.status);
+      local.set(operation, statuses);
+      continue;
+    }
     if (!declared.has(operation)) {
       const statuses = unpublished.get(operation) ?? new Set<number>();
       statuses.add(line.status);
