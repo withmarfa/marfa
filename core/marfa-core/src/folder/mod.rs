@@ -3231,6 +3231,13 @@ impl Folder {
         }
         context.same_copy(&*self.core.conn()?)?;
         self.remove_departed(&members, &settings, &lists, &refused, report)?;
+        if crate::fault::named("copy-changes-after-pull-effects").is_some() {
+            static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                crate::read_view::pins_changed(&*self.core.conn()?)?;
+                context.check(&*self.core.conn()?)?;
+            }
+        }
         report.flagged.extend({
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -3310,6 +3317,8 @@ impl Folder {
             let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if match how.as_str() {
                 "once" => call == 0,
+                "twice" => call < 2,
+                "thrice" => call < 3,
                 "second" => call == 1,
                 _ => true,
             } {
