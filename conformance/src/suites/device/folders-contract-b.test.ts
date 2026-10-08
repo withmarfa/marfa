@@ -1107,3 +1107,68 @@ it.each(["ignore", "dot directory"])(
     ]);
   },
 );
+
+it.runIf(process.platform === "darwin")(
+  "leaves file and item executable values alone on an exFAT volume",
+  async () => {
+    harness = await fileHarness("contract-b-exfat");
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const scratch = mkdtempSync(join(tmpdir(), "marfa-exfat-"));
+    const mount = join(scratch, "volume");
+    mkdirSync(mount);
+    const image = join(scratch, "volume.sparseimage");
+    let attached = false;
+    try {
+      await execute("hdiutil", [
+        "create",
+        "-size",
+        "256m",
+        "-type",
+        "SPARSE",
+        "-fs",
+        "ExFAT",
+        "-volname",
+        "conformance",
+        image,
+      ]);
+      await execute("hdiutil", [
+        "attach",
+        image,
+        "-mountpoint",
+        mount,
+        "-nobrowse",
+        "-noautoopen",
+      ]);
+      attached = true;
+      const dir = join(mount, "notes");
+      cpSync(harness.dir, dir, { recursive: true });
+      rmSync(harness.dir, { recursive: true });
+      harness.dir = dir;
+      harness.folder = new CliFolder(dir, {
+        binary: requireBinary(),
+        url: harness.server.url,
+        key: KEY,
+        registry: harness.registry,
+      });
+      const path = join(dir, "file.bin");
+      chmodSync(path, 0o644);
+      expect(statSync(path).mode & 0o100).toBe(0o100);
+      const originalMode = statSync(path).mode & 0o777;
+      const scanned = await harness.folder.scan();
+      expect(scanned.ok && scanned.value.updated).toBe(0);
+      const item = await harness.folder.device().get(row(0).item.id);
+      expect(item.ok && item.value.properties.executable).toBe(false);
+      const queued = await harness.folder.device().queue();
+      expect(
+        queued.ok &&
+          queued.value.filter((write) => write.kind === "update_item"),
+      ).toEqual([]);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(statSync(path).mode & 0o777).toBe(originalMode);
+      expect(readFileSync(path, "utf8")).toBe("file bytes");
+    } finally {
+      if (attached) await execute("hdiutil", ["detach", mount]);
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
