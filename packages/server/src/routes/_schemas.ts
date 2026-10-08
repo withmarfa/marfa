@@ -772,7 +772,7 @@ export const KEY_FIELD_TEXT = {
   type_permissions:
     "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers.",
   extension_permissions:
-    "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`.",
+    "Extension namespaces the key may `read` or `write`, by namespace or `*`.",
   edge_permissions:
     "Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`.",
   metadata_permissions:

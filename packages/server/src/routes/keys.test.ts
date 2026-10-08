@@ -19,7 +19,6 @@ import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { KeyResponseSchema } from "./_schemas.js";
-import { extensionLabelOf } from "../auth/extension-label.js";
 import { generateId, PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -1536,34 +1535,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     );
     expect(stored?.type_permissions ?? {}).toEqual({});
     expect(stored?.edge_permissions ?? {}).toEqual({});
-  });
-
-  it("does not let a session-minted key claim a namespace by its label", async () => {
-    // `label` is read as identity, the same way `source` is: a namespace
-    // equal to the key's label is granted write implicitly. A session chooses
-    // its key's label, so without the stamp being consulted an app could name
-    // another vendor's namespace and read it on every item stored,
-    // durably and after the app was revoked.
-    const { token } = await seedOauthBearer(
-      oauthCtx.storage,
-      grantScopes("core.note:read"),
-      {},
-    );
-    const minted = await request(oauthCtx.app, "POST", "/keys", {
-      key: token,
-      body: {
-        label: "com.othervendor.sync",
-        source: "vendor-probe",
-        type_permissions: { "core.note": "read" },
-      },
-    });
-    expect(minted.status).toBe(201);
-    const key = await oauthCtx.storage.keys.get(
-      ((await minted.json()) as { id: string }).id,
-    );
-    // The stored map is empty, and the label must not stand in for one.
-    expect(key?.extension_permissions ?? {}).toEqual({});
-    expect(extensionLabelOf(key ?? undefined)).toBe("");
   });
 
   it("measures a metadata wildcard on the metadata axis, not the type axis", async () => {

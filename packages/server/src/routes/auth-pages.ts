@@ -772,9 +772,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       renderDeviceConsentScreen({
         nonce: c.var.cspNonce,
         clientName: client.name ?? client.clientId,
-        // The same rule as the authorize screen: an app that registered
-        // itself has no vetted identity behind its name.
-        unverified: client.isPublic,
         scopes: parsedScopes,
         userCode,
         descriptions,

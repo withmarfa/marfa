@@ -625,25 +625,17 @@ describe("renderConsentScreen — re-consent diff", () => {
 });
 
 describe("renderConsentScreen — unverified app", () => {
-  it("renders one boxed callout (no inline badge) for a public/DCR client", () => {
-    const html = renderConsentScreen({ ...PARAMS, unverified: true });
+  it("renders one boxed callout (no inline badge) for every app", () => {
+    const html = renderConsentScreen(PARAMS);
     expect(html).toContain('class="callout"');
     expect(html).toContain("Marfa hasn't verified this app");
     expect(html).not.toContain("unverified-badge");
   });
 
-  it("omits the callout when unverified is false or absent", () => {
-    expect(renderConsentScreen({ ...PARAMS, unverified: false })).not.toContain(
-      'class="callout"',
-    );
-    expect(renderConsentScreen(PARAMS)).not.toContain('class="callout"');
-  });
-
-  it("still escapes a hostile client name when the callout is shown", () => {
+  it("still escapes a hostile client name beside the callout", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       clientName: "<script>alert(1)</script>",
-      unverified: true,
     });
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");

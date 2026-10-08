@@ -536,25 +536,11 @@ While a working key may read an extension namespace by its extension map and may
 
 ### `blobs/lend-extension-unread`
 
-If a working key may not read an extension namespace, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
+If a working key or an app's access token may not read an extension namespace by its extension map, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
 
-**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`.
+**Reason:** a key's label names no namespace, and an app holds no extension map, since no scope names a namespace (`keys-and-oauth.md` 21).
 
-### `blobs/lend-extension-label`
-
-Where a working key's label is the name of an extension namespace, the server MUST count that namespace as one the key may read, whatever its extension map grants.
-
-**Reason:** a key reads the namespace its own label names beside the namespaces its extension map grants (`keys-and-oauth.md` 21).
-
-**Tests:** `compliance/blob-reach.test.ts › serves a blob an extension names to a key whose label is the namespace, and to no key labeled another`.
-
-### `blobs/lend-extension-app-label`
-
-If an app's access token reads a blob that only an extension namespace named by the app's own label references, then the server MUST answer `404 blob_not_found`.
-
-**Reason:** an app's own label is not its namespace, though a key of the same label reads it.
-
-**Tests:** `compliance/blob-reach-app.test.ts › is not served a blob an extension names under the app's own label`.
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› does not serve a blob an extension names to a key whose label is the namespace and whose extension map does not reach it`, `compliance/blob-reach-app.test.ts › is not served a blob named only in an extension, since no scope reaches a namespace`.
 
 ### `blobs/lend-copy-edges`
 

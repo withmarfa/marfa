@@ -16,7 +16,6 @@ import {
 let server: FreshServer;
 let owner: MarfaClient;
 let app: MarfaClient;
-let appLabel: string;
 
 const UNKNOWN = {
   bytes: [404, "blob_not_found"],
@@ -87,12 +86,6 @@ beforeAll(async () => {
   });
   const approved = await approvedApp(server, ["core.note:read"]);
   app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: approved.token });
-  const person = await new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  }).getOwner();
-  expect(person.ok, JSON.stringify(person.error)).toBe(true);
-  appLabel = `oauth:${approved.clientId}:${person.data.id}`;
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -100,8 +93,8 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 describe("a signed-in app and an extension namespace", () => {
-  it("is not served a blob an extension names under the app's own label", async () => {
-    const bytes = new TextEncoder().encode("named under an app's label");
+  it("is not served a blob named only in an extension, since no scope reaches a namespace", async () => {
+    const bytes = new TextEncoder().encode("named under an extension");
     const sent = await owner.uploadBlob(bytes, "text/plain");
     expect(sent.status).toBe(201);
     const note = await owner.createItem({
@@ -109,24 +102,26 @@ describe("a signed-in app and an extension namespace", () => {
       properties: { body: "an item an app may read" },
     });
     expect(note.ok, JSON.stringify(note.error)).toBe(true);
-    const written = await owner.setItemExtension(note.data.item.id, appLabel, {
+    const namespace = "blob-reach-app.cover";
+    const written = await owner.setItemExtension(note.data.item.id, namespace, {
       cover: sent.data.hash,
     });
     expect(written.ok, JSON.stringify(written.error)).toBe(true);
 
-    // The witness: a key of the same label is served the blob, and the app
-    // reads the item the extension sits on.
+    // The witness: a key whose extension map reaches the namespace is served
+    // the blob, and the app reads the item the extension sits on.
     const keyed = await owner.createKey({
-      label: appLabel,
+      label: "blob-reach-app-keyed",
       source: "blob-reach-app-keyed",
       type_permissions: { "core.note": "read" },
+      extension_permissions: { [namespace]: "read" },
     });
     expect(keyed.ok, JSON.stringify(keyed.error)).toBe(true);
-    const sameLabel = new MarfaClient({
+    const mapped = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: keyed.data.key,
     });
-    expect((await sameLabel.downloadBlob(sent.data.hash)).status).toBe(200);
+    expect((await mapped.downloadBlob(sent.data.hash)).status).toBe(200);
     expect((await app.getItem(note.data.item.id)).status).toBe(200);
     const refused = await app.downloadBlob(sent.data.hash);
     expect(refused.status).toBe(404);

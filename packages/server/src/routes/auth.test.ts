@@ -261,9 +261,7 @@ describe("extension_permissions wiring", () => {
     expect(found?.metadata_permissions).toEqual({ types: "write" });
   });
 
-  it("falls through to implicit own-namespace write when extension_permissions is empty", async () => {
-    // Regression guard: the wiring change must not break the
-    // "key writes its own namespace" implicit rule for keys with no grants.
+  it("grants no namespace by the key's label when extension_permissions is empty", async () => {
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.workingKey,
       body: {
@@ -287,7 +285,7 @@ describe("extension_permissions wiring", () => {
       `/items/${item.id}/extensions/selfns`,
       { key: rawKey, body: { ok: true } },
     );
-    expect(putRes.status).toBe(200);
+    expect(putRes.status).toBe(403);
   });
 });
 
