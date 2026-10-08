@@ -3347,6 +3347,10 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ["accepted", null],
       ["refused", "trashed"],
     ]);
+    expect(
+      drained.value.verdicts.at(-1)?.refusal?.trashed,
+      "a create refused for a row in the bin did not say the row is in the bin",
+    ).toBe(true);
     const queued = await queueOf(device);
     expect(
       queued.map((row) => [row.verdict, row.reason]).at(-1),

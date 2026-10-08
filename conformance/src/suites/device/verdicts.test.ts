@@ -998,7 +998,8 @@ describe("the server did not take the write", () => {
     scriptWrites(harness.server, {
       update: [
         refusal(400, "invalid_properties", "Invalid properties", {
-          errors: [{ field: "title", message: "Too long" }],
+          // The second entry names no property, so it is no field's.
+          errors: [{ field: "title", message: "Too long" }, { message: "Bad" }],
         }),
         refusal(403, "type_not_permitted", "this key may not write core.note", {
           grant: { kind: "type", name: "core.note", level: "write" },
@@ -1225,6 +1226,17 @@ describe("a verdict is reported, not acted on", () => {
       byId.get(edit.value.id)?.reason,
       "the dependant's reason does not name the write that was refused, so a caller is told this row failed and not why",
     ).toContain("create_item");
+    expect(
+      byId.get(edit.value.id)?.refusal,
+      "a refusal the drain made carries parts only a server's envelope can",
+    ).toEqual({
+      reason: byId.get(edit.value.id)?.reason,
+      code: null,
+      message: null,
+      fields: [],
+      trashed: false,
+      grant: null,
+    });
     expect(
       harness.server.requests.some((request) => request.method === "PATCH"),
       "the dependant went to the server although its create was refused",

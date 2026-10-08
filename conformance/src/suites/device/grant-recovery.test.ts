@@ -303,7 +303,12 @@ describe("a grant refusal waits for the credential", () => {
           version: 3,
         }),
       );
-      expect(value(await device.drain()).verdicts[0]?.verdict).toBe("refused");
+      const refused = value(await device.drain()).verdicts[0];
+      expect(refused?.verdict).toBe("refused");
+      expect(
+        refused?.refusal?.grant,
+        "a grant the refusal names in another shape was read as one",
+      ).toBeNull();
       expect(value(await device.drain()).verdicts).toEqual([]);
       expect(
         server.requests.filter((request) => request.method === "PATCH"),
