@@ -81,7 +81,7 @@ describe("POST /connectors", () => {
     expect(theirs.status).toBe(201);
     expect(theirs.connector.id).not.toBe(first.connector.id);
     const listed = await json<{ data: Connector[] }>(
-      await request(ctx.app, "GET", "/connectors", { key: ctx.operatorKey }),
+      await request(ctx.app, "GET", "/connectors", { key: ctx.managementKey }),
     );
     expect(listed.data.map((row) => row.id)).toEqual([
       theirs.connector.id,
@@ -101,7 +101,7 @@ describe("POST /connectors", () => {
     expect([a.status, b.status].sort()).toEqual([200, 201]);
     expect(b.connector.id).toBe(a.connector.id);
     const listed = await json<{ data: Connector[] }>(
-      await request(ctx.app, "GET", "/connectors", { key: ctx.operatorKey }),
+      await request(ctx.app, "GET", "/connectors", { key: ctx.managementKey }),
     );
     expect(listed.data.filter((row) => row.id === a.connector.id)).toHaveLength(
       1,
@@ -111,7 +111,7 @@ describe("POST /connectors", () => {
 
   it("refuses an app's session token, which is not a connector's key", async () => {
     const mine = await register(ctx.workingKey, "mine, hidden from apps");
-    const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
+    const { token } = await seedOauthBearer(ctx, ["openid"]);
     const listed = await request(ctx.app, "GET", "/connectors", { key: token });
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({ data: [], next_cursor: null });
@@ -172,7 +172,7 @@ describe("POST /connectors", () => {
       ["GET", "/runs", undefined],
     ] as const) {
       const res = await request(ctx.app, method, `${unknown}${sub}`, {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
         body,
       });
       expect(res.status, `${method} ${sub}`).toBe(404);
@@ -246,7 +246,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
       "GET",
       `/connectors/${mine.connector.id}`,
       {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       },
     );
     expect(read.status).toBe(200);
@@ -266,15 +266,15 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(
       (
         await request(ctx.app, "GET", `/connectors/${mine.connector.id}`, {
-          key: ctx.operatorKey,
+          key: ctx.managementKey,
         })
       ).status,
     ).toBe(200);
-    expect(await remove(ctx.operatorKey, mine.connector.id)).toBe(200);
+    expect(await remove(ctx.managementKey, mine.connector.id)).toBe(200);
     expect(
       (
         await request(ctx.app, "GET", `/connectors/${mine.connector.id}`, {
-          key: ctx.operatorKey,
+          key: ctx.managementKey,
         })
       ).status,
     ).toBe(404);
@@ -300,7 +300,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     const mine = await register(ctx.workingKey, "removed twice");
     const statuses = await Promise.all([
       remove(ctx.workingKey, mine.connector.id),
-      remove(ctx.operatorKey, mine.connector.id),
+      remove(ctx.managementKey, mine.connector.id),
     ]);
     expect(statuses.sort()).toEqual([200, 404]);
     const rows = await ctx.storage.audit.list({
@@ -330,7 +330,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect((await heartbeat()).status).toBe(200);
 
     const revoked = await request(ctx.app, "DELETE", `/keys/${keyId}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(revoked.status).toBe(200);
     expect((await heartbeat()).status).toBe(401);
@@ -338,7 +338,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
       ctx.app,
       "GET",
       `/connectors/${mine.connector.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(read.status).toBe(200);
     expect(await json<Connector>(read)).toMatchObject({
@@ -383,7 +383,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(own.connector.id).not.toBe(mine.connector.id);
     expect(own.connector.key_id).toBe(successor.id);
     expect(await remove(successor.key, own.connector.id)).toBe(200);
-    expect(await remove(ctx.operatorKey, mine.connector.id)).toBe(200);
+    expect(await remove(ctx.managementKey, mine.connector.id)).toBe(200);
   });
 
   it("writes audit rows for every registration and a removal, and none for a heartbeat or a run", async () => {
@@ -443,7 +443,7 @@ describe("POST /connectors/{id}/heartbeat", () => {
       ctx.app,
       "POST",
       `/connectors/${mine.connector.id}/heartbeat`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(operator.status).toBe(403);
     expect(
@@ -516,7 +516,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       });
       expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400);
     }
-    for (const key of [otherKey, ctx.operatorKey]) {
+    for (const key of [otherKey, ctx.managementKey]) {
       const theirs = await request(ctx.app, "POST", path, {
         key,
         body: { outcome: "failed", started_at: at(1000), finished_at: at(0) },
@@ -525,7 +525,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     }
     expect(
       await json<{ data: ConnectorRun[] }>(
-        await request(ctx.app, "GET", path, { key: ctx.operatorKey }),
+        await request(ctx.app, "GET", path, { key: ctx.managementKey }),
       ),
     ).toEqual({ data: [run], next_cursor: null });
 
@@ -570,7 +570,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(lateRun.reported_at).not.toBe(lateRun.started_at);
 
     const listed = await request(ctx.app, "GET", path, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(listed.status).toBe(200);
     const runs = await json<{ data: ConnectorRun[] }>(listed);
@@ -582,7 +582,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     ]);
     const one = await json<{ data: ConnectorRun[] }>(
       await request(ctx.app, "GET", `${path}?limit=1`, {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       }),
     );
     expect(one.data.map((r) => r.summary)).toEqual(["reported late"]);
@@ -590,7 +590,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       expect(
         (
           await request(ctx.app, "GET", `${path}?limit=${limit}`, {
-            key: ctx.operatorKey,
+            key: ctx.managementKey,
           })
         ).status,
       ).toBe(400);
@@ -651,7 +651,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     }
 
     const listed = await json<{ data: ConnectorRun[] }>(
-      await request(ctx.app, "GET", path, { key: ctx.operatorKey }),
+      await request(ctx.app, "GET", path, { key: ctx.managementKey }),
     );
     expect(listed.data).toHaveLength(3);
     for (const run of listed.data) {
@@ -685,7 +685,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       (
         await json<{ data: ConnectorRun[] }>(
           await request(ctx.app, "GET", `/connectors/${id}/runs`, {
-            key: ctx.operatorKey,
+            key: ctx.managementKey,
           }),
         )
       ).data.map((r) => r.summary);
@@ -693,7 +693,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(await runsOf(b.connector.id)).toEqual(["b's run"]);
     expect(await runsOf(c.connector.id)).toEqual([]);
     const listed = await json<{ data: Connector[] }>(
-      await request(ctx.app, "GET", "/connectors", { key: ctx.operatorKey }),
+      await request(ctx.app, "GET", "/connectors", { key: ctx.managementKey }),
     );
     const lastRunOf = (id: string) =>
       listed.data.find((row) => row.id === id)?.last_run?.summary ?? null;
@@ -749,7 +749,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(kept).toHaveLength(RUNS_KEPT_PER_CONNECTOR);
     const byDefault = await json<{ data: ConnectorRun[] }>(
       await request(ctx.app, "GET", `/connectors/${mine.connector.id}/runs`, {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       }),
     );
     expect(byDefault.data).toHaveLength(50);
@@ -758,7 +758,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
         ctx.app,
         "GET",
         `/connectors/${mine.connector.id}/runs?limit=200`,
-        { key: ctx.operatorKey },
+        { key: ctx.managementKey },
       ),
     );
     expect(two.data).toHaveLength(RUNS_KEPT_PER_CONNECTOR);

@@ -54,9 +54,9 @@ afterAll(async () => {
 });
 
 describe("GET /housekeeping", () => {
-  it("lists every registration with its schedule and last run to the operator key", async () => {
+  it("lists every registration with its schedule and last run to the management key", async () => {
     const res = await request(ctx.app, "GET", "/housekeeping", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -81,11 +81,11 @@ describe("GET /housekeeping", () => {
     expect(fresh).toHaveProperty("next_run_at");
     // The witness for the nulls: a name that has run carries its run.
     const ran = await request(ctx.app, "POST", "/housekeeping/silent/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(ran.status).toBe(200);
     const after = (await (
-      await request(ctx.app, "GET", "/housekeeping", { key: ctx.operatorKey })
+      await request(ctx.app, "GET", "/housekeeping", { key: ctx.managementKey })
     ).json()) as { data: Record<string, unknown>[] };
     expect(after.data.find((row) => row.name === "silent")).toMatchObject({
       running_since: null,
@@ -98,9 +98,9 @@ describe("GET /housekeeping", () => {
     ).toBe("string");
   });
 
-  it("refuses a working key where the operator key is answered", async () => {
+  it("refuses a working key where the management key is answered", async () => {
     const operator = await request(ctx.app, "GET", "/housekeeping", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(operator.status).toBe(200);
     const res = await request(ctx.app, "GET", "/housekeeping", {
@@ -116,7 +116,7 @@ describe("POST /housekeeping/:name/run", () => {
   it("runs the name now and answers the run, which the listing then records", async () => {
     const before = runs;
     const res = await request(ctx.app, "POST", "/housekeeping/counter/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -131,7 +131,7 @@ describe("POST /housekeeping/:name/run", () => {
     expect(typeof body.finished_at).toBe("string");
 
     const listed = await request(ctx.app, "GET", "/housekeeping", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const { data } = (await listed.json()) as {
       data: Record<string, unknown>[];
@@ -147,7 +147,7 @@ describe("POST /housekeeping/:name/run", () => {
 
   it("answers a run that reported nothing with a null result, present in the body", async () => {
     const res = await request(ctx.app, "POST", "/housekeeping/silent/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -157,7 +157,7 @@ describe("POST /housekeeping/:name/run", () => {
 
   it("answers a failed run as the run's outcome, not the door's", async () => {
     const res = await request(ctx.app, "POST", "/housekeeping/faulty/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
@@ -170,11 +170,11 @@ describe("POST /housekeeping/:name/run", () => {
 
   it("answers 404 for a name the instance does not run, where a known one runs", async () => {
     const known = await request(ctx.app, "POST", "/housekeeping/counter/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(known.status).toBe(200);
     const res = await request(ctx.app, "POST", "/housekeeping/nothing/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -183,7 +183,7 @@ describe("POST /housekeeping/:name/run", () => {
 
   it("answers 400 for a name outside the grammar, where a name inside it runs", async () => {
     const inside = await request(ctx.app, "POST", "/housekeeping/counter/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(inside.status).toBe(200);
     const res = await request(
@@ -191,7 +191,7 @@ describe("POST /housekeeping/:name/run", () => {
       "POST",
       "/housekeeping/Not%20A%20Job/run",
       {
-        key: ctx.operatorKey,
+        key: ctx.managementKey,
       },
     );
     expect(res.status).toBe(400);
@@ -217,11 +217,11 @@ describe("POST /housekeeping/:name/run", () => {
   it("answers 409 while a run holds the name, and runs it again once released", async () => {
     const seen = slowStarts;
     const first = request(ctx.app, "POST", "/housekeeping/slow/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     const release = await slowRunStarted(seen);
     const second = await request(ctx.app, "POST", "/housekeeping/slow/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: { code: string } };
@@ -230,18 +230,18 @@ describe("POST /housekeeping/:name/run", () => {
     release();
     expect((await first).status).toBe(200);
     const again = request(ctx.app, "POST", "/housekeeping/slow/run", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     (await slowRunStarted(seen + 1))();
     expect((await again).status).toBe(200);
   });
 
-  it("refuses a working key where the operator key is answered", async () => {
+  it("refuses a working key where the management key is answered", async () => {
     const operator = await request(
       ctx.app,
       "POST",
       "/housekeeping/counter/run",
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(operator.status).toBe(200);
     const res = await request(ctx.app, "POST", "/housekeeping/counter/run", {

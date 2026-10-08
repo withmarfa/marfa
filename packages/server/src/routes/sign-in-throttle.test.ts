@@ -11,11 +11,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import {
-  createTestContext,
-  createTestAccount,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { auth_session } from "../storage/sqlite/schema.js";
 import {
@@ -97,8 +93,10 @@ function signInForm(
 
 describe("the address Better Auth sees", () => {
   it("is the connection's, whatever forwarding headers the client sent", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
 
     const direct = await signInDirect(ctx, PASSWORD, "203.0.113.7", SPOOFED);
     expect(direct.status).toBe(200);
@@ -110,8 +108,10 @@ describe("the address Better Auth sees", () => {
   });
 
   it("is the one the instance's trusted proxy header names, when it names one", async () => {
-    ctx = await createTestContext({ trustedProxyHeader: "x-real-ip" });
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(
+      { trustedProxyHeader: "x-real-ip" },
+      { email: EMAIL, password: PASSWORD },
+    );
 
     const direct = await signInDirect(ctx, PASSWORD, "10.0.0.1", {
       "x-real-ip": "192.0.2.5",
@@ -130,8 +130,10 @@ describe("the address Better Auth sees", () => {
 
 describe("the per-account sign-in throttle", () => {
   it("stops one address guessing one account, and leaves the owner's own address signing in", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
 
     for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++) {
       const res = await signInDirect(ctx, "wrong password", "203.0.113.50");
@@ -153,8 +155,10 @@ describe("the per-account sign-in throttle", () => {
   });
 
   it("keys an IPv6 address by its /64, so a host cannot rotate within its own prefix", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
 
     for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++) {
       const res = await signInDirect(
@@ -173,27 +177,31 @@ describe("the per-account sign-in throttle", () => {
   });
 
   it("bounds the guesses at one account across every address", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
 
-    for (let i = 0; i < SIGN_IN_ACCOUNT_LIMIT; i++) {
+    // Provisioning already signed the real owner in once.
+    for (let i = 0; i < SIGN_IN_ACCOUNT_LIMIT - 1; i++) {
       const res = await signInDirect(ctx, "wrong", `203.0.${String(i)}.1`);
       expect(res.status).toBe(401);
     }
     expect((await signInDirect(ctx, "wrong", "192.0.2.200")).status).toBe(429);
-    // Another account is its own count.
-    await createTestAccount(ctx, "other@example.com", PASSWORD);
+    // An unknown address has its own guess count; it is not an account.
     const other = await request(ctx.app, "POST", "/auth/sign-in/email", {
       body: { email: "other@example.com", password: PASSWORD },
       headers: { origin: ORIGIN },
       peer: "192.0.2.200",
     });
-    expect(other.status).toBe(200);
+    expect(other.status).toBe(401);
   });
 
   it("tells the form's visitor the sign-in is throttled, not that the password is wrong", async () => {
-    ctx = await createTestContext();
-    await createTestAccount(ctx, EMAIL, PASSWORD);
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
 
     for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++) {
       const res = await signInForm(ctx, "wrong", "203.0.113.60");

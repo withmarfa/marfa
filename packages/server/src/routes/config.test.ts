@@ -1,129 +1,15 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { Hono } from "hono";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { createApp } from "../app.js";
-import { ensureInstanceId } from "../storage/instance-id.js";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createBlobLayer } from "../storage/blob-layer.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
-import { hashApiKey } from "../middleware/auth.js";
-import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { PERMISSIONS } from "@withmarfa/shared";
 import {
   readInstanceConfig,
   writeInstanceConfig,
 } from "../storage/instance-config.js";
 
-const SALT = "test-salt";
-
-// A second app built inline, so the config round trips run on a database
-// the shared context does not share.
-interface ConfigContext {
-  app: Hono<AppEnv>;
-  storage: Storage;
-  operatorKey: string;
-  workingKey: string;
-  cleanup: () => Promise<void>;
-}
-
-async function createConfigContext(): Promise<ConfigContext> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-config-test-"));
-  const blobPath = join(tmpDir, "blobs");
-
-  const dbPath = join(tmpDir, "test.db");
-  const storage = await createSqliteStorage(dbPath);
-  const instanceId = await ensureInstanceId(storage.settings);
-
-  const blobs = await createBlobLayer(storage, {
-    blobPath: blobPath,
-    s3Bucket: "",
-    s3Region: "us-east-1",
-    s3Endpoint: "",
-    s3AccessKeyId: "",
-    s3SecretAccessKey: "",
-  });
-  const app = createApp(
-    storage,
-    blobs,
-    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
-    {
-      port: 0,
-      sqlitePath: "",
-      blobPath,
-      maxRequestBytes: 1_048_576,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-      apiKeySalt: SALT,
-      corsOrigins: [],
-      rateLimitEnabled: false,
-      enableHsts: false,
-      auditRetentionDays: 90,
-      auditCleanupIntervalMs: 86_400_000,
-      eventLogRetentionHours: 168,
-      versionThinningIntervalMs: 3_600_000,
-      versionRecentDays: 30,
-      versionDailySnapshotDays: 90,
-      versionWeeklySnapshotDays: 365,
-      versionMaxVersions: 500,
-      trashRetentionDays: 60,
-      trashPurgeIntervalMs: 3_600_000,
-      errorWebhookUrl: "",
-      trustedProxyCidrs: [],
-      authBaseUrl: "http://localhost:0",
-      authSecret: "test-auth-secret",
-      rateLimitDefaultLimit: 1000,
-      rateLimitWindowMs: 60_000,
-    },
-    instanceId,
-  );
-
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const operatorKey = `marfa_k1_operator_cfg_${suffix}`;
-  const workingKey = `marfa_k1_working_cfg_${suffix}`;
-
-  await storage.keys.create(
-    {
-      label: "operator-cfg",
-      source: `operator-cfg-${suffix}`,
-      is_operator: true,
-      type_permissions: {},
-      default_tier: "feed",
-    },
-    hashApiKey(operatorKey, SALT),
-  );
-
-  await storage.keys.create(
-    {
-      label: "config-key",
-      source: `config-key-${suffix}`,
-      permissions: [...PERMISSIONS],
-      type_permissions: {},
-      default_tier: "feed",
-    },
-    hashApiKey(workingKey, SALT),
-  );
-  await storage.settings.set("bootstrapped", "true");
-
-  return {
-    app,
-    storage,
-    operatorKey,
-    workingKey,
-    cleanup: async () => {
-      await storage.close();
-      // The directory holds this file's sqlite database and blob
-      // root; nothing else removes it.
-      rmSync(tmpDir, { recursive: true, force: true });
-    },
-  };
+async function createConfigContext(): Promise<TestContext> {
+  return createTestContext();
 }
 
 // ----- The shared context: the door's defaults when nothing is set -----
@@ -165,12 +51,9 @@ describe("PUT /config", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects the operator key", async () => {
-    // The operator key is refused at the permission gate, because the
-    // instance tier holds no permissions at all — running the
-    // instance sits outside the permission model rather than above it.
+  it("requires config.manage even from a management key", async () => {
     const res = await request(ctx.app, "PUT", "/config", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
       body: {},
     });
     expect(res.status).toBe(403);

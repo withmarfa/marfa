@@ -75,11 +75,11 @@ describe("connector read doors", () => {
     );
     expect(reported.status).toBe(201);
     const other = await mintWorkingKey(ctx);
-    const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
+    const { token } = await seedOauthBearer(ctx, ["openid"]);
 
     for (const door of READS) {
       const path = door.slice(4).replace(":id", connector.id);
-      for (const key of [ctx.workingKey, ctx.operatorKey]) {
+      for (const key of [ctx.workingKey, ctx.managementKey]) {
         const witness = await request(ctx.app, "GET", path, { key });
         expect(witness.status, path).toBe(200);
         expect(await witness.text(), path).toContain("vendor details");

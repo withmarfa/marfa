@@ -113,7 +113,7 @@ describe("POST /blobs", () => {
     expect(second.status).toBe(201);
     expect(second.body.mime_type).toBe("text/plain");
     const head = await request(ctx.app, "HEAD", `/blobs/${hashOf(data)}`, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(head.headers.get("Content-Type")).toBe("text/plain");
   });
@@ -583,9 +583,9 @@ describe("GET /blobs/:hash/fetch", () => {
 });
 
 describe("GET /blobs/stores", () => {
-  it("lists the attached disk store to the operator key", async () => {
+  it("lists the attached disk store to the management key", async () => {
     const res = await request(ctx.app, "GET", "/blobs/stores", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -616,7 +616,7 @@ describe("GET /blobs/stores", () => {
     const two = await createTestContext({ blobMinCopies: 2 });
     try {
       const res = await request(two.app, "GET", "/blobs/stores", {
-        key: two.operatorKey,
+        key: two.managementKey,
       });
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ min_copies: 2 });
@@ -625,9 +625,9 @@ describe("GET /blobs/stores", () => {
     }
   });
 
-  it("refuses a working key where the operator key is answered", async () => {
+  it("refuses a working key where the management key is answered", async () => {
     const operator = await request(ctx.app, "GET", "/blobs/stores", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(operator.status).toBe(200);
     const res = await request(ctx.app, "GET", "/blobs/stores", {
@@ -716,13 +716,13 @@ describe("POST /blobs wakes replication", () => {
 });
 
 describe("GET /blobs/orphans", () => {
-  it("answers the report to the operator key and refuses a working key", async () => {
+  it("answers the report to the management key and refuses a working key", async () => {
     const data = new TextEncoder().encode("reported, not yet purged");
     await upload(data);
     const reporter = new BlobOrphanReporter(ctx.storage, ctx.blobs, 3_600_000);
     await reporter.runOnce();
     const res = await request(ctx.app, "GET", "/blobs/orphans", {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -769,7 +769,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       ctx.app,
       "DELETE",
       `/blobs/${hash}/locations/${second.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(dropped.status).toBe(200);
     expect(await dropped.json()).toEqual({ ok: true });
@@ -789,7 +789,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       ctx.app,
       "DELETE",
       `/blobs/${hash}/locations/${ctx.blobs.disk.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(refused.status).toBe(409);
     const body = (await refused.json()) as {
@@ -805,7 +805,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       ctx.app,
       "DELETE",
       `/blobs/${hash}/locations/${second.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(nowhere.status).toBe(404);
     expect(
@@ -815,7 +815,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       ctx.app,
       "DELETE",
       `/blobs/${hash}/locations/no-such-store`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(unattached.status).toBe(404);
     // An unknown blob, and a working key.
@@ -823,7 +823,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       ctx.app,
       "DELETE",
       `/blobs/sha256:${"0".repeat(64)}/locations/${ctx.blobs.disk.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(unknown.status).toBe(404);
     expect(
