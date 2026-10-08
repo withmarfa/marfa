@@ -22,8 +22,9 @@ import { waitFor } from "../../utils/wait.js";
  * purges, and the run's shared server runs the sweep for every file: a run
  * another file asks for between this file's report and its next step would
  * purge the blob or report it again. The sweep's first run on its own clock
- * comes thirty seconds after boot, so `beforeAll` runs it once, which moves
- * the next one a day away.
+ * comes thirty seconds after boot, and a run asked for earlier leaves that
+ * time where it was, so `beforeAll` waits for that first run to set the next
+ * one a day away.
  */
 let server: FreshServer | undefined;
 let operator: MarfaClient;
@@ -35,8 +36,20 @@ beforeAll(async () => {
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
   });
   ({ operator, working } = clientsFor(server));
-  await runJob(operator, "blob-orphans");
-}, FRESH_SERVER_TIMEOUT_MS);
+  await waitFor(
+    "the sweep's first run on its own clock",
+    async () => {
+      const jobs = await operator.listHousekeeping();
+      const sweep = jobs.data.data.find((job) => job.name === "blob-orphans");
+      return sweep !== undefined &&
+        sweep.running_since === null &&
+        Date.parse(sweep.next_run_at) - Date.now() > sweep.interval_ms / 2
+        ? sweep
+        : undefined;
+    },
+    60_000,
+  );
+}, FRESH_SERVER_TIMEOUT_MS + 60_000);
 
 afterAll(async () => {
   await server?.stop();
