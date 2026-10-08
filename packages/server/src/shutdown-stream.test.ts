@@ -61,7 +61,7 @@ async function boot(): Promise<Running> {
       BLOB_PATH: join(dir, "blobs"),
       MARFA_CONTROL_SOCKET: socketPath,
       MARFA_CONTROL_ONLY: "false",
-      MARFA_AUTH_BASE_URL: `http://127.0.0.1:${port}`,
+      MARFA_AUTH_BASE_URL: `http://127.0.0.1:${String(port)}`,
       MARFA_AUTH_SECRET: "test-secret-for-local-runs-0123456789abcdef",
       RATE_LIMIT_ENABLED: "false",
       MARFA_ENRICHMENT_ENABLED: "false",
@@ -136,7 +136,7 @@ async function localPost(
             expect(res.statusCode, output).toBe(201);
             resolve(JSON.parse(output) as Record<string, unknown>);
           } catch (error) {
-            reject(error);
+            reject(error instanceof Error ? error : new Error(String(error)));
           }
         });
         res.on("error", reject);
@@ -163,7 +163,7 @@ describe("stopping the server process with an event stream open", () => {
     expect(typeof working).toBe("string");
 
     const stream = await fetch(`${server.url}/events`, {
-      headers: { Authorization: `Bearer ${working}` },
+      headers: { Authorization: `Bearer ${String(working)}` },
     });
     expect(stream.status).toBe(200);
     const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
