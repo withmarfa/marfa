@@ -176,7 +176,7 @@ describe("separate rule metadata", () => {
     const statement = readText(
       "folders.md",
       [
-        "### `folders/sample-rule`",
+        "### `folders/" + "sample-rule`",
         "",
         "The command MUST answer.",
         "",
