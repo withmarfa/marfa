@@ -6,6 +6,7 @@ import {
   createSecondClient,
   cleanup,
   getManagementClient,
+  getOwnerClient,
   removeTrackedRegistrations,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -41,7 +42,7 @@ async function register(c: MarfaClient, name: string, description?: string) {
 }
 
 describe("registration", () => {
-  it("keeps registrations and runs to the own key or operator", async () => {
+  it("keeps registrations and runs to the own key or manager", async () => {
     const mine = await register(client, `${ctx.runId} private reader`);
     const theirs = await register(other, `${ctx.runId} another reader`);
     const unrelated = await createSecondClient(ctx, "unregistered-reader");
@@ -136,8 +137,8 @@ describe("registration", () => {
     expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
   });
 
-  it("refuses to register the operator key", async () => {
-    const operator = getManagementClient();
+  it("refuses to register direct owner authority", async () => {
+    const operator = getOwnerClient();
     // The witness: the same door registers a working key.
     const witness = await createSecondClient(ctx, "register-witness");
     const mine = await witness.registerConnector({
@@ -390,7 +391,7 @@ describe("registration", () => {
     expect((await client.deleteConnector(real.data.id)).status).toBe(200);
   });
 
-  it("removes a registration for its own key or the operator, never another", async () => {
+  it("removes a registration for its own key or the manager, never another", async () => {
     const mine = await register(client, `${ctx.runId} mine`);
     const theirs = await other.deleteConnector(mine.data.id);
     expect(theirs.status).toBe(403);
@@ -407,7 +408,7 @@ describe("registration", () => {
     expect((await client.getConnector(again.data.id)).status).toBe(404);
   });
 
-  it("keeps a registration whose key was revoked, until the operator removes it", async () => {
+  it("keeps a registration whose key was revoked, until the manager removes it", async () => {
     const shortLived = await createSecondClient(ctx, "short-lived");
     const mine = await shortLived.registerConnector({
       name: `${ctx.runId} short-lived reader`,
@@ -819,8 +820,11 @@ describe("heartbeats and runs", () => {
     ]);
     // Witness: the declared key is answered.
     expect(
-      (await getManagementClient().listConnectorRuns(mine.data.id, { limit: 1 }))
-        .status,
+      (
+        await getManagementClient().listConnectorRuns(mine.data.id, {
+          limit: 1,
+        })
+      ).status,
     ).toBe(200);
   });
 

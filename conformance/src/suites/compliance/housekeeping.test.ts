@@ -36,7 +36,7 @@ const ALWAYS_LISTED = [
 ];
 
 describe("the housekeeping the server runs on itself", () => {
-  it("lists the housekeeping jobs to the operator key", async () => {
+  it("lists the housekeeping jobs to the management key", async () => {
     const listed = await getManagementClient().listHousekeeping();
     expect(listed.status).toBe(200);
     await expectMatchesSchema("GET", "/housekeeping", 200, listed.data);

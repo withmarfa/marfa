@@ -201,7 +201,7 @@ describe("an orphan report that holds blobs from more than one run", () => {
 
 describe("an app's access token", () => {
   it(
-    "is refused the operator's operations on the stores, the report and the jobs, and the copy stays",
+    "is refused the management operations on the stores, the report and the jobs, and the copy stays",
     async () => {
       const { server, operator, working } = await boot("blob-store-app-token", {
         ...ownObjectStore(),

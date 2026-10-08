@@ -34,7 +34,7 @@ afterAll(async () => {
 });
 
 describe("the stores an instance keeps bytes in", () => {
-  it("lists the disk store and the object store to the operator key", async () => {
+  it("lists the disk store and the object store to the management key", async () => {
     const operator = getManagementClient();
     const stores = await operator.listBlobStores();
     expect(stores.status).toBe(200);

@@ -220,7 +220,7 @@ describe("a property-update job that has ended", () => {
       await runJob(operator, "blob-orphans");
       expect(await reported()).toContain(hash);
 
-      const minted = await operator.createKey({
+      const minted = await working.createKey({
         label: "blob-store-jobs-queued",
         source: "blob-store-jobs-queued",
       });

@@ -11,6 +11,7 @@ import {
   createSecondClient,
   createTestContext,
   getManagementClient,
+  getOwnerClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -74,7 +75,7 @@ async function address(own: Owner): Promise<{ id: string; path: string }> {
 }
 
 describe("a revoked key", () => {
-  it("answers 401 unauthorized to a revoked key on every door, and leaves its runs to the operator", async () => {
+  it("answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager", async () => {
     const own = await owner("revoked");
     const when = at();
     const failed = await own.client.reportConnectorRun(own.id, {
@@ -420,10 +421,12 @@ describe("what the server stamps", () => {
 });
 
 describe("a registration that was refused", () => {
-  it("leaves nothing behind when the operator key, a name or a description is refused", async () => {
+  it("leaves nothing behind when direct owner authority, a name or a description is refused", async () => {
     const own = await createSecondClient(ctx, "refused");
     const keyId = (await own.getCurrentKey()).data.id;
-    const operatorId = (await operator().getCurrentKey()).data.id;
+    const ownerId = (
+      await getOwnerClient().rawRequest<{ id: string }>("/owner")
+    ).data.id;
     const since = at();
     const before = (await operator().listConnectors()).data.data.map(
       (row) => row.id,
@@ -440,13 +443,15 @@ describe("a registration that was refused", () => {
       );
       expect(refused.status, JSON.stringify(body).slice(0, 30)).toBe(400);
     }
-    const byOperator = await operator().registerConnector({ name: "operator" });
+    const byOperator = await getOwnerClient().registerConnector({
+      name: "owner",
+    });
     expect(byOperator.status).toBe(403);
 
     const after = (await operator().listConnectors()).data.data;
     expect(after.map((row) => row.id)).toEqual(before);
     expect(after.map((row) => row.key_id)).not.toContain(keyId);
-    expect(after.map((row) => row.key_id)).not.toContain(operatorId);
+    expect(after.map((row) => row.key_id)).not.toContain(ownerId);
     const written = async (): Promise<AuditEntry[]> => {
       const rows: AuditEntry[] = [];
       let cursor: string | undefined;
@@ -464,9 +469,7 @@ describe("a registration that was refused", () => {
       return rows;
     };
     expect(
-      (await written()).filter((row) =>
-        [keyId, operatorId].includes(row.key_id),
-      ),
+      (await written()).filter((row) => [keyId, ownerId].includes(row.key_id)),
     ).toEqual([]);
 
     // The witness: a registration that is taken leaves its row and its

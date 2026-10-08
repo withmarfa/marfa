@@ -8,6 +8,7 @@ import {
   createTestContext,
   cleanup,
   getManagementClient,
+  getOwnerClient,
   trackItem,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -679,7 +680,7 @@ describe("the rules that keep a blob's bytes", () => {
       // the bytes, or the run purges them and the restore stores them again.
       // A run the scheduler holds answers 409 and purges nothing.
       const [restored, swept] = await Promise.all([
-        operator.restoreArchive(archive),
+        getOwnerClient().restoreArchive(archive),
         operator.runHousekeeping("blob-orphans"),
       ]);
       expect(restored.status, JSON.stringify(restored.error)).toBe(200);

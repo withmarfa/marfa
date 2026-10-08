@@ -142,7 +142,7 @@ async function pending(owner: Connector): Promise<InboundDeliveryRow[]> {
 }
 
 describe("endpoints", () => {
-  it("makes an endpoint for the connector's own key and the operator, answering its address once", async () => {
+  it("makes an endpoint for the connector's own key and the manager, answering its address once", async () => {
     const owner = await connector("endpoint-maker");
     const made = await owner.client.createInboundEndpoint(owner.id, {
       label: "github",

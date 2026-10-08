@@ -10,6 +10,7 @@ import {
   createSecondClient,
   createTestContext,
   getManagementClient,
+  getOwnerClient,
 } from "../../utils/setup.js";
 
 /**
@@ -886,8 +887,8 @@ describe("a credential that is missing, against what the body would be refused f
     }
   });
 
-  it("answers the operator key 403 before a registration body it would be refused for", async () => {
-    const operator = getManagementClient();
+  it("answers direct owner authority 403 before a registration body it would be refused for", async () => {
+    const operator = getOwnerClient();
     for (const body of [{ name: "" }, {}, { name: "n".repeat(201) }]) {
       const refused = await operator.rawRequest<unknown>("/connectors", {
         method: "POST",

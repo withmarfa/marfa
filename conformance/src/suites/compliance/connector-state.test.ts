@@ -1613,7 +1613,7 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(mine, [row.id])).toEqual([row.id]);
   });
 
-  it("clears the state and the agreements for the own key or the operator, and audits it", async () => {
+  it("clears the state and the agreements for the own key or the manager, and audits it", async () => {
     const mine = await connector("clear");
     const process = await holding(mine);
     const rows = [await note("c1"), await note("c2")];
