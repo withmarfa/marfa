@@ -95,7 +95,7 @@ async function mint(overrides: Partial<ApiKeyRequest> = {}): Promise<Actor> {
   };
 }
 
-/** Changes what the key holds; `sources` needs the operator key. */
+/** Changing a key's `sources` enforcement requires config.manage. */
 async function grant(
   actor: Actor,
   changes: Partial<ApiKeyRequest>,

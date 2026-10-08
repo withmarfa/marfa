@@ -32,9 +32,6 @@ interface SeriesError {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // A working credential, not the operator key: reading your own calendar is
-  // the ordinary case, and it exercises the type filter rather than bypassing
-  // it.
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.workingKey,
     body: {

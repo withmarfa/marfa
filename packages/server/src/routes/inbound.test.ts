@@ -116,7 +116,7 @@ describe("inbound webhook endpoints", () => {
     ctx = await context();
   });
 
-  it("makes an endpoint for the connector's own key and the operator, answering the address once", async () => {
+  it("makes an endpoint for the connector's own key and a holder of connectors.manage, answering the address once", async () => {
     const connector = await register(ctx);
     const made = await endpoint(ctx, connector, {
       label: "github",

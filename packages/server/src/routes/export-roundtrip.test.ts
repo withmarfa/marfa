@@ -448,9 +448,8 @@ describe("export → restore round trip", () => {
 // because reading the manifest is what let this survive: the count agreed
 // with the (empty) blob set it was counting.
 //
-// **Driven with a working key.** An operator caller's type map is empty,
-// and an export is a list read narrowed by that map, so under the operator
-// it would carry no items and therefore no blob hashes.
+// The exporting key needs type access so the archive contains items and
+// their blob hashes; an empty type map would make this witness vacuous.
 // ---------------------------------------------------------------------------
 
 describe("an archive's blobs", () => {

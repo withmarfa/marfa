@@ -576,9 +576,7 @@ describe("GET and POST /items/bulk-actions/jobs/:id", () => {
   });
 
   it("a credential that did not start the job is 403 on GET", async () => {
-    // Two ordinary credentials, because that is the only shape the 403
-    // branch has left: an operator key reaches every job, and no permission
-    // a sibling can hold opens another credential's job to it.
+    // Without instance.read, one credential cannot inspect another's job.
     let ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
     ownerKey = await mintWorkingKey(ctx, {
       permissions: [],

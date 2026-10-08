@@ -13,17 +13,12 @@ import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
-/** A working credential and deliberately NOT the operator key: the
- *  credential the refusal is about. The operator key holds no permission to
- *  purge one with. */
 let workingKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // Reaches every type and is still not the instance tier,
-  // which is the whole shape this file is about: the reserved namespace
-  // is fenced off a working credential however wide its maps are.
+  // Broad type maps still cannot authorize writes to reserved namespaces.
   workingKey = await mintWorkingKey(ctx, {
     label: "purger",
     source: "purger",
@@ -39,8 +34,7 @@ afterAll(async () => {
  * A reserved-namespace row, seeded through storage.
  *
  * Through storage rather than the API because the API gate is the very
- * thing under test: a working credential cannot create one, and the operator
- * key holds no permissions to create one with.
+ * thing under test: no public credential can create one.
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await itemWrites(ctx.storage).create({

@@ -14,7 +14,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -33,15 +37,20 @@ function uniqueSuffix(): string {
 describe("keys.revoke", () => {
   it("answers `revoked` on the call that revokes and `already_revoked` after", async () => {
     const suffix = uniqueSuffix();
-    const key = await ctx.storage.keys.create(
-      {
-        label: `affected-rows ${suffix}`,
-        source: `affected-rows-${suffix}`,
-        type_permissions: {},
-        // An operator key, whose empty maps the row constraint requires.
-      },
-      hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
+    const raw = await mintWorkingKey(ctx, {
+      label: `affected-rows ${suffix}`,
+      source: `affected-rows-${suffix}`,
+      permissions: [],
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+    });
+    const key = await ctx.storage.keys.validate(
+      hashApiKey(raw, TEST_API_KEY_SALT),
     );
+    if (!key) throw new Error("Owner-minted key was not stored");
 
     expect(await ctx.storage.keys.revoke(key.id)).toBe("revoked");
     // A second revoke changes nothing, and saying otherwise is what let an

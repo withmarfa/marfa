@@ -73,10 +73,7 @@ interface SyncKey {
 /**
  * A credential whose stamped `source` fixes its natural-key namespace.
  *
- * Not the operator key, which is the instance tier and reaches no content at
- * all. Both maps below decide every type and every
- * `acme.*` namespace this credential touches, which is what each case here
- * asserts.
+ * Its maps decide every type and every `acme.*` namespace it touches.
  */
 async function syncCredential(options: {
   types: Record<string, "read" | "write">;

@@ -239,7 +239,7 @@ describe("POST /connectors/{id}/runs", () => {
 });
 
 describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
-  it("answers one to the operator, 404 for an unknown id, and removes for the own key or the operator", async () => {
+  it("lets connectors.manage inspect registrations and lets it or the own key remove them", async () => {
     const mine = await register(ctx.workingKey, "mine");
     const read = await request(
       ctx.app,
@@ -313,7 +313,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     ]);
   });
 
-  it("keeps a registration whose key was revoked, until the operator removes it", async () => {
+  it("keeps a registration whose key was revoked, until a holder of connectors.manage removes it", async () => {
     const minted = await request(ctx.app, "POST", "/keys", {
       key: ctx.workingKey,
       body: { label: "short-lived", source: "short-lived" },

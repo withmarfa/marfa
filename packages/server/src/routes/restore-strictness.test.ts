@@ -1,8 +1,8 @@
 /**
  * What an archive may write, and what a refused restore may leave behind.
  *
- * An archive is a file somebody can hand you. Restore is operator-key
- * gated, so this is trust-boundary erosion rather than an open door, but a
+ * Full archive restore requires direct authority, but a supplied file
+ * still needs validation. A
  * replay through the raw edge insert (no registry lookup, no endpoint-type
  * constraints, no cardinality, no cycle check, no self-edge guard, no
  * duplicate guard) would let a hand-edited archive plant relationships the
@@ -115,7 +115,7 @@ const A = "01912345-0000-7000-8000-0000000000a1";
 const B = "01912345-0000-7000-8000-0000000000b2";
 const C = "01912345-0000-7000-8000-0000000000c3";
 
-/** Restore an archive. The route is operator-gated. */
+/** Restore through the recently authenticated owner session. */
 async function restoreInto(
   ctx: TestContext,
   archive: Buffer,

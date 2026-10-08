@@ -8,12 +8,7 @@ let ctx: TestContext;
 const SCOPED_LABEL = "noter";
 let scopedKey: string;
 
-// A working credential rather than the operator key, and that is load-bearing
-// rather than incidental: the reserved-namespace fence admits an operator key,
-// so an operator fixture would pass the very door two tests here exist to see
-// refused.
-//
-// It shares the context, so the working key and the scoped key address the
+// The working key and the scoped key address the
 // same items and the difference between them is the permission map alone,
 // which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
@@ -193,7 +188,7 @@ describe("GET /items/:id/extensions/:namespace", () => {
 });
 
 describe("PUT /items/:id/extensions/:namespace", () => {
-  it("rejects a reserved namespace write from a non-operator key with 403", async () => {
+  it("rejects a reserved namespace write from an ordinary key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {
@@ -254,7 +249,7 @@ describe("PUT /items/:id/extensions/:namespace", () => {
 });
 
 describe("DELETE /items/:id/extensions/:namespace", () => {
-  it("rejects a reserved namespace delete from a non-operator key with 403", async () => {
+  it("rejects a reserved namespace delete from an ordinary key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {

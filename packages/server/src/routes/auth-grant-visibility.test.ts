@@ -134,7 +134,7 @@ async function approveDeviceFlow(
 }
 
 /** Move a grant to `state: revoked` without touching its properties, the
- *  shape an operator soft-delete produced before the door refused it. */
+ *  deliberately inconsistent shape that no public operation produces. */
 async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
   const row = await c.storage.items.get(id);
   if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
@@ -195,8 +195,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
     // The baseline. An empty list at the end proves nothing unless the
-    // grant was listed to begin with, and this is also what pins that the
-    // operator key can read this surface at all.
+    // grant was listed to begin with.
     const before = await listedGrants(c, key);
     expect(before.length).toBe(1);
     const originalId = before[0]!.id;
@@ -219,7 +218,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
-    // Exactly one grant, and it is not the one an operator deleted.
+    // Exactly one grant, and it is not the deliberately corrupted row.
     const after = await listedGrants(c, key);
     expect(after.length).toBe(1);
     expect(after[0]!.id).not.toBe(originalId);
@@ -311,8 +310,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
  * **Two of these doors never reach the grant refusal.** `DELETE /items/{id}`
  * and `POST /items/{id}/transition` both run `requireTypeAccess(item.type,
  * "write")` first, and a grant is a `system.connection`: the
- * reserved-namespace fence admits only the operator key, whose own type map
- * is empty, so no credential the product can mint writes one. Both answer 403
+ * reserved-namespace fence refuses every public credential. Both answer 403
  * `type_not_permitted` and never consult liveness at all. No liveness
  * refusal sits behind that gate, because a refusal nobody can reach reads as
  * a protection somebody is relying on; what

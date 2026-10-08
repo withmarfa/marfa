@@ -114,8 +114,7 @@ describe("a restore does not rewind a row's version", () => {
       .find((line) => line.item.id === note.id);
     expect(itemLine?.item.version).toBe(archivedItem?.version);
 
-    // `/restore` is an operator route, and the operator key is
-    // the only credential that reaches it.
+    // Full archive restore requires recent owner authentication or local authority.
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {

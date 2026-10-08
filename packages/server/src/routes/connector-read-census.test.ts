@@ -25,7 +25,8 @@ const READS = [
 ];
 
 const OWN_RULES = {
-  "GET /connectors/:id/endpoints": "the own key or operator reads endpoints",
+  "GET /connectors/:id/endpoints":
+    "the own key or a holder of connectors.manage reads endpoints",
   "GET /connectors/:id/deliveries": "the own key reads deliveries",
   "GET /connectors/:id/deliveries/:delivery_id/body":
     "the own key reads delivery bodies",
@@ -50,7 +51,7 @@ describe("connector read doors", () => {
     expect(doors).toEqual([...READS, ...Object.keys(OWN_RULES)].sort());
   });
 
-  it("shows registrations and their runs only to the own key or operator", async () => {
+  it("shows registrations and their runs only to the own key or a holder of connectors.manage", async () => {
     const registered = await request(ctx.app, "POST", "/connectors", {
       key: ctx.workingKey,
       body: { name: "reader", description: "connector details" },

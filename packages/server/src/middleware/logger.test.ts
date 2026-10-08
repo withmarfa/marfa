@@ -294,16 +294,9 @@ describe("serializeError", () => {
 // ---------------------------------------------------------------------------
 
 describe("the OpenTelemetry mirror", () => {
-  // **The one line whose message is a credential must not be exported.** The
-  // redaction processor rewrites attributes and deliberately leaves the body
-  // alone, on the reasoning that a message string is Marfa-controlled and so
-  // safe by construction. The bootstrap secret breaks that reasoning: it has
-  // to be readable by whoever runs the instance and by nobody further, and
-  // exporting it turns "can read the boot log" into "can read the
-  // observability stack".
-  //
-  // Asserted through the real logs API rather than a spy on the private
-  // helper, because the helper is what a refactor would move.
+  // Attribute redaction cannot remove a secret from the message body. A
+  // local-only message must never reach the remote observability service.
+  // Exercise the real logs API so changing a private helper cannot evade this.
   it("skips a line marked localOnly and mirrors every other", async () => {
     const { logs } = await import("@opentelemetry/api-logs");
     const emitted: string[] = [];

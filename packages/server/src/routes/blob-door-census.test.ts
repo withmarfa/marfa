@@ -34,8 +34,8 @@ const READING = [
   "GET /blobs/:hash/locations",
 ];
 
-/** Doors only the management key opens, refusing a working key outright. */
-const OPERATOR_ONLY = [
+/** Doors requiring instance.read or blobs.manage. */
+const MANAGEMENT_DOORS = [
   "GET /blobs/orphans",
   "GET /blobs/stores",
   "DELETE /blobs/:hash/locations/:store",
@@ -152,7 +152,7 @@ describe("every blob door is held to the credential's reach", () => {
     const doors = blobDoors();
     expect(doors.length).toBeGreaterThan(5);
     expect(doors).toEqual(
-      [...READING, ...OPERATOR_ONLY, ...Object.keys(OWN_RULE)].sort(),
+      [...READING, ...MANAGEMENT_DOORS, ...Object.keys(OWN_RULE)].sort(),
     );
     for (const door of BYTES) expect(doors).toContain(door);
   });
@@ -282,9 +282,9 @@ describe("every blob door is held to the credential's reach", () => {
     );
   });
 
-  it("refuses a working key on every operator door", async () => {
+  it("refuses a key without management grants on each management door", async () => {
     const hash = `sha256:${"c".repeat(64)}`;
-    for (const door of OPERATOR_ONLY) {
+    for (const door of MANAGEMENT_DOORS) {
       const [method, path] = pathFor(door, hash);
       const res = await request(ctx.app, method, path, {
         key: ctx.workingKey,

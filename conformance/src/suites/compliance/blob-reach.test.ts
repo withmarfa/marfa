@@ -938,8 +938,8 @@ describe("who may read and upload a blob", () => {
     const unknown = `sha256:${"c".repeat(64)}`;
     expect((await empty.client.downloadBlob(unknown)).status).toBe(403);
 
-    // Refused nothing for its map, the operator key reaches the lookup, and
-    // a hash nothing holds is an unknown one.
+    // blobs.manage admits the lookup even without a type map; an absent
+    // hash still answers unknown.
     expect(await readingDoors(operator, unknown)).toEqual(UNKNOWN);
     const malformed = await operator.downloadBlob("not-a-hash");
     expect(malformed.status).toBe(400);

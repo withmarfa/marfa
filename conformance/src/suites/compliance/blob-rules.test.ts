@@ -408,8 +408,8 @@ describe("the rules that keep a blob's bytes", () => {
       mime_type: "text/plain",
       size_bytes: text("nothing names me").length,
     });
-    // Through the operator key, which reads every blob, so each status says
-    // whether the bytes are held rather than whether a key may read them.
+    // blobs.manage permits reading every blob, so these statuses witness
+    // whether the bytes are held.
     // Reported is not deleted: the bytes still answer.
     expect((await operator.downloadBlob(orphan)).status).toBe(200);
 
@@ -1018,16 +1018,14 @@ describe("how the copies are placed and removed", () => {
     const managementKey = process.env.MARFA_MANAGEMENT_KEY!;
     const working = await client.deleteBlobLocation(malformed, "no-such-store");
 
-    // No credential first, then a credential that is not the operator key,
-    // whatever the hash and the store are.
+    // Authentication and blobs.manage are checked before the hash or store.
     const anonymous = await drop(`${malformed}/locations/no-such-store`);
     expect(anonymous.status).toBe(401);
     expect(await code(anonymous)).toBe("unauthorized");
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
 
-    // The operator key reaches the hash: malformed, then unregistered, then
-    // the store, whatever the store is.
+    // blobs.manage admits hash validation and then the store lookup.
     const bad = await drop(`${malformed}/locations/${s3.id}`, managementKey);
     expect(bad.status).toBe(400);
     expect(await code(bad)).toBe("validation_error");

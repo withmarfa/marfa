@@ -1,5 +1,5 @@
 /**
- * The operator surface for shipped types the build no longer carries.
+ * The management surface for shipped types the build no longer carries.
  *
  * Drift is derived at boot, so these tests set it directly rather than
  * booting an instance against a doctored database. What that leaves

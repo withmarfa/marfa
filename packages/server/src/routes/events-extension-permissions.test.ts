@@ -206,8 +206,6 @@ describe("an OAuth-derived subscriber", () => {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
-    // Written by a working credential rather than the operator key, whose
-    // own maps are empty.
     const suffix = Math.random().toString(36).slice(2, 8);
 
     const writerKey = await mintWorkingKey(ctx, {

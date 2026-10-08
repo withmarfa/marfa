@@ -170,8 +170,7 @@ async function exportArchive(ctx: TestContext): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Restore an archive. `/restore` is an operator route, so it
- *  takes the operator key and no working credential reaches it. */
+/** Full archive restore uses the recently authenticated owner session. */
 async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
   return await ctx.app.request(`/restore`, {
     method: "POST",

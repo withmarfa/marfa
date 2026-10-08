@@ -540,9 +540,8 @@ describe("key management", () => {
     const { key } = await createClientWithoutPermissions(
       `km-standing-${ctx.runId}`,
     );
-    // Each door asks the same of every caller: the operator key, or one
-    // permission. The request is one no validator would take, so a 400
-    // would be the body being read first.
+    // These doors require management grants or direct authority. Invalid
+    // requests distinguish that gate from later request validation.
     const doors: [string, string][] = [
       ["GET", "/metrics"],
       ["GET", "/housekeeping"],
@@ -731,10 +730,8 @@ describe("key management", () => {
   });
 
   it("refuses a bulk action to a key reaching no type, and narrows one for a key writing none", async () => {
-    // A key reaching no type at all, the operator key among them, is refused
-    // the bulk action as it is every other door of the data plane: a dry run
-    // answering it `200` with nothing matched said "there is nothing here",
-    // which is not what happened.
+    // Management grants confer no type access. A dry run must refuse a key
+    // with an empty type map rather than report an empty match set.
     const operator = getManagementClient();
     const dryRunBody = JSON.stringify({
       action: "transition",

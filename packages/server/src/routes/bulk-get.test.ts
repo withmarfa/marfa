@@ -213,10 +213,8 @@ describe("POST /items/bulk-get and the system token", () => {
     });
     expect(note.status).toBe(201);
     const { item: n } = (await note.json()) as { item: { id: string } };
-    // The system row goes in through storage: a reserved namespace is fenced
-    // to the operator key, whose own type permissions are empty, so no
-    // credential writes one. What this door does with the row afterwards is
-    // the same either way.
+    // The fixture models a platform-owned row, which no public credential
+    // can create through the item write API.
     const folder = await itemWrites(ctx.storage).create({
       type: "system.folder",
       properties: { title: `bulk-sys-${marker}` },
