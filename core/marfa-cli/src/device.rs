@@ -291,6 +291,11 @@ pub enum ItemsCommand {
     Add(AddArgs),
     /// Attach a file to an item: its upload, a file item naming the bytes,
     /// and an `attached-to` edge, three queued writes.
+    ///
+    /// Answers the text that embeds the file in the item's body,
+    /// `![[title]]`, where the file's title names it alone among the item's
+    /// attachments. Under --json the answer is one object: `upload`, `item`
+    /// and `edge`, each a queued write, and `embed`, the text or null.
     Attach(AttachArgs),
     /// The links and embeds of files in an item's body, read from the local
     /// copy: each with the item it names, or why it names none yet.
