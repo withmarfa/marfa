@@ -1542,7 +1542,7 @@ When `logout` signs out of a kept sign-in, the command MUST forget the kept toke
 
 ### `device/command-logout-not-revoked`
 
-If a sign-in kept no revocation endpoint, or the server refuses its revocation or cannot be reached, then `logout` MUST report `revoked: false`.
+If `logout` signs out of a sign-in that kept no revocation endpoint, or whose revocation the server refuses or cannot be reached for, then the command MUST report `revoked: false`.
 
 **Reason:** a sign-out that claimed a revocation it never had would leave a person believing a token is dead while it stands until it expires.
 
@@ -1555,6 +1555,156 @@ When `keys forget` runs, the command MUST forget the credential kept for the ser
 **Reason:** a credential is often forgotten for a server that is gone.
 
 **Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
+
+## The working copy's contract
+
+The contract version a device speaks is the one in the document its core is built from.
+
+### `device/contract-mismatch`
+
+If an answer that a hydration, a catch-up, a held stream, a drain or a blob's link reads names another contract, then a device MUST refuse it `contract_mismatch`.
+
+**Reason:** a copy that read a body shaped for another contract would hold rows it misread with nothing to say so.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› ends a held stream on another contract rather than asking again`, `› ends a drain on an answer from another contract, and sends the write again under its key`, `› refuses a blob's link from a server on another contract`, `› refuses a catch-up whose catalog is on another contract, before opening its stream`.
+
+### `device/contract-unnamed-success`
+
+If a success a device reads names no contract, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses a success the working copy is given that names no contract`.
+
+### `device/contract-refusal-held`
+
+If a refusal a device reads names another contract, then a device MUST refuse it `contract_mismatch` without reading its envelope.
+
+**Tests:** `device/contract.test.ts › refuses an event stream's refusal on another contract rather than reading its envelope`.
+
+### `device/contract-mismatch-applies-nothing`
+
+When a device refuses an answer `contract_mismatch`, a device MUST apply nothing the answer carried.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› applies nothing from a page on another contract, after a head read and a catalog on its own`.
+
+### `device/contract-catalog-first`
+
+If a catch-up's catalog answers on another contract, then a device MUST NOT open the catch-up's stream.
+
+**Tests:** `device/contract.test.ts › refuses a catch-up whose catalog is on another contract, before opening its stream`.
+
+### `device/contract-follow-ends`
+
+If a held stream's answer names another contract, then a device MUST end the stream rather than ask for it again.
+
+**Tests:** `device/contract.test.ts › ends a held stream on another contract rather than asking again`.
+
+### `device/contract-link-not-followed`
+
+If a blob's link answers on another contract, then a device MUST NOT follow a link.
+
+**Tests:** `device/contract.test.ts › refuses a blob's link from a server on another contract`.
+
+### `device/contract-headers`
+
+When an answer names another contract, a device MUST refuse it on its headers without waiting for its body.
+
+**Reason:** a body that never ends would otherwise hold the refusal back.
+
+**Tests:** `device/contract.test.ts › refuses a catalog on another contract on its headers, without waiting on its body`, `› refuses a write's answer on another contract on its headers, without waiting on its body`, `› refuses a blob's link on another contract on its headers, without waiting on its body`.
+
+### `device/contract-exact`
+
+If an answer names a contract that only begins with the one the device speaks, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses a contract that only begins with the one it speaks`.
+
+### `device/contract-twice`
+
+If an answer names its contract on two header lines that differ, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses an answer the working copy is given that names its contract twice, differently`.
+
+### `device/contract-refusal-names`
+
+When a device refuses an answer `contract_mismatch`, a device MUST name the server it asked, the contract it speaks, the answer's status, and the contract the answer named where it named one.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› says a read refused on another contract sent no write, naming the server and the status, with exit 1`, `› refuses a success the working copy is given that names no contract`.
+
+### `device/contract-read-no-write`
+
+When a device refuses the answer to a read `contract_mismatch`, a device MUST NOT say that a write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a read refused on another contract sent no write, naming the server and the status, with exit 1`.
+
+### `device/contract-write-unsettled`
+
+If a write's answer names another contract, then a device MUST say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `› ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-write-resent`
+
+If a write's answer names another contract, then a device MUST leave the write with no verdict and send it again on a later drain under the same idempotency key.
+
+**Reason:** the answer was not read, so only the server's retained answer to the same key can settle the write.
+
+**Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`.
+
+### `device/contract-drain-ends`
+
+If a write's answer names another contract, then a device MUST end the drain's pass with nothing sent after that write.
+
+**Tests:** `device/contract.test.ts › ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-read-back`
+
+If the read a refused write is reconciled against answers on another contract, then a device MUST end the pass and keep the refusal the server gave.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read a refusal is reconciled against answers on another contract`.
+
+### `device/contract-landed-read`
+
+If the read of the row a create landed on answers on another contract, then a device MUST end the pass keeping the create's verdict.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read of the row a create landed on answers on another contract`.
+
+### `device/owed-read-no-resend`
+
+When a device reads again the row a create it holds a verdict for landed on, a device MUST NOT send the create again.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read of the row a create landed on answers on another contract`.
+
+### `device/redirect-not-followed`
+
+If an answer a hydration or a drain reads is a `3xx`, whatever contract it names, then a device MUST refuse it `redirect`, naming the server, the status and the destination where one was named, without following it.
+
+**Tests:** `device/contract.test.ts › refuses a redirect a hydration is answered with, naming %s contract, without following it`, `device/cli-outcomes.test.ts › preserves a redirected queued write without following %s`.
+
+### `device/redirect-queue-kept`
+
+If a drain's write is answered with a `3xx`, then a device MUST end the pass with the queue as it was, counting no refusal and keeping the write's request and idempotency key.
+
+**Tests:** `device/cli-outcomes.test.ts › preserves a redirected queued write without following %s`.
+
+### `device/unnamed-environmental`
+
+If a refusal names no contract, then a device MUST report it `unnamed_answer`, naming its status, whatever the status is.
+
+**Reason:** the server names its contract on every answer, so a refusal naming none is from something in front of it.
+
+**Tests:** `device/contract.test.ts › hands the working copy a refusal that names no contract, as a proxy's would`, `› takes a refusal naming no contract on any read as the network's, never as the server's word`.
+
+### `device/unnamed-not-server-word`
+
+If a refusal names no contract, then a device MUST NOT take it as the server's word, so a `401` stops nothing and a `404` says no row or bytes are gone.
+
+**Tests:** `device/contract.test.ts › takes a refusal naming no contract on any read as the network's, never as the server's word`, `› keeps a row a 404 naming no contract says is gone, since a proxy's says nothing of the server's rows`, `› reads a blob as absent only on the server's own 404, never on a proxy's`, `› takes a refusal that names no contract as the network's, ending the pass uncounted`.
+
+### `device/unnamed-drain-uncounted`
+
+If a drain meets a refusal that names no contract, then a device MUST end the pass with every write it had not answered still queued, given no verdict and counted against nothing.
+
+**Tests:** `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
 
 ## Held open
 

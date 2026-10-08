@@ -290,8 +290,19 @@ describe("every device statement is asserted by something", () => {
     ]) {
       expect(SKIPS.test(written), written).toBe(true);
     }
+    // A fixture of the macOS keychain runs where the device suite runs on
+    // macOS, nightly and on request (`ci.yml`), so it asserts its statement
+    // there; on any other platform the binary has no keychain to keep in.
+    const ON_MACOS = /\.runIf\(process\.platform === "darwin"\)/g;
+    const skips = (text: string) => SKIPS.test(text.replace(ON_MACOS, ""));
+    expect(skips('describe.runIf(process.platform === "darwin")("a")')).toBe(
+      false,
+    );
+    expect(skips('describe.runIf(process.platform === "linux")("a")')).toBe(
+      true,
+    );
     const skipping = fixtureFiles.filter((file) =>
-      SKIPS.test(readFileSync(resolve(here, file), "utf8")),
+      skips(readFileSync(resolve(here, file), "utf8")),
     );
     expect(
       skipping,
