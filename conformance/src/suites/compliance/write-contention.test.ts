@@ -231,7 +231,7 @@ describe("contention on the write lock", () => {
     const minted = await fetch(`${impatient!.apiUrl}/keys`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${impatient!.managementKey}`,
+        Authorization: `Bearer ${impatient!.workingKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ label: "first-use", source: "first-use" }),
