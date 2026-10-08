@@ -830,7 +830,10 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                     refusals,
                     answer.as_ref().ok().map(|answer| answer.body.clone()),
                 )?;
-                settled.reason = Some(format!("the copy could not take the answer: {error}"));
+                // A dead write carries no reason, in the queue or here.
+                if settled.verdict.is_none() {
+                    settled.reason = Some(format!("the copy could not take the answer: {error}"));
+                }
                 settled
             }
         };
