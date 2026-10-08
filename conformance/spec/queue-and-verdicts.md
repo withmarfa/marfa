@@ -50,7 +50,7 @@ A device MUST report a write that no drain has sent, held or settled, or that we
 
 A device MUST queue each write as exactly one of these kinds: `create_item`, `update_item`, `delete_item`, `restore_item`, `transition_item`, `create_edge`, `update_edge`, `delete_edge`, `replace_metadata`, `merge_metadata`, `add_tag`, `remove_tag`, `write_extension`, `delete_extension` and `upload_blob`.
 
-**Reason:** a purge is sent at once or refused, never queued (`device.md` 25), and a bulk operation is the server's way of doing many things in one request, not a write a device holds.
+**Reason:** a purge is sent at once or refused, never queued (`device/purge-unqueued` and `device/purge-at-once`), and a bulk operation is the server's way of doing many things in one request, not a write a device holds.
 
 **Tests:** `device/queue.test.ts › holds one kind per write, from the closed set`.
 
@@ -166,7 +166,7 @@ When a drain sends a create whose caller named a version, a device MUST send tha
 
 When a drain sends a create whose caller named no version, a device MUST send the create with no `version`.
 
-**Reason:** a version the device supplied would be one it minted (`device.md` 20).
+**Reason:** the server assigns every version, so a version the device supplied would be one it made up.
 
 **Tests:** `device/queue.test.ts › sends a create with the version it was based on`.
 
@@ -230,7 +230,7 @@ When a drain sends an update that carries a null, a device MUST send the null as
 
 When a drain sends an update of an item, a device MUST send it with `conflict=auto`.
 
-**Reason:** a device resolves nothing itself (`device.md` 21); the flag asks the server to resolve in the same write rather than refuse.
+**Reason:** a device resolves nothing itself (`device/conflict-blocked`); the flag asks the server to resolve in the same write rather than refuse.
 
 **Tests:** `device/queue.test.ts › sends every update with the server asked to resolve`.
 
@@ -510,7 +510,7 @@ When a drain refuses writes and the command prints its report as text, the comma
 
 ## The six verdicts
 
-Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. What a device does not do on meeting one is `device.md` 21.
+Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. What a device does not do on meeting one is `device/conflict-blocked`.
 
 ### `queue-and-verdicts/verdicts-six`
 
@@ -522,7 +522,7 @@ A device MUST give every write it settles exactly one of the verdicts `accepted`
 
 ### `queue-and-verdicts/success-no-resolution`
 
-When the server answers a write `2xx` with a body the device reads as its operation's answer and no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `queue-and-verdicts/upload-named-by-hash` or `queue-and-verdicts/trashed-ack-refused` says otherwise.
+When the server answers a write `2xx` with a body the device reads as its operation's answer and no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `device/upload-answer-hash` or `queue-and-verdicts/trashed-ack-refused` says otherwise.
 
 **Reason:** the three verdicts a success can carry are told apart by what the answer reports about resolving, never by comparing the row that came back with the row sent: every answer carries fields the server stamps.
 
@@ -560,7 +560,7 @@ When a write is answered `accepted`, `merged` or `conflicted`, a device MUST NOT
 
 When the server answers a write to a row or an edge `2xx`, a device MUST read that row or edge again and hold what the read returns, with the writes still waiting laid over it, rather than the row or edge the answer carried.
 
-**Reason:** a receipt settles the write, not what the key may read now (`device.md` 54).
+**Reason:** a receipt settles the write, not what the key may read now (`device/read-back-keeps-verdict`).
 
 **Tests:** `device/verdicts.test.ts › holds the row a fresh read returns where it differs from the row the answer carried`, `device/queue.test.ts › holds the edge a fresh read returns where it differs from the edge the answer carried`, `› keeps the later row a catch-up brought over an older answer replayed after it`, `› keeps the later edge a catch-up brought over an older edge answer replayed after it`.
 
@@ -600,7 +600,7 @@ When a write is answered `conflicted`, a device MUST NOT hold the copy the serve
 
 When the working copy holds a copy the server set aside, a device MUST hold its `derived-from` edge to its original (`versions/copy-link`), whether or not it holds the original, from a catch-up and from a hydration, and after the store is opened again.
 
-**Reason:** an app finds the original from the copy, and the copies from the original, by reading edges from either end (`device.md` 43), after a restart as before it.
+**Reason:** an app finds the original from the copy, and the copies from the original, by reading edges from either end (`device/edges-to` and `device/edges-whole-either-end`), after a restart as before it.
 
 **Tests:** `device/verdicts.test.ts › holds the link with the sibling after the verdict's catch-up, and after the store is reopened`, `› holds the link a catch-up brings where the copy does not hold the original`, `› holds the link a hydration reads with the sibling, where the copy does not hold the original`.
 
@@ -638,7 +638,7 @@ When the server refuses a write to a row or an edge, a device MUST hold what a f
 
 If the read after a refusal meets an environmental failure, then a device MUST keep the row as the copy showed it and the refusal as recorded.
 
-**Reason:** the refusal is recorded before the read, so a read that fails never sends the write again, and the copy changes only on a read the server answered (`device.md` 54).
+**Reason:** the refusal is recorded before the read, so a read that fails never sends the write again, and the copy changes only on a read the server answered (`device/read-back-keeps-verdict`).
 
 **Tests:** `device/verdicts.test.ts › refused: preserves the local row until a fresh read succeeds at the next drain`.
 
@@ -776,7 +776,7 @@ When a write meets a dropped connection, a read that timed out, a `5xx`, a `408`
 
 When the server's answer to a write is not a success and names no contract, whatever its status, a device MUST take it as an environmental failure, a `401` among them.
 
-**Reason:** a refusal naming no contract comes from something in front of the server, a proxy, a tunnel or an access gateway, and says nothing of the write or the key (`device.md` 42). Refused on its word, a write the server never saw would end for good; counted, a proxy restarting under a watch that drains each second would make every queued write `dead` within seconds.
+**Reason:** a refusal naming no contract comes from something in front of the server, a proxy, a tunnel or an access gateway, and says nothing of the write or the key (`device/unnamed-environmental` and `device/unnamed-not-server-word`). Refused on its word, a write the server never saw would end for good; counted, a proxy restarting under a watch that drains each second would make every queued write `dead` within seconds.
 
 **Tests:** `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
 
@@ -1200,7 +1200,7 @@ If a caller discards a `refused` write that an unsent write with no verdict, or 
 
 When a copy is hydrated again, a device MUST keep every queued write, with its id and idempotency key.
 
-**Reason:** a copy that expires, whether its cursor aged out, its server was restored behind it or another instance answers at its origin, is cleared and pulled again (`device.md` 16), and a queue cleared with it would drop writes a caller was told were queued.
+**Reason:** a copy that expires, whether its cursor aged out, its server was restored behind it or another instance answers at its origin, is cleared and pulled again (`device/expire-aged-cursor`, `device/expire-log-behind` and `device/instance-marker`), and a queue cleared with it would drop writes a caller was told were queued.
 
 **Tests:** `device/queue.test.ts › keeps the queue through a re-hydration`, `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`.
 
@@ -1214,7 +1214,7 @@ When a drain finds another instance at the copy's origin, a device MUST send no 
 
 While a drain cannot confirm which instance the server is, a device MUST send no queued write, leaving each unanswered and uncounted.
 
-**Reason:** a restart is when another instance appears at an address (`device.md` 2).
+**Reason:** a restart is when another instance appears at an address (`device/instance-drain-expires`).
 
 **Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› queues writes while the server is unreachable`.
 
@@ -1264,7 +1264,7 @@ When a hydration holds again a row of this device's own create still waiting tha
 
 When a hydration leaves the copy without the source of an edge create still waiting, of a type the slice does not hold whole, a device MUST NOT hold the edge again, nor its answer.
 
-**Reason:** the copy never holds an edge whose source it does not hold (`device.md` 44).
+**Reason:** the copy never holds an edge whose source it does not hold (`device/edge-source-left-unheld`).
 
 **Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
 
@@ -1482,7 +1482,7 @@ When a move is answered, or refused and read back, a device MUST hold the row as
 
 When the read after an answer or a refusal returns a row outside the copy's slice, a device MUST let the row go, with the edges it draws but those of a type the slice holds whole, unless the row is pinned or a write to it still waits.
 
-**Reason:** the copy lets the row go as a catch-up would on the same row (`device.md` 14); an attachment's file item, held outside the slice, is pinned when it is made, so an edit of it keeps it.
+**Reason:** the copy lets the row go as a catch-up would on the same row (`device/catch-up-leaves-slice`); an attachment's file item, held outside the slice, is pinned when it is made, so an edit of it keeps it.
 
 **Tests:** `device/queue.test.ts › lets a row go once its retype out of the slice is answered`, `› keeps a pinned row its own answered move takes out of the slice`, `› keeps a pinned row outside the slice when its refused move is read back`, `› keeps the edges of a type held whole on a row its answered move lets go`, `› keeps the edges of a type held whole on a row its refused move, read back, lets go`, `› keeps a row held outside the slice when an edit to it is answered`, `› sends no tier naming the tier the row already has, and keeps a row held outside the slice`.
 
@@ -1608,7 +1608,7 @@ When the copy moves onto the row a refused create's natural key names, a device 
 
 When the copy moves onto the row a refused create's natural key names, a device MUST move the pin the create's row held onto that row.
 
-**Reason:** the pin follows the row a create of a row the slice does not take is answered with (`device.md` 1), and a refusal naming the row is that answer; left on the minted id, it would hold nothing and the landed row would go at its next event.
+**Reason:** the pin follows the row a create of a row the slice does not take is answered with (`device/pin-holds`), and a refusal naming the row is that answer; left on the minted id, it would hold nothing and the landed row would go at its next event.
 
 **Tests:** `device/queue.test.ts › moves the pin of a create the slice does not hold onto the row a refusal names its natural key under`.
 
@@ -1670,19 +1670,9 @@ When a caller creates an item naming no tier whose natural key names this device
 
 When a caller creates an item the copy's slice does not take, by its type or its tier, a device MUST pin it when it is queued.
 
-**Reason:** the copy then holds what it shows through the answer and the event that follow, an attachment's file item of a type outside the slice among them; the pin follows the row as `device.md` 1 says. A create the copy showed and then let go at its own event reads as saved and then lost.
+**Reason:** the copy then holds what it shows through the answer and the event that follow, an attachment's file item of a type outside the slice among them; the pin follows the row as `device/pin-holds` says. A create the copy showed and then let go at its own event reads as saved and then lost.
 
 **Tests:** `device/queue.test.ts › holds a create the slice does not hold through its answer and its event`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› pins a create of a type the slice does not take when it is queued`.
-
-## Uploads
-
-### `queue-and-verdicts/upload-named-by-hash`
-
-When the server answers an upload with a success that does not name the bytes by the hash they were queued under, a device MUST count a refusal against it rather than accept it.
-
-**Reason:** accepted, the upload would report bytes landed under a name the server does not hold them by, and the file item waiting on it would then name nothing.
-
-**Tests:** `device/queue.test.ts › counts an upload whose answer names other bytes`.
 
 ## Drains that overlap
 
@@ -1690,7 +1680,7 @@ When the server answers an upload with a success that does not name the bytes by
 
 If a process asks for a drain of a store that another process holds open as its writer, then a device MUST refuse the drain with `reading_handle`, sending nothing.
 
-**Reason:** a second process opening the store is a reading handle (`device.md` 41). So no write is sent twice by two drains at once, and each drain reports only the writes it had answered.
+**Reason:** a second process opening the store is a reading handle (`device/reader-not-writer`). So no write is sent twice by two drains at once, and each drain reports only the writes it had answered.
 
 **Tests:** `device/queue.test.ts › refuses a drain from a second process while one runs, and sends each write once`.
 
@@ -1704,7 +1694,7 @@ When a drain is asked for in a process while another runs on the same store, a d
 
 ## Local checks of an item's properties
 
-A device checks an item write against the type catalog the copy holds before it changes the copy or the queue, so a row shown as queued never holds a value the type it holds already proves invalid. Permissions, strict mode, uniqueness and recurrence remain the server's to judge, and a type the copy does not hold is `device.md` 57.
+A device checks an item write against the type catalog the copy holds before it changes the copy or the queue, so a row shown as queued never holds a value the type it holds already proves invalid. Permissions, strict mode, uniqueness and recurrence remain the server's to judge, and a type the copy does not hold is `device/unknown-type-write`.
 
 ### `queue-and-verdicts/check-refuses-invalid`
 
@@ -1810,7 +1800,7 @@ When a folder gives way to another machine's placement of a file (`folders.md` 1
 
 When a caller restores a row the copy does not hold, a device MUST queue the restore by the row's id.
 
-**Reason:** a row read from the bin (`device.md` 83) is not held, and nor is one the slice never took, yet the person restoring it is restoring a row the server holds. Queued, the restore waits out a network as any write does and goes after a restart.
+**Reason:** a row read from the bin (`device/bin-unheld`) is not held, and nor is one the slice never took, yet the person restoring it is restoring a row the server holds. Queued, the restore waits out a network as any write does and goes after a restart.
 
 **Tests:** `device/bin-live.test.ts › restores a row read from the bin that the copy does not hold`.
 

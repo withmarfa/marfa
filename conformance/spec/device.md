@@ -1308,6 +1308,8 @@ When a drain reaches an upload, a device MUST send the bytes it holds for it to 
 
 If the server's answer to an upload names other bytes, or none, then a device MUST leave the upload unanswered and count a refusal against it.
 
+**Reason:** accepted, the upload would report bytes landed under a name the server does not hold them by, and the file item waiting on it would then name nothing.
+
 **Tests:** `device/queue.test.ts › counts an upload whose answer names other bytes`.
 
 ### `device/upload-bytes-gone`
@@ -2890,7 +2892,7 @@ When a body carries a link that names its own item, by id or by title, a device 
 
 When a body carries a link to an item whose create waits in the queue, a device MUST send the link's edge after that create.
 
-**Reason:** this is what lets a link name an item created earlier in the same queue (`queue-and-verdicts.md` 4).
+**Reason:** this is what lets a link name an item created earlier in the same queue (`queue-and-verdicts/edge-depends-on-ends`).
 
 **Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`.
 
@@ -2912,7 +2914,7 @@ When a body carries an embed of a note, a device MUST read it as text and make n
 
 When a body's change names an edge, a device MUST queue the edge as a write of its own, with its own verdict.
 
-**Reason:** a refused edge then leaves the body saved, and the body's write is refused alone where the server refuses it (`queue-and-verdicts.md` 33).
+**Reason:** a refused edge then leaves the body saved, and the body's write is refused alone where the server refuses it (`queue-and-verdicts/sidecars-own-writes`).
 
 **Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reports a refused edge write against its link, and keeps the body`.
 
@@ -2944,7 +2946,7 @@ When a body names an edge of a type and ends the copy holds already, a device MU
 
 If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded.
 
-**Reason:** a refused write is kept as any refused write is (`queue-and-verdicts.md` 47), so the person can see it.
+**Reason:** a refused write is kept as any refused write is (`queue-and-verdicts/clear-keeps-content` and `queue-and-verdicts/discard-refused`), so the person can see it.
 
 **Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
 
@@ -2960,7 +2962,7 @@ When the server refuses a body's edge create because the edge exists, a device M
 
 When the write a body's edges were made from is answered `conflicted` on the body, a device MUST take those edge writes out of the queue unsent.
 
-**Reason:** the server kept another body on the item and wrote this one to a conflicted copy (`queue-and-verdicts.md` 11), so the edges this body asked for are not the item's: a link taken out of the losing body would delete an edge the kept body names.
+**Reason:** the server kept another body on the item and wrote this one to a conflicted copy (`queue-and-verdicts/success-conflicted`), so the edges this body asked for are not the item's: a link taken out of the losing body would delete an edge the kept body names.
 
 **Tests:** `device/body-edges-live.test.ts › sends no edge write whose body lost to another device's, and keeps the edge the kept body names`.
 
@@ -3042,7 +3044,7 @@ When a write takes a link out of a body, a device MUST NOT delete an edge of ano
 
 When a body's change names an edge, a device MUST queue the edge's write to wait on the write that changed the body.
 
-**Reason:** what waits on a refused write is refused with it (`queue-and-verdicts.md` 16), so an edge never lands for a body the server refused.
+**Reason:** what waits on a refused write is refused with it (`queue-and-verdicts/dependency-refused`), so an edge never lands for a body the server refused.
 
 **Tests:** `device/body-edges-live.test.ts › queues a body's edge to wait on the write that changed the body`.
 
@@ -3058,7 +3060,7 @@ When an edit moves an item to another type, a device MUST read the body before t
 
 When an edit based on a version older than the one the copy holds changes an item's body, a device MUST read the body's edges from the row the server answers the edit with, once it answers.
 
-**Reason:** the server merges such an edit (`queue-and-verdicts.md` 43), and the copy cannot tell what the merge makes of the body until it is answered.
+**Reason:** the server merges such an edit (`queue-and-verdicts/as-read-sent-on-read`), and the copy cannot tell what the merge makes of the body until it is answered.
 
 **Tests:** `device/body-edges-live.test.ts › reads an edit based on an older version once the server answers it, and sends its edges at the next drain`.
 
@@ -3172,7 +3174,7 @@ When the server answers a read-back by id `400 invalid_id`, a device MUST take t
 
 If a caller drains a working copy that has never completed a hydration, then a device MUST refuse the drain `no_cursor`, sending nothing and leaving the queue as it was.
 
-**Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts.md` 12), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain.
+**Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts/success-read-again` and `queue-and-verdicts/refused-read-again`), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain.
 
 **Tests:** `device/save-before-sync-live.test.ts › refuses a drain before its first hydration, sending nothing and keeping the queue`.
 
@@ -3514,13 +3516,13 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
-- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions/auto-resolved`), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give for a write it can resolve. A write carrying only `edges` and a stale version is refused rather than resolved, because there is nothing to merge, but that is not a write that asked for resolution.
+- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions/auto-resolved`), so the refusal a device has to classify (`queue-and-verdicts/conflict-blocks`) is one the real server does not give for a write it can resolve. A write carrying only `edges` and a stale version is refused rather than resolved, because there is nothing to merge, but that is not a write that asked for resolution.
 - **An answer on another contract, or a success naming none.** The run's server names the contract the binary was built for on every answer, and nothing over the wire asks it for another.
 - **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the row (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
 - **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth.md` 33 asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (`device/server-row-order`). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
 - **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders.md` 30).
-- **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts.md` 48), and the fixtures script the shapes the server will answer.
+- **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts/refusal-in-bin` and `queue-and-verdicts/refusal-parts`), and the fixtures script the shapes the server will answer.
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. The frame's shape is held by the server's own test, which retires a row directly.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).
 - **A create queued under an id the server cannot hold.** A device refuses such an id before it queues it (`device/id-format`), so only a store an earlier build made carries one. `device/verdicts.test.ts` scripts the refusal and the read-back that follow it (`device/read-back-invalid-id`).
