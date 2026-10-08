@@ -250,9 +250,9 @@ const PERMISSION_CALLS: Record<
   { asks: Record<string, number>; because: string }
 > = {
   "routes/_blob-reach.ts": {
-    asks: { "blobs.manage": 3 },
+    asks: { "blobs.manage": 4 },
     because:
-      "manager admission alongside item reach, determined by the selected blob",
+      "manager admission alongside item reach, including copy lending rechecked under the write lock",
   },
   "routes/_connector-reach.ts": {
     asks: { "connectors.manage": 1 },
