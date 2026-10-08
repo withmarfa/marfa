@@ -303,6 +303,9 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     );
                     if let Some(pulled) = &pulled {
                         lines.extend(uncarried_line(&pulled.uncarried));
+                        if pulled.paused > 0 {
+                            lines.push(paused_line(pulled.paused, true));
+                        }
                     }
                     lines.extend(flagged_lines(&flagged));
                     lines.extend(embed_lines(

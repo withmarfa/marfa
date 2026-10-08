@@ -92,11 +92,11 @@ impl Folder {
                 state::paused(&conn, state::Removal::Pull)?,
             )
         };
+        let members = self.members(&settings)?;
         let mut put_back = 0;
         for path in &disk {
             let (bound, held) = {
                 let conn = self.core.conn()?;
-                state::journal_clear(&conn, path)?;
                 let Some(bound) = state::bound_at(&conn, path)? else {
                     continue;
                 };
@@ -110,10 +110,18 @@ impl Folder {
             if !held {
                 // The file leaves for good, so its placement ends before its binding.
                 self.end_placement(&bound.item_id, path)?;
-                state::unbind(&*self.core.conn()?, path)?;
+                let conn = self.core.conn()?;
+                state::journal_clear(&conn, path)?;
+                state::unbind(&conn, path)?;
+                continue;
+            }
+            // A missing unmatched file remains the person's deletion: the pull
+            // never writes a new file for an item outside the search.
+            if !members.contains(&bound.item_id) {
                 continue;
             }
             let conn = self.core.conn()?;
+            state::journal_clear(&conn, path)?;
             state::bind(
                 &conn,
                 &state::Bound {
@@ -128,7 +136,13 @@ impl Folder {
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
                 continue;
             };
-            let Some(item) = self.core.get(&row.item_id)? else {
+            // The ordinary read excludes the bin, but restoring a paused
+            // removal must still find the trashed row the copy holds.
+            let Some(item) = crate::store::items_by_ids(
+                &*self.core.conn()?,
+                std::slice::from_ref(&row.item_id),
+            )?
+            .pop() else {
                 continue;
             };
             if item.state == ItemState::Trashed {

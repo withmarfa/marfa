@@ -234,6 +234,12 @@ impl Folder {
     ) -> Result<FileStatus> {
         let mut entry = FileStatus::new(&bound.path, Some(&bound.item_id), "held");
         let changed = hash.as_deref() != Some(bound.content_hash.as_str());
+        if pull.contains(&bound.path) {
+            return Ok(entry.because(
+                "removal",
+                "its item left elsewhere with more files than the removal threshold lets go at once, so the file stays: `folders confirm` takes it away, and `folders restore` brings its item back",
+            ));
+        }
         // A refused create forgets its row, and the file keeps the reason.
         if self.core.get(&bound.item_id)?.is_none() {
             if changed {
@@ -246,12 +252,6 @@ impl Folder {
                     "is bound to an item this copy no longer holds, and unchanged since, so nothing is sent; changed, it goes as a new item",
                 ),
             });
-        }
-        if pull.contains(&bound.path) {
-            return Ok(entry.because(
-                "removal",
-                "its item left elsewhere with more files than the removal threshold lets go at once, so the file stays: `folders confirm` takes it away, and `folders restore` brings its item back",
-            ));
         }
         if let Some(held) = &bound.held {
             let flagged = Flagged::of(&bound.path, held);
