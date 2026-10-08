@@ -2,7 +2,7 @@
 
 Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server, a persistent data volume, and a private backup bucket in your Railway project.
 
-**Container-tested; Railway verification pending.** Live deployment, claim, and recovery checks remain outstanding.
+**Draft:** live claim, persistence, and password recovery have passed. Final build-revision verification and cleanup remain outstanding.
 
 ## Deploy the template
 
@@ -37,7 +37,7 @@ To set up entirely in the terminal, replace step 3 with:
 marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --email you@example.com --name "Your name"
 ```
 
-Enter your email and name in the command. The password uses a hidden prompt. **Pending: verify these commands in the deployed container.**
+Enter your email and name in the command. The password uses a hidden prompt.
 
 The browser handoff carries a single-use ticket in the URL fragment. Do not put a setup code in a URL or share the handoff link. The claim command must connect to the running server's local socket; `railway run` and `railway shell` run on your own machine and cannot reach it. See [Railway SSH](https://docs.railway.com/cli/ssh).
 
@@ -63,8 +63,6 @@ To recover a lost data volume, use the same container revision, backup bucket, a
    ```
 
 3. Enter the new password at the hidden prompt, then sign in with it.
-
-**Pending: verify recovery, ended browser sessions, and preserved app access on Railway.**
 
 Recovery ends existing browser sessions and preserves app access. It uses the same protected socket as claim. Keep the data volume and instance secrets in place throughout recovery.
 
