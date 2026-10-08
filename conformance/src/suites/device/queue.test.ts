@@ -7542,4 +7542,60 @@ describe("a create the slice does not hold", () => {
     expect((await device.catchUp()).ok).toBe(true);
     expect((await device.get(other)).ok).toBe(false);
   });
+
+  it("moves the pin of a create the slice does not hold onto the row a refusal names its natural key under", async () => {
+    harness = await feedSlice("queue-landed-pin");
+    const { device, server } = harness;
+    const THEIRS = "01a00000-0000-7000-8000-0000000000f3";
+    const created = await device.create({
+      type: "core.note",
+      tier: "library",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "pinned.md",
+      version: 0,
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const before = await device.status();
+    expect(
+      before.ok && before.value.pinned,
+      "the create outside the slice was not pinned, so nothing below is about its pin",
+    ).toContain(local);
+    const theirs = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "pinned.md",
+      type: "core.note",
+    };
+    scriptWrites(server, {
+      create: [answers.ancestorUnavailable(theirs, 0)],
+      read: [
+        answers.updated(
+          wireItem({
+            id: THEIRS,
+            version: 1,
+            tier: "library",
+            properties: theirs.properties,
+            source: "notes",
+            source_id: "pinned.md",
+          }),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "the pin stayed on the id the device minted, so the row the create landed on is let go at its next event",
+    ).toEqual(expect.arrayContaining([THEIRS]));
+    expect(status.ok && status.value.pinned).not.toContain(local);
+    const held = await device.get(THEIRS);
+    expect(held.ok && held.value.tier).toBe("library");
+  });
 });
