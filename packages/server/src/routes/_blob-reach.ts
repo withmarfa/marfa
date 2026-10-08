@@ -69,8 +69,9 @@ export async function mayReadBlob(
   key: ApiKey,
   storage: Storage,
   hash: string,
+  permissions: readonly string[],
 ): Promise<boolean> {
-  if (key.permissions?.includes("blobs.manage")) return true;
+  if (permissions.includes("blobs.manage")) return true;
   const { allowed, excluded } = computeTypeFilter(key, "read");
   if (!allowed || allowed.length === 0) return false;
   return storage.blobs.readableThrough(hash, {
@@ -91,11 +92,12 @@ export function blobProof(
   storage: Storage,
   key: ApiKey,
   kind: CredentialKind,
+  permissions: readonly string[],
 ): (hash: string) => Promise<boolean> {
   const principal = blobPrincipal(key, kind);
   return async (hash) =>
     (await storage.blobs.uploadedBy(hash, principal)) ||
-    (await mayReadBlob(key, storage, hash));
+    (await mayReadBlob(key, storage, hash, permissions));
 }
 
 /** `blobProof` for the credential this request carries. */
@@ -103,9 +105,17 @@ export function requestBlobProof(
   c: Context<AppEnv>,
   storage: Storage,
 ): (hash: string) => Promise<boolean> {
-  if (isDirectAuthority(c)) return () => Promise.resolve(true);
-  const { key, kind } = requestCredential(c);
-  return blobProof(storage, key, kind);
+  return async (hash) => {
+    if (isDirectAuthority(c)) return true;
+    // The writer turn refreshes the context's bound credential. Resolve the
+    // proof there too, rather than retain a grant read before the write lock.
+    const { key, kind } = requestCredential(c);
+    const permissions =
+      kind === "oauth" ? (c.get("oauthGrant")?.scopes ?? []) : key.permissions;
+    if (permissions.includes("blobs.manage"))
+      requirePermission(c, "blobs.manage");
+    return blobProof(storage, key, kind, permissions)(hash);
+  };
 }
 
 /**
@@ -125,7 +135,7 @@ export async function requireReadableBlob(
   } else {
     const key = requireAuth(c);
     getTypeFilter(c);
-    if (!(await mayReadBlob(key, storage, hash))) throw blobNotFound();
+    if (!(await mayReadBlob(key, storage, hash, []))) throw blobNotFound();
   }
   const record = await storage.blobs.get(hash);
   if (!record) throw blobNotFound();

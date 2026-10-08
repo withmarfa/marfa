@@ -250,7 +250,12 @@ async function runUpdatePropertiesChunk(
     ctx,
     {
       properties: input.patch,
-      blob_proof: blobProof(storage, credential.key, credential.kind),
+      blob_proof: blobProof(
+        storage,
+        credential.key,
+        credential.kind,
+        credential.permissions,
+      ),
     },
     "update_properties",
   );

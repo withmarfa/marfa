@@ -124,6 +124,10 @@ export async function handleArchiveExport(
   filter: ExportFilter,
 ): Promise<Response> {
   const callerKey = requireAuth(c);
+  const permissions =
+    c.get("authType") === "oauth"
+      ? (c.get("oauthGrant")?.scopes ?? [])
+      : callerKey.permissions;
   const readsHistory = typeReader(c);
   const clientGone = c.req.raw.signal;
   const spool = new ExportSpool(() => blobs.disk.spoolPath());
@@ -133,6 +137,7 @@ export async function handleArchiveExport(
     selection = await collectSelection({
       storage,
       callerKey,
+      permissions,
       readsHistory,
       filter,
       spool,
@@ -261,12 +266,21 @@ export async function handleArchiveExport(
 async function collectSelection(input: {
   storage: Storage;
   callerKey: ReturnType<typeof requireAuth>;
+  permissions: readonly string[];
   readsHistory: ReturnType<typeof typeReader>;
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
 }): Promise<Selection> {
-  const { storage, callerKey, readsHistory, filter, spool, signal } = input;
+  const {
+    storage,
+    callerKey,
+    permissions,
+    readsHistory,
+    filter,
+    spool,
+    signal,
+  } = input;
   const items = await spool.text();
   const edges = await spool.text();
   const types = await spool.text();
@@ -411,7 +425,7 @@ async function collectSelection(input: {
     const listed: string[] = [];
     const entries: string[] = [];
     for (const hash of page) {
-      if (!(await mayReadBlob(callerKey, storage, hash))) continue;
+      if (!(await mayReadBlob(callerKey, storage, hash, permissions))) continue;
       const record = await storage.blobs.get(hash);
       if (!record) continue;
       listed.push(hash);
