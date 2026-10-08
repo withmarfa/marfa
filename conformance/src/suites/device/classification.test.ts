@@ -1296,6 +1296,77 @@ describe("the ceiling, and releasing what it stopped", () => {
     expect(byId.ok && byId.value).toBe(1);
   });
 
+  it("holds a write behind a create blocked with another for a source its key does not claim", async () => {
+    const KEYED = { id: "01a00000-0000-7000-8000-00000000000b", version: 2 };
+    harness = await hydratedHarness("class-unclaimed-follower", {
+      rows: {
+        "core.note": [
+          ...held()["core.note"],
+          {
+            item: {
+              id: KEYED.id,
+              version: KEYED.version,
+              source: "notes",
+              source_id: "kept.md",
+              properties: { title: "kept", body: "kept" },
+            },
+          },
+        ],
+      },
+    });
+    const { device, server } = harness;
+    const first = await device.create({
+      type: "core.note",
+      properties: { title: "first", body: "first" },
+      source: "notes",
+      sourceId: "first.md",
+    });
+    // Carries the natural key of the row the copy holds, so it is a write to
+    // that row, and the edit queued after it follows it.
+    const keyed = await device.create({
+      type: "core.note",
+      properties: { title: "again", body: "kept" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    const edited = await device.update(KEYED.id, {
+      properties: { title: "edited" },
+      version: KEYED.version,
+    });
+    if (!first.ok || !keyed.ok || !edited.ok)
+      throw new Error(JSON.stringify([first, keyed, edited]));
+    expect(
+      edited.value.follows,
+      "the edit does not follow the create carrying its row's natural key, so nothing here is about that order",
+    ).toBe(keyed.value.id);
+    scriptWrites(server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await device.queue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue));
+    const of = (id: string) => queue.value.find((row) => row.id === id);
+    expect([of(keyed.value.id)?.verdict, of(keyed.value.id)?.reason]).toEqual([
+      "blocked",
+      "credential_refused",
+    ]);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+      "an edit went out ahead of the create it follows, which a refused claim parked unsent",
+    ).toEqual([]);
+    expect([of(edited.value.id)?.verdict, of(edited.value.id)?.reason]).toEqual(
+      ["blocked", "awaiting_dependency"],
+    );
+  });
+
   it("blocks a create naming a source its key does not claim, and sends it once the key does", async () => {
     harness = await hydratedHarness("class-unclaimed-source", {
       rows: held(),

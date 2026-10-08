@@ -193,6 +193,9 @@ describe("the queue keeps its order", () => {
     });
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
+    expect(queued.value.idempotency_key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
 
     // A second device over the same store file, which is what a restart is:
     // the process that queued the write is gone and the store is not.
@@ -210,6 +213,32 @@ describe("the queue keeps its order", () => {
 });
 
 describe("every write names the version it read", () => {
+  it("sends a null an update carries as its caller gave it", async () => {
+    harness = await hydratedHarness("queue-null-sent", { rows: held() });
+    const queued = await harness.device.update(HELD.id, {
+      properties: { title: "kept", notes: null },
+      version: HELD.version,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const answered = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "kept", body: "held" },
+    });
+    scriptWrites(harness.server, {
+      update: [answers.updated(answered)],
+      read: [answers.updated(answered)],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const sent = harness.server.requests.filter(
+      (request) => request.method === "PATCH",
+    );
+    expect(
+      JSON.parse(sent[0]?.body ?? "{}").properties,
+      "the null the caller gave was dropped or changed before it was sent, so the server never judged it",
+    ).toEqual({ title: "kept", notes: null });
+  });
+
   it("refuses an update queued with no version", async () => {
     harness = await hydratedHarness("queue-version", { rows: held() });
     const refused = await harness.device.update(HELD.id, {
@@ -446,6 +475,10 @@ describe("a write is answered once", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     const id = queued.value.item_id ?? "a";
+    expect(
+      queued.value.idempotency_key,
+      "the write was queued with no key, so the comparison below would hold however the attempts went",
+    ).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
     // The first attempt meets a 5xx, which retries and is not counted; the
     // second is answered from the server's record.
