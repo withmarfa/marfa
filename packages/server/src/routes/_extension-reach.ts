@@ -2,7 +2,7 @@
  * The one way an item's extension data reaches a credential.
  *
  * **A credential is answered the namespaces its extension map lets it read,
- * and its own label's, on every door that answers extension data, whatever
+ * on every door that answers extension data, whatever
  * the door did to get there.** A write door is not a read of what it did not
  * write: a key that may write one namespace answered with the whole map
  * would read every other integration's data off its own write. The export
@@ -15,7 +15,6 @@
  * through here; `extension-door-census.test.ts` finds those doors in the
  * OpenAPI document and drives each with a key holding one namespace.
  */
-import { extensionLabelOf } from "../auth/extension-label.js";
 import {
   filterExtensionsByPermission,
   resolveExtensionPermission,
@@ -23,10 +22,7 @@ import {
 import type { ApiKey, Metadata } from "@withmarfa/shared";
 
 /** The credential fields the rule reads. */
-export type ExtensionReader = Pick<
-  ApiKey,
-  "extension_permissions" | "label" | "oauth_client_id"
->;
+export type ExtensionReader = Pick<ApiKey, "extension_permissions">;
 
 /** Whether `reader` may read this namespace, by the rule that decides
  *  which namespaces of a map it is answered. */
@@ -35,11 +31,8 @@ export function mayReadNamespace(
   namespace: string,
 ): boolean {
   return (
-    resolveExtensionPermission(
-      namespace,
-      reader?.extension_permissions,
-      extensionLabelOf(reader),
-    ) !== "none"
+    resolveExtensionPermission(namespace, reader?.extension_permissions) !==
+    "none"
   );
 }
 
@@ -51,7 +44,6 @@ export function readableExtensions(
   return filterExtensionsByPermission(
     extensions,
     reader?.extension_permissions,
-    extensionLabelOf(reader),
   );
 }
 

@@ -41,7 +41,7 @@ interface SignInPageParams {
    * verified: the name is whatever the app registered, and a request nobody
    * signed would put a stranger's words on this page.
    */
-  app?: { name: string; unverified: boolean };
+  app?: { name: string };
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -115,7 +115,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   const lede = params.app
     ? `Sign in to continue to <b>${escapeHtml(params.app.name)}</b>.`
     : "Welcome back.";
-  const appCallout = params.app?.unverified ? unverifiedAppCallout() : "";
+  const appCallout = params.app ? unverifiedAppCallout() : "";
 
   const body = `
     <h1 class="title">Sign in to Marfa</h1>

@@ -39,12 +39,6 @@ interface DeviceConsentParams {
   /** The nonce the response's content security policy names. */
   nonce: string;
   clientName: string;
-  /**
-   * The app registered itself, so its name is whatever it said. Shown as the
-   * same caution the browser consent screen carries, because the device flow
-   * is where a code from a stranger is likeliest to be typed in.
-   */
-  unverified?: boolean;
   scopes: ParsedScope[];
   userCode: string;
   descriptions?: Record<string, string>;
@@ -326,7 +320,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const bodyHtml = `
     <h1 class="title">Approve sign-in</h1>
     <p class="sub"><b>${safeClient}</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
-    ${params.unverified ? unverifiedAppCallout() : ""}
+    ${unverifiedAppCallout()}
     <div class="codetile">${safeUserCode}</div>
     <div class="actions">
       <form method="POST" action="/auth/device/consent" novalidate>

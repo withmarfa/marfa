@@ -39,20 +39,16 @@ describe("canonical effective read projection", () => {
       }),
     ).toEqual(projection({ type_permissions: { "core.note.*": "read" } }));
   });
-  it("distinguishes wildcard extension access from only the implicit namespace", () => {
+  it("distinguishes wildcard extension access from none, whatever the label", () => {
     expect(projection({ extension_permissions: {} })).not.toEqual(
       projection({ extension_permissions: { "*": "read" } }),
     );
     expect(
       projection({ extension_permissions: { "own.namespace": "read" } }),
-    ).toEqual(projection({ extension_permissions: {} }));
-    expect(
-      projection({
-        extension_permissions: {
-          "own.namespace": "none",
-        } as unknown as ApiKey["extension_permissions"],
-      }),
     ).not.toEqual(projection({ extension_permissions: {} }));
+    expect(
+      projection({ label: "another.namespace", extension_permissions: {} }),
+    ).toEqual(projection({ extension_permissions: {} }));
   });
   it("collapses unchanged read reach across write reductions and irrelevant powers", () => {
     expect(

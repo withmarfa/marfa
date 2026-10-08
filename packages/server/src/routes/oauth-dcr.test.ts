@@ -108,7 +108,6 @@ describe("POST /auth/oauth2/register through the provider plugin", () => {
     const row = await c.storage.oauthProvider!.getClient(body.client_id!);
     expect(row).not.toBeNull();
     expect(row!.name).toBe("Registered App");
-    expect(row!.isPublic).toBe(true);
     expect(row!.redirectUris).toEqual([CALLBACK]);
     expect([...(row!.grantTypes ?? [])].sort()).toEqual(
       ["authorization_code", DEVICE_CODE_GRANT_TYPE].sort(),

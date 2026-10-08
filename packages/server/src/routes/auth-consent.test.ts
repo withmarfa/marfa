@@ -51,9 +51,8 @@ async function seedClient(
   c: TestContext,
   opts: {
     name?: string | null;
-    /** When set, marks the client confidential (a verified client that
-     *  authenticates with a secret). Omitted → the DCR/public default
-     *  shape (`public: true`, `token_endpoint_auth_method: none`). */
+    /** When set, the client authenticates with a secret. Omitted, it is
+     *  public (`token_endpoint_auth_method: none`). */
     confidential?: boolean;
   } = {},
 ): Promise<string> {
@@ -460,7 +459,7 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain("plus any you add later");
   });
 
-  it("flags a public/DCR client as unverified on the consent screen", async () => {
+  it("flags an app that sends no secret as unverified on the consent screen", async () => {
     ctx = await createTestContext({});
     // Default seedClient shape is public (token_endpoint_auth_method: none).
     const clientId = await seedClient(ctx, { name: "Google Drive" });
@@ -478,13 +477,13 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain("Marfa hasn't verified this app");
   });
 
-  it("does NOT flag a confidential client as unverified", async () => {
+  it("flags an app that authenticates with a secret as unverified too", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, {
-      name: "Vetted App",
+      name: "Secret App",
       confidential: true,
     });
-    const cookie = await signInUser(ctx, "verified-app@example.com");
+    const cookie = await signInUser(ctx, "secret-app@example.com");
 
     const res = await request(
       ctx.app,
@@ -494,8 +493,9 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).not.toContain('class="callout"');
-    expect(html).not.toContain("Marfa hasn't verified");
+    expect(html).toContain("Secret App");
+    expect(html).toContain('class="callout"');
+    expect(html).toContain("Marfa hasn't verified this app");
   });
 
   it("404s when client genuinely does not exist", async () => {

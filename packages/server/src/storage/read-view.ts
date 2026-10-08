@@ -9,7 +9,6 @@ import {
   resolveTypePermission,
 } from "@withmarfa/shared";
 import type { ApiKey, EnforcementSettings } from "@withmarfa/shared";
-import { extensionLabelOf } from "../auth/extension-label.js";
 import {
   resolveBoundCredential,
   type BoundCredential,
@@ -69,20 +68,16 @@ export function canonicalReadProjection(
   bound: BoundCredential,
   enforcement: EnforcementSettings,
 ): unknown {
-  const label = extensionLabelOf(key);
   const extensionMap = key.extension_permissions ?? {};
-  const extensionNames = [
-    ...new Set([
-      ...Object.keys(extensionMap).filter((name) => name !== "*"),
-      ...(label ? [label] : []),
-    ]),
-  ].sort();
+  const extensionNames = Object.keys(extensionMap)
+    .filter((name) => name !== "*")
+    .sort();
   const extensionDefault =
     extensionMap["*"] === "read" || extensionMap["*"] === "write";
   const extensions = extensionNames
     .map((name): [string, boolean] => [
       name,
-      resolveExtensionPermission(name, extensionMap, label) !== "none",
+      resolveExtensionPermission(name, extensionMap) !== "none",
     ])
     .filter(([, readable]) => readable !== extensionDefault);
   const metadataDefault = metadataPermissionCovers(

@@ -1060,7 +1060,7 @@ function resolveEdgePermission(
   perms: Record<string, "read" | "write">,
   edgeType: string,
 ): "read" | "write" | undefined {
-  const exact = perms[edgeType];
+  const exact = Object.hasOwn(perms, edgeType) ? perms[edgeType] : undefined;
   if (exact !== undefined) return exact;
 
   let best: "read" | "write" | undefined;

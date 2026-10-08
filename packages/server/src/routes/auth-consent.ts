@@ -529,12 +529,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const html = renderConsentScreen({
       nonce: c.var.cspNonce,
       clientName,
-      // Public clients (DCR / `token_endpoint_auth_method: none`) self-assert
-      // their name with no vetted identity behind it. Flag them so the user
-      // can tell a self-asserted name from a confidential, verified one — a
-      // scammer registering a client named "Google Drive" must be visibly
-      // distinguishable.
-      unverified: client.isPublic,
       scopes: parsed,
       clientId,
       oauthQuery,
@@ -1025,13 +1019,12 @@ function classifyProxyOutcome(
  * Only a request the plugin signed and whose window is open is read: the name
  * is whatever the app registered under, so one taken from a query nobody
  * signed would put a stranger's words on a page served by the real issuer,
- * which is the reason the consent page refuses it too. An unverified app is
- * named all the same, flagged as the consent screen flags it.
+ * which is the reason the consent page refuses it too.
  */
 export async function appBehindReturnTo(
   deps: { auth: MarfaAuth; storage: Storage },
   returnTo: string,
-): Promise<{ name: string; unverified: boolean } | null> {
+): Promise<{ name: string } | null> {
   let target: URL;
   try {
     target = new URL(returnTo, "http://localhost");
@@ -1048,7 +1041,7 @@ export async function appBehindReturnTo(
   }
   const client = await resolveClient(deps.storage, clientId);
   if (!client) return null;
-  return { name: client.name ?? clientId, unverified: client.isPublic };
+  return { name: client.name ?? clientId };
 }
 
 export const __test_internals = {
@@ -1182,7 +1175,6 @@ async function resolveClient(
   clientId: string,
 ): Promise<{
   name: string | null;
-  isPublic: boolean;
   redirectUris: readonly string[];
 } | null> {
   try {
@@ -1191,7 +1183,6 @@ async function resolveClient(
       return row
         ? {
             name: row.name,
-            isPublic: row.isPublic,
             redirectUris: row.redirectUris,
           }
         : null;
