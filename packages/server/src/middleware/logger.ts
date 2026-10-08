@@ -7,7 +7,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "./auth.js";
 import { toOpenApiPath } from "../openapi-path.js";
 import { loggablePath } from "../inbound/address.js";
-import { withoutParametersOf, withoutQueryParameters } from "../error-text.js";
+import { reportableError, withoutFailedQueries } from "../error-text.js";
 
 // ---------------------------------------------------------------------------
 // Structured log entry
@@ -131,7 +131,7 @@ export function log(
   data?: Record<string, unknown>,
   options?: LogOptions,
 ): void {
-  const message = withoutQueryParameters(rawMessage);
+  const message = withoutFailedQueries(rawMessage);
   let payload: Record<string, unknown>;
   let line: string;
   try {
@@ -228,7 +228,7 @@ function prepareLogPayload(data: Record<string, unknown> | undefined): {
     }
     // Every string is held to the failed-query rule: a caller that built its
     // own text from an error has handed this function the values already.
-    if (kind === "string") return withoutQueryParameters(value as string);
+    if (kind === "string") return withoutFailedQueries(value as string);
     // Everything left that is not an object is a number or boolean.
     if (kind !== "object") return value;
 
@@ -291,10 +291,11 @@ function isErrorLike(value: object): boolean {
 // ---------------------------------------------------------------------------
 
 /** Short, always-safe description of a value that could not be rendered. */
-function describeThrown(err: unknown): string {
+function describeThrown(thrown: unknown): string {
   try {
+    const err = reportableError(thrown);
     if (err instanceof Error && typeof err.message === "string") {
-      return err.message.slice(0, 200);
+      return withoutFailedQueries(err.message).slice(0, 200);
     }
   } catch {
     // A throwing `message` getter on the failure itself. Fall through.
@@ -400,7 +401,7 @@ const MAX_AGGREGATE_ERRORS = 5;
 export function formatErrorSummary(err: unknown): string {
   try {
     const parts: string[] = [];
-    let current: unknown = err;
+    let current: unknown = reportableError(err);
     for (
       let depth = 0;
       current !== null && current !== undefined && depth <= MAX_CAUSE_DEPTH;
@@ -470,7 +471,7 @@ function describeErrorValue(err: unknown): string {
     typeof rawName === "string" && rawName !== "" ? rawName : undefined;
   const message =
     typeof rawMessage === "string"
-      ? withoutParametersOf(err, rawMessage).trim()
+      ? withoutFailedQueries(rawMessage).trim()
       : "";
 
   let text: string;
@@ -505,7 +506,8 @@ export function setLogStacks(include: boolean): void {
  * exactly what has just failed — is otherwise able to suppress the log line
  * describing its own failure.
  */
-export function serializeError(err: unknown, depth = 0): unknown {
+export function serializeError(thrown: unknown, depth = 0): unknown {
+  const err = reportableError(thrown);
   if (err === null || err === undefined) return null;
   if (typeof err !== "object") return stringifyThrownValue(err);
 
@@ -514,7 +516,7 @@ export function serializeError(err: unknown, depth = 0): unknown {
   if (typeof name === "string" && name !== "") out.name = name;
   const message = readProperty(err, "message");
   out.message =
-    typeof message === "string" ? withoutParametersOf(err, message) : "";
+    typeof message === "string" ? withoutFailedQueries(message) : "";
 
   for (const key of ERROR_DETAIL_KEYS) {
     const value = readProperty(err, key);
@@ -525,7 +527,7 @@ export function serializeError(err: unknown, depth = 0): unknown {
 
   if (logStacks) {
     const stack = readProperty(err, "stack");
-    if (typeof stack === "string") out.stack = withoutParametersOf(err, stack);
+    if (typeof stack === "string") out.stack = withoutFailedQueries(stack);
   }
 
   if (depth < MAX_CAUSE_DEPTH) {

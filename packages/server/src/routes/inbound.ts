@@ -16,7 +16,6 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS } from "../config.js";
-import { shapedError } from "../middleware/error-handler.js";
 import { hashInboundToken } from "../inbound/address.js";
 
 /** Long enough for a backlog to drain or a burst to pass. */
@@ -159,23 +158,16 @@ export function inboundRoutes(storage: Storage, config: AppConfig) {
         }
       }
       const headers = receivedHeaders(c);
-      let received: Awaited<ReturnType<Storage["inbound"]["receive"]>>;
-      try {
-        received = await storage.inbound.receive(
-          {
-            tokenHash: hashInboundToken(c.req.param("token")),
-            method: c.req.method,
-            query: rawQuery(c.req.url),
-            headers,
-            body: Buffer.concat(chunks, held),
-          },
-          limits,
-        );
-      } catch (error) {
-        if (shapedError(error) !== undefined) throw error;
-        // eslint-disable-next-line preserve-caught-error -- Receipt SQL parameters must not reach error sinks.
-        throw new Error("Inbound receipt storage failed");
-      }
+      const received = await storage.inbound.receive(
+        {
+          tokenHash: hashInboundToken(c.req.param("token")),
+          method: c.req.method,
+          query: rawQuery(c.req.url),
+          headers,
+          body: Buffer.concat(chunks, held),
+        },
+        limits,
+      );
       if (received.kind === "not_found") {
         throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
       }

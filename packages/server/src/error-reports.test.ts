@@ -3,10 +3,11 @@
  * report.
  *
  * A failed statement's message is its SQL plus the values it was bound to,
- * and for a write those values are the item: its properties, tags and hashes.
- * An error report is read by whoever runs the log stack, the telemetry
- * backend, the error-tracking product and the alert channel, so none of them
- * may carry the values. The statement itself, which says what failed, stays.
+ * and for a write those values are the content written: an item's
+ * properties, tags and hashes, or a delivery's headers, query and body. An
+ * error report is read by whoever runs the log stack, the telemetry backend,
+ * the error-tracking product and the alert channel, so each receives the
+ * fixed database failure with its SQLite code, and nothing of the statement.
  *
  * Each case provokes one real failed write, then reads what every sink
  * received. A test that only asserts absence proves nothing if the thing could
@@ -33,10 +34,14 @@ import {
   it,
   vi,
 } from "vitest";
-import { createErrorHandler } from "./middleware/error-handler.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
 import { itemWrites } from "./storage/item-writes.js";
-import { createTestContext, request, type TestContext } from "./test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  type TestContext,
+} from "./test-utils.js";
 
 /** What the fixture makes the driver say, which is why the statement failed. */
 const REASON = "refused by the fixture";
@@ -45,6 +50,9 @@ const CANARY_PROPERTY = "canary-property-7c1e9a52";
 const CANARY_TAG = "canary-tag-4d08b6f3";
 const BLOB_BYTES = new TextEncoder().encode("canary-blob-bytes-91b5e07d");
 const CANARY_HASH = createHash("sha256").update(BLOB_BYTES).digest("hex");
+const CANARY_HEADER = "canary-header-5a2c81d4";
+const CANARY_QUERY = "canary-query-0e6b37f9";
+const CANARY_BODY = "canary-body-c94d1e26";
 
 interface Received {
   path: string;
@@ -133,18 +141,39 @@ async function stopTelemetry(): Promise<void> {
   vi.restoreAllMocks();
 }
 
-/** Holds each of these sinks to the rule: it received the report, and the value is not in it. */
+/** Holds each of these sinks to the rule: it received the fixed report, and no value or statement is in it. */
 function expectNoValue(
   sinks: Record<string, string>,
-  value: string,
-  reason = REASON,
+  values: readonly string[],
+  code: string,
 ): void {
   for (const [name, text] of Object.entries(sinks)) {
-    // The report arrived, and it still names what failed and why.
-    expect.soft(text, `${name} received the report`).toContain("Failed query");
-    expect.soft(text, `${name} gives the driver's reason`).toContain(reason);
-    expect.soft(text, `${name} carries the value`).not.toContain(value);
+    // The report arrived, and it still says a database operation failed and
+    // which SQLite code it failed with.
+    expect
+      .soft(text, `${name} received the report`)
+      .toContain("Database operation failed");
+    expect.soft(text, `${name} gives the SQLite code`).toContain(code);
+    expect
+      .soft(text, `${name} carries the statement`)
+      .not.toContain("Failed query");
+    expect
+      .soft(text, `${name} carries the driver's text`)
+      .not.toContain(REASON);
+    for (const value of values)
+      expect.soft(text, `${name} carries ${value}`).not.toContain(value);
   }
+}
+
+/** Records what exception reporting is handed, then hands it on. */
+function recordReportedExceptions(): unknown[] {
+  const handed: unknown[] = [];
+  const report = globalThis.__marfaReportException;
+  globalThis.__marfaReportException = (error, properties) => {
+    handed.push(error);
+    report?.(error, properties);
+  };
+  return handed;
 }
 
 const bodiesAt = (
@@ -156,16 +185,50 @@ const bodiesAt = (
     .map((r) => r.text)
     .join("\n");
 
+/** A fresh connector's receiving endpoint, as a sender would address it. */
+async function inboundPath(ctx: TestContext): Promise<string> {
+  const key = await mintWorkingKey(ctx);
+  const connector = await request(ctx.app, "POST", "/connectors", {
+    key,
+    body: { name: "error reports" },
+  });
+  const { id } = (await connector.json()) as { id: string };
+  const made = await request(ctx.app, "POST", `/connectors/${id}/endpoints`, {
+    key,
+    body: {},
+  });
+  return ((await made.json()) as { path: string }).path;
+}
+
+async function deliver(ctx: TestContext): Promise<Response> {
+  const path = await inboundPath(ctx);
+  return ctx.app.request(`${path}?q=${CANARY_QUERY}`, {
+    method: "POST",
+    headers: { "X-Fixture": CANARY_HEADER },
+    body: CANARY_BODY,
+  });
+}
+
+/** Every value the cases below write, which no sink may carry whichever statement failed. */
+const ALL_CANARIES = [
+  CANARY_PROPERTY,
+  CANARY_TAG,
+  CANARY_HASH,
+  CANARY_HEADER,
+  CANARY_QUERY,
+  CANARY_BODY,
+];
+
 /**
  * One write that fails at a statement whose values are the thing written:
  * the table that statement inserts into, what the caller sends, and the
- * value of it that statement carries.
+ * values of it that statement carries.
  */
 const WRITES = [
   {
     name: "an item's properties",
     table: "items",
-    canary: CANARY_PROPERTY,
+    canaries: [CANARY_PROPERTY],
     send: (ctx: TestContext) =>
       request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -175,7 +238,7 @@ const WRITES = [
   {
     name: "an item's tags",
     table: "metadata",
-    canary: CANARY_TAG,
+    canaries: [CANARY_TAG],
     send: (ctx: TestContext) =>
       request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -189,7 +252,7 @@ const WRITES = [
   {
     name: "a blob's hash",
     table: "blobs",
-    canary: CANARY_HASH,
+    canaries: [CANARY_HASH],
     send: (ctx: TestContext) =>
       ctx.app.request("/blobs", {
         method: "POST",
@@ -199,6 +262,18 @@ const WRITES = [
         },
         body: BLOB_BYTES,
       }),
+  },
+  {
+    name: "an inbound delivery's headers and query",
+    table: "inbound_deliveries",
+    canaries: [CANARY_HEADER, CANARY_QUERY],
+    send: deliver,
+  },
+  {
+    name: "an inbound delivery's body",
+    table: "inbound_delivery_bodies",
+    canaries: [CANARY_BODY],
+    send: deliver,
   },
 ] as const;
 
@@ -212,6 +287,11 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
     collector = await startCollector();
     ctx = await createTestContext();
     await refuseInsertsInto(ctx, write.table);
+    // Each case's alert carries the same fixed text from the same door, which
+    // the webhook's debounce would hold back, so each case gets its own.
+    vi.resetModules();
+    const { createErrorHandler } =
+      await import("./middleware/error-handler.js");
     const handler = createErrorHandler({
       errorWebhookUrl: `${collector.url}/hook`,
     });
@@ -239,8 +319,9 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
 
   afterEach(stopTelemetry);
 
-  it("reaches no sink with the values the failed statement was bound to", async () => {
+  it("reaches no sink with the statement or the values it was bound to", async () => {
     await bootTelemetry(collector.url);
+    const handed = recordReportedExceptions();
 
     // A server span is the active one while a real request is handled, and
     // the handler records the error on it.
@@ -253,13 +334,16 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
       });
     expect(status).toBe(500);
 
-    // The witness: the error the handler was given does carry the value, in
+    // The witness: the error the handler was given does carry the values, in
     // its message and in its stack.
     expect(raised).toHaveLength(1);
     const error = raised[0] as Error;
-    expect(error.message).toContain(write.canary);
-    expect(error.stack).toContain(write.canary);
+    for (const canary of write.canaries) {
+      expect(error.message).toContain(canary);
+      expect(error.stack).toContain(canary);
+    }
     expect((error.cause as Error).message).toContain(REASON);
+    expect(handed).toHaveLength(1);
 
     await globalThis.__marfaOtelShutdown?.();
     // The webhook is fire-and-forget; give its request time to land.
@@ -280,8 +364,12 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
           p.startsWith("/batch"),
         ),
         "the error webhook": bodiesAt(collector, (p) => p === "/hook"),
+        "the error handed to exception reporting": inspect(handed, {
+          depth: 10,
+        }),
       },
-      write.canary,
+      ALL_CANARIES,
+      "SQLITE_CONSTRAINT",
     );
   });
 });
@@ -314,8 +402,9 @@ describe("a failed write no request is waiting on", () => {
 
   afterEach(stopTelemetry);
 
-  it("reaches no sink with the values the failed statement was bound to when it ends as an unhandled rejection", async () => {
+  it("reaches no sink with the statement or the values it was bound to when it ends as an unhandled rejection", async () => {
     await bootTelemetry(collector.url);
+    const handed = recordReportedExceptions();
     const proc = new EventEmitter();
     installUnhandledRejectionReporter((event, listener) => {
       proc.on(event, listener);
@@ -348,8 +437,12 @@ describe("a failed write no request is waiting on", () => {
         "the exception sent to error tracking": bodiesAt(collector, (p) =>
           p.startsWith("/batch"),
         ),
+        "the error handed to exception reporting": inspect(handed, {
+          depth: 10,
+        }),
       },
-      CANARY_PROPERTY,
+      ALL_CANARIES,
+      "SQLITE_CONSTRAINT",
     );
   });
 });
@@ -390,7 +483,7 @@ describe("a read that fails after the response has begun", () => {
 
   afterEach(stopTelemetry);
 
-  it("reaches no sink, the server's own error printing included, with the values the failed statement was bound to", async () => {
+  it("reaches no sink, the server's own error printing included, with the statement or the values it was bound to", async () => {
     for (let n = 0; n < 3; n++) {
       const created = await request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -465,8 +558,8 @@ describe("a read that fails after the response has begun", () => {
           p.startsWith("/batch"),
         ),
       },
-      bound,
-      "no such table",
+      [bound],
+      "SQLITE_ERROR",
     );
     // What the server's own logging printed, as it would print it.
     expect.soft(inspect(printed, { depth: 10 })).not.toContain(bound);

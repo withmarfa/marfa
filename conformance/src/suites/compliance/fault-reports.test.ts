@@ -14,9 +14,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * What the server reports of an unhandled fault that failed a database
  * statement, in the places a fixture can read: its log, its error webhook,
  * the log record and the span's exception event it exports, and the
- * exception it sends to error tracking. Each carries the failed statement,
- * with placeholders where the values were, and the driver's own reason, and
- * none of the values the write was given.
+ * exception it sends to error tracking. Each carries `Database operation
+ * failed` and the SQLite result code, and none of the statement, the driver's
+ * own message or the values the write was given.
  *
  * **A fault the fixture makes, on a server of its own.** A table the write
  * reaches is renamed in the stored file, as `internal-error.test.ts` does,
@@ -28,10 +28,8 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * and spans, and the PostHog host takes the exception sent to error tracking.
  *
  * **What a fixture cannot reach.** A fault met by a background job or after
- * a response began has no arrangement that does not depend on timing, and the
- * driver's reasons a request can produce quote no value of the write, so the
- * withholding of a reason that does is not reachable over HTTP. The server's
- * own suite holds those.
+ * a response began has no arrangement that does not depend on timing. The
+ * server's own suite holds those.
  */
 let server: FreshServer | undefined;
 let receiver: Server | undefined;
@@ -101,6 +99,21 @@ const COLLECTOR_BUDGET_MS = 60_000;
 /** A stream re-reads its credential every 30 seconds. */
 const HEARTBEAT_BUDGET_MS = 45_000;
 const COLLECTOR_TEST_TIMEOUT_MS = COLLECTOR_BUDGET_MS + 15_000;
+
+/** What the renamed table makes the statement and the driver say. */
+const STATEMENT = "INSERT INTO event_log";
+const DRIVER_MESSAGE = "no such table";
+const FIXED = "Database operation failed";
+const CODE = "SQLITE_ERROR";
+
+/** Holds a report to the rule: the fixed failure and its code, and nothing of the statement. */
+function expectFixedFailure(reported: string): void {
+  expect(reported).toContain(FIXED);
+  expect(reported).toContain(CODE);
+  expect(reported).not.toContain("event_log");
+  expect(reported).not.toContain("VALUES (?");
+  expect(reported).not.toContain(DRIVER_MESSAGE);
+}
 
 /** The server's own log, which its state directory holds. */
 function serverLog(): string {
@@ -262,7 +275,7 @@ function faulted(): Promise<Fault> {
 }
 
 describe("an unhandled fault in which a statement failed", () => {
-  it("is logged with the statement and the driver's reason, and none of the values the statement was bound to", async () => {
+  it("is logged as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
     const { marker, requestId } = await faulted();
     const line = await until("the fault's log line", () =>
       serverLog()
@@ -279,17 +292,16 @@ describe("an unhandled fault in which a statement failed", () => {
     expect(line.level).toBe("error");
     expect(line.method).toBe("POST");
     expect(line.path).toBe("/items");
-    const reported = String(line.error);
-    // The statement, with a placeholder where each value was.
-    expect(reported).toContain("INSERT INTO event_log");
-    expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
-    // The driver's own reason.
-    expect(reported).toContain("no such table: event_log");
-    // Nowhere in the log, whichever field carries it.
+    expectFixedFailure(String(line.error));
+    // Nowhere in the fault's line, whichever field carries it.
+    expectFixedFailure(JSON.stringify(line));
+    // Nowhere in the log.
     expect(serverLog()).not.toContain(marker);
+    expect(serverLog()).not.toContain(STATEMENT);
+    expect(serverLog()).not.toContain(DRIVER_MESSAGE);
   });
 
-  it("is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to", async () => {
+  it("is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
     const { marker, requestId } = await faulted();
     const sent = await until("the error webhook's notification", () =>
       notifications.find((entry) => entry.request_id === requestId),
@@ -297,10 +309,8 @@ describe("an unhandled fault in which a statement failed", () => {
 
     expect(sent.method).toBe("POST");
     expect(sent.path).toBe("/items");
-    const reported = String(sent.error);
-    expect(reported).toContain("INSERT INTO event_log");
-    expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
-    expect(reported).toContain("no such table: event_log");
+    expectFixedFailure(String(sent.error));
+    expectFixedFailure(JSON.stringify(sent));
     expect(JSON.stringify(notifications)).not.toContain(marker);
     // One notification for the one fault.
     expect(
@@ -309,7 +319,7 @@ describe("an unhandled fault in which a statement failed", () => {
   });
 
   it(
-    "is carried by the log record sent to the telemetry collector, with the statement and the driver's reason and none of the values",
+    "is carried by the log record sent to the telemetry collector as a database failure with its SQLite code, and none of the statement, the driver's message or the values",
     async () => {
       const { marker, requestId } = await faulted();
       const record = await until(
@@ -323,18 +333,18 @@ describe("an unhandled fault in which a statement failed", () => {
         COLLECTOR_BUDGET_MS,
       );
 
-      const reported = String(record.attributes.error);
-      expect(reported).toContain("INSERT INTO event_log");
-      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
-      expect(reported).toContain("no such table: event_log");
+      expectFixedFailure(String(record.attributes.error));
+      expectFixedFailure(JSON.stringify(record));
       // Whichever attribute of whichever record carries it.
       expect(JSON.stringify(logRecords)).not.toContain(marker);
+      expect(JSON.stringify(logRecords)).not.toContain(STATEMENT);
+      expect(JSON.stringify(logRecords)).not.toContain(DRIVER_MESSAGE);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
 
   it(
-    "is carried by the exception event on the request's span, with the statement and the driver's reason and none of the values",
+    "is carried by the exception event on the request's span as a database failure with its SQLite code, and none of the statement, the driver's message or the values",
     async () => {
       const { marker, requestId } = await faulted();
       const span = await until(
@@ -351,18 +361,17 @@ describe("an unhandled fault in which a statement failed", () => {
       const events = span.events.filter((event) => event.name === "exception");
       expect(events).toHaveLength(1);
       const exception = events[0]!.attributes;
-      const reported = String(exception["exception.message"]);
-      expect(reported).toContain("INSERT INTO event_log");
-      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
-      expect(reported).toContain("no such table: event_log");
-      expect(String(exception["exception.stacktrace"])).not.toContain(marker);
+      expectFixedFailure(String(exception["exception.message"]));
+      expectFixedFailure(JSON.stringify(exception));
       expect(JSON.stringify(traces)).not.toContain(marker);
+      expect(JSON.stringify(traces)).not.toContain(STATEMENT);
+      expect(JSON.stringify(traces)).not.toContain(DRIVER_MESSAGE);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
 
   it(
-    "is sent to error tracking as an exception with the statement and the driver's reason and none of the values",
+    "is sent to error tracking as a database failure with its SQLite code, and none of the statement, the driver's message or the values",
     async () => {
       const { marker, requestId } = await faulted();
       type Event = {
@@ -389,14 +398,17 @@ describe("an unhandled fault in which a statement failed", () => {
 
       expect(sent.properties.method).toBe("POST");
       expect(sent.properties.path).toBe("/items");
-      // The statement and the driver's reasons beneath it, one entry each.
       const reported = (sent.properties.$exception_list ?? [])
         .map((entry) => entry.value)
         .join("\n");
-      expect(reported).toContain("INSERT INTO event_log");
-      expect(reported).toContain("VALUES (?, ?, ?, ?, ?, ?)");
-      expect(reported).toContain("no such table: event_log");
+      expectFixedFailure(reported);
+      expect(
+        (sent.properties.$exception_list ?? []).map((entry) => entry.type),
+      ).toEqual(["DatabaseFailure"]);
+      // Error tracking also carries the server's own source lines around each
+      // frame, which hold its statements' text with no value in them.
       expect(JSON.stringify(trackedErrors)).not.toContain(marker);
+      expect(JSON.stringify(trackedErrors)).not.toContain(DRIVER_MESSAGE);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
@@ -440,7 +452,7 @@ describe("a warning about an event stream that cannot be read", () => {
   }
 
   it(
-    "names the failed statement and no value of the credential's, for the head of the log, a catch-up and the credential",
+    "names a database failure with its SQLite code and none of the statement or the credential's values, for the head of the log, a catch-up and the credential",
     async () => {
       // The witness: a stream is served while the log and the keys are there,
       // and says where it is.
@@ -465,7 +477,7 @@ describe("a warning about an event stream that cannot be read", () => {
         eventWarnings().find((text) => !known.has(text)),
       );
       expect(head).toContain("the event-log head could not be read");
-      expect(head).toContain("SELECT MAX(id) AS max FROM event_log");
+      expectFixedFailure(head);
 
       // A catch-up fails after the head was read. The log's sequence is moved
       // up so that the cursor is a number nothing else in the statement is,
@@ -500,10 +512,7 @@ describe("a warning about an event stream that cannot be read", () => {
       const replay = await until("the catch-up's warning", () =>
         eventWarnings().find((text) => text.includes("the catch-up could not")),
       );
-      expect(replay).toContain(
-        'from "event_log" where "event_log"."id" > CAST(? AS INTEGER)',
-      );
-      expect(replay).toContain("limit ?)");
+      expectFixedFailure(replay);
       expect(replay).not.toContain("params");
 
       // The credential cannot be read again at the stream's next heartbeat.
@@ -531,9 +540,8 @@ describe("a warning about an event stream that cannot be read", () => {
           ),
         HEARTBEAT_BUDGET_MS,
       );
-      expect(credential).toContain(
-        'from "api_keys" where ("api_keys"."id" = ?',
-      );
+      expectFixedFailure(credential);
+      expect(credential).not.toContain("api_keys");
       expect(credential).not.toContain("params");
       expect(credential).not.toContain(keyId);
       expect(credential).not.toContain(server!.workingKey);

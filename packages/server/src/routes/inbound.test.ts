@@ -1641,7 +1641,7 @@ describe("inbound charged storage and cleanup", () => {
 
 describe("inbound storage-failure privacy", () => {
   it.each(["inbound_deliveries", "inbound_delivery_bodies"])(
-    "sanitizes a real %s SQLite failure before every error sink",
+    "reports a real %s SQLite failure to every error sink as the fixed database failure",
     async (table) => {
       const ctx = await context({
         errorWebhookUrl: "http://127.0.0.1:9/fixture-error",
@@ -1661,6 +1661,18 @@ describe("inbound storage-failure privacy", () => {
         "QUERY_SENTINEL_" + table,
         "BODY_SENTINEL_" + table,
       ];
+      const real = ctx.storage.inbound.receive.bind(ctx.storage.inbound);
+      let thrown: unknown;
+      const receive = vi
+        .spyOn(ctx.storage.inbound, "receive")
+        .mockImplementation(async (...args) => {
+          try {
+            return await real(...args);
+          } catch (error) {
+            thrown = error;
+            throw error;
+          }
+        });
       const written: string[] = [];
       const stdout = vi
         .spyOn(process.stdout, "write")
@@ -1702,6 +1714,13 @@ describe("inbound storage-failure privacy", () => {
             "SELECT delivery_id FROM inbound_delivery_bodies",
           ),
         ).toEqual([]);
+        // The witness: the failed statement carries what it was bound to.
+        const bound =
+          table === "inbound_deliveries"
+            ? sentinels.slice(0, 2)
+            : sentinels.slice(2);
+        for (const sentinel of bound)
+          expect((thrown as Error).message).toContain(sentinel);
         expect(reported).toHaveLength(1);
         expect(recorded).toHaveBeenCalledOnce();
         expect(notified).toHaveBeenCalledOnce();
@@ -1723,17 +1742,25 @@ describe("inbound storage-failure privacy", () => {
         for (const output of outputs)
           for (const sentinel of sentinels)
             expect(output).not.toContain(sentinel);
+        const fixed = "Database operation failed (SQLITE_CONSTRAINT_TRIGGER)";
+        expect(errors[0]!.message).toBe(fixed);
+        expect(errors[1]!.name).toBe("DatabaseFailure");
+        expect(errors[1]!.message).toBe(`DatabaseFailure: ${fixed}`);
         for (const error of errors) {
-          expect(error.message).toBe("Inbound receipt storage failed");
           expect(error.cause).toBeUndefined();
           expect(error.stack).not.toContain("Failed query");
         }
+        for (const output of outputs) {
+          expect(output).not.toContain("Failed query");
+          expect(output).not.toContain("fixture receipt failure");
+        }
         expect(written.join("")).toContain("Unhandled error");
-        expect(written.join("")).toContain("Inbound receipt storage failed");
+        expect(written.join("")).toContain(fixed);
         expect(notified.mock.calls[0]![1].error).toBe(
-          "Inbound receipt storage failed",
+          `DatabaseFailure: ${fixed}`,
         );
       } finally {
+        receive.mockRestore();
         stdout.mockRestore();
         active.mockRestore();
         recorded.mockRestore();

@@ -1,5 +1,5 @@
 import { DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
-import { withoutQueryParameters } from "../error-text.js";
+import { withoutFailedQueries } from "../error-text.js";
 
 /**
  * Fire-and-forget error webhook notifications with per-error-type debouncing.
@@ -67,10 +67,10 @@ export function notifyError(
   timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS,
 ): void {
   // The channel is read by more people than the instance holds data for, so
-  // the text it is sent never carries a failed query's values, whoever built it.
+  // the text it is sent never carries a failed query, whoever built it.
   const notification = {
     ...reported,
-    error: withoutQueryParameters(reported.error),
+    error: withoutFailedQueries(reported.error),
     environment: DEPLOYMENT_ENVIRONMENT,
   };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;

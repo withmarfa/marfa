@@ -89,9 +89,9 @@ describe("every bulk runner arm distinguishes row refusal from transaction loss"
     });
     expect(outcome.succeeded).toEqual([ids[0], ids[2]]);
     expect(outcome.errors.map((entry) => entry.id)).toEqual([ids[1]]);
-    expect(outcome.errors[0]!.message).toContain("original native refusal");
-    expect(outcome.errors[0]!.message).not.toContain("Failed query:");
-    expect(outcome.errors[0]!.message).not.toContain("params:");
+    expect(outcome.errors[0]!.message).toBe(
+      "Database operation failed (SQLITE_CONSTRAINT_TRIGGER)",
+    );
     expect(await ctx.storage.items.getIncludingTrashed(ids[1]!)).toEqual(
       before[1],
     );

@@ -1,13 +1,14 @@
 import { DrizzleQueryError } from "drizzle-orm";
-import { createClient } from "@libsql/client";
+import { createClient, LibsqlError } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { originalErrorMessage } from "./storage/sqlite/transaction-control.js";
 import {
+  DatabaseFailure,
   errorMessage,
   errorReason,
   errorStack,
   reportableError,
-  withoutQueryParameters,
+  withoutFailedQueries,
 } from "./error-text.js";
 import {
   formatErrorSummary,
@@ -18,13 +19,32 @@ import {
 const VALUE = "bound-value-3e9d51c0";
 const STATEMENT =
   'insert into "items" ("id", "properties") values (?, jsonb(?))';
+const FIXED = "Database operation failed";
 
 /** The wrapper the query layer raises, built by the library's own class. */
 function failedQuery(
   params: unknown[] = ["an-id", `{"body":"${VALUE}"}`],
-  cause: unknown = new Error("SQLITE_FULL: database or disk is full"),
+  cause: unknown = new LibsqlError(
+    "database or disk is full",
+    "SQLITE_FULL",
+    "SQLITE_FULL",
+    13,
+  ),
 ): DrizzleQueryError {
   return new DrizzleQueryError(STATEMENT, params, cause as Error);
+}
+
+/** Every text a sink could be handed for `error`. */
+function everyRendering(error: unknown): string[] {
+  return [
+    errorMessage(error),
+    errorReason(error),
+    errorStack(error) ?? "",
+    formatErrorSummary(error),
+    JSON.stringify(serializeError(error)),
+    JSON.stringify(reportableError(error), ["name", "message", "stack"]),
+    String((reportableError(error) as Error).stack),
+  ];
 }
 
 afterEach(() => {
@@ -32,41 +52,137 @@ afterEach(() => {
 });
 
 describe("a failed query as the query layer raises it", () => {
-  it("names its values in the message and in the stack, which is why a report must not copy either", () => {
+  it("names its statement and values in the message and in the stack, which is why a report must not copy either", () => {
     const error = failedQuery();
     expect(error.message).toContain(VALUE);
+    expect(error.message).toContain(STATEMENT);
     expect(error.stack).toContain(VALUE);
   });
 });
 
-describe("errorMessage and errorStack", () => {
-  it("keep the statement and drop the values", () => {
+describe("reportableError", () => {
+  it("hands back an error with no database failure in its chain as it is", () => {
+    const plain = new Error("boom", { cause: new Error("inner") });
+    expect(reportableError(plain)).toBe(plain);
+    expect(reportableError("text")).toBe("text");
+    expect(reportableError(undefined)).toBeUndefined();
+  });
+
+  it("replaces one with a failed query by the fixed failure, keeping the SQLite code and the outer frames", () => {
     const error = failedQuery();
-    expect(errorMessage(error)).toBe(`Failed query: ${STATEMENT}`);
-    const stack = errorStack(error) ?? "";
-    expect(stack).not.toContain(VALUE);
-    expect(stack.startsWith(`Error: Failed query: ${STATEMENT}\n    at `)).toBe(
-      true,
+    const reported = reportableError(error) as DatabaseFailure;
+    expect(reported).toBeInstanceOf(DatabaseFailure);
+    expect(reported.name).toBe("DatabaseFailure");
+    expect(reported.message).toBe(`${FIXED} (SQLITE_FULL)`);
+    expect(reported.code).toBe("SQLITE_FULL");
+    expect(reported.cause).toBeUndefined();
+    expect(reported).not.toHaveProperty("query");
+    expect(reported).not.toHaveProperty("params");
+    const frames = error.stack!.slice(error.stack!.indexOf("\n    at "));
+    expect(reported.stack).toBe(
+      `DatabaseFailure: ${FIXED} (SQLITE_FULL)${frames}`,
     );
   });
 
-  it("drop values that run over several lines, or that look like a stack frame or a parameters line", () => {
+  it("keeps the extended code the driver gives, and only in SQLite's own spelling", () => {
+    const unique = failedQuery(
+      ["x", VALUE],
+      new LibsqlError(
+        VALUE,
+        "SQLITE_CONSTRAINT",
+        "SQLITE_CONSTRAINT_UNIQUE",
+        2067,
+      ),
+    );
+    const reported = reportableError(unique) as DatabaseFailure;
+    expect(reported.message).toBe(`${FIXED} (SQLITE_CONSTRAINT_UNIQUE)`);
+    expect(reported.code).toBe("SQLITE_CONSTRAINT");
+    expect(reported.extendedCode).toBe("SQLITE_CONSTRAINT_UNIQUE");
+
+    for (const code of [VALUE, `SQLITE_CONSTRAINT ${VALUE}`, "SQLITE_X_y"]) {
+      const odd = reportableError(new LibsqlError(VALUE, code)) as Error;
+      expect(odd.message).toBe(FIXED);
+      expect(JSON.stringify(serializeError(odd))).not.toContain(code);
+    }
+  });
+
+  it("replaces a wrapper whose chain holds a database failure, wherever in the chain or an aggregate's branches", () => {
+    const wrapped = new Error(`transaction failed: ${VALUE}`, {
+      cause: failedQuery(),
+    });
+    const aggregate = new AggregateError(
+      [new Error("ordinary"), failedQuery()],
+      `several: ${VALUE}`,
+    );
+    const native = Object.assign(new Error(VALUE), {
+      name: "SqliteError",
+      code: "SQLITE_BUSY_SNAPSHOT",
+    });
+    for (const error of [wrapped, aggregate, native]) {
+      const reported = reportableError(error) as Error;
+      expect(reported).toBeInstanceOf(DatabaseFailure);
+      for (const text of everyRendering(error)) {
+        expect(text).toContain(FIXED);
+        expect(text).not.toContain(VALUE);
+        expect(text).not.toContain("Failed query");
+      }
+    }
+    expect((reportableError(native) as Error).message).toBe(
+      `${FIXED} (SQLITE_BUSY_SNAPSHOT)`,
+    );
+  });
+
+  it("treats a chain too deep or too wide to read whole as a database failure, and stops at a cycle", () => {
+    let deep: Error = new Error(VALUE);
+    for (let i = 0; i < 20; i++) deep = new Error(VALUE, { cause: deep });
+    expect(reportableError(deep)).toBeInstanceOf(DatabaseFailure);
+
+    const wide = new AggregateError(
+      Array.from({ length: 100 }, () => new Error(VALUE)),
+      VALUE,
+    );
+    expect(reportableError(wide)).toBeInstanceOf(DatabaseFailure);
+
+    const a = new Error("a");
+    const b = new Error("b", { cause: a });
+    Object.assign(a, { cause: b });
+    expect(reportableError(a)).toBe(a);
+    const c = failedQuery();
+    Object.assign(c, { cause: new Error("d", { cause: c }) });
+    expect(reportableError(c)).toBeInstanceOf(DatabaseFailure);
+  });
+
+  it("drops the frames when the stack's header cannot be told apart exactly", () => {
+    const error = failedQuery();
+    error.stack = `Error: something else\n    at fake (${VALUE}.ts:1:1)`;
+    const reported = reportableError(error) as Error;
+    expect(reported.stack).toBe(`DatabaseFailure: ${FIXED} (SQLITE_FULL)`);
+  });
+});
+
+describe("errorMessage, errorReason and errorStack", () => {
+  it("give the fixed failure for a failed query, whatever its values look like", () => {
     const awkward = [
       `first\nsecond ${VALUE}`,
       `line\n    at fake (/nowhere.ts:1:1) ${VALUE}`,
       `\nparams: ${VALUE}`,
     ];
     const error = failedQuery(awkward);
-    expect(errorMessage(error)).toBe(`Failed query: ${STATEMENT}`);
+    expect(errorMessage(error)).toBe(`${FIXED} (SQLITE_FULL)`);
+    expect(errorReason(error)).toBe(`${FIXED} (SQLITE_FULL)`);
     expect(errorStack(error)).not.toContain(VALUE);
+    expect(errorStack(error)).not.toContain("fake");
   });
 
-  it("read the message of any other error as it stands", () => {
+  it("read any other error as it stands", () => {
     expect(errorMessage(new Error("boom"))).toBe("boom");
     expect(errorMessage("a thrown string")).toBe("a thrown string");
     expect(errorMessage(42)).toBe("42");
     expect(errorStack(new Error("boom"))).toContain("boom");
     expect(errorStack("not an error")).toBeUndefined();
+    expect(errorReason(new Error("outer", { cause: new Error("inner") }))).toBe(
+      "inner",
+    );
   });
 
   it("cannot be made to throw by the value they are given", () => {
@@ -79,75 +195,34 @@ describe("errorMessage and errorStack", () => {
       },
     };
     expect(errorMessage(hostile)).toBe("unknown error");
-    const lying = Object.assign(new Error("Failed query: x"), {
-      query: "x",
-      params: {
-        toString(): string {
-          throw new Error("a throwing toString");
+    const lying = Object.defineProperty(
+      Object.assign(new Error("Failed query: x"), { query: "x" }),
+      "cause",
+      {
+        get(): unknown {
+          throw new Error("a throwing getter");
         },
       },
-    });
+    );
     expect(() => errorMessage(lying)).not.toThrow();
+    expect(errorMessage(lying)).toBe(FIXED);
   });
 });
 
-describe("withoutQueryParameters", () => {
-  it("leaves text that has no parameters line exactly as it is", () => {
+describe("withoutFailedQueries", () => {
+  it("leaves text that has no failed query exactly as it is", () => {
     const text = "Error: boom\n    at somewhere (file.ts:1:1)";
-    expect(withoutQueryParameters(text)).toBe(text);
+    expect(withoutFailedQueries(text)).toBe(text);
   });
 
-  it("cuts a message at its end and a stack at its first frame", () => {
+  it("replaces a failed query's statement and values, up to the first frame", () => {
     const message = `Failed query: ${STATEMENT}\nparams: a,${VALUE}`;
-    expect(withoutQueryParameters(message)).toBe(`Failed query: ${STATEMENT}`);
+    expect(withoutFailedQueries(message)).toBe(FIXED);
     expect(
-      withoutQueryParameters(
+      withoutFailedQueries(
         `Error: ${message}\n    at one (a.ts:1:1)\n    at two (b.ts:2:2)`,
       ),
-    ).toBe(
-      `Error: Failed query: ${STATEMENT}\n    at one (a.ts:1:1)\n    at two (b.ts:2:2)`,
-    );
-  });
-});
-
-describe("reportableError", () => {
-  it("hands back an error with no failed query in its chain as it is", () => {
-    const plain = new Error("boom", { cause: new Error("inner") });
-    expect(reportableError(plain)).toBe(plain);
-    expect(reportableError("text")).toBe("text");
-  });
-
-  it("copies one with a failed query, keeping the name, code, stack and cause and dropping the values and the library's fields", () => {
-    const driver = Object.assign(new Error("SQLITE_BUSY"), {
-      code: "SQLITE_BUSY",
-    });
-    const wrapped = new Error("transaction failed", {
-      cause: failedQuery(["x", VALUE], driver),
-    });
-    wrapped.name = "TransactionFailure";
-
-    const copy = reportableError(wrapped) as Error;
-
-    expect(copy).not.toBe(wrapped);
-    expect(copy).toBeInstanceOf(Error);
-    expect(copy.name).toBe("TransactionFailure");
-    expect(copy.message).toBe("transaction failed");
-    const failed = copy.cause as Error & { query?: unknown; params?: unknown };
-    expect(failed.message).toBe(`Failed query: ${STATEMENT}`);
-    expect(failed.stack).not.toContain(VALUE);
-    expect(failed).not.toHaveProperty("query");
-    expect(failed).not.toHaveProperty("params");
-    const inner = failed.cause as Error & { code?: string };
-    expect(inner.message).toBe("SQLITE_BUSY");
-    expect(inner.code).toBe("SQLITE_BUSY");
-    expect(JSON.stringify([copy.stack, failed.stack])).not.toContain(VALUE);
-  });
-
-  it("stops at a cause chain that leads back to itself", () => {
-    const a = failedQuery();
-    const b = new Error("b", { cause: a });
-    Object.assign(a, { cause: b });
-    expect(() => reportableError(a)).not.toThrow();
+    ).toBe(`Error: ${FIXED}\n    at one (a.ts:1:1)\n    at two (b.ts:2:2)`);
   });
 });
 
@@ -162,7 +237,7 @@ describe("the log line", () => {
     return lines.join("");
   }
 
-  it("carries a failed query's statement and never its values, whichever way the caller hands the error over", () => {
+  it("carries the fixed failure and never the statement or its values, whichever way the caller hands the error over", () => {
     const error = failedQuery();
     const out = written(() => {
       log("error", "by itself", { error });
@@ -173,33 +248,24 @@ describe("the log line", () => {
       log("error", "by hand", { error: error.message, stack: error.stack });
       log("error", `by hand in the message: ${error.message}`);
     });
-    expect(out).toContain(`Failed query: ${STATEMENT.replaceAll('"', '\\"')}`);
+    expect(out).toContain(FIXED);
+    expect(out).toContain("SQLITE_FULL");
     expect(out).not.toContain(VALUE);
-  });
-
-  it("keeps the driver's own error beside the statement, so an operator can still tell what failed", () => {
-    const out = written(() => {
-      log("error", "serialized", { error: serializeError(failedQuery()) });
-      log("error", "summarized", {
-        error: formatErrorSummary(failedQuery()),
-      });
-    });
-    expect(out).toContain("SQLITE_FULL: database or disk is full");
+    expect(out).not.toContain("Failed query");
+    expect(out).not.toContain("database or disk is full");
   });
 });
 
 describe("the original message a transaction failure reports", () => {
-  it("is the driver's own when the failed query has one, and the statement alone when it has none", () => {
-    expect(originalErrorMessage(failedQuery())).toBe(
-      "SQLITE_FULL: database or disk is full",
-    );
+  it("is the fixed failure for a failed query, with or without the driver's error beneath it", () => {
+    expect(originalErrorMessage(failedQuery())).toBe(`${FIXED} (SQLITE_FULL)`);
     const orphan = new DrizzleQueryError(STATEMENT, ["x", VALUE], undefined);
     expect(orphan.message).toContain(VALUE);
-    expect(originalErrorMessage(orphan)).toBe(`Failed query: ${STATEMENT}`);
+    expect(originalErrorMessage(orphan)).toBe(FIXED);
   });
 });
 
-describe("the driver's reason beneath a failed query", () => {
+describe("the driver's own message beneath a failed query", () => {
   /** What the real driver raises for a statement, as the query layer would wrap it. */
   async function failure(
     sql: string,
@@ -212,78 +278,45 @@ describe("the driver's reason beneath a failed query", () => {
       await client.execute({ sql, args });
     } catch (error) {
       return new DrizzleQueryError(sql, args, error as Error);
+    } finally {
+      client.close();
     }
     throw new Error("the statement was meant to fail");
   }
 
-  it("is kept when it names the constraint or the table and not a value", async () => {
-    const failed = await failure(
-      "insert into i(id) values (?), (?)",
-      ["bound-value-3e9d51c0", "bound-value-3e9d51c0"],
-      ["create table i(id text primary key)"],
-    );
-    expect(failed.cause!.message).toContain("UNIQUE constraint");
-    for (const text of [
-      formatErrorSummary(failed),
-      JSON.stringify(serializeError(failed)),
-      errorReason(failed),
-      JSON.stringify(reportableError(failed), ["message", "cause"]),
-    ]) {
-      expect(text).toContain("UNIQUE constraint failed: i.id");
-      expect(text).not.toContain("bound-value-3e9d51c0");
-    }
-  });
-
-  it("is withheld when the driver quotes a token of what the statement was bound to", async () => {
-    const failed = await failure(
-      "select * from t where t match ?",
-      ["canaryzzq:term"],
-      ["create virtual table t using fts5(x)"],
-    );
-    // The witness: the real driver does repeat the token in its message.
-    expect(failed.cause!.message).toContain("canaryzzq");
-
-    for (const text of [
-      formatErrorSummary(failed),
-      JSON.stringify(serializeError(failed)),
-      JSON.stringify(reportableError(failed), ["message", "cause", "stack"]),
-    ]) {
-      expect(text).toContain("Failed query");
-      expect(text).toContain("withheld");
-      expect(text).not.toContain("canaryzzq");
-    }
-    expect(errorReason(failed)).toContain("withheld");
-    expect(errorReason(failed)).not.toContain("canaryzzq");
-    expect(formatErrorSummary(failed)).toContain("SQLITE_ERROR");
-  });
-
   const FTS = ["create virtual table t using fts5(x)"];
   it.each([
-    ["a CJK word", "東京", "select * from t where t match ?", FTS],
-    ["a Cyrillic word", "Привет", "select * from t where t match ?", FTS],
-    ["an accented word", "naïve", "select * from t where t match ?", FTS],
-    ["a two-character word", "qz", "select * from t where t match ?", FTS],
     [
-      "a CJK word in a JSON path",
+      "a full-text token",
+      "canaryzzq",
+      "canaryzzq:term",
+      "select * from t where t match ?",
+      FTS,
+    ],
+    ["a CJK word", "東京", "東京:x", "select * from t where t match ?", FTS],
+    [
+      "an accented word",
+      "naïve",
+      "naïve:x",
+      "select * from t where t match ?",
+      FTS,
+    ],
+    [
+      "a word in a JSON path",
       "名前",
+      '$."名前 x',
       "select json_extract(jsonb('{}'), ?)",
       [],
     ],
   ])(
-    "is withheld when the driver quotes %s of what the statement was bound to",
-    async (_name, word, sql, setup) => {
-      const argument = sql.includes("json") ? `$."${word} x` : `${word}:x`;
+    "is not reported when it quotes %s of what the statement was bound to",
+    async (_name, word, argument, sql, setup) => {
       const failed = await failure(sql, [argument], setup);
       // The witness: the real driver repeats the word in its message.
       expect(failed.cause!.message).toContain(word);
-
-      for (const text of [
-        formatErrorSummary(failed),
-        JSON.stringify(serializeError(failed)),
-        errorReason(failed),
-        JSON.stringify(reportableError(failed), ["message", "cause", "stack"]),
-      ]) {
-        expect(text).toContain("withheld");
+      for (const text of everyRendering(failed)) {
+        expect(text).toContain(FIXED);
+        expect(text).toContain("SQLITE_ERROR");
         expect(text).not.toContain(word);
       }
     },

@@ -1,6 +1,10 @@
 import type { RegistrySnapshot } from "@withmarfa/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { errorMessage } from "../../error-text.js";
+import {
+  errorMessage,
+  reportableError,
+  withoutFailedQueries,
+} from "../../error-text.js";
 
 type Usability = "usable" | "ended" | "poisoned";
 export type TransactionOutcome =
@@ -55,7 +59,7 @@ export class TransactionControl {
   diagnose(cause: unknown): void {
     if (this.failure) this.failure.addDiagnostic(cause);
     else if (this.pendingDiagnostics.length < 4)
-      this.pendingDiagnostics.push(originalErrorMessage(cause));
+      this.pendingDiagnostics.push(rootMessage(cause));
   }
 
   onReconciled(
@@ -82,7 +86,12 @@ export class TransactionControl {
   }
 }
 
-/** Internal only: the wire envelope receives the original message, never SQL or diagnostics. */
+/**
+ * Internal only: the message and diagnostics are the original's, which a
+ * caller may classify by, such as a duplicate key named in the driver's
+ * text. Every report receives the database failure in its fixed form, from
+ * {@link originalErrorMessage} or the sinks themselves.
+ */
 export class TransactionFailure extends Error {
   readonly code = "TRANSACTION_CLOSED";
   readonly diagnostics: string[] = [];
@@ -91,25 +100,40 @@ export class TransactionFailure extends Error {
     cause: unknown,
     readonly control: TransactionControl,
   ) {
-    super(originalErrorMessage(cause), { cause });
+    super(rootMessage(cause), { cause });
     this.name = "TransactionFailure";
   }
 
   addDiagnostic(error: unknown): void {
-    if (this.diagnostics.length < 4)
-      this.diagnostics.push(originalErrorMessage(error));
+    if (this.diagnostics.length < 4) this.diagnostics.push(rootMessage(error));
   }
 }
 
-export function originalErrorMessage(error: unknown): string {
+/** The message of the innermost error in the chain, as it was written. */
+function rootMessage(error: unknown): string {
   let message = "The transaction could not complete";
   for (let value = error, depth = 0; value != null && depth < 8; depth++) {
-    if (value instanceof Error) message = errorMessage(value);
-    else if (typeof value === "string") message = value;
-    if (typeof value !== "object") break;
-    value = (value as { cause?: unknown }).cause;
+    try {
+      if (value instanceof Error) message = value.message;
+      else if (typeof value === "string") message = value;
+      if (typeof value !== "object") break;
+      value = (value as { cause?: unknown }).cause;
+    } catch {
+      break;
+    }
   }
-  return message.slice(0, 512);
+  return withoutFailedQueries(message).slice(0, 512);
+}
+
+/**
+ * What to report of a failure the transaction layer met: the database
+ * failure in its fixed form when there is one in the chain, and the
+ * innermost error's message otherwise.
+ */
+export function originalErrorMessage(error: unknown): string {
+  return reportableError(error) === error
+    ? rootMessage(error)
+    : errorMessage(error);
 }
 
 export const transactionControl = new AsyncLocalStorage<TransactionControl>();

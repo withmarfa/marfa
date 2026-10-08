@@ -1,157 +1,236 @@
 /**
- * The words an error leaves the process in, with the values of a failed query
- * taken out.
+ * The form an error takes when it leaves the process: in a log line, an
+ * exported telemetry record, an error-tracking event, an alert, a stored
+ * failure or an answer that reports one.
  *
- * **Why the values are in the message at all.** The query layer wraps every
- * failed statement in an error whose message is the SQL followed by
- * `params: ` and every value the statement was bound to, and whose stack
- * starts with the same message. For a write those values are the item: its
- * properties, tags and hashes. A message that reaches a log, an exported
- * telemetry attribute, an error-tracking event or an alert channel therefore
- * hands item content to whoever reads that sink.
+ * **A database failure leaves only as a fixed error.** The query layer's
+ * message is the statement followed by every value it was bound to, and the
+ * stack repeats it. The driver's own message can quote a bound value too, and
+ * the statement's text is not guaranteed to hold only placeholders. For a
+ * write those values are the content written. So an error with a database
+ * failure anywhere in its chain is replaced, at every sink, by a
+ * {@link DatabaseFailure} that keeps the SQLite code and the outer error's
+ * stack frames, and nothing the database was given or said.
  *
- * **What stays.** The statement, which carries only placeholders, and the
- * wrapped driver error beside it, which says what went wrong, unless its
- * message repeats a bound value. An operator can still find the failing
- * statement and, in most cases, the reason.
+ * Classification reads the original: a typed refusal, write contention or a
+ * full disk is decided before any of this runs.
  *
  * Nothing in this module throws: it runs on the path that reports a failure,
  * and a report that throws hides the failure it was reporting.
  */
 
+const FIXED_MESSAGE = "Database operation failed";
 const STATEMENT_PREFIX = "Failed query: ";
-const PARAMETERS_MARKER = "\nparams: ";
-const MAX_CAUSE_DEPTH = 8;
+const MAX_CHAIN_DEPTH = 8;
+const MAX_CHAIN_NODES = 64;
 
-/** The query layer's wrapper, recognized by its shape rather than its class, which a second copy of the library would not share. */
-interface QueryFailure extends Error {
-  query: string;
-  params: unknown;
+/** SQLite's primary result codes that report a failure. */
+const PRIMARY_CODES = new Set([
+  "SQLITE_ERROR",
+  "SQLITE_INTERNAL",
+  "SQLITE_PERM",
+  "SQLITE_ABORT",
+  "SQLITE_BUSY",
+  "SQLITE_LOCKED",
+  "SQLITE_NOMEM",
+  "SQLITE_READONLY",
+  "SQLITE_INTERRUPT",
+  "SQLITE_IOERR",
+  "SQLITE_CORRUPT",
+  "SQLITE_NOTFOUND",
+  "SQLITE_FULL",
+  "SQLITE_CANTOPEN",
+  "SQLITE_PROTOCOL",
+  "SQLITE_EMPTY",
+  "SQLITE_SCHEMA",
+  "SQLITE_TOOBIG",
+  "SQLITE_CONSTRAINT",
+  "SQLITE_MISMATCH",
+  "SQLITE_MISUSE",
+  "SQLITE_NOLFS",
+  "SQLITE_AUTH",
+  "SQLITE_FORMAT",
+  "SQLITE_RANGE",
+  "SQLITE_NOTADB",
+  "SQLITE_NOTICE",
+  "SQLITE_WARNING",
+]);
+
+/** An extended code is its primary code and a suffix of capitals. */
+const EXTENDED_SUFFIX = /^_[A-Z]+(?:_[A-Z]+)*$/;
+
+interface FailureCodes {
+  code?: string;
+  extendedCode?: string;
 }
 
-function isQueryFailure(value: unknown): value is QueryFailure {
-  try {
-    return (
-      value instanceof Error &&
-      typeof (value as { query?: unknown }).query === "string" &&
-      "params" in value &&
-      value.message.startsWith(STATEMENT_PREFIX)
-    );
-  } catch {
-    return false;
+/** What a sink receives in place of an error with a database failure in its chain. */
+export class DatabaseFailure extends Error {
+  readonly code?: string;
+  readonly extendedCode?: string;
+
+  constructor(codes: FailureCodes, frames: string) {
+    const shown = codes.extendedCode ?? codes.code;
+    const message =
+      shown === undefined ? FIXED_MESSAGE : `${FIXED_MESSAGE} (${shown})`;
+    super(message);
+    this.name = "DatabaseFailure";
+    if (codes.code !== undefined) this.code = codes.code;
+    if (codes.extendedCode !== undefined)
+      this.extendedCode = codes.extendedCode;
+    this.stack = `${this.name}: ${message}${frames}`;
   }
 }
 
-/** The failed statement's own text, which carries placeholders and no values. */
-function statementOf(failure: QueryFailure): string {
-  return `${STATEMENT_PREFIX}${failure.query}`;
+function read(value: object, key: string): unknown {
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
 }
 
-/**
- * The text of a failed query's message as the library composes it, so that
- * exactly those characters can be found again in the message and in the
- * stack, which repeats it.
- */
-function composedMessage(failure: QueryFailure): string {
-  return `${statementOf(failure)}${PARAMETERS_MARKER}${String(failure.params)}`;
-}
+/** The code the driver writes at the start of its message, as in `SQLITE_FULL: database or disk is full`. */
+const MESSAGE_CODE = /^(SQLITE_[A-Z_]+):/;
 
 /**
- * Takes the values out of any failed query's message found in a string.
- *
- * **A net, not the mechanism.** A string has lost the error that made it, so
- * where the values end can only be guessed: at the first stack frame if one
- * follows, else at the end of the text. A value written to look like a stack
- * frame would end the guess early. Callers that hold the error use
- * {@link errorMessage} and {@link errorStack}, which remove exactly what the
- * library wrote; this is for the sink that only ever sees text.
+ * The query layer's wrapper, the driver's error and the native binding's
+ * error, recognized by name, code and the start of the message rather than
+ * by class, which a second copy of a library would not share.
  */
-export function withoutQueryParameters(text: string): string {
-  if (!text.includes(PARAMETERS_MARKER)) return text;
-  return text.replace(
-    /(Failed query: [^]*?)\nparams: [^]*?(?=\n {4}at |$)/g,
-    (_whole, statement: string) => statement,
+function isDatabaseError(value: object): boolean {
+  const name = read(value, "name");
+  if (
+    name === "LibsqlError" ||
+    name === "LibsqlBatchError" ||
+    name === "SqliteError" ||
+    name === "DrizzleQueryError"
+  )
+    return true;
+  const code = read(value, "code");
+  if (typeof code === "string" && code.startsWith("SQLITE_")) return true;
+  const message = read(value, "message");
+  return (
+    typeof message === "string" &&
+    (message.startsWith(STATEMENT_PREFIX) || MESSAGE_CODE.test(message))
   );
 }
 
-const WORD = /[\p{L}\p{N}\p{M}_]+/gu;
-
-/** The words of the values each failed query was bound to, held for the driver errors beneath it. */
-const boundWords = new WeakMap<object, ReadonlySet<string>>();
-
-function wordsOf(value: unknown, into: Set<string>, depth = 0): void {
-  if (typeof value === "string") {
-    for (const word of value.match(WORD) ?? []) into.add(word);
-  } else if (typeof value === "number" || typeof value === "bigint") {
-    wordsOf(String(value), into, depth);
-  } else if (Array.isArray(value) && depth < 3) {
-    for (const item of value) wordsOf(item, into, depth + 1);
+/** The codes a database error carries, kept only in SQLite's own spelling. */
+function codesOf(value: object): FailureCodes {
+  const codes: FailureCodes = {};
+  const message = read(value, "message");
+  const written =
+    typeof message === "string" ? MESSAGE_CODE.exec(message)?.[1] : undefined;
+  for (const candidate of [
+    read(value, "code"),
+    read(value, "extendedCode"),
+    written,
+  ]) {
+    if (typeof candidate !== "string") continue;
+    const primary = [...PRIMARY_CODES].find(
+      (code) =>
+        candidate === code ||
+        (candidate.startsWith(code) &&
+          EXTENDED_SUFFIX.test(candidate.slice(code.length))),
+    );
+    if (primary === undefined) continue;
+    codes.code ??= primary;
+    if (candidate !== primary) codes.extendedCode ??= candidate;
   }
+  return codes;
 }
 
 /**
- * Notes, for each error beneath a failed query, the words of what the query
- * was bound to. The driver's own message is kept in a report because it says
- * what failed, but the driver sometimes quotes a token of the text it was
- * given: a malformed full-text search says `near "token"`, and a filter on a
- * column that is not there names it. A message that does is withheld.
+ * Whether a database failure sits anywhere in the error's cause chain or in
+ * an aggregate's branches, with the first codes found. A chain too deep or too
+ * wide to read whole counts as one, since what was not read could be.
  */
-function rememberBound(failure: QueryFailure): void {
-  const words = new Set<string>();
-  wordsOf(failure.params, words);
-  let step: unknown = (failure as { cause?: unknown }).cause;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
-    if (step === null || typeof step !== "object") return;
-    boundWords.set(step, words);
-    step = (step as { cause?: unknown }).cause;
-  }
-}
-
-const WITHHELD =
-  "[withheld: it repeats a value the failed statement was bound to]";
-
-function echoesBoundValue(error: unknown, text: string): boolean {
-  if (error === null || typeof error !== "object") return false;
-  const words = boundWords.get(error);
-  if (words === undefined) return false;
-  return (text.match(WORD) ?? []).some((word) => words.has(word));
+function databaseFailureIn(error: unknown): FailureCodes | undefined {
+  const walk: { found?: FailureCodes; nodes: number; complete: boolean } = {
+    nodes: 0,
+    complete: true,
+  };
+  const seen = new Set<object>();
+  const visit = (value: unknown, depth: number): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    if (depth > MAX_CHAIN_DEPTH || ++walk.nodes > MAX_CHAIN_NODES) {
+      walk.complete = false;
+      return;
+    }
+    seen.add(value);
+    if (isDatabaseError(value)) {
+      const codes = codesOf(value);
+      walk.found =
+        walk.found?.code === undefined
+          ? { ...codes, ...walk.found }
+          : walk.found;
+    }
+    visit(read(value, "cause"), depth + 1);
+    const errors = read(value, "errors");
+    if (Array.isArray(errors))
+      for (const branch of errors as unknown[]) visit(branch, depth + 1);
+  };
+  visit(error, 0);
+  return walk.found ?? (walk.complete ? undefined : {});
 }
 
 /**
- * `text`, which came from `error`'s message or stack, with a failed query's
- * values removed: exactly where `error` is the failed query, by the net
- * otherwise, and withheld where `error` is a driver error beneath a failed
- * query and repeats one of its values.
- *
- * Callers walk a cause chain from the top, so a failed query has been seen
- * before the errors beneath it are read.
+ * The stack frames of `error`, without the header that repeats its message,
+ * or nothing when the header cannot be told apart exactly.
  */
-export function withoutParametersOf(error: unknown, text: string): string {
+function framesOf(error: unknown): string {
+  if (error === null || typeof error !== "object") return "";
+  const stack = read(error, "stack");
+  const message = read(error, "message");
+  if (typeof stack !== "string" || typeof message !== "string") return "";
+  const at = message === "" ? stack.indexOf("\n") : stack.indexOf(message);
+  if (at < 0 || stack.slice(0, at).includes("\n")) return "";
+  const rest = stack.slice(at + message.length);
+  return /^\n {4}at /.test(rest) ? rest : "";
+}
+
+/**
+ * The value to hand any diagnostic sink in place of `error`: the error
+ * itself when no database failure is in its chain, and a
+ * {@link DatabaseFailure} otherwise.
+ */
+export function reportableError(error: unknown): unknown {
   try {
-    if (isQueryFailure(error)) rememberBound(error);
-    else if (echoesBoundValue(error, text)) return WITHHELD;
-    const exact = isQueryFailure(error)
-      ? text.split(composedMessage(error)).join(statementOf(error))
-      : text;
-    return withoutQueryParameters(exact);
+    if (error instanceof DatabaseFailure) return error;
+    const codes = databaseFailureIn(error);
+    return codes === undefined
+      ? error
+      : new DatabaseFailure(codes, framesOf(error));
   } catch {
-    return withoutQueryParameters(text);
+    return new DatabaseFailure({}, "");
   }
+}
+
+/**
+ * Takes the text of a failed query out of a string, from its statement to its
+ * first stack frame or the end.
+ *
+ * **A net, not the mechanism.** A string has lost the error that made it, so
+ * only the query layer's own spelling can be found in it. Callers that hold
+ * the error use {@link reportableError} and the functions below; this is for
+ * the sink that only ever sees text.
+ */
+export function withoutFailedQueries(text: string): string {
+  if (!text.includes(STATEMENT_PREFIX)) return text;
+  return text.replace(/Failed query: [^]*?(?=\n {4}at |$)/g, FIXED_MESSAGE);
 }
 
 /**
  * Why a failure happened, for a report that has room for one line: the
- * error an error wrapped when it wrapped one, since the query layer's own
- * message is the statement, and the error itself otherwise.
+ * error an error wrapped when it wrapped one, and the error itself otherwise.
  */
 export function errorReason(error: unknown): string {
   try {
+    const reported = reportableError(error);
+    if (reported !== error) return errorMessage(reported);
     const cause = error instanceof Error ? error.cause : undefined;
-    if (cause instanceof Error) {
-      if (isQueryFailure(error)) rememberBound(error);
-      return errorMessage(cause);
-    }
-    return errorMessage(error);
+    return errorMessage(cause instanceof Error ? cause : error);
   } catch {
     return "unknown error";
   }
@@ -159,76 +238,29 @@ export function errorReason(error: unknown): string {
 
 /**
  * What to put in a report for a caught value: its message, as the first line
- * of `err instanceof Error ? err.message : String(err)` would, without the
- * values of a failed query.
+ * of `err instanceof Error ? err.message : String(err)` would, with a
+ * database failure in its fixed form.
  */
 export function errorMessage(error: unknown): string {
   try {
-    return withoutParametersOf(
-      error,
-      error instanceof Error ? error.message : String(error),
+    const reported = reportableError(error);
+    return withoutFailedQueries(
+      reported instanceof Error ? reported.message : String(reported),
     );
   } catch {
     return "unknown error";
   }
 }
 
-/** An error's stack without the values of a failed query, which the stack's first line repeats. */
+/** An error's stack, with a database failure in its fixed form. */
 export function errorStack(error: unknown): string | undefined {
   try {
-    if (!(error instanceof Error) || typeof error.stack !== "string") {
+    const reported = reportableError(error);
+    if (!(reported instanceof Error) || typeof reported.stack !== "string") {
       return undefined;
     }
-    return withoutParametersOf(error, error.stack);
+    return withoutFailedQueries(reported.stack);
   } catch {
     return undefined;
-  }
-}
-
-/** Whether a failed query sits anywhere in the error's cause chain. */
-function chainHasQueryFailure(error: unknown): boolean {
-  let step: unknown = error;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
-    if (isQueryFailure(step)) return true;
-    if (step === null || typeof step !== "object") return false;
-    step = (step as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
-function cleanCopy(error: unknown, depth: number): unknown {
-  if (!(error instanceof Error)) {
-    return typeof error === "string" ? withoutQueryParameters(error) : error;
-  }
-  const copy = new Error(errorMessage(error));
-  copy.name = error.name;
-  const stack = errorStack(error);
-  if (stack !== undefined) copy.stack = stack;
-  const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" || typeof code === "number") {
-    (copy as { code?: unknown }).code = code;
-  }
-  const cause = (error as { cause?: unknown }).cause;
-  if (cause !== undefined && cause !== null && depth < MAX_CAUSE_DEPTH) {
-    copy.cause = cleanCopy(cause, depth + 1);
-  }
-  return copy;
-}
-
-/**
- * The value to hand a sink that reads an error's own fields, such as an
- * error-tracking client or a span's exception event.
- *
- * An error with no failed query in its chain is returned as it is, so what
- * the sink records of every other failure does not change. One with a failed
- * query comes back as a copy: the same name, message, stack, code and cause
- * chain, with the values taken out and the library's `query` and `params`
- * fields not carried over.
- */
-export function reportableError(error: unknown): unknown {
-  try {
-    return chainHasQueryFailure(error) ? cleanCopy(error, 0) : error;
-  } catch {
-    return new Error("unreportable error");
   }
 }

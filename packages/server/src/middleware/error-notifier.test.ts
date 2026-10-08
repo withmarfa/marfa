@@ -207,7 +207,7 @@ describe("what the error webhook is sent", () => {
     ["a generic endpoint", "https://example.invalid/hook"],
     ["Telegram", "https://api.telegram.org/bot123/sendMessage"],
   ])(
-    "keeps a failed query's values out of the message sent to %s",
+    "keeps a failed query's statement and values out of the message sent to %s",
     async (_name, url) => {
       const given = `${STATEMENT}\nparams: ${VALUE}`;
       // The witness: what the caller hands over does carry the value.
@@ -217,7 +217,8 @@ describe("what the error webhook is sent", () => {
       notifyError(url, notification(given, "/items"));
 
       expect(bodies).toHaveLength(1);
-      expect(bodies[0]).toContain("Failed query");
+      expect(bodies[0]).toContain("Database operation failed");
+      expect(bodies[0]).not.toContain("Failed query");
       expect(bodies[0]).not.toContain(VALUE);
     },
   );
