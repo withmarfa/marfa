@@ -2,7 +2,7 @@
 
 Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server, a persistent data volume, and a private backup bucket in your Railway project.
 
-**Draft: live deployment, claim, and recovery verification are pending the finished container.**
+**Container-tested; Railway verification pending.** Live deployment, claim, and recovery checks remain outstanding.
 
 ## Deploy the template
 
@@ -11,7 +11,7 @@ You need a Railway account with permission to deploy services, volumes, and buck
 1. Open the [Marfa Railway template](https://railway.com/new/template/5z9-Ja).
 2. Choose your workspace and create a project for this instance.
 3. Review the resources: one Marfa server with a volume mounted at `/data`, and one private backup bucket belonging to this instance. Deploy them together.
-4. Wait for the server deployment to pass its `/health` check. Open the server's generated HTTPS domain from its settings.
+4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
 
 The template generates separate random values for `API_KEY_SALT` and `MARFA_AUTH_SECRET` for each deployment. It also references the new bucket's credentials and sets `MARFA_AUTH_BASE_URL` to the server's public HTTPS address. You should not need to enter bucket credentials or generate secrets yourself. Railway documents these mechanisms under [template variable functions](https://docs.railway.com/templates/create#template-variable-functions) and [variable references](https://docs.railway.com/variables#reference-variables).
 
