@@ -6458,6 +6458,42 @@ describe("an edit behind an edit of the same row", () => {
     expect(copies(door)).toEqual(["first", "second"]);
   });
 
+  it("sends an edit made after a catch-up that shares no property with a conflicted one ahead of it on its own base", async () => {
+    harness = await startHarness("edit-after-catch-up-apart-from-conflict");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const { edges: _edges, ...theirs } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "theirs" },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [copyItemEvent("11", "item.updated", theirs)]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await edit(device, HELD.id, { body: "first" }, HELD.version);
+    expect((await device.catchUp()).ok).toBe(true);
+    // Made on the version the catch-up brought, and carrying nothing the
+    // first edit carries, so everything it carries it read from the server.
+    await edit(device, HELD.id, { title: "second" }, HELD.version + 1);
+    const door = scriptDoor(harness);
+    elsewhere(door, HELD.id, { body: "theirs" });
+    const report = await drained(device);
+
+    expect(verdictsOf(report, "update_item", HELD.id)[0]).toBe("conflicted");
+    expect(
+      sentOn(harness, `/items/${HELD.id}`),
+      "an edit that shares nothing with the conflicted one ahead of it was moved back onto that one's base",
+    ).toEqual([HELD.version, HELD.version + 1]);
+    expect(
+      door.rows.get(HELD.id)?.properties.title,
+      "the title the person set did not land",
+    ).toBe("second");
+    expect(copies(door)).toEqual(["first"]);
+  });
+
   it("holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer", async () => {
     harness = await hydratedHarness("row-writes-behind-unanswered", {
       rows: rows(),
