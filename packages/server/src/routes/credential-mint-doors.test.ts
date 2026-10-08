@@ -12,7 +12,7 @@
  * The invariant is stated in `auth/mint-ceiling.ts`: no minting path may
  * issue a credential whose authority exceeds, on any axis, the authority
  * of the principal or governing declaration that authorized the mint —
- * the permissions it holds, the operator flag, and the breadth of its
+ * the permissions it holds and the breadth of its
  * content maps. Quoted from that file rather than
  * paraphrased, because this comment named a role lattice long after the
  * lattice had gone and the file it cites had stopped listing one. Each door
@@ -64,9 +64,10 @@ async function mintFullWorkingKey(): Promise<string> {
     {
       label: "mint-door-working-key",
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
-      permissions: [...PERMISSIONS],
+      permissions: PERMISSIONS.filter(
+        (permission) => permission !== "config.manage",
+      ),
       type_permissions: { "*": "write" },
-
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );
@@ -129,16 +130,13 @@ const DOORS: MintDoor[] = [
     ceiling: async () => {
       const workingKey = await mintFullWorkingKey();
 
-      // Over the ceiling: claiming the operator flag without holding it.
-      // Refused outright rather than coerced, because running the instance
-      // sits outside the permission model and nothing in a permission set
-      // reaches it.
+      // A named permission the caller does not hold cannot be delegated.
       const platform = await request(ctx.app, "POST", "/keys", {
         key: workingKey,
         body: {
-          label: "flag",
-          source: "mint-flag",
-          is_operator: true,
+          label: "over-ceiling",
+          source: "over-ceiling",
+          permissions: ["config.manage"],
         },
       });
       expect(platform.status).toBe(403);
@@ -170,11 +168,7 @@ const DOORS: MintDoor[] = [
     name: "POST /keys — a session mints no wider than its own grant",
     specRoute: "post /keys",
     forgedSource: async () => {
-      const { token } = await seedOauthBearer(
-        ctx,
-        ["openid", "keys.mint"],
-        {},
-      );
+      const { token } = await seedOauthBearer(ctx, ["openid", "keys.mint"], {});
       const res = await request(ctx.app, "POST", "/keys", {
         key: token,
         body: {
@@ -230,7 +224,7 @@ const DOORS: MintDoor[] = [
       expect(at.status).toBe(201);
       const body = (await at.json()) as { id: string };
       const stored = await ctx.storage.keys.get(body.id);
-      expect(stored?.is_operator).toBe(false);
+      expect(stored).not.toHaveProperty("is_operator");
       expect(stored?.type_permissions["core.note"]).toBe("read");
       expect(stored?.permissions).toEqual(["keys.mint"]);
     },

@@ -30,7 +30,6 @@ async function storeKey(): Promise<string> {
       source: `expiring-${suffix}`,
       type_permissions: { "core.note": "read" },
       default_tier: "library",
-
     },
     hashApiKey(`marfa_k1_expiring_${suffix}`, TEST_API_KEY_SALT),
   );
@@ -49,7 +48,9 @@ async function stampExpiry(id: string, at: string): Promise<void> {
 }
 
 async function listed(id: string): Promise<boolean> {
-  const res = await request(ctx.app, "GET", "/keys", { key: ctx.operatorKey });
+  const res = await request(ctx.app, "GET", "/keys", {
+    key: ctx.managementKey,
+  });
   expect(res.status).toBe(200);
   const body = (await res.json()) as { data: { id: string }[] };
   return body.data.some((k) => k.id === id);
@@ -64,7 +65,10 @@ describe("a key past its expiry", () => {
     await stampExpiry(live, FUTURE);
     expect(await listed(live)).toBe(true);
     const renamed = await request(ctx.app, "PATCH", `/keys/${live}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
       body: { label: "still here" },
     });
     expect(renamed.status).toBe(200);
@@ -77,7 +81,10 @@ describe("a key past its expiry", () => {
       ["DELETE", undefined],
     ] as const) {
       const res = await request(ctx.app, method, `/keys/${gone}`, {
-        headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+        headers: {
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
+        },
         body,
       });
       expect(res.status, method).toBe(404);
@@ -87,7 +94,10 @@ describe("a key past its expiry", () => {
     }
 
     const revoked = await request(ctx.app, "DELETE", `/keys/${live}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
     expect(revoked.status).toBe(200);
   });

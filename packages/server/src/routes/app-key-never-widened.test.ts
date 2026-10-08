@@ -11,7 +11,7 @@
  * "an app cannot make a key wider than itself in one step".
  *
  * The rule is a property of the key rather than of whoever is editing it, so
- * there is no exemption for the operator key — a guarantee with a credential
+ * there is no exemption for the direct owner — a guarantee with a credential
  * that can lift it quietly is not a guarantee. The case at the end is what
  * holds that.
  *
@@ -100,7 +100,7 @@ describe("editing a key an app made", () => {
     const body = (await res.json()) as {
       error: { message: string; details?: { required_scope?: string } };
     };
-    expect(body.error.message).toContain("created by an app");
+    expect(body.error.message).toContain("may only be narrowed");
     expect(body.error.details?.required_scope).toBe("core.note:write");
   });
 
@@ -189,25 +189,31 @@ describe("editing a key an app made", () => {
   });
 
   it("refuses a source it does not already claim, and allows dropping one it does", async () => {
-    // The editor is the operator key, which may grant any source, so the
+    // The editor is the direct owner, which may grant any source, so the
     // refusal is the key's ceiling and not the editor's.
     const { id } = await seedKey("app-claims", {
       oauth_client_id: "client-notes",
       sources: ["notes-folder"],
     });
     const widened = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
       body: { sources: ["notes-folder", "elsewhere"] },
     });
     expect(widened.status).toBe(403);
     const body = (await widened.json()) as {
       error: { message: string; details?: { source?: string } };
     };
-    expect(body.error.message).toContain("created by an app");
+    expect(body.error.message).toContain("may only be narrowed");
     expect(body.error.details?.source).toBe("elsewhere");
 
     const narrowed = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
       body: { sources: [] },
     });
     expect(narrowed.status).toBe(200);
@@ -216,19 +222,22 @@ describe("editing a key an app made", () => {
     );
   });
 
-  it("refuses the operator key too, because the rule is the key's", async () => {
+  it("refuses the direct owner too, because the rule is the key's", async () => {
     const id = await seedAppKey();
-    // The operator key is the credential with nothing above it: it reaches
+    // The direct owner is the credential with nothing above it: it reaches
     // this door without holding `keys.mint`, and its binding
     // skips the fence that stops every other caller addressing a key outside
     // nothing else. So it is the one that would lift the rule quietly.
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
       body: { type_permissions: { "*": "write" } },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("never widened afterwards");
+    expect(body.error.message).toContain("may only be narrowed");
   });
 
   it("leaves a key the person made themselves editable", async () => {

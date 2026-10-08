@@ -11,13 +11,20 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PERMISSIONS, type Permission } from "@withmarfa/shared";
-import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  seedOauthBearer,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
+let fullKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  fullKey = await mintWorkingKey(ctx, { permissions: [...PERMISSIONS] });
 });
 
 afterAll(async () => {
@@ -42,7 +49,14 @@ async function mint(
 ): Promise<MintedKey> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const res = await request(ctx.app, "POST", "/keys", {
-    ...(minter ? { key: minter } : { headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin } }),
+    ...(minter
+      ? { key: minter }
+      : {
+          headers: {
+            cookie: ctx.owner.cookie,
+            origin: new URL(ctx.config.authBaseUrl).origin,
+          },
+        }),
     body: { label: `named-${suffix}`, source: `named-${suffix}`, ...body },
   });
   expect(res.status, JSON.stringify(await res.clone().json())).toBe(201);
@@ -63,7 +77,7 @@ const NOTE = {
 };
 
 const minters = [
-  ["a full key", () => ctx.workingKey],
+  ["a full key", () => fullKey],
   ["the direct owner", () => undefined],
 ] as const;
 

@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { getCookie, deleteCookie } from "hono/cookie";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import { requireDirectAuthority } from "../middleware/auth.js";
+import { directAuthorityOnly } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { MarfaAuth } from "../auth/instance.js";
@@ -31,6 +31,8 @@ const getOwnerRoute = createRoute({
   path: "/",
   tags: ["Access"],
   summary: "Get the owner",
+  security: [{ ownerSession: [] }],
+  middleware: directAuthorityOnly,
   description:
     "Returns the owner of the claimed instance. Requires a direct owner sign-in or local process authority.",
   responses: {
@@ -103,7 +105,6 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     await next();
   });
   router.openapi(getOwnerRoute, async (c) => {
-    requireDirectAuthority(c);
     const owner = await storage.owner?.find();
     if (!owner)
       throw new MarfaError(

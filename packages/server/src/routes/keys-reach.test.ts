@@ -153,23 +153,6 @@ describe("the keys a signed-in app reaches", () => {
     });
     expect(res.status).toBe(404);
   });
-
-  it("never reaches an operator key, though it holds nothing", async () => {
-    const { token } = await seedOauthBearer(ctx, scopes, {});
-    const operator = await request(ctx.app, "GET", "/keys/current", {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
-    });
-    const { id } = (await operator.json()) as { id: string };
-
-    const res = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      key: token,
-    });
-    expect(res.status).toBe(404);
-    const list = await request(ctx.app, "GET", "/keys", { key: token });
-    const rows = ((await list.json()) as { data: { is_operator: boolean }[] })
-      .data;
-    expect(rows.some((k) => k.is_operator)).toBe(false);
-  });
 });
 
 describe("the keys a working key reaches", () => {
@@ -199,13 +182,13 @@ describe("the keys a working key reaches", () => {
     const list = await request(ctx.app, "GET", "/keys", { key: minter.raw });
     const rows = (
       (await list.json()) as {
-        data: { id: string; is_operator: boolean }[];
+        data: { id: string }[];
       }
     ).data;
     const ids = rows.map((k) => k.id);
     expect(ids).toContain(minter.id);
     expect(ids).not.toContain(full.id);
-    expect(rows.some((k) => k.is_operator)).toBe(false);
+    for (const row of rows) expect(row).not.toHaveProperty("is_operator");
   });
 
   it("is measured against a denial it holds, not only against what it lists", async () => {
@@ -239,7 +222,7 @@ describe("the keys a working key reaches", () => {
     ).toBe(401);
   });
 
-  it("is not told whether a key it no longer reaches was revoked; the operator is", async () => {
+  it("is not told whether a key it no longer reaches was revoked; the owner is", async () => {
     const minter = await storeKey({
       permissions: ["keys.mint"],
       type_permissions: { "core.note": "read" },
@@ -267,11 +250,14 @@ describe("the keys a working key reaches", () => {
       await answer(unknown, UNKNOWN_ID),
     );
 
-    const operator = await request(ctx.app, "DELETE", `/keys/${target.id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+    const owner = await request(ctx.app, "DELETE", `/keys/${target.id}`, {
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
-    expect(operator.status).toBe(404);
-    const err = (await operator.json()) as { error: { message: string } };
+    expect(owner.status).toBe(404);
+    const err = (await owner.json()) as { error: { message: string } };
     expect(err.error.message).toMatch(/already revoked/i);
   });
 });

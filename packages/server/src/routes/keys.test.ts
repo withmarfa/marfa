@@ -1,23 +1,14 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createApp } from "../app.js";
-import { ensureInstanceId } from "../storage/instance-id.js";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createBlobLayer } from "../storage/blob-layer.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   createTestContext,
+  createUnclaimedTestApp,
   mintWorkingKey,
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import { generateId, PERMISSIONS } from "@withmarfa/shared";
 
@@ -168,15 +159,10 @@ describe("PATCH /keys/{id}", () => {
       {
         label: `patcher-narrow-${suffix}`,
         source: `patcher-narrow-${suffix}`,
-        // The whole point of the fixture: it reaches content and nothing
-        // administrative, which is what the keys doors now ask about. Not an
-        // operator key either — that one reaches these doors by being the
-        // operator key, and a fixture carrying the flag would prove the
-        // carve-out rather than the permission.
+        // Content access does not grant key management.
         permissions: [],
         type_permissions: { "*": "read" },
         default_tier: "library",
-
       },
       hashApiKey(narrow, TEST_API_KEY_SALT),
     );
@@ -375,74 +361,6 @@ describe("enforcement_override — a lever missing a required field", () => {
   });
 });
 
-describe("PATCH /keys/{id} — an operator target", () => {
-  /** A spare credential at the instance tier, holding nothing. */
-  async function mintOperatorKey(suffix: string): Promise<string> {
-    const res = await request(ctx.app, "POST", "/keys", {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
-      body: {
-        label: `operator-patch-${suffix}`,
-        source: `operator-patch-${suffix}`,
-        is_operator: true,
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(true);
-    return minted.id;
-  }
-
-  // The control, so the case below cannot pass by the guard having been
-  // removed rather than by the write having been forced empty.
-  it("refuses a request naming reach", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const id = await mintOperatorKey(suffix);
-
-    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
-      body: { type_permissions: { "core.note": "read" } },
-    });
-    expect(res.status).toBe(403);
-    const err = (await res.json()) as { error: { message: string } };
-    expect(err.error.message).toMatch(/POST \/keys/);
-  });
-
-  // **A body of denials is a non-empty map that names nothing.** The guard
-  // skips a `none` entry, exactly as the creator ceiling does, so such a body
-  // reached the store and the store wrote `{"core.note":"none"}` onto a row
-  // the constraint says holds `{}`. The caller read a database refusal where
-  // a route answer belongs. The mint forces the same families empty for the
-  // same reason and this is that door a moment later, so it forces too.
-  //
-  // `type_permissions` is the one family the body schema lets a `none` into,
-  // so it is the one that reaches the store. The forcing is written across
-  // all five because the guard is: a schema that admitted `none` on a second
-  // family would otherwise reopen this on that family alone.
-  it("writes a denial-only map empty rather than sending it at the row constraint", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const id = await mintOperatorKey(suffix);
-
-    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
-      body: {
-        label: `renamed-${suffix}`,
-        type_permissions: { "core.note": "none" },
-      },
-    });
-    expect(res.status).toBe(200);
-
-    const stored = await ctx.storage.keys.get(id);
-    expect(stored?.type_permissions).toEqual({});
-    // The rest of the edit still lands: forcing the family empty is not a
-    // refusal of the request, and a caller renaming a key gets the rename.
-    expect(stored?.label).toBe(`renamed-${suffix}`);
-    // Families the body never named are left alone rather than rewritten.
-    expect(stored?.edge_permissions).toEqual({});
-    expect(stored?.permissions).toEqual([]);
-  });
-});
-
 describe("DELETE /keys/{id} — the answer is what happened", () => {
   /** How many `key.revoke` rows the audit log holds for one key id. */
   async function revokeAudits(id: string): Promise<number> {
@@ -454,7 +372,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     return page.data.length;
   }
 
-  // **Nothing stood between the operator key and a revoke that did
+  // **Nothing stood between the direct owner and a revoke that did
   // nothing.** `keys.get` drops revoked rows, so a revoked key and an
   // unknown one both read as a miss, and the store was reached with any id
   // at all. The route handler carries what that cost.
@@ -462,7 +380,10 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const unknown = generateId();
 
     const res = await request(ctx.app, "DELETE", `/keys/${unknown}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
     expect(
       res.status,
@@ -480,18 +401,24 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     ).toBe(0);
   });
 
-  it("tells the operator a key was already revoked rather than answering ok", async () => {
+  it("tells the owner a key was already revoked rather than answering ok", async () => {
     const { id } = await createKey();
 
     const first = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
     expect(first.status).toBe(200);
 
     expect(await revokeAudits(id)).toBe(1);
 
     const second = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
     expect(
       second.status,
@@ -518,628 +445,16 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const { id } = await createKey();
 
     const res = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      headers: { cookie: ctx.owner.cookie, origin: new URL(ctx.config.authBaseUrl).origin },
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+      },
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
 
     expect(await revokeAudits(id)).toBe(1);
     expect(await ctx.storage.keys.get(id)).toBeNull();
-  });
-});
-
-describe("bootstrap sentinel", () => {
-  // Builds a fresh app with NO existing key and NO sentinel set —
-  // mirrors a brand-new installation: a fresh tmp DB, so the
-  // `bootstrapped` sentinel isn't set and the bootstrap path can fire
-  // cleanly. Cannot use `createTestContext` because that
-  // pre-creates the bootstrap credential and stamps the bootstrapped sentinel.
-  async function freshApp(): Promise<{
-    app: ReturnType<typeof createApp>;
-    storage: Storage;
-    /**
-     * The one-time secret the first mint must present, obtained the way boot
-     * obtains it. **Generated here rather than by the app**, because these
-     * tests build the app directly and never run the boot path that prints
-     * it — and a fixture that skipped the secret would be testing a door the
-     * product does not have.
-     */
-    bootstrapSecret: string;
-    /** Removed by the caller alongside `storage.close()`; nothing else
-     *  removes it. */
-    tmpDir: string;
-  }> {
-    const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
-    const storage = await createSqliteStorage(join(tmpDir, "test.db"));
-    const instanceId = await ensureInstanceId(storage.settings);
-    const blobPath = join(tmpDir, "blobs");
-    const blobs = await createBlobLayer(storage, {
-      blobPath: blobPath,
-      s3Bucket: "",
-      s3Region: "us-east-1",
-      s3Endpoint: "",
-      s3AccessKeyId: "",
-      s3SecretAccessKey: "",
-    });
-    const app = createApp(
-      storage,
-      blobs,
-      new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
-      {
-        port: 0,
-        sqlitePath: "",
-        blobPath,
-        maxRequestBytes: 1_048_576,
-        s3Bucket: "",
-        s3Region: "us-east-1",
-        s3Endpoint: "",
-        s3AccessKeyId: "",
-        s3SecretAccessKey: "",
-        apiKeySalt: "test-salt",
-        corsOrigins: [],
-        rateLimitEnabled: false,
-        enableHsts: false,
-        auditRetentionDays: 90,
-        auditCleanupIntervalMs: 86_400_000,
-        eventLogRetentionHours: 168,
-        versionThinningIntervalMs: 3_600_000,
-        versionRecentDays: 30,
-        versionDailySnapshotDays: 90,
-        versionWeeklySnapshotDays: 365,
-        versionMaxVersions: 500,
-        trashRetentionDays: 60,
-        trashPurgeIntervalMs: 3_600_000,
-        errorWebhookUrl: "",
-        trustedProxyCidrs: [],
-        authBaseUrl: "http://localhost:0",
-        authSecret: "test-auth-secret",
-        rateLimitDefaultLimit: 1000,
-        rateLimitWindowMs: 60_000,
-      },
-      instanceId,
-    );
-    const bootstrapSecret = await ensureBootstrapSecret(storage);
-    return { app, storage, bootstrapSecret, tmpDir };
-  }
-
-  it("admits the first unauthenticated POST /keys as bootstrap", async () => {
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "first-admin",
-          source: "first-admin",
-          default_tier: "feed",
-          type_permissions: { "*": "write" },
-          extension_permissions: {},
-          edge_permissions: {},
-        },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as { is_operator: boolean; id: string };
-      // The first credential on an instance is the operator key, whatever the
-      // request asked for.
-      expect(body.is_operator).toBe(true);
-      // Sentinel must now be stamped.
-      const stamped = await storage.settings.get("bootstrapped");
-      expect(stamped).toBe("true");
-
-      // Bootstrap mint emits the distinct `key.bootstrap` action, not
-      // `key.create`, so operators can identify the first-mint event
-      // in audit logs without ambiguity.
-      const audits = await storage.audit.list({ action: "key.bootstrap" });
-      expect(audits.data.some((row) => row.resource_id === body.id)).toBe(true);
-      const row = audits.data.find((r) => r.resource_id === body.id);
-      expect(row).toBeTruthy();
-      expect(row?.action).toBe("key.bootstrap");
-      expect(row?.resource_type).toBe("key");
-      // Bootstrap mint has no calling credential — `key_id` is null.
-      expect(row?.key_id).toBeNull();
-
-      // Negative: no `key.create` row for this id.
-      const createRows = await storage.audit.list({ action: "key.create" });
-      expect(createRows.data.some((r) => r.resource_id === body.id)).toBe(
-        false,
-      );
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("returns the operator key only, and the operator mints the key that works", async () => {
-    // **The operator key is not a working key**, so an operator handed only
-    // that has a credential it cannot use: no permissions, because running
-    // the instance sits outside the permission model. The setup story is
-    // mint the operator key, then mint a working key with it — and a body
-    // naming nothing takes everything, because the operator key is a seed
-    // rather than a ceiling.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as {
-        key: string;
-        is_operator: boolean;
-      };
-      expect(body.is_operator).toBe(true);
-
-      const working = await request(app, "POST", "/keys", {
-        key: body.key,
-        body: { label: "working", source: "working" },
-      });
-      expect(working.status).toBe(201);
-      const workingBody = (await working.json()) as {
-        key: string;
-        is_operator: boolean;
-        permissions: string[];
-        type_permissions: Record<string, string>;
-      };
-      // The working key is an ordinary credential holding the whole instance.
-      expect(workingBody.is_operator).toBe(false);
-      expect(workingBody.permissions).toEqual(
-        expect.arrayContaining(["keys.mint", "config.manage"]),
-      );
-      expect(workingBody.type_permissions).toEqual({ "*": "write" });
-
-      // **And it works.** A key holding nothing it can reach would satisfy
-      // every assertion above and be useless, so the round trip is the
-      // assertion that matters.
-      const created = await request(app, "POST", "/items", {
-        key: workingBody.key,
-        body: { type: "core.note", properties: { body: "hello" } },
-      });
-      expect(created.status).toBe(201);
-      const listed = await request(app, "GET", "/items?type=core.note", {
-        key: workingBody.key,
-      });
-      expect(listed.status).toBe(200);
-      const page = (await listed.json()) as { data: unknown[] };
-      expect(page.data).toHaveLength(1);
-      // The store holds the two rows the story produced.
-      const keys = await storage.keys.list();
-      expect(keys.filter((k) => k.is_operator)).toHaveLength(1);
-      expect(keys.filter((k) => !k.is_operator)).toHaveLength(1);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("takes no content reach on bootstrap, whatever the body asks for", async () => {
-    // **The operator key holds nothing on any axis.** The permissions
-    // are forced empty and the clamp refuses anything requested; the four
-    // content maps must not come off the body either, because bootstrap is
-    // unauthenticated with no creator to clamp against, so `*: write` here
-    // would be read and write over everything, in the one row shape the
-    // constraint exists to make unwritable.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "greedy",
-          source: "greedy",
-          type_permissions: { "*": "write" },
-          edge_permissions: { "*": "write" },
-          metadata_permissions: { "*": "write" },
-          profile_permissions: { "*": "write" },
-          extension_permissions: { "*": "write" },
-        },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as {
-        key: string;
-        is_operator: boolean;
-        type_permissions: Record<string, string>;
-        edge_permissions: Record<string, string>;
-        metadata_permissions: Record<string, string>;
-        profile_permissions: Record<string, string>;
-        extension_permissions: Record<string, string>;
-      };
-      expect(body.is_operator).toBe(true);
-      expect(body.type_permissions).toEqual({});
-      expect(body.edge_permissions).toEqual({});
-      expect(body.metadata_permissions).toEqual({});
-      expect(body.profile_permissions).toEqual({});
-      expect(body.extension_permissions).toEqual({});
-
-      // The stored row, not just the response: a map echoed empty and
-      // persisted wide would satisfy everything above.
-      const stored = (await storage.keys.list()).find(
-        (k) => k.source === "greedy",
-      );
-      expect(stored?.type_permissions).toEqual({});
-
-      // And it cannot write. This is the assertion with teeth — a map is
-      // only interesting because of what it admits, and an echoed-empty map
-      // over a stored wide one would pass every check above.
-      const written = await request(app, "POST", "/items", {
-        key: body.key,
-        body: { type: "core.note", properties: { body: "hello" } },
-      });
-      expect(written.status).toBe(403);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses a claim on bootstrap, as on any operator key, and the secret still mints", async () => {
-    // The key bootstrap mints is the operator key, which holds nothing, so a
-    // claim named on it is refused rather than dropped: a mint that answered
-    // `201` with the claim gone would not be the key the caller asked for.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const refused = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "first-admin",
-          source: "first-admin",
-          sources: ["shared-notes"],
-        },
-      });
-      expect(refused.status).toBe(403);
-      const body = (await refused.json()) as {
-        error: { code: string; details?: { source?: string } };
-      };
-      expect(body.error.code).toBe("forbidden");
-      expect(body.error.details?.source).toBe("shared-notes");
-      expect(await storage.keys.list()).toHaveLength(0);
-
-      // The witness, and the point of refusing inside the claim's window:
-      // the same secret mints once the body names no claim.
-      const minted = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(minted.status).toBe(201);
-      const operator = (await minted.json()) as {
-        is_operator: boolean;
-        sources: string[];
-      };
-      expect(operator.is_operator).toBe(true);
-      expect(operator.sources).toEqual([]);
-      // The listing that held no key after the refusal holds this one.
-      expect(
-        (await storage.keys.list()).map((k) => k.source),
-        "the listing does not surface a minted key, so its emptiness above proves nothing",
-      ).toEqual(["first-admin"]);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rolls bootstrap claim, key and secret consumption back when its audit fails", async () => {
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      await (
-        storage as Storage & {
-          __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
-        }
-      ).__sqliteRun(
-        "CREATE TRIGGER reject_bootstrap_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'key.bootstrap' BEGIN SELECT RAISE(ABORT, 'bootstrap audit refused'); END",
-        [],
-      );
-      const res = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(500);
-      expect(await storage.keys.list()).toHaveLength(0);
-      expect(await storage.settings.get("bootstrapped")).toBeNull();
-      expect(await storage.settings.get("bootstrap.secret")).toBe(
-        bootstrapSecret,
-      );
-      await (
-        storage as Storage & {
-          __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
-        }
-      ).__sqliteRun("DROP TRIGGER reject_bootstrap_audit", []);
-      const retry = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(retry.status).toBe(201);
-      expect(await storage.keys.list()).toHaveLength(1);
-      expect(await storage.settings.get("bootstrapped")).toBe("true");
-      expect(await storage.settings.get("bootstrap.secret")).toBeNull();
-      expect(
-        (await storage.audit.list({ action: "key.bootstrap" })).data,
-      ).toHaveLength(1);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("gives the one-shot claim back when the mint itself fails", async () => {
-    // The claim has to come first or two concurrent callers both mint, and it
-    // is also what stops the middleware admitting an unauthenticated mint. A
-    // throw after it must not leave a sentinel with no operator key behind it:
-    // an instance nobody can reach and no route can repair. The failure is
-    // injected at the key insert because that is the write, and any of the
-    // several after it fail the same way.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const create = storage.keys.create.bind(storage.keys);
-      storage.keys.create = () => {
-        throw new Error("storage is having a moment");
-      };
-
-      const failed = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(failed.status).toBe(500);
-      expect(await storage.settings.get("bootstrapped")).toBeNull();
-
-      // The premise, and the point: the retry works, **presenting the same
-      // secret**. Releasing the claim while spending the secret would be no
-      // retry at all — the door would be open and the only thing that opens
-      // it would be gone.
-      storage.keys.create = create;
-      const retried = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(retried.status).toBe(201);
-      expect(await storage.settings.get("bootstrapped")).toBe("true");
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses the first mint without the secret this instance printed", async () => {
-    // **The window this closes.** A fresh instance accepts one unauthenticated
-    // write, and until the secret existed that door was open to whoever
-    // reached the port first between `up` and the operator's first call.
-    const { app, storage, tmpDir } = await freshApp();
-    try {
-      const res = await request(app, "POST", "/keys", {
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(401);
-      // And the one-shot claim is intact, so the real operator can still
-      // bootstrap. A refused attempt that burned it would lock the instance
-      // out for good.
-      expect(await storage.settings.get("bootstrapped")).toBeNull();
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses a secret that is not this instance's", async () => {
-    const { app, storage, tmpDir } = await freshApp();
-    try {
-      const res = await request(app, "POST", "/keys", {
-        key: "not-the-secret",
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(res.status).toBe(401);
-      expect(await storage.settings.get("bootstrapped")).toBeNull();
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("consumes the secret, so it cannot mint a second time", async () => {
-    // The log line stays on somebody's screen long after the mint. What stops
-    // a second use is the claim, and this is the belt beside it: the row is
-    // gone the moment the operator key exists.
-    //
-    // Deleted, not blanked. A blanked row reads as absent to `get` and as an
-    // empty string to a comparison, and `bootstrapSecretMatches("", "")` is
-    // true — so a request with no `Authorization` header at all presents the
-    // empty string and matches. `null` is the one state every reader agrees
-    // about.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const first = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(first.status).toBe(201);
-      expect(await storage.settings.get("bootstrap.secret")).toBeNull();
-
-      const second = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "second", source: "second" },
-      });
-      expect(second.status).toBe(401);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("returns the same secret across a restart before the first mint", async () => {
-    // An operator who copied the line and then restarted the container must
-    // not find it invalidated. Idempotence is what makes re-printing at every
-    // boot safe rather than confusing.
-    const { storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      expect(await ensureBootstrapSecret(storage)).toBe(bootstrapSecret);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("a rejected body does not burn the one-shot bootstrap claim", async () => {
-    // The sentinel claim is irreversible. If a request that can never
-    // mint consumed it, a single stray field would lock a brand-new
-    // instance out of bootstrap permanently.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const rejected = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "reserved-source",
-          // A source claiming a connector's identity is refused, so the
-          // request can never mint.
-          source: "oauth:stray",
-        },
-      });
-      expect(rejected.status).toBe(400);
-      expect(await storage.settings.get("bootstrapped")).toBeNull();
-
-      // Bootstrap still available to the corrected request.
-      const retry = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: { label: "first-admin", source: "first-admin" },
-      });
-      expect(retry.status).toBe(201);
-      expect(await storage.settings.get("bootstrapped")).toBe("true");
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("operator-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
-    // Self-contained — bootstrap a fresh app, then use the first key it
-    // mints to mint a second on the now-closed (non-bootstrap) branch.
-    // Uses its own app rather than the shared `ctx` so the closed branch is
-    // reached from a known state.
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const bootstrapRes = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "bootstrap-key",
-          source: "bootstrap-key",
-          type_permissions: { "*": "write" },
-        },
-      });
-      expect(bootstrapRes.status).toBe(201);
-      const bootstrap = (await bootstrapRes.json()) as {
-        id: string;
-        key: string;
-      };
-
-      // Second POST authenticated as the bootstrap credential — this is the
-      // non-bootstrap branch (sentinel is now stamped).
-      // Naming no reach, because the caller is the operator key: an
-      // operator key holds nothing and may give nothing, so a body naming
-      // a type map is refused. What this case is about is which audit
-      // action the non-bootstrap branch writes.
-      const followUpRes = await request(app, "POST", "/keys", {
-        key: bootstrap.key,
-        body: {
-          label: "routine-operator-mint",
-          source: "routine-operator-mint",
-          default_tier: "feed",
-        },
-      });
-      expect(followUpRes.status).toBe(201);
-      const followUp = (await followUpRes.json()) as { id: string };
-
-      const audits = await storage.audit.list({ action: "key.create" });
-      expect(audits.data.some((row) => row.resource_id === followUp.id)).toBe(
-        true,
-      );
-      const row = audits.data.find((r) => r.resource_id === followUp.id);
-      expect(row).toBeTruthy();
-      expect(row?.action).toBe("key.create");
-      expect(row?.resource_type).toBe("key");
-      // Caller is the bootstrap credential — `key_id` is its id.
-      expect(row?.key_id).toBe(bootstrap.id);
-
-      // Negative: no `key.bootstrap` row for the second-mint id.
-      const bootstrapRows = await storage.audit.list({
-        action: "key.bootstrap",
-      });
-      expect(
-        bootstrapRows.data.some((r) => r.resource_id === followUp.id),
-      ).toBe(false);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does NOT re-open bootstrap after every key is revoked", async () => {
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      // First unauthenticated POST succeeds as bootstrap.
-      const firstRes = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "first-admin",
-          source: "first-admin",
-          default_tier: "feed",
-          type_permissions: { "*": "write" },
-          extension_permissions: {},
-          edge_permissions: {},
-        },
-      });
-      expect(firstRes.status).toBe(201);
-      const { id: firstId } = (await firstRes.json()) as { id: string };
-
-      // Revoke every key.
-      await storage.keys.revoke(firstId);
-
-      // Next unauthenticated POST must be rejected: the sentinel persists
-      // past the key it was set for.
-      const secondRes = await request(app, "POST", "/keys", {
-        key: bootstrapSecret,
-        body: {
-          label: "takeover",
-          source: "takeover",
-          default_tier: "feed",
-          type_permissions: { "*": "write" },
-          extension_permissions: {},
-          edge_permissions: {},
-        },
-      });
-      expect(secondRes.status).toBe(401);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("concurrent unauthenticated POST /keys mints exactly one operator key", async () => {
-    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
-    try {
-      const N = 8;
-      const bodies = Array.from({ length: N }, (_, i) => ({
-        label: `race-${String(i)}`,
-        source: `race-${String(i)}`,
-        type_permissions: { "*": "write" },
-      }));
-      const results = await Promise.all(
-        bodies.map((body) =>
-          request(app, "POST", "/keys", { key: bootstrapSecret, body }),
-        ),
-      );
-      const statuses = results.map((r) => r.status);
-      const successes = statuses.filter((s) => s === 201).length;
-      const unauthorized = statuses.filter((s) => s === 401).length;
-      expect(successes).toBe(1);
-      expect(unauthorized).toBe(N - 1);
-
-      // Sentinel must be stamped exactly once.
-      const stamped = await storage.settings.get("bootstrapped");
-      expect(stamped).toBe("true");
-
-      // **Exactly one operator key**, which is the property.
-      const keys = await storage.keys.list();
-      expect(keys.filter((k) => k.is_operator)).toHaveLength(1);
-      expect(keys.filter((k) => !k.is_operator)).toHaveLength(0);
-    } finally {
-      await storage.close();
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 });
 
@@ -1188,7 +503,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   it("refuses a session reading itself as a key, whatever it was granted", async () => {
     const { token } = await seedOauthBearer(
       oauthCtx,
-      grantScopes("types:*:write"),
+      grantScopes("core.*:write"),
       {},
     );
     const res = await request(oauthCtx.app, "GET", "/keys/current", {
@@ -1220,7 +535,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(created.type_permissions["core.note"]).toBe("read");
 
     const stored = await oauthCtx.storage.keys.get(created.id);
-    expect(stored?.is_operator).toBe(false);
+    expect(stored).not.toHaveProperty("is_operator");
   });
 
   it("refuses reach the grant does not cover, and names the literal", async () => {
@@ -1266,12 +581,8 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(res.status).toBe(201);
   });
 
-  it("never mints an operator key from a session, whatever the body asks", async () => {
-    const { token } = await seedOauthBearer(
-      oauthCtx,
-      grantScopes(),
-      {},
-    );
+  it("rejects the removed authority field from a signed-in app", async () => {
+    const { token } = await seedOauthBearer(oauthCtx, grantScopes(), {});
     const res = await request(oauthCtx.app, "POST", "/keys", {
       key: token,
       body: {
@@ -1280,13 +591,10 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         is_operator: true,
       },
     });
-    // Running the instance sits outside the permission model, so no scope can
-    // reach it and the ask is refused rather than quietly downgraded. The
-    // synthetic OAuth principal never carries the flag, so no session can
-    // satisfy this whatever it was granted.
-    expect(res.status).toBe(403);
+    // Removed fields are invalid, including when supplied by an approved app.
+    expect(res.status).toBe(400);
     const err = (await res.json()) as { error: { code: string } };
-    expect(err.error.code).toBe("forbidden");
+    expect(err.error.code).toBe("validation_error");
     expect(
       (await oauthCtx.storage.keys.list()).some((k) => k.label === "platform"),
     ).toBe(false);
@@ -1321,11 +629,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("lets a granted session read, revoke and rename", async () => {
-    const { token } = await seedOauthBearer(
-      oauthCtx,
-      grantScopes(),
-      {},
-    );
+    const { token } = await seedOauthBearer(oauthCtx, grantScopes(), {});
     const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
     const target = await oauthCtx.storage.keys.create(
       {
@@ -1333,7 +637,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "target-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1403,7 +706,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "victim-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1455,7 +757,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         source: "ext-target-" + Math.random().toString(36).slice(2),
         type_permissions: {},
         default_tier: "library",
-
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1593,7 +894,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1610,11 +910,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 });
 
-describe("POST /keys — what an operator key mints", () => {
-  // The operator key holds nothing, so nothing about it is a ceiling: a
-  // working key it mints holds what the body names, or the whole set when
-  // the body names nothing. A body naming `is_operator: true` produces a
-  // second operator key, which holds nothing.
+describe("POST /keys — what the direct owner mints", () => {
   let oauthCtx: TestContext;
 
   beforeAll(async () => {
@@ -1628,17 +924,19 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a working key holding everything when the body names nothing", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
+      headers: {
+        cookie: oauthCtx.owner.cookie,
+        origin: new URL(oauthCtx.config.authBaseUrl).origin,
+      },
       body: {
         label: `seeded-${suffix}`,
         source: `seeded-${suffix}`,
-
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(false);
+    expect(stored).not.toHaveProperty("is_operator");
     expect(stored?.type_permissions).toEqual({ "*": "write" });
     expect(stored?.edge_permissions).toEqual({ "*": "write" });
     expect(stored?.metadata_permissions).toEqual({ "*": "write" });
@@ -1650,7 +948,10 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a working key holding only what the body names", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
+      headers: {
+        cookie: oauthCtx.owner.cookie,
+        origin: new URL(oauthCtx.config.authBaseUrl).origin,
+      },
       body: {
         label: `narrow-${suffix}`,
         source: `narrow-${suffix}`,
@@ -1661,20 +962,27 @@ describe("POST /keys — what an operator key mints", () => {
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(false);
+    expect(stored).not.toHaveProperty("is_operator");
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.edge_permissions).toEqual({});
     expect(stored?.permissions).toEqual(["keys.mint"]);
   });
 
-  it("mints a key naming a map and no permissions with no permissions, from the operator key or a working one", async () => {
+  it("mints a key naming a map and no permissions with no permissions, from the owner or a working key", async () => {
     // Naming a map is naming what the key holds, so the permissions left
     // unnamed are held no more than the maps left unnamed. The witness is
     // the case above: the same mint naming nothing takes every permission.
-    for (const minter of [oauthCtx.operatorKey, oauthCtx.workingKey]) {
+    for (const minter of [undefined, oauthCtx.workingKey]) {
       const suffix = Math.random().toString(36).slice(2, 10);
       const res = await request(oauthCtx.app, "POST", "/keys", {
-        key: minter,
+        ...(minter
+          ? { key: minter }
+          : {
+              headers: {
+                cookie: oauthCtx.owner.cookie,
+                origin: new URL(oauthCtx.config.authBaseUrl).origin,
+              },
+            }),
         body: {
           label: `mapped-${suffix}`,
           source: `mapped-${suffix}`,
@@ -1697,7 +1005,10 @@ describe("POST /keys — what an operator key mints", () => {
   it("mints a key naming only claimed sources with no permissions", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
+      headers: {
+        cookie: oauthCtx.owner.cookie,
+        origin: new URL(oauthCtx.config.authBaseUrl).origin,
+      },
       body: {
         label: `claims-${suffix}`,
         source: `claims-${suffix}`,
@@ -1713,7 +1024,10 @@ describe("POST /keys — what an operator key mints", () => {
   it("lets a key holding nothing read itself, and nothing else of the keys", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const minted = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
+      headers: {
+        cookie: oauthCtx.owner.cookie,
+        origin: new URL(oauthCtx.config.authBaseUrl).origin,
+      },
       body: {
         label: `self-${suffix}`,
         source: `self-${suffix}`,
@@ -1740,162 +1054,13 @@ describe("POST /keys — what an operator key mints", () => {
     expect(list.status).toBe(403);
   });
 
-  it("answers the operator key its own row", async () => {
-    const res = await request(oauthCtx.app, "GET", "/keys/current", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
-    });
-    expect(res.status).toBe(200);
-    const row = (await res.json()) as { is_operator: boolean };
-    expect(row.is_operator).toBe(true);
-  });
-
   it("refuses a request with no credential", async () => {
     const res = await request(oauthCtx.app, "GET", "/keys/current", {});
     expect(res.status).toBe(401);
   });
 
-  it("refuses to give the operator key it mints any reach at all", async () => {
-    // Running the instance is not a permission, so the tier that runs it
-    // carries none. The creator ceiling does not catch this, because the
-    // operator key is exempt from it by having nothing to be measured
-    // against.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
-      body: {
-        label: `operator-narrow-${suffix}`,
-        source: `operator-narrow-${suffix}`,
-        is_operator: true,
-        type_permissions: { "core.note": "read" },
-      },
-    });
-    expect(res.status).toBe(403);
-    const err = (await res.json()) as { error: { message: string } };
-    // The refusal names the route that mints a working key, so the caller's
-    // recourse is not a guess.
-    expect(err.error.message).toMatch(/POST \/keys/);
-  });
-
-  it("mints a spare operator key when the body names nothing", async () => {
-    // The one thing this door still does for an operator caller: a second
-    // key at the same tier, carrying the same nothing.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
-      body: {
-        label: `operator-spare-${suffix}`,
-        source: `operator-spare-${suffix}`,
-        is_operator: true,
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(true);
-    expect(stored?.type_permissions).toEqual({});
-    expect(stored?.permissions).toEqual([]);
-
-    const audits = await oauthCtx.storage.audit.list({ action: "key.create" });
-    expect(audits.data.some((row) => row.resource_id === minted.id)).toBe(true);
-    const row = audits.data.find((r) => r.resource_id === minted.id);
-    expect(row?.details).toMatchObject({ operator_tier: true });
-  });
-
-  it("mints one from a body that names only denials, forcing the map empty", async () => {
-    // **The one non-empty body this door still admits from an operator
-    // caller.** A `none` entry is a denial rather than a request, so it names
-    // nothing and the refusal above skips it, exactly as the creator ceiling
-    // skips it. Nothing between that guard and the insert would then have
-    // emptied the map: the route's own forcing is what turns
-    // `{"core.note": "none"}` into `{}`, and without it a non-empty map would
-    // arrive at a row the constraint says holds nothing and the mint would
-    // fail as a database error rather than succeed as a mint.
-    //
-    // The sibling above covers the empty body, where the forcing has nothing
-    // to do; this is the case where it does the work.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
-      body: {
-        label: `operator-denials-${suffix}`,
-        source: `operator-denials-${suffix}`,
-        is_operator: true,
-        type_permissions: { "core.note": "none" },
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(true);
-    // Empty, not the denial that was sent. `{"core.note": "none"}` grants
-    // nothing either, so the difference is not what a door would read off it:
-    // the constraint compares bytes, and those are not the bytes `{}` takes.
-    expect(stored?.type_permissions).toEqual({});
-    expect(stored?.permissions).toEqual([]);
-  });
-
-  it("cannot even be handed a widened operator key to mint from", async () => {
-    // The row constraint says both halves (no permissions, no maps), so
-    // the caller this case would need, an operator key carrying every map,
-    // is a row nothing can write, and the route's forcing is unreachable
-    // from below rather than merely unused.
-    //
-    // So the refusal is what is asserted: a constraint dropped from the row
-    // turns this red, rather than making that caller writable with nothing
-    // to say the forcing now matters.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const rawWide = `marfa_k1_wide_operator_${suffix}`;
-    await expect(
-      oauthCtx.storage.keys.create(
-        {
-          label: `wide-operator-${suffix}`,
-          source: `wide-operator-${suffix}`,
-          default_tier: "library",
-          is_operator: true,
-          type_permissions: { "*": "write" },
-          edge_permissions: { "*": "write" },
-          metadata_permissions: { "*": "write" },
-          extension_permissions: { "*": "write" },
-          profile_permissions: { "*": "write" },
-          permissions: ["keys.mint"],
-        },
-        hashApiKey(rawWide, TEST_API_KEY_SALT),
-      ),
-    ).rejects.toThrow();
-    // Asserted on the row rather than on the message, because the message is
-    // the driver's and carries the constraint's name. What matters is
-    // that nothing landed. The constraint itself is
-    // `api_keys_operator_holds_nothing`, declared in `schema.ts` and pinned
-    // by `schema-sql.test.ts` against a database it builds fresh.
-    expect(
-      (await oauthCtx.storage.keys.list()).some(
-        (k) => k.label === `wide-operator-${suffix}`,
-      ),
-    ).toBe(false);
-
-    // And the operator key the instance really holds mints a credential that
-    // inherits nothing, which is what the forcing is for.
-    const res = await request(oauthCtx.app, "POST", "/keys", {
-      headers: { cookie: oauthCtx.owner.cookie, origin: new URL(oauthCtx.config.authBaseUrl).origin },
-      body: {
-        label: `inherits-nothing-${suffix}`,
-        source: `inherits-nothing-${suffix}`,
-        is_operator: true,
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.type_permissions).toEqual({});
-    expect(stored?.edge_permissions).toEqual({});
-    expect(stored?.metadata_permissions).toEqual({});
-    expect(stored?.extension_permissions).toEqual({});
-    expect(stored?.profile_permissions).toEqual({});
-    expect(stored?.permissions).toEqual([]);
-  });
-
   it("mints the two-hop credential chain a black-box client relies on", async () => {
-    // The conformance suite provisions with the operator key and then runs as
+    // The conformance suite provisions with the direct owner and then runs as
     // a working credential minted from it, which mints narrower ones from
     // itself. Pinned here as well as there, so a regression names the door
     // rather than the referee's boot.
@@ -1917,7 +1082,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(secondHop.status).toBe(201);
     const scoped = (await secondHop.json()) as { id: string };
     const stored = await oauthCtx.storage.keys.get(scoped.id);
-    expect(stored?.is_operator).toBe(false);
+    expect(stored).not.toHaveProperty("is_operator");
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 
@@ -1931,7 +1096,6 @@ describe("POST /keys — what an operator key mints", () => {
         permissions: [...PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );
@@ -1943,6 +1107,52 @@ describe("POST /keys — what an operator key mints", () => {
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await oauthCtx.storage.keys.get(minted.id);
-    expect(stored?.is_operator).toBe(false);
+    expect(stored).not.toHaveProperty("is_operator");
+  });
+});
+
+describe("ordinary keys never establish machine authority", () => {
+  it("refuses an unauthenticated mint before and after claim", async () => {
+    const fresh = await createUnclaimedTestApp();
+    try {
+      expect(
+        (
+          await request(fresh.app, "POST", "/keys", {
+            body: { label: "no-authority", source: "no-authority" },
+          })
+        ).status,
+      ).toBe(401);
+      const witness = await ctx.ownerRequest("/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "owner-witness",
+          source: "owner-witness",
+          permissions: [],
+        }),
+      });
+      expect(witness.status).toBe(201);
+      expect(
+        (
+          await request(ctx.app, "POST", "/keys", {
+            body: { label: "still-no-authority", source: "still-no-authority" },
+          })
+        ).status,
+      ).toBe(401);
+    } finally {
+      await fresh.cleanup();
+    }
+  });
+  it("rejects a removed privileged-key field even from the owner", async () => {
+    const response = await ctx.ownerRequest("/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "removed",
+        source: "removed",
+        is_operator: true,
+      }),
+    });
+    expect(response.status).toBe(400);
   });
 });

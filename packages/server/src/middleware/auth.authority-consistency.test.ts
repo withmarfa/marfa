@@ -58,7 +58,7 @@ let mintCounter = 0;
 
 async function mintKey(opts: {
   permissions?: Permission[];
-  is_operator?: boolean;
+
   label?: string;
   source?: string;
   type_permissions?: Record<string, "read" | "write" | "none">;
@@ -75,7 +75,6 @@ async function mintKey(opts: {
       default_tier: "library",
       type_permissions: opts.type_permissions ?? {},
       extension_permissions: opts.extension_permissions,
-      is_operator: opts.is_operator ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );
@@ -168,18 +167,18 @@ describe("extensions — the reserved namespaces are nobody's", () => {
     ).toContain('Namespace "system" is reserved');
   });
 
-  it("refuses an operator key on a reserved namespace too", async () => {
+  it("refuses a management key on a reserved namespace too", async () => {
     const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "reserved-control" },
     });
-    // The operator key's type map reaches no type, so the item's type gate
+    // The management key's type map reaches no type, so the item's type gate
     // refuses it before the namespace is asked; either way nothing lands.
     const res = await request(
       ctx.app,
       "PUT",
       `/items/${item.id}/extensions/system`,
-      { key: ctx.operatorKey, body: { ok: true } },
+      { key: ctx.managementKey, body: { ok: true } },
     );
     expect(res.status).toBe(403);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(

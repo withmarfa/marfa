@@ -236,7 +236,7 @@ const WAYS: Way[] = [
 async function send(
   door: string,
   way: Way,
-  key: string,
+  key: string | undefined,
   options: { path?: string; payload?: unknown } = {},
 ): Promise<Response> {
   const [method, template] = door.split(" ") as [string, string];
@@ -248,7 +248,15 @@ async function send(
     );
   return ctx.app.request(url, {
     method,
-    headers: { Authorization: `Bearer ${key}`, ...way.headers },
+    headers: {
+      ...(key === undefined
+        ? {
+            cookie: ctx.owner.cookie,
+            origin: new URL(ctx.config.authBaseUrl).origin,
+          }
+        : { Authorization: `Bearer ${key}` }),
+      ...way.headers,
+    },
     ...(way.body === undefined
       ? {}
       : { body: way.body(JSON.stringify(options.payload ?? {})) }),
@@ -261,12 +269,12 @@ interface Refusal {
 
 /**
  * What the door answers a credential that reaches it. An instance door
- * refuses the working key, so it is tried with the operator key after.
+ * refuses the working key, so it is tried with the direct owner after.
  */
 async function reached(door: string, way: Way): Promise<Response> {
   const working = await send(door, way, ctx.workingKey);
   if (working.status !== 403) return working;
-  return send(door, way, ctx.operatorKey);
+  return send(door, way, undefined);
 }
 
 describe("a JSON door sent a body that is not JSON", () => {
