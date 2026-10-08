@@ -409,7 +409,55 @@ pub fn with_credential_lock<T>(
 
 #[cfg(unix)]
 fn credential_lock_file(origin: &str) -> Result<File, CliError> {
-    lock_file_in(&user_home()?.join(".marfa-credential-locks"), origin)
+    lock_file_in(&credential_lock_directory()?, origin)
+}
+
+/// A lock guards one store's entries, so it lives with that store: every
+/// process that reads or writes a store finds the same lock, whatever its
+/// `HOME`, and a store made for a run takes its locks away with it.
+#[cfg(unix)]
+fn credential_lock_directory() -> Result<PathBuf, CliError> {
+    let home = user_home()?;
+    Ok(match credentials::location() {
+        Some(store) => lock_directory_for(&resolved(store)?, &home),
+        None => home.join(".marfa-credential-locks"),
+    })
+}
+
+#[cfg(unix)]
+fn lock_directory_for(store: &std::path::Path, home: &std::path::Path) -> PathBuf {
+    // The person's own keychain can also be named by its file, and both
+    // names must find one lock.
+    if let Ok(keychains) = std::fs::canonicalize(home.join("Library/Keychains"))
+        && store.parent() == Some(keychains.as_path())
+    {
+        return home.join(".marfa-credential-locks");
+    }
+    let mut beside = store.as_os_str().to_owned();
+    beside.push(".locks");
+    PathBuf::from(beside)
+}
+
+/// A link to a store, or a path relative to another directory, names the
+/// same store and so must find the same lock.
+#[cfg(unix)]
+fn resolved(store: &std::path::Path) -> Result<PathBuf, CliError> {
+    let store = std::path::absolute(store)?;
+    if let Ok(found) = std::fs::canonicalize(&store) {
+        return Ok(found);
+    }
+    // A keychain file that is not there yet resolves through its folder, so
+    // it finds this lock once something makes it.
+    let folder = store
+        .parent()
+        .and_then(|folder| std::fs::canonicalize(folder).ok());
+    match (folder, store.file_name()) {
+        (Some(folder), Some(name)) => Ok(folder.join(name)),
+        _ => Err(CliError::NoKeychain(format!(
+            "{}: no folder is there for its credential locks",
+            store.display()
+        ))),
+    }
 }
 
 #[cfg(unix)]

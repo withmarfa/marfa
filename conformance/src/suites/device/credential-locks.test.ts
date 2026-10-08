@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedServer, type Answer } from "../../device/scripted-server.js";
@@ -18,21 +18,28 @@ import { requireBinary } from "./harness.js";
 
 const run = promisify(execFile);
 
+/**
+ * The lock the binary takes for `origin` under the keychain file `keychain`
+ * names, which it keeps beside that file.
+ */
+function lockFor(keychain: string, origin: string): string {
+  return join(
+    `${keychain}.locks`,
+    `${createHash("sha256").update(origin).digest("hex")}.lock`,
+  );
+}
+
 it("refuses an unsafe credential lock across environment overrides before contacting the server", async () => {
   const server = await ScriptedServer.start();
   const prefix = `/credential-${randomUUID()}`;
   const origin = `${server.url}${prefix}`;
   const folder = mkdtempSync(join(tmpdir(), "marfa-credential-environment-"));
-  const directory = join(userInfo().homedir, ".marfa-credential-locks");
-  const lock = join(
-    directory,
-    `${createHash("sha256").update(origin).digest("hex")}.lock`,
-  );
-  let madeLock = false;
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
   Object.assign(env, keychainEnv());
+  const lock = lockFor(env.MARFA_KEYCHAIN!, origin);
+  let madeLock = false;
   const read = async (name: string) => {
     const environment = join(folder, name);
     mkdirSync(environment);
@@ -76,7 +83,7 @@ it("refuses an unsafe credential lock across environment overrides before contac
       },
     });
   try {
-    mkdirSync(directory, { mode: 0o700, recursive: true });
+    mkdirSync(dirname(lock), { mode: 0o700, recursive: true });
     writeFileSync(lock, "", { flag: "wx", mode: 0o600 });
     madeLock = true;
     answer();
@@ -116,17 +123,13 @@ async function withUnsafeLock(
   args: string[],
   input?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const directory = join(userInfo().homedir, ".marfa-credential-locks");
-  const lock = join(
-    directory,
-    `${createHash("sha256").update(origin).digest("hex")}.lock`,
-  );
   const environment = mkdtempSync(join(tmpdir(), "marfa-credential-unsafe-"));
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
   Object.assign(env, keychainEnv());
-  mkdirSync(directory, { mode: 0o700, recursive: true });
+  const lock = lockFor(env.MARFA_KEYCHAIN!, origin);
+  mkdirSync(dirname(lock), { mode: 0o700, recursive: true });
   writeFileSync(lock, "", { flag: "wx", mode: 0o644 });
   chmodSync(lock, 0o644);
   try {
@@ -293,14 +296,11 @@ function marfaAt(keychain: string, origin: string, args: string[]): Running {
  * `logout` or `keys forget` holds it while it changes the kept credential.
  */
 async function holdCredentialLock(
+  keychain: string,
   origin: string,
 ): Promise<{ release: () => Promise<void> }> {
-  const directory = join(userInfo().homedir, ".marfa-credential-locks");
-  mkdirSync(directory, { mode: 0o700, recursive: true });
-  const lock = join(
-    directory,
-    `${createHash("sha256").update(origin).digest("hex")}.lock`,
-  );
+  const lock = lockFor(keychain, origin);
+  mkdirSync(dirname(lock), { mode: 0o700, recursive: true });
   const holder = spawn(
     "python3",
     [
@@ -473,7 +473,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
       body: { total: 0, by_type: {}, by_state: {}, by_tier: {} },
     });
     const before = keychainFile();
-    const lock = await holdCredentialLock(origin);
+    const lock = await holdCredentialLock(keychain.path, origin);
     const keep = marfaAt(keychain.path, origin, [
       "--key",
       "fixture-key",
@@ -557,7 +557,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
       { timeout: 10_000, interval: 25 },
     );
     const before = keychainFile();
-    const lock = await holdCredentialLock(origin);
+    const lock = await holdCredentialLock(keychain.path, origin);
     try {
       approve();
       await vi.waitFor(

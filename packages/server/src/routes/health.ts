@@ -121,8 +121,8 @@ async function timed(
   }
 }
 
-/** What went wrong, from the driver's own error when the query layer wrapped
- *  it, since the wrapper's message is the statement and not the failure. */
+/** What went wrong: a database failure in its fixed form with its SQLite
+ *  code, and the wrapped error of anything else that wraps one. */
 function describe(err: unknown): string {
   if (!(err instanceof Error)) return "unknown";
   return errorReason(err);

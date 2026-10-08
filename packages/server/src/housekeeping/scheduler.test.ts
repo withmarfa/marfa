@@ -302,7 +302,7 @@ describe("Housekeeping", () => {
       await hk.stop();
     });
 
-    it("records a failed write's statement as the run's error and never the values it was bound to", async () => {
+    it("records a failed write as the fixed database failure and never its statement or the values it was bound to", async () => {
       ctx = await createTestContext();
       const value = "bound-value-3e9d51c0";
       await (
@@ -342,10 +342,13 @@ describe("Housekeeping", () => {
 
       const row = await ctx.storage.housekeeping.get("writer");
       expect(row?.last_outcome).toBe("error");
-      expect(row?.last_error).toContain("Failed query: insert into");
-      expect(row?.last_error).not.toContain(value);
-      expect(JSON.stringify(captured.lines)).toContain("Failed query");
-      expect(JSON.stringify(captured.lines)).not.toContain(value);
+      expect(row?.last_error).toBe(
+        "Database operation failed (SQLITE_CONSTRAINT_TRIGGER)",
+      );
+      const logged = JSON.stringify(captured.lines);
+      expect(logged).toContain("Database operation failed");
+      for (const absent of [value, "Failed query", "refused by the fixture"])
+        expect(logged).not.toContain(absent);
       await hk.stop();
     });
 

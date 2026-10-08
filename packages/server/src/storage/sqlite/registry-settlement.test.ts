@@ -15,6 +15,7 @@ import {
   readSse,
   readSseWriting,
   request,
+  causeMessages,
   type TestContext,
 } from "../../test-utils.js";
 import { runAuditedTransaction } from "../audited-transaction.js";
@@ -284,8 +285,8 @@ it("a native transaction-ending rollback discards staged structure and stops lat
       .tx.run(sql`CREATE TABLE registry_abort (id TEXT PRIMARY KEY)`);
   });
   let laterAttempted = false;
-  await expect(
-    ctx.storage.runInTransaction(async () => {
+  const refused = await ctx.storage
+    .runInTransaction(async () => {
       await ctx.storage.types.update(schema.id, changed);
       const tx = sqliteRequestContext.getStore()!.tx;
       try {
@@ -302,8 +303,9 @@ it("a native transaction-ending rollback discards staged structure and stops lat
         fields: {},
       });
       laterAttempted = true;
-    }),
-  ).rejects.toThrow(/UNIQUE constraint failed/);
+    })
+    .catch((error: unknown) => error);
+  expect(causeMessages(refused).join("\n")).toMatch(/UNIQUE constraint failed/);
   expect(laterAttempted).toBe(false);
   expect(await durable()).toEqual(schema);
   expect(getTypeSchema(schema.id)).toEqual(schema);

@@ -9,18 +9,18 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 /**
  * A failed database statement reported where a client can read the report:
  * the health answer, a housekeeping run's record and a bulk action's errors
- * carry what failed and none of the values the statement was bound to.
+ * carry `Database operation failed` and the SQLite result code, and none of
+ * the statement, the driver's own message or the values it was bound to.
  *
  * **A fault the fixture makes, on a server of its own.** No request reaches a
  * failed statement, so a table the statement names is renamed in the stored
  * file while the server runs and renamed back afterward, as
  * `internal-error.test.ts` does.
  *
- * **What a fixture cannot show.** The report is the failed statement's own
- * words with the values taken out, and the values are not readable over
- * HTTP, so the witness that the report could have carried one is the value
- * the failing write was given: a row the same write stored before the fault,
- * read back from the file.
+ * **What a fixture cannot show.** The values are not readable over HTTP, so
+ * the witness that the report could have carried one is the value the
+ * failing write was given: a row the same write stored before the fault, read
+ * back from the file.
  */
 let server: FreshServer | undefined;
 
@@ -61,8 +61,10 @@ function operator(path: string, init: RequestInit = {}): Promise<Response> {
   });
 }
 
-/** A time as the server writes one, which a cutoff the server computed is. */
-const A_TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+/** What a renamed table makes a report say, and nothing of the statement or the driver's message. */
+function expectFixedFailure(reported: string | null | undefined): void {
+  expect(reported).toBe("Database operation failed (SQLITE_ERROR)");
+}
 
 describe("the health answer to a write that fails", () => {
   type Health = {
@@ -75,7 +77,7 @@ describe("the health answer to a write that fails", () => {
     return { httpStatus: res.status, ...((await res.json()) as Health) };
   }
 
-  it("names the driver's reason and none of the values the probe write was bound to", async () => {
+  it("names a database failure with its SQLite code, and none of the statement, the driver's message or the values the probe write was bound to", async () => {
     // The witness: the probe's write commits while its table is there.
     const before = await health();
     expect(before.httpStatus).toBe(200);
@@ -99,19 +101,12 @@ describe("the health answer to a write that fails", () => {
     const write = down.components.database_write;
     expect(down.status).toBe("down");
     expect(write?.status).toBe("down");
-    // The reason, as the driver gives it, and not only a word the statement
-    // holds too.
-    expect(write?.error).toContain("no such table");
-    expect(write?.error).toContain("settings");
-    // The probe writes one key and the time of the probe.
-    expect(write?.error).not.toContain("health_probe");
-    expect(write?.error).not.toMatch(A_TIMESTAMP);
-    expect(write?.error).not.toContain("params");
+    expectFixedFailure(write?.error);
   });
 });
 
 describe("a housekeeping run whose statement fails", () => {
-  it("records the statement and none of the values it was bound to, in the run's answer and in the list", async () => {
+  it("records a database failure with its SQLite code and none of the statement, the driver's message or the values, in the run's answer and in the list", async () => {
     // The witness: the same run ends well while its table is there.
     const clean = await operator("/housekeeping/rate-limit-cleanup/run", {
       method: "POST",
@@ -141,14 +136,8 @@ describe("a housekeeping run whose statement fails", () => {
     ).data.find((row) => row.name === "rate-limit-cleanup");
     expect(job?.last_outcome).toBe("error");
 
-    for (const recorded of [run.error, job?.last_error]) {
-      expect(recorded).toContain("rate_limit_windows");
-      // The statement carries a placeholder where the cutoff the job computed
-      // was bound.
-      expect(recorded).toContain("?");
-      expect(recorded).not.toMatch(A_TIMESTAMP);
-      expect(recorded).not.toContain("params");
-    }
+    for (const recorded of [run.error, job?.last_error])
+      expectFixedFailure(recorded);
   });
 });
 
@@ -184,7 +173,7 @@ describe("a bulk action whose writes fail", () => {
     }
   }
 
-  it("names the driver's reason in each entry's error and none of the values its write was bound to", async () => {
+  it("names a database failure with its SQLite code in each entry's error, and none of the statement, the driver's message or the values its write was bound to", async () => {
     const marker = `marker-${Date.now().toString(36)}`;
     const body = `body ${marker}`;
     const ids: string[] = [];
@@ -236,12 +225,7 @@ describe("a bulk action whose writes fail", () => {
     );
     for (const entry of failed.result.errors) {
       expect(entry.code).toBe("internal_error");
-      expect(entry.message).toContain("no such table");
-      expect(entry.message).toContain("event_log");
-      for (const value of [refused, tagged, body, marker, entry.id]) {
-        expect(entry.message).not.toContain(value);
-      }
-      expect(entry.message).not.toContain("params");
+      expectFixedFailure(entry.message);
     }
   });
 });

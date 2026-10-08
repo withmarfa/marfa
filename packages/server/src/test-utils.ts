@@ -1071,6 +1071,18 @@ export async function settle(ms = 50): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** The message of every error in `error`'s cause chain, outermost first. */
+export function causeMessages(error: unknown): string[] {
+  const messages: string[] = [];
+  for (
+    let step = error, depth = 0;
+    step instanceof Error && depth < 8;
+    step = step.cause, depth++
+  )
+    messages.push(step.message);
+  return messages;
+}
+
 /**
  * Collect every item event until `signal` aborts.
  *

@@ -400,7 +400,7 @@ describe("GET /health error text", () => {
 });
 
 describe("GET /health error text from a wrapped failure", () => {
-  it("names the driver's failure rather than the statement the query layer wraps it in", async () => {
+  it("names a database failure with its code rather than the statement the query layer wraps it in", async () => {
     const wrapped = new Error('Failed query: insert into "settings"', {
       cause: new Error("SQLITE_FULL: database or disk is full"),
     });
@@ -415,13 +415,13 @@ describe("GET /health error text from a wrapped failure", () => {
     const body = (await res.json()) as HealthBody;
 
     expect(body.components.database_write?.error).toBe(
-      "SQLITE_FULL: database or disk is full",
+      "Database operation failed (SQLITE_FULL)",
     );
   });
 });
 
 describe("GET /health error text from a failed query with no failure inside it", () => {
-  it("names the statement and not the values it was bound to", async () => {
+  it("names a database failure and neither the statement nor the values it was bound to", async () => {
     const value = "bound-value-3e9d51c0";
     const bare = new DrizzleQueryError(
       'insert into "settings" ("key", "value") values (?, ?)',
@@ -440,8 +440,11 @@ describe("GET /health error text from a failed query with no failure inside it",
 
     const body = (await res.json()) as HealthBody;
 
-    expect(body.components.database_write?.error).toContain("Failed query");
+    expect(body.components.database_write?.error).toBe(
+      "Database operation failed",
+    );
     expect(JSON.stringify(body)).not.toContain(value);
+    expect(JSON.stringify(body)).not.toContain("settings");
   });
 });
 

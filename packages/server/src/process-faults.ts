@@ -15,12 +15,13 @@ export function reportFault(
   err: unknown,
   details: Record<string, string | undefined> = {},
 ): void {
+  const reported = reportableError(err);
   log("error", message, {
     ...details,
-    error: formatErrorSummary(err),
-    error_detail: serializeError(err),
+    error: formatErrorSummary(reported),
+    error_detail: serializeError(reported),
   });
-  globalThis.__marfaReportException?.(err, details);
+  globalThis.__marfaReportException?.(reported, details);
 }
 
 /**
@@ -30,7 +31,7 @@ export function reportFault(
  * The server's own logging of a failed stream prints the error whole, fields
  * included, and a failed query carries the values it was bound to in its
  * `query` and `params`. So the failure is reported here, and the stream is
- * given a copy that carries none of them.
+ * given the form every other sink receives.
  */
 export function streamFailure(
   message: string,

@@ -112,15 +112,16 @@ describe("redactAttributes — PII denylist", () => {
   });
 });
 
-describe("redactAttributes — a failed query's parameters", () => {
+describe("redactAttributes: a failed query", () => {
   const VALUE = "bound-value-3e9d51c0";
   const STATEMENT =
     'Failed query: insert into "items" ("properties") values (?)';
   const MESSAGE = `${STATEMENT}\nparams: ${VALUE}`;
   const FRAMES =
     "\n    at run (/srv/app.ts:1:1)\n    at tick (/srv/app.ts:2:2)";
+  const FIXED = "Database operation failed";
 
-  it("keeps the statement of an exception event and drops the values from its message and its stack", () => {
+  it("replaces the statement and values of an exception event's message and stack, and keeps the frames", () => {
     // The witness: the input does carry the value, so the absence below is the rule at work.
     const input = {
       "exception.type": "Error",
@@ -131,10 +132,11 @@ describe("redactAttributes — a failed query's parameters", () => {
 
     const out = redactAttributes(input);
 
-    expect(out["exception.message"]).toBe(STATEMENT);
-    expect(out["exception.stacktrace"]).toBe(`Error: ${STATEMENT}${FRAMES}`);
+    expect(out["exception.message"]).toBe(FIXED);
+    expect(out["exception.stacktrace"]).toBe(`Error: ${FIXED}${FRAMES}`);
     expect(out["exception.type"]).toBe("Error");
     expect(JSON.stringify(out)).not.toContain(VALUE);
+    expect(JSON.stringify(out)).not.toContain(STATEMENT);
   });
 
   it("reaches a value nested in a log record's serialized error, and one inside an array", () => {
@@ -150,7 +152,8 @@ describe("redactAttributes — a failed query's parameters", () => {
     const out = redactAttributes(input);
 
     expect(JSON.stringify(out)).not.toContain(VALUE);
-    expect(out.lines).toEqual([STATEMENT, 7, null]);
+    expect(JSON.stringify(out)).not.toContain(STATEMENT);
+    expect(out.lines).toEqual([FIXED, 7, null]);
   });
 
   it("leaves other values as they were, bytes and numbers included", () => {

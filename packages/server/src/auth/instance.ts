@@ -336,19 +336,18 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       ? withCredentialAudit(credentialAdapter, options.storage)
       : credentialAdapter,
     onAPIError: {
-      // Better Auth answers anything its handler throws that is not one of
-      // its own errors with a bare `500`. Write contention is a failure this
-      // server answers on every door as `503 write_contention`, so it is
-      // rethrown out of the handler to the server's error handler; throwing
-      // is the only way out, since this hook's return is ignored. Anything
-      // else is logged as Better Auth logs it when no hook is set: its own
-      // errors only when they are a `500`.
+      // Write contention, wherever it is wrapped, and anything else Better
+      // Auth's handler throws that is not one of its own errors are rethrown
+      // out of the handler to the server's error handler, which answers them
+      // as `503 write_contention` and `500 internal_error` and is the one
+      // place a fault is reported. Throwing is the only way out, since this
+      // hook's return is ignored, and left alone the library prints the error
+      // whole to stderr. Its own errors are logged as it logs them when no
+      // hook is set: only when they are a `500`.
       onError: (error, ctx) => {
-        if (carriesWriteContention(error)) throw error;
-        if (isAPIError(error) && error.status !== "INTERNAL_SERVER_ERROR") {
-          return;
-        }
-        ctx.logger.error(error instanceof Error ? error.name : "", error);
+        if (carriesWriteContention(error) || !isAPIError(error)) throw error;
+        if (error.status !== "INTERNAL_SERVER_ERROR") return;
+        ctx.logger.error(error.name, error);
       },
     },
     session: { deferSessionRefresh: true },

@@ -584,8 +584,8 @@ function transactionConnections(url: string): {
       try {
         await conn.executeMultiple("ROLLBACK");
         control.outcome = "rolled_back";
-      } catch (error) {
-        control.diagnose(error);
+      } catch {
+        // The failure being cleaned up after is the one reported.
       }
       if (holdWriter) {
         open = false;
@@ -654,8 +654,8 @@ function transactionConnections(url: string): {
       } finally {
         try {
           if (reading) await reader.executeMultiple("ROLLBACK");
-        } catch (cleanup) {
-          control.diagnose(cleanup);
+        } catch {
+          // A read's rollback failing is followed by closing the reader.
         } finally {
           reader.close();
         }
@@ -688,7 +688,6 @@ function transactionConnections(url: string): {
           "poisoned",
           "unknown",
         );
-        control.diagnose(error);
         const structural =
           statement === "COMMIT" && control.participant?.changed
             ? control.participant
@@ -699,8 +698,8 @@ function transactionConnections(url: string): {
           control.outcome = "unknown";
           try {
             await structural.uncertain(loadRegistry);
-          } catch (reconstruction) {
-            control.diagnose(reconstruction);
+          } catch {
+            // The outcome stays unknown, which is what the caller is told.
           } finally {
             leave();
           }
@@ -725,14 +724,12 @@ function transactionConnections(url: string): {
         ) {
           return "active";
         }
-        control.diagnose(error);
         return "unknown";
       }
       try {
         await conn.execute("ROLLBACK");
         return "ended";
-      } catch (error) {
-        control.diagnose(error);
+      } catch {
         return "unknown";
       }
     };

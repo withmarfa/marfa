@@ -22,6 +22,9 @@ trait Keychain: Sync {
     fn get(&self, account: &str) -> Result<Option<String>, CliError>;
     fn set(&self, account: &str, text: &str) -> Result<(), CliError>;
     fn delete(&self, account: &str) -> Result<bool, CliError>;
+    /// The file or folder the entries are kept in; `None` for the person's
+    /// own keychain.
+    fn location(&self) -> Option<&std::path::Path>;
 }
 
 #[cfg(not(test))]
@@ -62,6 +65,10 @@ impl Keychain for System {
             Err(error) => Err(no_keychain(error)),
         }
     }
+
+    fn location(&self) -> Option<&std::path::Path> {
+        None
+    }
 }
 
 #[cfg(not(test))]
@@ -80,12 +87,12 @@ fn named(path: std::path::PathBuf) -> Box<dyn Keychain + Send> {
 }
 
 #[cfg(all(not(test), not(target_os = "macos")))]
-fn named(_: std::path::PathBuf) -> Box<dyn Keychain + Send> {
-    Box::new(Unavailable)
+fn named(path: std::path::PathBuf) -> Box<dyn Keychain + Send> {
+    Box::new(Unavailable(path))
 }
 
 #[cfg(all(not(test), not(target_os = "macos")))]
-struct Unavailable;
+struct Unavailable(std::path::PathBuf);
 
 #[cfg(all(not(test), not(target_os = "macos")))]
 impl Keychain for Unavailable {
@@ -99,6 +106,10 @@ impl Keychain for Unavailable {
 
     fn delete(&self, _: &str) -> Result<bool, CliError> {
         Err(Self::refusal())
+    }
+
+    fn location(&self) -> Option<&std::path::Path> {
+        Some(&self.0)
     }
 }
 
@@ -182,6 +193,10 @@ pub fn keep_client_id(origin: &str, id: &str) -> Result<(), CliError> {
 
 pub fn current() -> Result<Option<String>, CliError> {
     keychain().get(CURRENT)
+}
+
+pub fn location() -> Option<&'static std::path::Path> {
+    keychain().location()
 }
 
 /// Every test that keeps a credential writes the one `current` entry, so
@@ -324,6 +339,10 @@ mod file {
                 Err(error) => Err(self.refused(error)),
             }
         }
+
+        fn location(&self) -> Option<&std::path::Path> {
+            Some(&self.path)
+        }
     }
 }
 
@@ -378,6 +397,35 @@ mod isolated {
                 Err(error) => Err(error.into()),
             }
         }
+
+        fn location(&self) -> Option<&std::path::Path> {
+            Some(&self.0)
+        }
+    }
+
+    /// The run's own folder, which its credential locks sit in as well as
+    /// its keychain, removed when the run ends.
+    fn folder() -> &'static std::path::Path {
+        FOLDER.get_or_init(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let folder = std::env::temp_dir()
+                .join(format!("marfa-cli-keychain-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&folder).expect("the test keychain's folder");
+            // Safe: `remove_folder` takes nothing and touches only this path.
+            unsafe { libc::atexit(remove_folder) };
+            folder
+        })
+    }
+
+    static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+    extern "C" fn remove_folder() {
+        if let Some(folder) = FOLDER.get() {
+            let _ = std::fs::remove_dir_all(folder);
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -389,21 +437,12 @@ mod isolated {
     fn create() -> super::file::File {
         use security_framework::os::macos::keychain::CreateOptions;
         assert!(super::file::refuse_prompts(), "keychain prompts refused");
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let folder =
-            std::env::temp_dir().join(format!("marfa-cli-keychain-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(&folder).expect("the test keychain's folder");
-        FOLDER
-            .set(folder.clone())
-            .expect("one test keychain per run");
-        // Safe: `remove_folder` takes nothing and touches only the path set
-        // above.
-        unsafe { libc::atexit(remove_folder) };
-        let path = folder.join("run.keychain-db");
-        let password = format!("{nanos:x}");
+        let path = folder().join("run.keychain-db");
+        let password = folder()
+            .file_name()
+            .expect("the folder has a name")
+            .to_string_lossy()
+            .into_owned();
         CreateOptions::new()
             .password(&password)
             .prompt_user(false)
@@ -413,35 +452,30 @@ mod isolated {
     }
 
     #[cfg(target_os = "macos")]
-    static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-
-    #[cfg(target_os = "macos")]
-    extern "C" fn remove_folder() {
-        if let Some(folder) = FOLDER.get() {
-            let _ = std::fs::remove_dir_all(folder);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
     pub(super) fn file() -> &'static super::file::File {
         &KEYCHAIN
     }
 
     #[cfg(not(target_os = "macos"))]
-    static KEYCHAIN: std::sync::LazyLock<Memory> = std::sync::LazyLock::new(Memory::default);
+    static KEYCHAIN: std::sync::LazyLock<Memory> = std::sync::LazyLock::new(|| Memory {
+        entries: Default::default(),
+        location: folder().join("run"),
+    });
 
     #[cfg(not(target_os = "macos"))]
-    #[derive(Default)]
-    pub(super) struct Memory(std::sync::Mutex<std::collections::HashMap<String, String>>);
+    pub(super) struct Memory {
+        entries: std::sync::Mutex<std::collections::HashMap<String, String>>,
+        location: std::path::PathBuf,
+    }
 
     #[cfg(not(target_os = "macos"))]
     impl Keychain for Memory {
         fn get(&self, account: &str) -> Result<Option<String>, CliError> {
-            Ok(self.0.lock().unwrap().get(account).cloned())
+            Ok(self.entries.lock().unwrap().get(account).cloned())
         }
 
         fn set(&self, account: &str, text: &str) -> Result<(), CliError> {
-            self.0
+            self.entries
                 .lock()
                 .unwrap()
                 .insert(account.to_string(), text.to_string());
@@ -449,7 +483,11 @@ mod isolated {
         }
 
         fn delete(&self, account: &str) -> Result<bool, CliError> {
-            Ok(self.0.lock().unwrap().remove(account).is_some())
+            Ok(self.entries.lock().unwrap().remove(account).is_some())
+        }
+
+        fn location(&self) -> Option<&std::path::Path> {
+            Some(&self.location)
         }
     }
 }

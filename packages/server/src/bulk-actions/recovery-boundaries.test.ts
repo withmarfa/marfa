@@ -671,7 +671,7 @@ it("bounds a retained uncertain announcement frame while ordinary writers contin
   });
 });
 
-it("records a definitely aborted chunk at its old cursor with the native cause before attempting the next chunk", async () => {
+it("records a definitely aborted chunk at its old cursor with the native code before attempting the next chunk", async () => {
   const ids = [
     await note("first"),
     await note("ends transaction"),
@@ -699,9 +699,9 @@ it("records a definitely aborted chunk at its old cursor with the native cause b
   expect(result.errors.map((e) => e.id)).toEqual(ids.slice(0, 2));
   for (const error of result.errors) {
     expect(error.code).toBe("internal_error");
-    expect(error.message).toContain("native bulk rollback witness");
-    expect(error.message).not.toContain("params:");
-    expect(error.message).not.toContain("update ");
+    expect(error.message).toBe(
+      "Database operation failed (SQLITE_CONSTRAINT_TRIGGER)",
+    );
   }
   expect(
     (await Promise.all(ids.map((id) => ctx.storage.items.get(id)))).map(

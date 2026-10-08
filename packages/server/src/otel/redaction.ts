@@ -9,7 +9,7 @@ import type {
 } from "@opentelemetry/sdk-logs";
 import type { AnyValueMap } from "@opentelemetry/api-logs";
 import { loggablePath } from "../inbound/address.js";
-import { withoutQueryParameters } from "../error-text.js";
+import { withoutFailedQueries } from "../error-text.js";
 
 /**
  * PII discipline for OpenTelemetry.
@@ -103,7 +103,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * application log line carries.
  */
 function withoutParameters(value: unknown, depth = 0): unknown {
-  if (typeof value === "string") return withoutQueryParameters(value);
+  if (typeof value === "string") return withoutFailedQueries(value);
   if (depth >= MAX_VALUE_DEPTH) return value;
   if (Array.isArray(value)) {
     return value.map((item) => withoutParameters(item, depth + 1));

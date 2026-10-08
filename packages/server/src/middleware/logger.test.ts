@@ -133,12 +133,6 @@ function databaseLocked(): Error {
  * A constraint failure, which is the case `extendedCode` exists for: every
  * one of them answers `SQLITE_CONSTRAINT` on `code`, and only the extended
  * code says which constraint.
- *
- * The wrapped `SqliteError` is the half that matters to the summary. libsql
- * prefixes the wrapper's own message with the code, so a summary that never
- * appended a code would still read `SQLITE_CONSTRAINT` off the message; the
- * `cause` carries the bare message and the extended code apart, which is the
- * only place the appending is visible.
  */
 function uniqueViolation(): Error {
   return Object.assign(
@@ -171,35 +165,47 @@ describe("formatErrorSummary", () => {
     expect(summary).toContain("9099");
   });
 
-  it("carries the driver's message through on a lock failure", () => {
-    const summary = formatErrorSummary(databaseLocked());
-    expect(summary).toContain("database is locked");
-    expect(summary).toContain("SQLITE_BUSY");
+  it("reports a lock failure as the fixed database failure with its code", () => {
+    expect(formatErrorSummary(databaseLocked())).toBe(
+      "DatabaseFailure: Database operation failed (SQLITE_BUSY)",
+    );
   });
 
-  // The witness for the appending itself. Every assertion above would pass
-  // on the message alone, because libsql writes the code into the wrapper's
-  // message; the wrapped `SqliteError` does not, so the extended code only
-  // reaches the summary if the code is read off the value and appended.
-  it("appends a code the message does not already carry", () => {
+  it("keeps the extended code that separates one constraint from another, and not the driver's message", () => {
     const summary = formatErrorSummary(uniqueViolation());
-    expect(summary).toContain("UNIQUE constraint failed: items.id");
-    expect(summary).toContain("SQLITE_CONSTRAINT_PRIMARYKEY");
-    // And it is not there through the wrapper, whose message names only the
-    // unextended code.
-    expect(uniqueViolation().message).not.toContain(
-      "SQLITE_CONSTRAINT_PRIMARYKEY",
+    expect(summary).toBe(
+      "DatabaseFailure: Database operation failed (SQLITE_CONSTRAINT_PRIMARYKEY)",
     );
+    // The witness: the driver's message names the column.
+    expect(uniqueViolation().message).toContain("items.id");
+  });
+
+  it("appends a code the message does not already carry", () => {
+    const err = Object.assign(new Error("the socket closed"), {
+      code: "ECONNRESET",
+    });
+    expect(formatErrorSummary(err)).toBe("the socket closed (ECONNRESET)");
   });
 
   it("walks the cause chain", () => {
     const err = new Error("storage init failed", {
-      cause: new Error("write transaction failed", { cause: databaseLocked() }),
+      cause: new Error("write transaction failed", {
+        cause: connectionRefused(),
+      }),
     });
     const summary = formatErrorSummary(err);
     expect(summary).toContain("storage init failed");
     expect(summary).toContain("write transaction failed");
-    expect(summary).toContain("SQLITE_BUSY");
+    expect(summary).toContain("ECONNREFUSED");
+  });
+
+  it("replaces a chain with a database failure anywhere in it by the fixed failure", () => {
+    const err = new Error("storage init failed", {
+      cause: new Error("write transaction failed", { cause: databaseLocked() }),
+    });
+    expect(formatErrorSummary(err)).toBe(
+      "DatabaseFailure: Database operation failed (SQLITE_BUSY)",
+    );
   });
 
   it("terminates on a self-referential cause chain", () => {
@@ -235,10 +241,13 @@ describe("serializeError", () => {
     });
   });
 
-  it("keeps the driver's diagnostic fields", () => {
+  it("keeps the SQLite code of a database failure and nothing else the driver gave", () => {
     const out = serializeError(databaseLocked()) as Record<string, unknown>;
+    expect(out.name).toBe("DatabaseFailure");
+    expect(out.message).toBe("Database operation failed (SQLITE_BUSY)");
     expect(out.code).toBe("SQLITE_BUSY");
-    expect(out.rawCode).toBe(5);
+    expect(out).not.toHaveProperty("rawCode");
+    expect(out).not.toHaveProperty("cause");
   });
 
   // The pair `code` alone cannot tell apart. Every constraint failure the
@@ -258,7 +267,6 @@ describe("serializeError", () => {
     const out = serializeError(uniqueViolation()) as Record<string, unknown>;
     expect(out.code).toBe("SQLITE_CONSTRAINT");
     expect(out.extendedCode).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
-    expect(out.rawCode).toBe(1555);
   });
 
   it("nests the cause chain", () => {
@@ -497,22 +505,24 @@ describe("log payload serialization", () => {
       args: [noSuchTable()],
     });
     const args = entry.args as Record<string, unknown>[];
-    expect(args[0]?.message).toBe("SQLITE_ERROR: no such table: auth_session");
+    expect(args[0]?.message).toBe("Database operation failed (SQLITE_ERROR)");
     expect(args[0]?.code).toBe("SQLITE_ERROR");
   });
 
-  it("adds a one-line error summary carrying the failing message", () => {
+  it("adds a one-line error summary of the database failure", () => {
     const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
       args: [noSuchTable()],
     });
-    expect(entry.error_summary).toContain("no such table: auth_session");
-    expect(entry.error_summary).toContain("SQLITE_ERROR");
+    expect(entry.error_summary).toBe(
+      "DatabaseFailure: Database operation failed (SQLITE_ERROR)",
+    );
+    expect(JSON.stringify(entry)).not.toContain("auth_session");
   });
 
   it("preserves an error passed directly and one nested in an object", () => {
     const direct = captureLog("error", "boom", { error: noSuchTable() });
     const error = direct.error as Record<string, unknown>;
-    expect(error.message).toBe("SQLITE_ERROR: no such table: auth_session");
+    expect(error.message).toBe("Database operation failed (SQLITE_ERROR)");
     expect(error.code).toBe("SQLITE_ERROR");
 
     const nested = captureLog("error", "boom", {
@@ -520,7 +530,7 @@ describe("log payload serialization", () => {
     });
     const context = nested.context as Record<string, Record<string, unknown>>;
     expect(context.cause?.message).toBe(
-      "SQLITE_ERROR: no such table: auth_session",
+      "Database operation failed (SQLITE_ERROR)",
     );
     expect(context.cause?.code).toBe("SQLITE_ERROR");
   });

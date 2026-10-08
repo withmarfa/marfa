@@ -558,101 +558,93 @@ While a type's stored parent chain is unresolvable, the server MUST accept `PUT 
 
 ### `errors/report-log`
 
-When the server logs an unhandled fault in which a database statement failed, the server MUST carry in the fault's log line the failed statement, with a placeholder where each value was bound, and the driver's own reason for the failure.
+When the server logs an unhandled fault in which a database statement failed, the server MUST carry in the fault's log line `Database operation failed` and the SQLite result code the statement failed with.
 
-**Reason:** the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint.
+**Reason:** the code is what an operator needs to tell one fault from another, such as a full disk from a violated constraint, and everything else the database was given or said can be content.
 
-**Tests:** `compliance/fault-reports.test.ts › is logged with the statement and the driver's reason, and none of the values the statement was bound to`.
+**Tests:** `compliance/fault-reports.test.ts › is logged as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-log-values`
 
-When the server logs an unhandled fault in which a database statement failed, the server MUST NOT carry any value the statement was bound to anywhere in its log.
+When the server logs an unhandled fault in which a database statement failed, the server MUST NOT carry the statement, the driver's own message or any value the statement was bound to anywhere in its log.
 
-**Reason:** the values of a failed write are what was being written, its properties, tags and hashes, and a log is read by people and services that the instance's data does not otherwise reach.
+**Reason:** the values of a failed write are what was being written, its properties, tags and hashes, the statement's text and the driver's message can quote them, and a log is read by people and services that the instance's data does not otherwise reach.
 
-**Tests:** `compliance/fault-reports.test.ts › is logged with the statement and the driver's reason, and none of the values the statement was bound to`.
+**Tests:** `compliance/fault-reports.test.ts › is logged as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-webhook`
 
-When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST carry in the notification the failed statement, with a placeholder where each value was bound, and the driver's own reason for the failure.
+When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST carry in the notification `Database operation failed` and the SQLite result code the statement failed with.
 
-**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to`.
+**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-webhook-values`
 
-When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST NOT carry any value the statement was bound to in the notification.
+When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST NOT carry the statement, the driver's own message or any value the statement was bound to in the notification.
 
 **Reason:** a webhook's receiver is a service the instance's data does not otherwise reach.
 
-**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to`.
+**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-telemetry`
 
-When the server sends a telemetry collector the log record of an unhandled fault in which a database statement failed, the server MUST carry in it the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+When the server sends a telemetry collector the log record of an unhandled fault in which a database statement failed, the server MUST carry in it `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Tests:** `compliance/fault-reports.test.ts › is carried by the log record sent to the telemetry collector, with the statement and the driver's reason and none of the values`.
+**Tests:** `compliance/fault-reports.test.ts › is carried by the log record sent to the telemetry collector as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-span`
 
-When the server records on a request's span the exception of an unhandled fault in which a database statement failed, the server MUST carry in the exception event the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+When the server records on a request's span the exception of an unhandled fault in which a database statement failed, the server MUST carry in the exception event `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Tests:** `compliance/fault-reports.test.ts › is carried by the exception event on the request's span, with the statement and the driver's reason and none of the values`.
+**Tests:** `compliance/fault-reports.test.ts › is carried by the exception event on the request's span as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-tracking`
 
-When the server sends error tracking the exception of an unhandled fault in which a database statement failed, the server MUST carry in it the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+When the server sends error tracking the exception of an unhandled fault in which a database statement failed, the server MUST carry in it `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Tests:** `compliance/fault-reports.test.ts › is sent to error tracking as an exception with the statement and the driver's reason and none of the values`.
+**Tests:** `compliance/fault-reports.test.ts › is sent to error tracking as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-stream-warning`
 
-When an event stream logs a warning because a database statement failed while it read the head of the log, a catch-up or the credential, the server MUST carry in the warning the failed statement, with a placeholder where each value was bound, and no value taken from the credential.
+When an event stream logs a warning because a database statement failed while it read the head of the log, a catch-up or the credential, the server MUST carry in the warning `Database operation failed` and the SQLite result code, and none of the statement or any value taken from the credential.
 
-**Tests:** `compliance/fault-reports.test.ts › names the failed statement and no value of the credential's, for the head of the log, a catch-up and the credential`.
-
-### `errors/report-reason-withheld`
-
-If the driver's reason for a failed database statement repeats a value the statement was bound to, then the server MUST withhold that reason from the report of the fault.
-
-**Reason:** a driver sometimes quotes a token of the text it was given, such as a malformed search query, in any script and at any length, and that token is a value `errors/report-log-values` keeps out.
-
-**Tests:** waiting on #1444.
+**Tests:** `compliance/fault-reports.test.ts › names a database failure with its SQLite code and none of the statement or the credential's values, for the head of the log, a catch-up and the credential`.
 
 ### `errors/report-response-began`
 
-When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST NOT carry any value the statement was bound to in its log.
+When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
 **Tests:** waiting on #1444.
 
 ### `errors/report-background`
 
-When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST NOT carry any value the statement was bound to in its log.
+When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
 **Tests:** waiting on #1444.
 
 ### `errors/report-health`
 
-While the write probe of `GET /health` fails on a database statement, when the operator key sends `GET /health`, the server MUST give the `database_write` component an `error` that carries the driver's reason for the failure and none of the values the probe write was bound to.
+While the write probe of `GET /health` fails on a database statement, when the operator key sends `GET /health`, the server MUST give the `database_write` component an `error` that carries `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the probe write was bound to.
 
-**Reason:** the answer has room for one line, so it keeps the part its reader needs.
+**Reason:** the answer has room for one line, and the code is the part its reader needs.
 
-**Tests:** `compliance/failed-statement-reports.test.ts › names the driver's reason and none of the values the probe write was bound to`.
+**Tests:** `compliance/failed-statement-reports.test.ts › names a database failure with its SQLite code, and none of the statement, the driver's message or the values the probe write was bound to`.
 
 ### `errors/report-housekeeping`
 
-When a run of a housekeeping job fails on a database statement, the server MUST record the failed statement, with a placeholder where each value was bound and none of the values, as the run's `error` and as the job's `last_error` in the listing.
+When a run of a housekeeping job fails on a database statement, the server MUST record `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values it was bound to, as the run's `error` and as the job's `last_error` in the listing.
 
-**Reason:** the record has room for one line, so it keeps the part its reader needs.
+**Reason:** the record has room for one line, and the code is the part its reader needs.
 
-**Tests:** `compliance/failed-statement-reports.test.ts › records the statement and none of the values it was bound to, in the run's answer and in the list`.
+**Tests:** `compliance/failed-statement-reports.test.ts › records a database failure with its SQLite code and none of the statement, the driver's message or the values, in the run's answer and in the list`.
 
 ### `errors/report-bulk-action`
 
-When a database statement fails for an item that a `POST /items/bulk-actions` job writes, the server MUST give that item's entry in the job's `result.errors` a `message` that carries the driver's reason for the failure and none of the values the statement was bound to.
+When a database statement fails for an item that a `POST /items/bulk-actions` job writes, the server MUST give that item's entry in the job's `result.errors` a `message` that carries `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Reason:** the job's messages have room for one line, so each keeps the part its reader needs.
+**Reason:** the job's messages have room for one line, and the code is the part each reader needs.
 
-**Tests:** `compliance/failed-statement-reports.test.ts › names the driver's reason in each entry's error and none of the values its write was bound to`.
+**Tests:** `compliance/failed-statement-reports.test.ts › names a database failure with its SQLite code in each entry's error, and none of the statement, the driver's message or the values its write was bound to`.
 
 ## Codes
 
