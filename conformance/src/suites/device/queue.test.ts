@@ -1781,10 +1781,15 @@ describe("a refused write's content is kept", () => {
       properties: { title: "the words a person wrote" },
     });
 
+    const shownBefore = await harness.device.get(HELD.id);
     const discarded = await harness.device.discard(edited.value.id);
     expect(discarded.ok).toBe(true);
     if (discarded.ok) expect(discarded.value).toBe(true);
     expect(await queueOf(harness.device)).toEqual([]);
+    expect(
+      await harness.device.get(HELD.id),
+      "the discard changed the copy, which the refusal had already put back",
+    ).toEqual(shownBefore);
   });
 
   it("keeps a refused write a write still waiting depends on through a discard", async () => {

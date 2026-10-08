@@ -1329,6 +1329,23 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (dead === undefined) return;
     const byId = await device.release({ id: dead.id });
     expect(byId.ok && byId.value).toBe(1);
+    const revived = (await queueOf(harness)).find((row) => row.id === dead.id);
+    expect(
+      [revived?.verdict, revived?.refusals],
+      "a released dead write kept its verdict or the refusals that killed it, so it would die again at once",
+    ).toEqual([null, 0]);
+    expect(revived?.idempotency_key).not.toBe(dead.idempotency_key);
+    const sends = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "PATCH" &&
+          request.pathname === `/items/${DEAD.id}`,
+      ).length;
+    const before = sends();
+    expect((await device.drain()).ok).toBe(true);
+    expect(sends(), "the released dead write was not sent again").toBe(
+      before + 1,
+    );
   });
 
   it("keeps a create blocked for its source, and the writes queued on it before the drain", async () => {
@@ -2049,16 +2066,20 @@ describe("withdrawing a write that can never be sent", () => {
     const kept = await device.forget();
     expect(kept.ok && kept.value, JSON.stringify(kept)).toBe(0);
     expect(await queueOf(harness)).toHaveLength(2);
+    // A tag carries nothing a person wrote.
+    const tagged = await device.addTag(setup.local, "mine");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
 
     expect((await device.withdraw(setup.create.id)).ok).toBe(true);
     // The edit held for the create carries what a person wrote, so it stays
-    // refused until it is discarded (`queue-and-verdicts/clear-keeps-content`).
+    // refused until it is discarded (`queue-and-verdicts/clear-keeps-content`);
+    // the tag held for it goes with the clearing.
     const cleared = await device.forget();
     expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
     expect(
       cleared.ok && cleared.value,
-      "clearing took the edit refused for a withdrawn create, and the words it carried with it",
-    ).toBe(0);
+      "clearing took the edit refused for a withdrawn create, and the words it carried with it, or kept the tag that carried nothing",
+    ).toBe(1);
     expect(
       (await queueOf(harness)).map((row) => [row.id, row.verdict]),
     ).toEqual([[setup.edit.id, "refused"]]);
