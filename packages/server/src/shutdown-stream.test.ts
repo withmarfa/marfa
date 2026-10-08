@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { request } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,14 +41,16 @@ async function freePort(): Promise<number> {
 
 interface Running {
   url: string;
+  socketPath: string;
   output: () => string;
   stop: () => Promise<{ code: number | null; ms: number }>;
 }
 
 async function boot(): Promise<Running> {
-  const dir = mkdtempSync(join(tmpdir(), "marfa-shutdown-"));
+  const dir = mkdtempSync(join(realpathSync("/tmp"), "marfa-shutdown-"));
   dirs.push(dir);
   const port = await freePort();
+  const socketPath = join(dir, "control", "marfa.sock");
   const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
     cwd: SERVER_ROOT,
     env: {
@@ -57,6 +59,9 @@ async function boot(): Promise<Running> {
       PORT: String(port),
       SQLITE_PATH: join(dir, "marfa.db"),
       BLOB_PATH: join(dir, "blobs"),
+      MARFA_CONTROL_SOCKET: socketPath,
+      MARFA_CONTROL_ONLY: "false",
+      MARFA_AUTH_BASE_URL: `http://127.0.0.1:${port}`,
       MARFA_AUTH_SECRET: "test-secret-for-local-runs-0123456789abcdef",
       RATE_LIMIT_ENABLED: "false",
       MARFA_ENRICHMENT_ENABLED: "false",
@@ -85,6 +90,7 @@ async function boot(): Promise<Running> {
   }
   return {
     url,
+    socketPath,
     output: () => output,
     stop: async () => {
       const started = Date.now();
@@ -102,32 +108,59 @@ async function boot(): Promise<Running> {
   };
 }
 
-async function mint(
-  url: string,
-  secret: string,
-  label: string,
-): Promise<string> {
-  const res = await fetch(`${url}/keys`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ label, source: label }),
+async function localPost(
+  socketPath: string,
+  path: string,
+  body: unknown,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = request(
+      {
+        socketPath,
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let output = "";
+        res.setEncoding("utf8");
+        res.on("data", (part: string) => {
+          output += part;
+        });
+        res.on("end", () => {
+          try {
+            expect(res.statusCode, output).toBe(201);
+            resolve(JSON.parse(output) as Record<string, unknown>);
+          } catch (error) {
+            reject(error);
+          }
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.end(payload);
   });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { key: string }).key;
 }
 
 describe("stopping the server process with an event stream open", () => {
   it("sends the stream its closing frame and ends it, and exits 0 within the grace", async () => {
     const server = await boot();
-    const secret = /bootstrap secret on its stdin: ([\w-]+)/.exec(
-      server.output(),
-    )?.[1];
-    expect(secret).toBeDefined();
-    const operator = await mint(server.url, secret ?? "", "operator");
-    const working = await mint(server.url, operator, "working");
+    await localPost(server.socketPath, "/_control/setup/claim", {
+      email: "owner@example.com",
+      password: "shutdown-test-password",
+    });
+    const minted = await localPost(server.socketPath, "/keys", {
+      label: "stream-reader",
+      source: "stream-reader",
+      type_permissions: { "*": "read" },
+    });
+    const working = minted.key;
+    expect(typeof working).toBe("string");
 
     const stream = await fetch(`${server.url}/events`, {
       headers: { Authorization: `Bearer ${working}` },

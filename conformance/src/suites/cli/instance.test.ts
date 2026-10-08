@@ -22,8 +22,7 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 
 /**
  * The instance from the terminal: what it says about itself, its keys, its
- * configuration, its audit log, its exports, and the doors an operator
- * holds.
+ * configuration, its audit log, its exports, and its management operations.
  */
 
 let c: CliContext;
@@ -467,7 +466,7 @@ describe("the instance from the terminal", () => {
     expect(tar.toString("latin1")).toContain(title);
   });
 
-  it("takes an archive back under the operator key and is refused it under a working key", async () => {
+  it("takes an archive back through the private socket and refuses ordinary keys", async () => {
     // The other half of the archive round trip, reachable from the client
     // because the door is published: a published door the reference client
     // cannot call is a hole, which is what the binary's own coverage gate
@@ -496,7 +495,12 @@ describe("the instance from the terminal", () => {
     // Every row in it is already here, so the restore counts duplicates
     // rather than imports. That the counts come back at all is what says
     // the archive reached the door and was read.
-    const report = await c.operator.json<{
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const report = await c.cli.viaSocket(socket!).json<{
       imported: number;
       duplicates: number;
       edges_imported: number;
@@ -504,14 +508,14 @@ describe("the instance from the terminal", () => {
     expect(report.duplicates).toBeGreaterThanOrEqual(1);
     expect(report.imported).toBeGreaterThanOrEqual(0);
 
-    // The witness that the operator key is what carried it: the same
-    // archive under a working key is refused by the door, not by the
-    // client, and the refusal is the door's own.
+    // The same archive is refused under both content and management keys.
     const refused = await c.cli.refused(["restore", archive]);
     expect(refused.envelope.error.server?.status).toBe(403);
+    const managerRefused = await c.operator.refused(["restore", archive]);
+    expect(managerRefused.envelope.error.server?.status).toBe(403);
   });
 
-  it("reaches the operator doors under the operator key and is refused them under a working key", async () => {
+  it("reaches management operations with named permissions and refuses a content key", async () => {
     const drift = await c.operator.json<{
       data: Array<{ id: string; item_count: number; removable: boolean }>;
     }>(["types", "drift"]);
