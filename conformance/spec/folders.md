@@ -336,6 +336,12 @@ When a new file item is created from file bytes, a device MUST apply the folder'
 
 **Tests:** `device/folders-contract-a.test.ts › applies default properties to documents but not file items`.
 
+### `folders/default-file-tier`
+
+When a device creates a new file item, a device MUST use the folder defaults' tier or, if absent, the search's tier.
+
+**Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`.
+
 ### `folders/registry-store-identity`
 
 When a folder is registered, a device MUST record its store identity beside its directory and folder ID in the machine registry.
@@ -526,19 +532,19 @@ When an item has no explicit time to render over a null `occurred_at` line, a de
 
 ### `folders/time-render`
 
-When an item's time differs from its creation time or a file already carries `occurred_at`, a device MUST render the item's time in that line.
+When an item's time differs from its creation time or a file already carries a non-null `occurred_at` value, a device MUST render the item's time in that line.
 
 **Tests:** `device/folders.test.ts › writes the line for an item whose time is its own, and none for one never set`, `device/folders.test.ts › follows a time changed elsewhere, and keeps a line in another spelling of the same time`.
 
 ### `folders/time-invalid`
 
-If an `occurred_at` line is non-text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
+If a non-null `occurred_at` value is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders.test.ts › flags a line that is no time, and sends nothing for the file`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/own-field-validation`
 
-If frontmatter names an empty or non-text type, a tier other than feed or library, a state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
+If frontmatter names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders.test.ts › reads own-field lines in each form a file can hold them`, `device/folders.test.ts › holds a file whose frontmatter does not parse`.
 
@@ -892,7 +898,7 @@ When several names in one edge line resolve to the same item, a device MUST trea
 
 ### `folders/edge-name-syntax-ambiguity`
 
-If an edge-line target can resolve both as its full text and as a name with a heading or alias, then a device MUST flag the line `edges` instead of choosing a target.
+If an edge-line target resolves as its full text to one item and as a name with a heading or alias to a different item, then a device MUST flag the line `edges` instead of choosing a target.
 
 **Tests:** `device/folders.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
 
@@ -1006,7 +1012,13 @@ When a line moves an existing edge's other end, a device MUST preserve that edge
 
 ### `folders/edge-replace-unshown-refused`
 
-When a line names a new target but the existing edge at that end has not appeared in the file, a device MUST flag the file without changing the edge.
+When a line names a new target but the existing edge at that end has not appeared in the file, a device MUST flag the file.
+
+**Tests:** `device/folders.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+
+### `folders/edge-replace-unshown-kept`
+
+When a line names a new target but the existing edge at that end has not appeared in the file, a device MUST leave that edge unchanged.
 
 **Tests:** `device/folders.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
 
@@ -1136,9 +1148,15 @@ When a document removes an embed, a device MUST retain the embedded file on disk
 
 ### `folders/embed-markdown-only`
 
-When a raw-text document contains embed syntax, a device MUST NOT create an attachment edge or materialize a file for that syntax.
+When a raw-text document contains embed syntax, a device MUST NOT create an attachment edge for that syntax.
 
 **Tests:** `device/folders.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders.test.ts › writes no file a .txt file's text embeds`.
+
+### `folders/embed-raw-no-file`
+
+When a raw-text document contains embed syntax, a device MUST NOT materialize a file for that syntax.
+
+**Tests:** `device/folders.test.ts › writes no file a .txt file's text embeds`.
 
 ### `folders/embed-code-comments`
 
@@ -1778,7 +1796,7 @@ When `GET /keys/current` answers `403 forbidden` for a credential that is not a 
 
 ### `folders/placement-key-watch-throttled`
 
-When a watch cannot read the current key, a device MUST continue watching without repeating that key request on every pass.
+When a watch cannot read the current key, a device MUST suppress repeated key requests across successive passes.
 
 **Tests:** `device/folders.test.ts › asks a key it could not read again at most once a minute while watching`.
 
@@ -1910,7 +1928,9 @@ When a document cannot be rendered safely, a device MUST count it `unwritten`.
 
 When a bound file disappears, a device MUST defer its item deletion for the five-second rename grace.
 
-**Tests:** `device/folders.test.ts › defers a delete past the rename grace`.
+**Reason:** The exact grace boundary requires a fixture-controlled clock; real-time fixtures assert deferral and cancellation but not the threshold.
+
+**Tests:** waiting on #1890.
 
 ### `folders/delete-rename-cancels`
 
@@ -2198,6 +2218,12 @@ When an edge move is answered that the edge is gone, a device MUST create the ed
 
 **Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`, `device/folders.test.ts › makes the edge a gone move's line asks for at the next drain, where the first one stops`.
 
+### `folders/edge-move-gone-properties`
+
+When an edge move is answered that the edge is gone, a device MUST preserve the former edge's properties in the replacement edge it creates for the document line.
+
+**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`.
+
 ### `folders/edge-move-waits-create`
 
 When a line moves an edge to an item whose create is queued, a device MUST wait for that item create before sending the move.
@@ -2318,9 +2344,21 @@ When a folder’s include list is empty, a device MUST admit every path not excl
 
 ### `folders/include-negation`
 
-When a negated include pattern matches an otherwise included folder path, a device MUST exclude that path from admission.
+When the last applicable include pattern for a folder path is negated, a device MUST exclude that path from admission.
 
 **Tests:** `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`.
+
+### `folders/list-pattern-order`
+
+When several patterns in one include or ignore list match the same path, a device MUST use the last matching pattern's inclusion or exclusion, including matches through equivalent Unicode names.
+
+**Tests:** `device/folder-patterns.test.ts › resolves %s negations in line order across original and equivalent names`.
+
+### `folders/list-path-before-parent`
+
+When an include or ignore pattern matches a file's path directly, a device MUST use that match before considering a pattern matching an ancestor directory.
+
+**Tests:** `device/folder-patterns.test.ts › resolves an equivalent file pattern before a matching parent pattern`.
 
 ### `folders/invalid-pattern-refused`
 
@@ -2332,19 +2370,19 @@ When a folder’s include or ignore list contains an invalid gitignore pattern, 
 
 When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the folder root.
 
-**Tests:** `device/folders.test.ts › takes only what its include list names`.
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folder-patterns.test.ts › keeps the members of the %s range in include patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
 
 ### `folders/ignore-paths`
 
 When a folder path matches its ignore list, a device MUST exclude that path from admission even when the include list also matches it.
 
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`, `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`.
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`, `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`, `device/folder-patterns.test.ts › keeps the members of the %s range in ignore patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
 
 ### `folders/include-dot-directories`
 
 When a folder path has a dot-led directory component, a device MUST admit it only where a non-negated include pattern explicitly names every dot-led directory on its path.
 
-**Tests:** `device/folders.test.ts › reaches a dot-led path its include list names`, `device/folders.test.ts › excludes a dot-led directory at any depth`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`, `device/folders.test.ts › takes nothing under a dot-led directory a negated include line names`.
+**Tests:** `device/folders.test.ts › reaches a dot-led path its include list names`, `device/folders.test.ts › excludes a dot-led directory at any depth`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`, `device/folders.test.ts › takes nothing under a dot-led directory a negated include line names`, `device/folder-patterns.test.ts › keeps the members of the %s range when entering dot directories`.
 
 ### `folders/builtin-machine-names`
 
@@ -2506,7 +2544,7 @@ When a folder pull cannot write a bound file inside an unreadable directory, a d
 
 When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
 
-**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`.
+**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`.
 
 ### `folders/same-name-scan-choice`
 
@@ -2710,7 +2748,7 @@ When an item starts matching a folder’s search through a tag, property, state,
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder’s search, a device MUST remove its bound file at the next pull only where the file still has the bytes the folder wrote.
+When an item is trashed or leaves the states held by a folder's search, its file is not required by an embedding document, its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
 **Tests:** `device/folders.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders.test.ts › removes the file of an item that leaves by state`.
 
@@ -3678,7 +3716,7 @@ When a bound file’s executable permission changes on a volume preserving permi
 
 ### `folders/executable-pulled`
 
-When a folder pull writes a file item or updates an unchanged scanned file’s permission, a device MUST apply the item’s executable value by adding execute bits wherever read bits are set or clearing all execute bits.
+Where a device has established that the volume preserves executable permissions and the filesystem permits the change, when a folder pull writes a file item or updates an unchanged scanned file's permission, a device MUST apply the item's executable value by adding execute bits wherever read bits are set or clearing all execute bits after any quarantine marking required by `folders/quarantine-download` or `folders/quarantine-in-place` succeeds.
 
 **Tests:** `device/folders.test.ts › gives a pulled file the permission its item holds`, `device/folders-contract-b.test.ts › applies execute bits only where each read bit is set`.
 
@@ -3802,6 +3840,12 @@ When a folder watch loses or regains access to the server, the command MUST say 
 
 **Tests:** `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`.
 
+### `folders/watch-reachability-details`
+
+When a folder watch reports that its server cannot be reached, the command MUST identify the server and the reason in that notice.
+
+**Tests:** `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`, `device/folders.test.ts › waits out a gateway refusing its key, naming no contract, without stopping`.
+
 ### `folders/watch-hydration-notice`
 
 While a folder watch retries an environmentally failed hydration, the command MUST say the failure once for that run of failures.
@@ -3813,6 +3857,12 @@ While a folder watch retries an environmentally failed hydration, the command MU
 When a folder push’s drain stops, the command MUST say why it stopped.
 
 **Tests:** `device/folders.test.ts › says why a push's drain stopped`.
+
+### `folders/watch-stopped-reason`
+
+When a folder watch's drain has a new or changed stop reason, the command MUST say why it stopped.
+
+**Tests:** `device/folders.test.ts › stops a watch whose credential is refused, with the credential's exit`.
 
 ### `folders/watch-credential-exit`
 
@@ -4272,7 +4322,7 @@ When a watch pass exhausts its pull attempts because the working copy keeps chan
 
 ### `folders/purged-file-remove`
 
-When a catch-up has applied an item's purge and its folder file still contains the bytes last written by the device, a device MUST remove that file at the next pull.
+When a catch-up has applied an item's purge, its file's path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
 **Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
 

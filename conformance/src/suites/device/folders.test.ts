@@ -20862,6 +20862,16 @@ describe("what a folder never does to a person's text", () => {
   it("reports a settings file it cannot write, and goes on", async () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-unwritable", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000fa90",
+              properties: { title: "Independent", body: "work continues\n" },
+            },
+          },
+        ],
+      },
       events: [
         (): Answer =>
           copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
@@ -20880,6 +20890,7 @@ describe("what a folder never does to a person's text", () => {
     // A path no file can be written over, as a full disk refuses one.
     rmSync(settingsFile(harness));
     mkdirSync(settingsFile(harness));
+    expect(existsSync(join(harness.dir, "Independent.md"))).toBe(false);
     const pulled = await harness.folder.pull();
     expect(
       pulled.ok,
@@ -20890,6 +20901,10 @@ describe("what a folder never does to a person's text", () => {
       written: false,
       unwritten: expect.stringContaining("folder.yaml") as unknown,
     });
+    expect(pulled.value.written).toBe(1);
+    expect(readFileSync(join(harness.dir, "Independent.md"), "utf8")).toContain(
+      "work continues\n",
+    );
     // A push and a watch say so in words too.
     const said = await harness.folder.pushText();
     expect(said.ok && said.value).toContain(
