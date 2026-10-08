@@ -300,7 +300,7 @@ it("rolls password replacement and session turnover back when their final audit 
   ).toHaveLength(1);
 });
 
-it("couples provider profile updates and signing-key creation to their native audits", async () => {
+it("couples provider profile updates to their native audits", async () => {
   const ctx = await fixture();
   const db = native(ctx);
   expect(
@@ -339,6 +339,15 @@ it("couples provider profile updates and signing-key creation to their native au
   expect(await db.__sqliteAll("SELECT name FROM auth_user")).toEqual([
     { name: "Changed Owner" },
   ]);
+  expect(
+    (await ctx.storage.audit.list({ action: "auth.user.update" })).data,
+  ).toHaveLength(1);
+});
+
+it("couples signing-key creation to its native audit", async () => {
+  const ctx = await fixture();
+  const db = native(ctx);
+  expect(await db.__sqliteAll("SELECT id FROM auth_jwks")).toHaveLength(0);
   await db.__sqliteRun(
     "CREATE TRIGGER reject_jwks_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.jwks.create' BEGIN SELECT RAISE(ABORT, 'jwks audit fault'); END",
     [],
