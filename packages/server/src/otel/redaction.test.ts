@@ -112,7 +112,7 @@ describe("redactAttributes — PII denylist", () => {
   });
 });
 
-describe("redactAttributes — a failed query", () => {
+describe("redactAttributes: a failed query", () => {
   const VALUE = "bound-value-3e9d51c0";
   const STATEMENT =
     'Failed query: insert into "items" ("properties") values (?)';
