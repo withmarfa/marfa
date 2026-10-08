@@ -1846,7 +1846,7 @@ If a catch-up's or a held stream's stream names an event id that is not a number
 
 ### `device/event-no-data`
 
-When a catch-up's stream sends a frame that names an id and an event and carries no data, a device MUST take the frame as no event and apply nothing of what it names to the frame after it.
+When a catch-up's stream sends a frame that names an id and an event and carries no data, a device MUST NOT apply the id or the event the frame names, to that frame or to the frame after it.
 
 **Tests:** `device/catch-up.test.ts › takes a frame that names an id and carries no data as no event`.
 

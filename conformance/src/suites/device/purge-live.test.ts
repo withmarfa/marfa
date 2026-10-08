@@ -12,10 +12,10 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A purge through a working copy, as the chapter's Purging section says, run
- * against a real server and the real binary: sent at once and never queued, refused with the
- * copy and the queue left as they were, and the row, its edges and its pin
- * taken out once the server answers.
+ * A purge through a working copy (the device chapter's section "Purging"),
+ * against a real server and the real binary: sent at once and never queued,
+ * refused with the copy and the queue left as they were, and the row, its
+ * edges and its pin taken out once the server answers.
  */
 
 let client: MarfaClient;
