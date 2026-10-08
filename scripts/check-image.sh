@@ -19,11 +19,9 @@ image=${1:?usage: check-image.sh <image> <sha>}
 sha=${2:?usage: check-image.sh <image> <sha>}
 work=$(mktemp -d)
 containers=()
-volume=marfa-check-data-$(openssl rand -hex 8)
 
 cleanup() {
   for name in "${containers[@]}"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
-  docker volume rm "$volume" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -75,8 +73,7 @@ stop_and_check() {
 echo "== a fresh volume"
 fresh=marfa-check-fresh-$$
 containers+=("$fresh")
-docker volume create "$volume" >/dev/null
-docker run -d --name "$fresh" --mount "type=volume,source=$volume,target=/data" -p 127.0.0.1::8600 "${health[@]}" "${secrets[@]}" "$image" >/dev/null
+docker run -d --name "$fresh" -p 127.0.0.1::8600 "${health[@]}" "${secrets[@]}" "$image" >/dev/null
 port=$(port_of "$fresh")
 healthy() { curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1; }
 until_true "the container answering /health" 90 healthy
