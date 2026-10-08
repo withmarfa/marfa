@@ -19,7 +19,6 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -307,10 +306,10 @@ describe("an app stays connected when a browser session ends", () => {
   it.each(DOORS)(
     "$name ends the browser and leaves the apps' access, refresh and consent",
     async ({ run, survivor }) => {
-      ctx = await createTestContext({});
+      ctx = await createTestContext({}, { email: "browser-sessions@example.com", password: PASSWORD, name: "Browser Sessions" });
       const c = ctx;
       const email = "browser-sessions@example.com";
-      await createTestAccount(c, email, PASSWORD, "Browser Sessions");
+      
       const a = await signIn(c, email);
       const b = await signIn(c, email);
       const refreshing = await seedClient(c, "Refreshing App");
@@ -344,10 +343,10 @@ describe("an app stays connected when a browser session ends", () => {
   );
 
   it("still refuses an authorization code once its browser has ended, and accepts one whose browser lives", async () => {
-    ctx = await createTestContext({});
+    ctx = await createTestContext({}, { email: "browser-code@example.com", password: PASSWORD, name: "Browser Code" });
     const c = ctx;
     const email = "browser-code@example.com";
-    await createTestAccount(c, email, PASSWORD, "Browser Code");
+    
     const a = await signIn(c, email);
     const clientId = await seedClient(c, "Code App");
     const live = await approve(c, clientId, a, "core.note:read");
