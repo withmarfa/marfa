@@ -272,6 +272,22 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "this command does not support --socket".into(),
         ));
     }
+    if cli.socket.is_none()
+        && matches!(
+            &cli.command,
+            Command::Owner {
+                command: owner::OwnerCommand::Recover(_)
+            } | Command::Setup {
+                command: owner::SetupCommand::Status
+                    | owner::SetupCommand::Code
+                    | owner::SetupCommand::Open { .. }
+            }
+        )
+    {
+        return Err(CliError::Usage(
+            "this operation requires --socket PATH".into(),
+        ));
+    }
     let named = Named {
         url: cli.url,
         key: cli.key,

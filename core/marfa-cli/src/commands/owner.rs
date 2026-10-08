@@ -122,12 +122,12 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             if !remote.is_local() {
                 let url = url::Url::parse(remote.url())
                     .map_err(|_| CliError::Invalid("invalid setup URL".into()))?;
-                let loopback = url.host_str().is_some_and(|host| {
-                    host == "localhost"
-                        || host
-                            .parse::<std::net::IpAddr>()
-                            .is_ok_and(|address| address.is_loopback())
-                });
+                let loopback = match url.host() {
+                    Some(url::Host::Domain("localhost")) => true,
+                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                    _ => false,
+                };
                 if url.scheme() != "https" && !loopback {
                     return Err(CliError::Usage(
                         "setup requires HTTPS, except on loopback".into(),
