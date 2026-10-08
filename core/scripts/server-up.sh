@@ -67,7 +67,6 @@ log="${state}/server.log"
 
 export SQLITE_PATH="${state}/marfa.db"
 export BLOB_PATH="${state}/blobs"
-export MARFA_CONTROL_SOCKET="${state}/control/marfa.sock"
 export PORT="${port}"
 export MARFA_AUTH_SECRET="${MARFA_AUTH_SECRET:-$(openssl rand -hex 32)}"
 export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
@@ -86,6 +85,12 @@ if [[ "${probe}" -eq 28 ]]; then
   echo "server-up: stop it, or set PORT to boot somewhere else" >&2
   exit 1
 fi
+
+# A kept data directory can exceed the Unix socket path limit, especially
+# under macOS temporary roots. The private listener gets its own short path.
+control_dir="$(mktemp -d "/tmp/marfa-core-control.XXXXXX")"
+control_dir="$(cd "${control_dir}" && pwd -P)"
+export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
 # The pid is pnpm's, two levels above node; server-down.sh walks the tree.
 (
@@ -111,6 +116,7 @@ write_env() {
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
+    echo "export MARFA_SERVER_CONTROL_DIR='${control_dir}'"
     echo "export MARFA_SERVER_KEPT='${keep}'"
   } >"${env_file}"
 }
