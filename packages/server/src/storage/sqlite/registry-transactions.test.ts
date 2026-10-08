@@ -6,6 +6,7 @@ import {
   type Transaction,
 } from "@libsql/client";
 import {
+  ErrorCode,
   getTypeSchema,
   getEdgeTypeSchema,
   edgeNameHolder,
@@ -344,10 +345,7 @@ describe("registry views follow SQLite transactions", () => {
     await pair();
     await ctx.storage.runInTransaction(async () => {
       await expect(ctx.storage.types.create(changed)).rejects.toMatchObject({
-        cause: {
-          code: "SQLITE_CONSTRAINT",
-          extendedCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
-        },
+        code: ErrorCode.TYPE_ALREADY_EXISTS,
       });
       expect(getTypeSchema(PARENT)).toEqual(parent);
       expect(

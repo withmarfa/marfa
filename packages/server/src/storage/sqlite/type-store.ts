@@ -13,12 +13,23 @@ import {
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
+import { databaseFailureCodes } from "../../error-text.js";
 import { safeJsonParse } from "../json-utils.js";
 import { items, types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
 import { indexShapes, reindexChangedTypes } from "./search-store.js";
+
+const DUPLICATE_KEY_CODES = new Set([
+  "SQLITE_CONSTRAINT_PRIMARYKEY",
+  "SQLITE_CONSTRAINT_UNIQUE",
+]);
+
+function isDuplicateKey(err: unknown): boolean {
+  const extended = databaseFailureCodes(err)?.extendedCode;
+  return extended !== undefined && DUPLICATE_KEY_CODES.has(extended);
+}
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -44,10 +55,7 @@ export class SqliteTypeStore implements TypeStore {
           VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${now}, ${now})
         `);
       } catch (err: unknown) {
-        if (
-          err instanceof Error &&
-          err.message.includes("UNIQUE constraint failed")
-        ) {
+        if (isDuplicateKey(err)) {
           throw new MarfaError(
             ErrorCode.TYPE_ALREADY_EXISTS,
             `Type "${schema.id}" already exists`,
