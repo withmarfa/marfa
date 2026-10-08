@@ -14,6 +14,7 @@ import {
   copyStreamCursor,
   edgeTypeCatalog,
   refusal,
+  typeCatalog,
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
@@ -549,6 +550,26 @@ describe("stopping a call whose first request is not answered", () => {
     );
     const after = await device.status();
     expect(after.ok && after.value.event_cursor).toBe("10");
+  });
+
+  it("ends a read of the server's catalog at once on Ctrl-C, while it still waits", async () => {
+    const reads: Array<[string[], string]> = [
+      [["types", "served"], "/types"],
+      [["edge-types", "served"], "/edge-types"],
+    ];
+    for (const [command, path] of reads) {
+      harness = await startHarness(`stop-unanswered-${String(command[0])}`);
+      const { server, device } = harness;
+      // The catalog is read item types first, so the edge types wait only
+      // once the item types are answered.
+      if (path === "/edge-types") server.answer("GET", "/types", typeCatalog());
+      expect((await device.status()).ok).toBe(true);
+      await stoppedWhileAsking(server, device, command, path);
+      const status = await device.status();
+      expect(status.ok && status.value.catalog_version).toBeNull();
+      await harness.stop();
+      harness = undefined;
+    }
   });
 
   it("ends a drain at once on Ctrl-C, while it still asks which instance the server is", async () => {

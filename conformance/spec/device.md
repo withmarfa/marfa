@@ -2296,17 +2296,17 @@ When a hydration's head read is stopped, a device MUST NOT read the head again.
 
 ### `device/stop-first-request`
 
-When a stop is raised while the first request of a hydration, a catch-up or a drain still waits on the server, a device MUST end the call `canceled` at once.
+When a stop is raised while the first request of a hydration, a catch-up, a drain or a read of the server's item types or edge types still waits on the server, a device MUST end the call `canceled` at once.
 
 **Reason:** a server that cannot be reached can hold a request far longer than an app that closes a copy or cancels a sync can wait, and the request left behind is only ever a read: the head read, the catalog read, or the root a drain asks before it sends.
 
-**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`.
+**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`, `› ends a read of the server's catalog at once on Ctrl-C, while it still waits`.
 
 ### `device/stop-first-request-unchanged`
 
-When a stop ends a hydration, a catch-up or a drain while its first request still waits on the server, a device MUST leave the copy and the queue as they were.
+When a stop ends a hydration, a catch-up, a drain or a read of the server's item types or edge types while its first request still waits on the server, a device MUST leave the copy and the queue as they were.
 
-**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`.
+**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`, `› ends a read of the server's catalog at once on Ctrl-C, while it still waits`.
 
 ## Names a write carries
 

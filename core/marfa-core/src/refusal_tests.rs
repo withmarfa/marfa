@@ -185,6 +185,9 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
 #[test]
 fn a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog() {
     let core = Core::open_in_memory(None).unwrap();
-    assert_eq!(core.server_catalog(), Err(CoreError::NoServer));
+    assert_eq!(
+        core.server_catalog_until(&crate::NEVER_STOPPED),
+        Err(CoreError::NoServer)
+    );
     assert!(core.item_types().is_ok());
 }

@@ -1257,12 +1257,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::Types { command } => {
             let core = match command {
-                TypesCommand::Served => store.open_with_server(named)?,
+                TypesCommand::Served => {
+                    stop_on_interrupt();
+                    store.open_with_server(named)?
+                }
                 _ => store.open(None)?,
             };
             match command {
                 TypesCommand::Served => {
-                    let types = core.server_catalog()?.item_types;
+                    let types = core.server_catalog_until(stop_after(None))?.item_types;
                     output::report(&types, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
@@ -1330,12 +1333,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::EdgeTypes { command } => {
             let core = match command {
-                CatalogCommand::Served => store.open_with_server(named)?,
+                CatalogCommand::Served => {
+                    stop_on_interrupt();
+                    store.open_with_server(named)?
+                }
                 _ => store.open(None)?,
             };
             match command {
                 CatalogCommand::Served => {
-                    let types = core.server_catalog()?.edge_types;
+                    let types = core.server_catalog_until(stop_after(None))?.edge_types;
                     output::report(&types, json, || {
                         types
                             .iter()
