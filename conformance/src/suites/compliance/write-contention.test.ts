@@ -259,6 +259,8 @@ describe("contention on the write lock", () => {
       expect(found).toBeDefined();
       return found!.last_used_at;
     };
+    // Prime the observer's own credential stamp before holding the writer.
+    expect(await readStamp()).toBeNull();
 
     const lock = await HeldLock.take(impatient!.sqlitePath);
     try {
