@@ -807,7 +807,7 @@ describe("a query key no door declares", () => {
     const unrefused: string[] = [];
     for (const door of doors) {
       // The credential that may use the door: the per-test key holds every
-      // permission, and the operator key holds the instance routes it does not.
+      // permission, and the management key holds the instance routes it does not.
       let refused = false;
       for (const key of [apiKey, managementKey ?? ""]) {
         const { status, unknown } = await stray(

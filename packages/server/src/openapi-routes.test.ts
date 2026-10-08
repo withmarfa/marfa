@@ -204,3 +204,7 @@ describe("the document and the routes", () => {
     }
   });
 });
+
+it("publishes the metrics operation for approved management apps", () => {
+  expect(publishedOperations()).toContain("GET /metrics");
+});

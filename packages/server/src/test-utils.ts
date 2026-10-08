@@ -342,7 +342,7 @@ export const TEST_MANAGEMENT_PERMISSIONS: Permission[] = [
   "blobs.manage",
   "keys.manage",
 ];
-const TEST_CONTENT_PERMISSIONS = PERMISSIONS.filter(
+export const TEST_CONTENT_PERMISSIONS = PERMISSIONS.filter(
   (permission) => !TEST_MANAGEMENT_PERMISSIONS.includes(permission),
 );
 

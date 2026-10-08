@@ -207,3 +207,9 @@ When the private local command recovers the owner's password, the server MUST pe
 When the private local command recovers the owner's password, the server MUST preserve existing ordinary keys.
 
 **Tests:** `compliance/owner.test.ts › recovers the existing owner and ends the old browser session`, `› keeps a completed claim and recovered password through restart`.
+
+### `instance-claim/management-metrics`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST return its instance-wide counters using the schema published for that operation.
+
+**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.

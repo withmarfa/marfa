@@ -7,8 +7,7 @@
  * a deliberate, consumer-facing shape:
  *
  *   1. Sets an ordered, described top-level `tags` list (resources first).
- *   2. Strips platform-internal operations (server metrics, the blob
- *      link target). They still serve — they are simply not part of the
+ *   2. Strips platform-internal operations (the blob link target). They still serve — they are simply not part of the
  *      public reference.
  *   3. Injects the routes defined as plain Hono handlers (the instance
  *      root, the SSE stream and OAuth dynamic client registration), which
@@ -177,8 +176,6 @@ const PUBLIC_TAGS = [
  * A new internal route adds its operationId here.
  */
 export const INTERNAL_OPERATION_IDS = new Set<string>([
-  // metrics.ts — server metrics
-  "getServerMetrics",
   // blobs.ts — the target of an instance-served link, which
   // `GET /blobs/{hash}/url` hands out; nothing calls it by name
   "fetchBlob",

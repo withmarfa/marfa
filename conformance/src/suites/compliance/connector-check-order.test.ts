@@ -285,7 +285,7 @@ describe("a field the door does not declare, against the key and the fence", () 
     label: string;
     call: Call;
     fence: Call;
-    /** What the operator key is told: it reaches the operations that admit
+    /** What the management key is told: it reaches the operations that admit
      *  it, and is refused the rest. */
     operator?: number;
   }[] = [

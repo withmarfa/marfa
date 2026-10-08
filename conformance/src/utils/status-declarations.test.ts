@@ -362,7 +362,7 @@ describe("the status checker", () => {
     const lines = parseRequestLines(
       [
         "Listening on http://127.0.0.1:0",
-        JSON.stringify({ level: "info", message: "bootstrap secret" }),
+        JSON.stringify({ level: "info", message: "setup code" }),
         "{ not json",
         "",
         OBSERVED_200,

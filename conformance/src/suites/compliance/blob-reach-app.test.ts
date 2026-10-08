@@ -38,7 +38,7 @@ const REFUSED = {
   locations: [403, "type_not_permitted"],
 };
 
-/** The operator key of a server, which reads every blob it holds, referenced
+/** The management key of a server, which reads every blob it holds, referenced
  *  or not. */
 function operatorOf(on: FreshServer): MarfaClient {
   return new MarfaClient({ baseUrl: on.apiUrl, apiKey: on.managementKey });
