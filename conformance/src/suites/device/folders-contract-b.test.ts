@@ -14,6 +14,8 @@ import {
   refusal,
   copyReplay,
   wireItem,
+  wireEdge,
+  answers,
 } from "../../device/marfa-answers.js";
 import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
 
@@ -344,3 +346,218 @@ it("does not scan a symlinked file or directory even when included", async () =>
     "source.md",
   ]);
 });
+
+it("reports purged paused files without promising that restore can recover their items", async () => {
+  const rows = Array.from({ length: 6 }, (_, n) => row(n));
+  harness = await folderHarness("contract-b-purged-pause", {
+    rows: { "core.note": rows },
+    settings: tight,
+    events: [
+      copyReplay(
+        "4",
+        rows
+          .slice(0, 3)
+          .map((r, n) =>
+            copyItemEvent(
+              String(n + 2),
+              "item.purged",
+              wireItem({ ...r.item, state: "trashed" }),
+            ),
+          ),
+      ),
+    ],
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  const paused = await harness.folder.pull();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  const status = await harness.folder.status();
+  expect(status.ok).toBe(true);
+  if (!status.ok) return;
+  const gone = status.value.files.filter((f) =>
+    /^Note [012]\.md$/.test(f.path),
+  );
+  expect(gone).toHaveLength(3);
+  for (const file of gone) {
+    expect(file.flag).toBe("removal");
+    expect(file.reason).toContain("purged");
+    expect(file.reason).not.toContain("brings its item back");
+  }
+  const restored = await harness.folder.restore();
+  expect(restored.ok && restored.value.restored).toBe(0);
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(true);
+  const confirmed = await harness.folder.confirm();
+  expect(confirmed.ok && confirmed.value.removed).toBe(3);
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+});
+
+it("applies include negation, ignore precedence and case-normalized patterns", async () => {
+  harness = await folderHarness("contract-b-list-composition", {
+    settings: {
+      search: { types: ["core.note"] },
+      include: ["*.MD", "!excluded.md", ".hidden.md"],
+      ignore: ["ignored.md"],
+    },
+  });
+  for (const name of ["allowed.md", "excluded.md", "IGNORED.md", ".hidden.md"])
+    writeFileSync(join(harness.dir, name), "note\n");
+  const scan = await harness.folder.scan();
+  expect(scan.ok && scan.value.created).toBe(2);
+  const status = await harness.folder.status();
+  expect(status.ok && status.value.files.map((f) => f.path).sort()).toEqual([
+    ".hidden.md",
+    "allowed.md",
+  ]);
+});
+
+it("reports a bound file as unreached when settings exclude it", async () => {
+  harness = await folderHarness("contract-b-unreached-status", {
+    rows: { "core.note": [row(0)] },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const settingsPath = join(harness.dir, ".marfa", "folder.yaml");
+  // The stored server settings are read by a fresh hydration, not inferred
+  // from an unsent edit of the local settings file.
+  harness.settings.settings = {
+    search: { types: ["core.note"] },
+    ignore: ["*.md"],
+  };
+  harness.settings.version += 1;
+  expect((await harness.folder.hydrate()).ok).toBe(true);
+  const status = await harness.folder.status();
+  expect(
+    status.ok && status.value.files.find((f) => f.path === "Note 0.md")?.status,
+  ).toBe("unreached");
+  expect(existsSync(settingsPath)).toBe(true);
+});
+
+it("refuses a pull during first sync and uses the directory as it stands after confirmation", async () => {
+  harness = await folderHarness("contract-b-first-current", {
+    hydrate: false,
+    rows: { "core.note": [row(0)] },
+    files: { "old.md": "old\n" },
+    confirm: false,
+  });
+  const pulled = await harness.folder.pull();
+  expect(!pulled.ok && pulled.refusal.raw).toContain("first_sync_waiting");
+  writeFileSync(join(harness.dir, "later.md"), "later\n");
+  expect((await harness.folder.confirm()).ok).toBe(true);
+  const scanned = await harness.folder.scan();
+  expect(scanned.ok && scanned.value.created).toBe(1);
+  const status = await harness.folder.status();
+  expect(
+    status.ok && status.value.files.find((f) => f.path === "later.md")?.waits,
+  ).toContain("create");
+});
+
+it("does not confirm a paused deletion for a file put back since the pause", async () => {
+  harness = await folderHarness("contract-b-confirm-returned", {
+    rows: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const original = readFileSync(join(harness.dir, "Note 0.md"));
+  for (const n of [0, 1, 2]) rmSync(join(harness.dir, `Note ${String(n)}.md`));
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  writeFileSync(join(harness.dir, "Note 0.md"), original);
+  const confirmed = await harness.folder.confirm();
+  expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok &&
+      queued.value
+        .filter((r) => r.kind === "delete_item")
+        .map((r) => r.item_id)
+        .sort(),
+  ).toEqual([row(1).item.id, row(2).item.id]);
+  expect(readFileSync(join(harness.dir, "Note 0.md"))).toEqual(original);
+});
+
+it.each(["include", "ignore"] as const)(
+  "refuses an invalid %s pattern before admission",
+  async (list) => {
+    await expect(
+      folderHarness(`contract-b-invalid-${list}`, {
+        settings: { search: { types: ["core.note"] }, [list]: ["a{b"] },
+      }),
+    ).rejects.toThrow(/pattern|glob/i);
+  },
+);
+
+it("refuses every parent component in a placement even when it climbs back inside", async () => {
+  const rows = [row(0), row(1)];
+  harness = await folderHarness("contract-b-parent-path", {
+    rows: { "core.note": rows },
+    hydrate: false,
+  });
+  Object.assign(rows[0]!.item, {
+    edges: {
+      "in-folder": {
+        data: [
+          wireEdge({
+            id: "01a00000-0000-7000-8000-000000004444",
+            source_id: rows[0]!.item.id,
+            target_id: harness.settings.id,
+            edge_type: "in-folder",
+            properties: { path: "Elsewhere/../inside.md" },
+          }),
+        ],
+        next_cursor: null,
+      },
+    },
+  });
+  expect((await harness.folder.hydrate()).ok).toBe(true);
+  const pulled = await harness.folder.pull();
+  expect(pulled.ok && [pulled.value.outside, pulled.value.written]).toEqual([
+    1, 1,
+  ]);
+  expect(existsSync(join(harness.dir, "inside.md"))).toBe(false);
+  expect(existsSync(join(harness.dir, "Note 1.md"))).toBe(true);
+});
+
+it.each(["create", "edit"] as const)(
+  "preserves a document after a request-too-large %s refusal",
+  async (kind) => {
+    harness = await folderHarness(`contract-b-size-refusal-${kind}`, {
+      rows: { "core.note": kind === "edit" ? [row(0)] : [] },
+    });
+    if (kind === "edit") expect((await harness.folder.pull()).ok).toBe(true);
+    const path = join(harness.dir, kind === "edit" ? "Note 0.md" : "new.md");
+    const before =
+      kind === "edit" ? readFileSync(path, "utf8") : "new document\n";
+    const bytes = before + "changed\n";
+    writeFileSync(path, bytes);
+    scriptWrites(harness.server, {
+      create: [refusal(413, "request_too_large", "request body too large")],
+      update: [refusal(413, "request_too_large", "request body too large")],
+      read: [
+        kind === "edit"
+          ? answers.updated(wireItem(row(0).item))
+          : refusal(404, "item_not_found", "no item"),
+      ],
+      edges: [refusal(403, "edge_permission_denied", "no placement")],
+    });
+    harness.server.copyAnswer(
+      "GET",
+      /^\/edges\/[^/]+$/,
+      refusal(404, "edge_not_found", "no edge"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      pushed.ok &&
+        pushed.value.drain.verdicts.some(
+          (v) => v.verdict === "refused" && v.reason === "request_too_large",
+        ),
+    ).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(bytes);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files.find(
+          (f) => f.path === (kind === "edit" ? "Note 0.md" : "new.md"),
+        )?.flag,
+    ).toBe(kind === "edit" ? "refused" : "lost");
+  },
+);
