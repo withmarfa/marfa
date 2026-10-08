@@ -50,8 +50,8 @@ async function mintKey(
   } = {},
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  let raw = `marfa_k1_edge_read_${suffix}`;
-  raw = await mintWorkingKey(ctx, {
+
+  const raw = await mintWorkingKey(ctx, {
     permissions: [],
     extension_permissions: {},
     metadata_permissions: {},

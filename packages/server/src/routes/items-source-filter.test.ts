@@ -28,9 +28,7 @@ let untrustedKey: string;
  * from an untrusted source" is an item written by a second credential.
  */
 async function mintSourceKey(source: string): Promise<string> {
-  const suffix = Math.random().toString(36).slice(2, 12);
-  let raw = `marfa_k1_src_${suffix}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     extension_permissions: {},
     edge_permissions: {},
     metadata_permissions: {},

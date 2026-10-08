@@ -69,8 +69,8 @@ async function mintScopedKey(
   patterns: Record<string, "read" | "write">,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  let raw = `marfa_k1_scoped_${suffix}`;
-  raw = await mintWorkingKey(ctx, {
+
+  const raw = await mintWorkingKey(ctx, {
     permissions: [],
     extension_permissions: {},
     edge_permissions: {},

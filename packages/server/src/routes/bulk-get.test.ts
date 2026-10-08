@@ -150,8 +150,8 @@ describe("POST /items/bulk-get", () => {
     // A key that can read core.note but not core.bookmark. The type map is
     // the whole of what it can read.
     const suffix = Math.random().toString(36).slice(2, 8);
-    let rawKey = `marfa_k1_bulkget_narrow_${suffix}`;
-    rawKey = await mintWorkingKey(ctx, {
+
+    const rawKey = await mintWorkingKey(ctx, {
       permissions: [],
       extension_permissions: {},
       edge_permissions: {},

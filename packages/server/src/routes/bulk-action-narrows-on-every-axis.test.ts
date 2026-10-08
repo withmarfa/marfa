@@ -50,8 +50,7 @@ async function mintKey(
   typePermissions: Record<string, "read" | "write">,
   permissions: Permission[] = [],
 ): Promise<string> {
-  let raw = `marfa_k1_axes_${Math.random().toString(36).slice(2, 12)}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     extension_permissions: {},
     edge_permissions: {},
     metadata_permissions: {},

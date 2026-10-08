@@ -23,8 +23,7 @@ describe("POST /items/bulk", () => {
 
     beforeAll(async () => {
       for (const tier of ["feed", "library"] as const) {
-        let rawKey = `marfa_k1_tier_${tier}_${crypto.randomUUID()}`;
-        rawKey = await mintWorkingKey(ctx, {
+        const rawKey = await mintWorkingKey(ctx, {
           permissions: [],
           extension_permissions: {},
           edge_permissions: {},

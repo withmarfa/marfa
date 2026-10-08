@@ -24,8 +24,7 @@ let narrowKey: string;
 
 /** Holds `keys.mint` and read on one type. A coherent credential now. */
 async function mintNarrow(): Promise<string> {
-  let raw = `marfa_k1_narrow_${Math.random().toString(36).slice(2, 12)}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     profile_permissions: {},
     label: "narrow",
     source: "ceiling-test",
@@ -59,8 +58,7 @@ describe("a creator whose own map carries denials", () => {
   let contentReadKey: string;
 
   beforeAll(async () => {
-    let raw = `marfa_k1_contentread_${Math.random().toString(36).slice(2, 12)}`;
-    raw = await mintWorkingKey(ctx, {
+    const raw = await mintWorkingKey(ctx, {
       profile_permissions: {},
       label: "content-read",
       source: "ceiling-content-read",

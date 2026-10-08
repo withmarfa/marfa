@@ -209,8 +209,8 @@ describe("an OAuth-derived subscriber", () => {
     // Written by a working credential rather than the operator key, whose
     // own maps are empty.
     const suffix = Math.random().toString(36).slice(2, 8);
-    let writerKey = `marfa_k1_oauthwriter_${suffix}`;
-    writerKey = await mintWorkingKey(ctx, {
+
+    const writerKey = await mintWorkingKey(ctx, {
       edge_permissions: {},
       metadata_permissions: {},
       profile_permissions: {},

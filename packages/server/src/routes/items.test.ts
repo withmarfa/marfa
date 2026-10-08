@@ -780,8 +780,8 @@ describe("POST /items: platform-managed records", () => {
   it("rejects a working credential writing system.* even with explicit type_permissions", async () => {
     // Only platform operations write system records. A key naming the
     // literal type and every permission still cannot create one directly.
-    let workingKey = "marfa_k1_test_working_bound";
-    workingKey = await mintWorkingKey(ctx, {
+
+    const workingKey = await mintWorkingKey(ctx, {
       extension_permissions: {},
       edge_permissions: {},
       metadata_permissions: {},
@@ -816,8 +816,8 @@ describe("POST /items: platform-managed records", () => {
 
   it("does not gate reads to system.* (a working credential lists its own system.connection rows)", async () => {
     // The caller's type map governs reads of platform-managed items.
-    let readerKey = "marfa_k1_test_reader";
-    readerKey = await mintWorkingKey(ctx, {
+
+    const readerKey = await mintWorkingKey(ctx, {
       extension_permissions: {},
       edge_permissions: {},
       metadata_permissions: {},

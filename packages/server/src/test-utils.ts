@@ -238,7 +238,9 @@ export async function seedOauthBearer(
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     code_challenge_method: "S256",
   });
-  const initiated = await ctx.ownerRequest(`/auth/oauth2/authorize?${query}`);
+  const initiated = await ctx.ownerRequest(
+    `/auth/oauth2/authorize?${query.toString()}`,
+  );
   const consentLocation = initiated.headers.get("location");
   if (initiated.status !== 302 || !consentLocation)
     throw new Error(

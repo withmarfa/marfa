@@ -73,8 +73,8 @@ afterAll(async () => {
  */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  let raw = `marfa_k1_excl_${suffix}`;
-  raw = await mintWorkingKey(ctx, {
+
+  const raw = await mintWorkingKey(ctx, {
     permissions: [],
     extension_permissions: {},
     edge_permissions: {},

@@ -18,8 +18,7 @@ const shared = `shared-${run}`;
 const open = `open-${run}`;
 
 async function mintSourceKey(source: string): Promise<string> {
-  let raw = `marfa_k1_tag_${source}_${run}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     extension_permissions: {},
     edge_permissions: {},
     metadata_permissions: {},

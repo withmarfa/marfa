@@ -84,7 +84,7 @@ export function instanceReadCaller(
       const key = await storage.keys.validate(
         hashApiKey(authorization.slice(7), salt),
       );
-      return key?.permissions?.includes("instance.read") === true;
+      return key?.permissions.includes("instance.read") === true;
     } catch {
       return false;
     }

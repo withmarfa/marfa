@@ -54,8 +54,7 @@ interface Credential {
 
 /** An ordinary credential, holding write on the two types the doors write. */
 async function credentialFor(name: string): Promise<Credential> {
-  let raw = `marfa_k1_doors_${Math.random().toString(36).slice(2, 14)}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     permissions: [],
     extension_permissions: {},
     edge_permissions: {},

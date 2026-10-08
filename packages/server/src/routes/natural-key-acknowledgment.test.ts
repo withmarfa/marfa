@@ -83,9 +83,8 @@ async function syncCredential(options: {
   extensions: Record<string, "read" | "write">;
 }): Promise<SyncKey> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  let raw: string;
   const source = `sync-${suffix}`;
-  raw = await mintWorkingKey(ctx, {
+  const raw = await mintWorkingKey(ctx, {
     permissions: [],
     edge_permissions: {},
     metadata_permissions: {},

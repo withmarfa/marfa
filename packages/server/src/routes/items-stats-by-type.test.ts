@@ -90,8 +90,8 @@ describe("GET /items/stats?by=type", () => {
     // a type must not learn it is in use — the same reasoning as the tag
     // vocabulary on GET /metadata/tags.
     const suffix = Math.random().toString(36).slice(2, 10);
-    let raw = `marfa_k1_stats_${suffix}`;
-    raw = await mintWorkingKey(ctx, {
+
+    const raw = await mintWorkingKey(ctx, {
       permissions: [],
       extension_permissions: {},
       edge_permissions: {},

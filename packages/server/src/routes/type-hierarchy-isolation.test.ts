@@ -37,8 +37,8 @@ async function newKey(
   permissions: Record<string, "read" | "write" | "none">,
 ): Promise<{ key: string }> {
   const suffix = Math.random().toString(36).slice(2, 10);
-  let raw = `marfa_k1_test_${suffix}`;
-  raw = await mintWorkingKey(c, {
+
+  const raw = await mintWorkingKey(c, {
     permissions: [],
     extension_permissions: {},
     edge_permissions: {},
@@ -67,8 +67,8 @@ describe("a registration does not retype existing rows", () => {
     // A credential that may read notes, and write the one type it registers.
     const child = childSchema();
     const suffix = Math.random().toString(36).slice(2, 10);
-    let scoped = `marfa_k1_test_scoped_${suffix}`;
-    scoped = await mintWorkingKey(ctx, {
+
+    const scoped = await mintWorkingKey(ctx, {
       permissions: [],
       extension_permissions: {},
       edge_permissions: {},
