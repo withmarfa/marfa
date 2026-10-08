@@ -257,6 +257,80 @@ describe("the status checker", () => {
     expect(report.unexplained).toEqual(["GET /unlisted"]);
   });
 
+  it("counts public 404 probes of private socket paths separately from served routes", () => {
+    const paths = [
+      ["GET", "/_control/setup/status"],
+      ["POST", "/_control/setup/claim"],
+    ] as const;
+    const report = reportStatuses(
+      parseRequestLines(
+        paths
+          .map(([method, path]) =>
+            logLine({
+              method,
+              path,
+              route: path,
+              status: 404,
+            }),
+          )
+          .join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect([...report.absentRoutes].sort()).toEqual(
+      paths.map(([method, path]) => `${method} ${path}`).sort(),
+    );
+    expect(report.unpublished.size).toBe(0);
+    expect(report.unexplained).toEqual([]);
+    expect(report.lines).toBe(2);
+  });
+
+  it.each([200, 201, 401, 403, 500])(
+    "still reports private-path probes answering %s",
+    (status) => {
+      const report = reportStatuses(
+        parseRequestLines(
+          logLine({
+            method: "POST",
+            path: "/_control/setup/claim",
+            route: "/_control/setup/claim",
+            status,
+          }),
+        ),
+        documentDeclaring([200]),
+      );
+      expect(report.absentRoutes.size).toBe(0);
+      expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
+    },
+  );
+
+  it("does not exempt an arbitrary unknown path or a published operation's 404", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        [
+          logLine({
+            method: "GET",
+            path: "/unlisted",
+            route: "/unlisted",
+            status: 404,
+          }),
+          logLine({
+            method: "GET",
+            path: "/items/x",
+            route: "/items/{id}",
+            status: 404,
+          }),
+        ].join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.absentRoutes.size).toBe(0);
+    expect(report.unexplained).toEqual(["GET /unlisted"]);
+    expect(report.undeclared).toMatchObject([
+      { operation: "GET /items/{id}", status: 404 },
+    ]);
+  });
+
   it("holds a HEAD answer to its GET operation's declarations", () => {
     const report = reportStatuses(
       parseRequestLines(
@@ -550,6 +624,20 @@ describe("the status checker", () => {
       const clean = await run(stateWith([OBSERVED_200, OBSERVED_403]));
       expect(clean.stderr).toBe("");
       expect(clean.status).toBe(0);
+
+      const privateProbe = (status: number) =>
+        logLine({
+          method: "POST",
+          path: "/_control/setup/claim",
+          route: "/_control/setup/claim",
+          status,
+        });
+      const absent = await run(stateWith([OBSERVED_200, privateProbe(404)]));
+      expect(absent.stderr).toBe("");
+      expect(absent.status).toBe(0);
+      const exposed = await run(stateWith([OBSERVED_200, privateProbe(200)]));
+      expect(exposed.stderr).toContain("POST /_control/setup/claim");
+      expect(exposed.status).toBe(1);
 
       statuses = [200, 401];
       const undeclared = await run(stateWith([OBSERVED_200, OBSERVED_403]));
