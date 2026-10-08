@@ -662,7 +662,8 @@ impl Core {
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
-    /// blocked or dead.
+    /// blocked, dead or refused without being sent, and for one refused
+    /// because what it waited for was withdrawn.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
