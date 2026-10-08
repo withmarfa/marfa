@@ -7,7 +7,10 @@ import {
   stopServer,
 } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { FRESH_SERVER_TIMEOUT_MS } from "../../utils/fresh-server.js";
+import {
+  FRESH_SERVER_TIMEOUT_MS,
+  keepStatusLog,
+} from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let state: string;
@@ -31,6 +34,7 @@ afterAll(async () => {
   vi.unstubAllEnvs();
   if (state) {
     await stopServer({ state });
+    keepStatusLog(state);
     await rm(state, { recursive: true, force: true });
   }
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -60,6 +64,7 @@ describe("claiming the one owner", () => {
     expect((await local("/owner")).status).toBe(404);
     expect((await fetch(`${server.url}/owner`)).status).toBe(401);
     expect((await post("/setup/claim", OWNER)).status).toBe(401);
+    expect((await post("/owner", OWNER)).status).toBe(401);
     expect(
       (await post("/auth/sign-in/email", OWNER, { origin: server.url })).status,
     ).toBe(401);
@@ -75,6 +80,15 @@ describe("claiming the one owner", () => {
     expect(second.status).toBe(200);
     code = second.body.code as string;
     expect(code).not.toBe(first.body.code);
+    expect(
+      (
+        await post(
+          "/owner",
+          { ...OWNER, code },
+          { origin: "https://elsewhere.example" },
+        )
+      ).status,
+    ).toBe(403);
     expect(
       (await post("/setup/claim", { ...OWNER, code: first.body.code })).status,
     ).toBe(401);

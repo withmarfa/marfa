@@ -316,7 +316,7 @@ const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
 /** Before `down`, which clears the log with the rest of the state. The run's
  *  server boots from the same checkout, so what this one answered is held to
  *  the same document. */
-function keepStatusLog(state: string): void {
+export function keepStatusLog(state: string): void {
   const destination = process.env.MARFA_STATUS_LOGS;
   const log = join(state, "server.log");
   if (destination !== undefined && destination !== "" && existsSync(log)) {

@@ -220,7 +220,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance != 'false') }}
     name: Conformance
-    timeout-minutes: 60
+    # The serial suite includes real expiry waits and large archive restores.
+    timeout-minutes: 90
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7

@@ -441,7 +441,9 @@ describe("the contract the binary was built for", () => {
     const words = await marfa(["--url", started.url, "--key", KEY, "status"]);
     expect(words.code, words.stderr).toBe(0);
     expect(words.stdout).toContain("health ok");
-    expect(words.stdout).toContain("items need a working key");
+    expect(words.stdout).toContain(
+      "this credential's type permissions reach no type",
+    );
   });
 
   it("hands on any other refusal of the counts", async () => {
