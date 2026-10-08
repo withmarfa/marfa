@@ -111,7 +111,10 @@ function imageOf(server: FreshServer): string {
     cpSync(state, image, {
       recursive: true,
       // What the running process owns rather than what it holds.
-      filter: (source) => !/server\.(pid|log)$/.test(source),
+      filter: (source) =>
+        !/server\.(pid|log|exit)$/.test(source) &&
+        !/\/control-directory$/.test(source) &&
+        !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
     });
   } finally {
     process.kill(-group, "SIGCONT");

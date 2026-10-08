@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
+import { MarfaClient } from "../../client/api.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { itemsArchive, listTarGzEntries, tarGz } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -16,6 +18,15 @@ import { clientsFor } from "../../utils/own-blob-server.js";
  * the shared server cannot change for every other file.
  */
 const SMALL_CAP = 8192;
+
+function ownerFor(server: FreshServer): MarfaClient {
+  return new MarfaClient({
+    baseUrl: server.apiUrl,
+    ownerCookie: server.ownerCookie,
+    ownerCredentials: TEST_OWNER,
+    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+  });
+}
 
 let source: FreshServer | undefined;
 let target: FreshServer | undefined;
@@ -39,7 +50,7 @@ describe("the counts an archive carries", () => {
     async () => {
       const items = 5_001;
       const { working } = clientsFor(source!);
-      const { operator } = clientsFor(target!);
+      const owner = ownerFor(target!);
 
       // One more than each round number a limit might once have sat at.
       const types = 201;
@@ -99,7 +110,7 @@ describe("the counts an archive carries", () => {
 
       const archive = await working.exportArchive({ type: "core.note" });
       expect(archive.status).toBe(200);
-      const restored = await operator.restoreArchive(archive.data);
+      const restored = await owner.restoreArchive(archive.data);
       expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
       expect(restored.data).toMatchObject({
         imported: items,
@@ -209,17 +220,18 @@ describe("the size of a row an archive carries", () => {
   ] as const)(
     "takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing",
     async (_what, kind, field, idField, row) => {
-      const { operator, working } = clientsFor(capped!);
+      const { working } = clientsFor(capped!);
+      const owner = ownerFor(capped!);
 
       // The witness: at the cap, both rows restore.
       const atCap = archiveOf(kind, SMALL_CAP);
-      const taken = await operator.restoreArchive(atCap.archive);
+      const taken = await owner.restoreArchive(atCap.archive);
       expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
       expect(taken.data.imported).toBe(2);
       expect((await working.getItem(atCap.second)).status).toBe(200);
 
       const over = archiveOf(kind, SMALL_CAP + 1);
-      const refused = await operator.restoreArchive(over.archive);
+      const refused = await owner.restoreArchive(over.archive);
       expect(refused.status, JSON.stringify(refused.error)).toBe(413);
       expect(refused.error?.error.code).toBe("request_too_large");
       expect(refused.error?.error.details).toMatchObject({
