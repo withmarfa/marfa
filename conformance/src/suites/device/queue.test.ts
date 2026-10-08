@@ -3103,6 +3103,69 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(
       server.requests.filter((request) => request.pathname.endsWith("/tags")),
     ).toEqual([]);
+    // And in a later drain, still unable to read that row, a write queued
+    // since goes too.
+    const later = await device.update(HELD.id, {
+      properties: { title: "again" },
+      version: HELD.version + 1,
+    });
+    expect(later.ok, JSON.stringify(later)).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      patches(),
+      "a write queued after the first drain did not go in a later one",
+    ).toBe(2);
+  });
+
+  it("holds the row a read returns after a create refused ancestor_unavailable, not the row the envelope named", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000cc";
+    harness = await hydratedHarness("queue-landed-ancestor-read", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "read-again.md",
+      version: 0,
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: THEIRS,
+            version: 2,
+            properties: { title: "the envelope's", body: "theirs" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "read-again.md",
+            type: "core.note",
+          },
+          0,
+        ),
+      ],
+      // Another write landed between the refusal and the read.
+      read: [
+        answers.updated(
+          wireItem({
+            id: THEIRS,
+            version: 3,
+            properties: { title: "the read's", body: "theirs" },
+            source: "notes",
+            source_id: "read-again.md",
+          }),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
+    const landed = await device.get(THEIRS);
+    expect(
+      landed.ok ? [landed.value.version, landed.value.properties.title] : [],
+      "the copy took the row the refusal named rather than the row a read of it returned",
+    ).toEqual([3, "the read's"]);
   });
 
   it("holds a write made to a refused create's row until a read finds the row its natural key names", async () => {
@@ -7784,6 +7847,114 @@ describe("a create the slice does not hold", () => {
     stream = copyReplay("12", [copyItemEvent("12", "item.created", theirs)]);
     expect((await device.catchUp()).ok).toBe(true);
     expect((await device.get(other)).ok).toBe(false);
+  });
+
+  /** Answers every create under the id it names, or one it mints, and every
+   *  read of a row it made. */
+  function keyedCreateDoor(server: ScriptedServer) {
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    let minted = 0;
+    server.copyAnswer("GET", /^\/items\/[^/]+$/, (request) => {
+      const row = rows.get(request.pathname.split("/").at(-1) ?? "");
+      return row === undefined
+        ? refusal(404, "item_not_found", "No such item")
+        : answers.updated(row);
+    });
+    return (request: { body: string }) => {
+      const sent = JSON.parse(request.body);
+      minted += 1;
+      const row = wireItem({
+        id:
+          sent.id ??
+          `01a00000-0000-7000-8000-0000000001${String(minted).padStart(2, "0")}`,
+        tier: sent.tier ?? "library",
+        properties: sent.properties,
+        source: sent.source,
+        source_id: sent.source_id,
+      });
+      rows.set(String(row.id), row);
+      return answers.created(row);
+    };
+  }
+
+  const sentTiers = (server: ScriptedServer) =>
+    server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => {
+        const body = JSON.parse(request.body) as { tier?: string };
+        return "tier" in body ? body.tier : "none";
+      });
+
+  it("sends no tier with a create whose natural key names a row the copy holds, and shows it at that row's tier", async () => {
+    const KEPT = "01a00000-0000-7000-8000-0000000000f6";
+    harness = await startHarness("queue-keyed-create-no-tier");
+    const { device, server } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: KEPT,
+              tier: "feed",
+              source: "notes",
+              source_id: "kept.md",
+              properties: { title: "kept", body: "kept" },
+            },
+          },
+        ],
+      },
+    });
+    expect((await device.hydrate(["core.note"], "all")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "re-saved", body: "kept" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const shown = await device.get(created.value.item_id ?? "");
+    expect(shown.ok && shown.value.tier).toBe("feed");
+    const door = keyedCreateDoor(server);
+    scriptWrites(server, { create: [door] });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      sentTiers(server),
+      "a create carrying the natural key of a row the copy holds named a tier, which would move that row",
+    ).toEqual(["none"]);
+  });
+
+  it("sends a create naming no tier whose natural key names its own create still waiting at that create's tier", async () => {
+    harness = await feedSlice("queue-keyed-create-own-tier");
+    const { device, server } = harness;
+    const first = await device.create({
+      type: "core.note",
+      tier: "library",
+      properties: { title: "first", body: "first" },
+      source: "notes",
+      sourceId: "twice.md",
+    });
+    const again = await device.create({
+      type: "core.note",
+      properties: { title: "again", body: "again" },
+      source: "notes",
+      sourceId: "twice.md",
+    });
+    if (!first.ok || !again.ok) throw new Error(JSON.stringify([first, again]));
+    const shown = await device.get(again.value.item_id ?? "");
+    expect(
+      shown.ok && shown.value.tier,
+      "the second create was not shown at the tier of the create it follows",
+    ).toBe("library");
+    const door = keyedCreateDoor(server);
+    scriptWrites(server, { create: [door, door] });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      sentTiers(server),
+      "a create naming no tier whose key names a create still waiting went at another tier, so were the first refused it would make the row at the key's default",
+    ).toEqual(["library", "library"]);
   });
 
   it("moves the pin of a create the slice does not hold onto the row a refusal names its natural key under", async () => {

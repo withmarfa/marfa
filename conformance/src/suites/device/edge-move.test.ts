@@ -364,6 +364,10 @@ describe("an edit that moves an edge's end", () => {
       }),
     );
     expect(moved.kind).toBe("update_edge");
+    expect(
+      Object.keys(moved.body as Record<string, unknown>).sort(),
+      "the end the edge already holds went into the update, which the server reads as a move of both ends",
+    ).toEqual(["properties", "target_id", "version"]);
     expect(await drawnTo(device, OLDEST)).toEqual([SUCCESSION]);
   });
 });

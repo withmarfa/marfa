@@ -244,6 +244,96 @@ describe("a working copy checks the fields its catalog holds", () => {
       );
   });
 
+  it("judges a known upsert by the row it leaves, and a stale or other-type one by what it supplies", async () => {
+    harness = await startHarness("property-validation-known-upsert");
+    scriptHydration(harness.server, {
+      head: "10",
+      catalog: typeCatalog([
+        ...types,
+        {
+          id: "fixture.destination",
+          fields: { url: { type: "url", required: true } },
+        },
+      ]),
+      rows: {
+        // Held without the title its type requires, as a row written before
+        // the type required it is.
+        [TYPE]: [
+          {
+            item: {
+              id: ROW,
+              type: TYPE,
+              version: 3,
+              source: "fixture",
+              source_id: "gap",
+              properties: { body: "held" },
+            },
+          },
+        ],
+        "fixture.destination": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000000c",
+              type: "fixture.destination",
+              version: 1,
+              source: "fixture",
+              source_id: "elsewhere",
+              properties: { url: "https://example.test" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate([TYPE, "fixture.destination"], "library"))
+        .ok,
+    ).toBe(true);
+    const { device } = harness;
+    invalid(
+      await device.create({
+        type: TYPE,
+        source: "fixture",
+        sourceId: "gap",
+        properties: { read: true },
+      }),
+      "title",
+    );
+    expect(
+      (
+        await device.create({
+          type: TYPE,
+          source: "fixture",
+          sourceId: "gap",
+          version: 1,
+          properties: { read: true },
+        })
+      ).ok,
+      "a create on a version the copy does not hold was judged on the row the copy holds",
+    ).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: TYPE,
+          source: "fixture",
+          sourceId: "elsewhere",
+          properties: { read: true },
+        })
+      ).ok,
+      "a create whose key names a row of another type was judged as a whole new row",
+    ).toBe(true);
+    // The witness: the same create giving the title is taken.
+    expect(
+      (
+        await device.create({
+          type: TYPE,
+          source: "fixture",
+          sourceId: "gap",
+          properties: { title: "given" },
+        })
+      ).ok,
+    ).toBe(true);
+  });
+
   it("checks known upserts and supplied values on unresolved or stale targets", async () => {
     const { device } = await hydrated();
     expect(
