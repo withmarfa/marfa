@@ -1,16 +1,12 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { afterAll,beforeAll,describe,expect,it } from "vitest";
 import { Housekeeping } from "../housekeeping/scheduler.js";
-import type { Storage } from "../storage/interface.js";
 import {
-  readInstanceConfig,
-  writeInstanceConfig,
+readInstanceConfig,
+writeInstanceConfig,
 } from "../storage/instance-config.js";
-
-async function createConfigContext(): Promise<TestContext> {
-  return createTestContext();
-}
+import type { Storage } from "../storage/interface.js";
+import type { TestContext } from "../test-utils.js";
+import { createTestContext,request } from "../test-utils.js";
 
 // ----- The shared context: the door's defaults when nothing is set -----
 let ctx: TestContext;
@@ -67,10 +63,10 @@ describe("PUT /config", () => {
 
 // ----- A second context: the settings-backed round trips -------
 describe("Instance config — round trips", () => {
-  let configCtx: ConfigContext;
+  let configCtx: TestContext;
 
   beforeAll(async () => {
-    configCtx = await createConfigContext();
+    configCtx = await createTestContext();
   });
 
   afterAll(async () => {

@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { hashApiKey } from "./middleware/auth.js";
+import { describe,expect,it } from "vitest";
 import { getClaimStatus } from "./auth/instance-claim.js";
+import { hashApiKey } from "./middleware/auth.js";
 import {
-  createTestContext,
-  mintWorkingKey,
-  seedOauthBearer,
-  TEST_API_KEY_SALT,
-  TEST_MANAGEMENT_PERMISSIONS,
+createTestContext,
+mintWorkingKey,
+seedOauthBearer,
+TEST_API_KEY_SALT,
+TEST_MANAGEMENT_PERMISSIONS,
 } from "./test-utils.js";
 
 // A normal fixture must produce the same claim and audit records as a real setup.
@@ -76,6 +76,19 @@ describe("production provisioning in server fixtures", () => {
       expect(
         entries.data.some((entry) => entry.resource_id === app.clientId),
       ).toBe(true);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+  it("can approve independent app fixtures without spending device-code attempts", async () => {
+    const ctx = await createTestContext();
+    try {
+      const grants = new Set<string>();
+      for (let i = 0; i < 12; i++) {
+        const app = await seedOauthBearer(ctx, ["instance.read"]);
+        grants.add(app.grantId);
+      }
+      expect(grants.size).toBe(12);
     } finally {
       await ctx.cleanup();
     }

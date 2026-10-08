@@ -1,6 +1,6 @@
 import { PERMISSIONS } from "@withmarfa/shared";
 import type { Permission } from "@withmarfa/shared";
-import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
+import { createHash, randomBytes } from "node:crypto";
 import { claimOwner, issueSetupCode } from "./auth/instance-claim.js";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
@@ -184,7 +184,7 @@ export async function closeTestContexts(
   }
 }
 
-/** Approve a real registered app through the device flow and exchange its code. */
+/** Approve a real registered app through the browser PKCE flow. */
 export async function seedOauthBearer(
   ctx: TestContext,
   scopes: string[],
@@ -210,60 +210,75 @@ export async function seedOauthBearer(
       body: {
         client_name: opts.clientName ?? "Test App",
         application_type: "native",
-        grant_types: [DEVICE_CODE_GRANT_TYPE, "refresh_token"],
+        grant_types: ["authorization_code", "refresh_token"],
         token_endpoint_auth_method: "none",
         redirect_uris: ["http://localhost:5173/callback"],
-        response_types: [],
+        response_types: ["code"],
       },
     }),
     201,
   );
   const clientId = registered.client_id as string;
-  const initiated = await checked(
-    await request(ctx.app, "POST", "/auth/device/code", {
-      headers: { origin },
-      form: { client_id: clientId, scope: scopes.join(" ") },
-    }),
-    200,
-  );
-  const userCode = initiated.user_code as string;
+  const redirectUri = "http://localhost:5173/callback";
+  const verifier = randomBytes(32).toString("base64url");
+  const query = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: scopes.join(" "),
+    state: randomBytes(16).toString("hex"),
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
+  });
+  const initiated = await ctx.ownerRequest(`/auth/oauth2/authorize?${query}`);
+  const consentLocation = initiated.headers.get("location");
+  if (initiated.status !== 302 || !consentLocation)
+    throw new Error(
+      `App authorization returned ${String(initiated.status)}: ${await initiated.text()}`,
+    );
+  const consentUrl = new URL(consentLocation, origin);
   const screen = await ctx.ownerRequest(
-    `/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    `${consentUrl.pathname}${consentUrl.search}`,
   );
   if (screen.status !== 200)
     throw new Error(
       `App consent screen returned ${String(screen.status)}: ${await screen.text()}`,
     );
-  const approved = await request(ctx.app, "POST", "/auth/device/consent", {
+  const approved = await request(ctx.app, "POST", "/auth/authorize/decision", {
     headers: { origin, cookie: ctx.owner.cookie },
-    form: { user_code: userCode, decision: "approve", scopes },
+    form: {
+      accept: "true",
+      client_id: clientId,
+      oauth_query: consentUrl.search.slice(1),
+      scopes,
+    },
   });
-  if (approved.status !== 200)
+  const location = approved.headers.get("location");
+  if (approved.status !== 302 || !location)
     throw new Error(
       `App approval returned ${String(approved.status)}: ${await approved.text()}`,
     );
+  const code = new URL(location).searchParams.get("code");
+  if (!code) throw new Error("App approval returned no authorization code");
   const exchanged = await checked(
     await request(ctx.app, "POST", "/auth/oauth2/token", {
       headers: { origin },
       form: {
-        grant_type: DEVICE_CODE_GRANT_TYPE,
+        grant_type: "authorization_code",
         client_id: clientId,
-        device_code: initiated.device_code as string,
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
       },
     }),
     200,
   );
-  const grants = await ctx.storage.items.list({ type: "system.connection" });
-  const grant = grants.data.find(
-    (item) =>
-      item.properties.kind === "app" && item.properties.client_id === clientId,
-  );
-  if (!grant) throw new Error("App consent did not create its grant");
-  return {
-    token: exchanged.access_token as string,
-    grantId: grant.id,
+  const grantId = await ctx.storage.oauthProvider?.findGrantItemId({
     clientId,
-  };
+    authUserId: ctx.owner.id,
+  });
+  if (!grantId) throw new Error("App consent did not create its grant");
+  return { token: exchanged.access_token as string, grantId, clientId };
 }
 
 /**
@@ -527,7 +542,7 @@ async function buildTestContext(
     const headers = new Headers(init.headers);
     headers.set("cookie", cookie);
     headers.set("origin", origin);
-    return fresh.app.request(path, { ...init, headers });
+    return Promise.resolve(fresh.app.request(path, { ...init, headers }));
   };
   const workingKey = await mintWorkingKey({ ownerRequest });
   const managementKey = await mintWorkingKey(
