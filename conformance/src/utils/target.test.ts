@@ -66,6 +66,19 @@ describe("env file", () => {
     });
   });
 
+  it("names the protected shared session without exporting the server secret setting", () => {
+    const env = parseEnvFile(
+      renderEnvFile("http://127.0.0.1:8600", {
+        ...credentials,
+        ownerSessionFile: "/state/owner-session.json",
+        authSecret: "fixture-secret",
+      }),
+    );
+    expect(env.MARFA_OWNER_SESSION_FILE).toBe("/state/owner-session.json");
+    expect(env.MARFA_FIXTURE_AUTH_SECRET).toBe("fixture-secret");
+    expect(env.MARFA_AUTH_SECRET).toBeUndefined();
+  });
+
   it("names the booted server's disk store when given one", () => {
     const text = renderEnvFile(
       "http://127.0.0.1:8600",

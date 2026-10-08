@@ -95,7 +95,7 @@ registers a second object store beside the first, and `scripts/marfa-server.ts`
 says why. `garage/` sits inside the same directory and is `garage:down`'s to
 remove.
 
-The server runs with enrichment, OCR and rate limiting switched off.
+The server runs with enrichment, OCR and general request rate limiting switched off. Password sign-in throttling remains enabled. Owner fixtures share a session in a file with mode `0600`, validate its authentication time with the server, and serialize password sign-ins across workers when it needs renewal. The launcher retains its authentication secret in the protected env file so a restart can reuse a valid session.
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot
@@ -114,15 +114,17 @@ corrupts a copy under it.
 
 ## Configuration
 
-| Variable               | Description                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `MARFA_API_URL`        | The booted server. Unset, the run stops: there is no default target.                                           |
-| `MARFA_API_KEY`        | Ordinary content/provisioning key with the original seven named permissions and write access in all five maps. |
-| `MARFA_MANAGEMENT_KEY` | Ordinary management fixture key with all twelve named permissions and empty content maps.                      |
-| `MARFA_OWNER_COOKIE`   | The owner's production sign-in session, used for direct-owner fixtures.                                        |
-| `MARFA_CONTROL_SOCKET` | Absolute path to the fixture server's private socket.                                                          |
-| `MARFA_DEVICE_BIN`     | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
-| `MARFA_LOAD_PROFILE`   | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
+| Variable                    | Description                                                                                                    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `MARFA_API_URL`             | The booted server. Unset, the run stops: there is no default target.                                           |
+| `MARFA_API_KEY`             | Ordinary content/provisioning key with the original seven named permissions and write access in all five maps. |
+| `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all twelve named permissions and empty content maps.                      |
+| `MARFA_OWNER_SESSION_FILE`  | Protected shared session file used by owner fixtures to reuse a recent sign-in across test processes.          |
+| `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances.    |
+| `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
+| `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
+| `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
+| `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
 `pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary you built before running `pnpm test:conformance`. Required fixture credentials and the binary fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
 

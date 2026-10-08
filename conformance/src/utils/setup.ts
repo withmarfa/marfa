@@ -555,6 +555,7 @@ export function getOwnerClient(): MarfaClient {
   return new MarfaClient({
     baseUrl: requireApiUrl(),
     ownerCookie: key,
+    ownerSessionFile: process.env.MARFA_OWNER_SESSION_FILE,
     ownerCredentials: TEST_OWNER,
   });
 }

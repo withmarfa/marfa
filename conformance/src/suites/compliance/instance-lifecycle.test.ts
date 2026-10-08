@@ -392,7 +392,8 @@ describe("starting on an image a crash leaves", () => {
             // What the running process owns rather than what it holds.
             filter: (source) =>
               !/server\.(pid|log|exit)$/.test(source) &&
-              !/\/control-directory$/.test(source),
+              !/\/control-directory$/.test(source) &&
+              !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
           });
         },
       });
@@ -568,6 +569,7 @@ describe("copying the data directory one file after another while the instance w
           filter: (source) =>
             !/server\.(pid|log|exit)$/.test(source) &&
             !/\/control-directory$/.test(source) &&
+            !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source) &&
             !/marfa\.db(-wal|-shm)?$/.test(source) &&
             !/\/blobs$/.test(source),
         });

@@ -54,6 +54,11 @@ import {
   TEST_OWNER,
   renderEnvFile,
 } from "../src/utils/target.js";
+import {
+  authenticateOwner,
+  writeOwnerSession,
+  type SharedOwnerSession,
+} from "../src/client/owner-session.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 
 const HEALTH_BUDGET_MS = 180_000;
@@ -136,6 +141,7 @@ function paths(state: string) {
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
+    ownerSession: resolve(state, "owner-session.json"),
     statusLogs: resolve(state, FRESH_SERVER_LOGS),
   };
 }
@@ -262,6 +268,7 @@ interface Started {
   /** Whether the supervisor has ended, which it does when the server does. */
   ended: () => boolean;
   controlSocket: string;
+  authSecret: string;
 }
 
 async function startServer(args: BootOptions): Promise<Started> {
@@ -305,6 +312,13 @@ async function startServer(args: BootOptions): Promise<Started> {
   writeFileSync(resolve(args.state, "control-directory"), controlDir, {
     mode: 0o600,
   });
+  const retainedEnv = existsSync(p.env)
+    ? parseEnvFile(readFileSync(p.env, "utf8"))
+    : {};
+  const authSecret =
+    process.env.MARFA_AUTH_SECRET ??
+    retainedEnv.MARFA_FIXTURE_AUTH_SECRET ??
+    randomBytes(32).toString("hex");
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
@@ -312,8 +326,7 @@ async function startServer(args: BootOptions): Promise<Started> {
     ...(args.controlOnly !== undefined && {
       MARFA_CONTROL_ONLY: String(args.controlOnly),
     }),
-    MARFA_AUTH_SECRET:
-      process.env.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
+    MARFA_AUTH_SECRET: authSecret,
     SQLITE_PATH: p.db,
     BLOB_PATH: p.blobs,
     // The origin the server is reached at, which a link it mints carries.
@@ -397,7 +410,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   console.log(
     `[marfa-server] started pid ${String(child.pid)} on ${url}; log at ${p.log}`,
   );
-  return { child, url, ended: () => ended, controlSocket };
+  return { child, url, ended: () => ended, controlSocket, authSecret };
 }
 
 /** Starts the real server without claiming it, for claim-operation tests. */
@@ -437,7 +450,7 @@ export async function bootControlServer(
 
 export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const { url, ended, controlSocket } = await startServer(args);
+  const { url, ended, controlSocket, authSecret } = await startServer(args);
   await waitForHealth(url, p, ended);
   const status = await controlRequest(controlSocket, "/_control/setup/status");
   if (status.status !== 200)
@@ -513,25 +526,38 @@ export async function bootServer(args: BootOptions): Promise<void> {
     apiKey = working.body.key;
     managementKey = management.body.key;
   }
-  const signIn = await fetch(`${url}/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: url },
-    body: JSON.stringify(TEST_OWNER),
+  const retainedSession = existsSync(p.ownerSession)
+    ? (JSON.parse(readFileSync(p.ownerSession, "utf8")) as SharedOwnerSession)
+        .cookie
+    : previous.MARFA_OWNER_COOKIE;
+  const { cookie: ownerCookie } = await authenticateOwner(
+    url,
+    retainedSession,
+    TEST_OWNER,
+  );
+  maskInActions(
+    apiKey,
+    managementKey,
+    ownerCookie,
+    TEST_OWNER.password,
+    authSecret,
+  );
+  await writeOwnerSession(p.ownerSession, {
+    baseUrl: url,
+    cookie: ownerCookie,
   });
-  if (!signIn.ok)
-    throw new Error(`Fixture owner sign-in answered ${signIn.status}`);
-  const ownerCookie =
-    signIn.headers
-      .getSetCookie()
-      .find((cookie) => cookie.startsWith("marfa.auth.session_token="))
-      ?.split(";")[0] ?? "";
-  if (!ownerCookie) throw new Error("Fixture owner sign-in set no cookie");
-  maskInActions(apiKey, managementKey, ownerCookie, TEST_OWNER.password);
   writeFileSync(
     p.env,
     renderEnvFile(
       url,
-      { apiKey, managementKey, controlSocket, ownerCookie },
+      {
+        apiKey,
+        managementKey,
+        controlSocket,
+        ownerCookie,
+        ownerSessionFile: p.ownerSession,
+        authSecret,
+      },
       p.blobs,
       p.statusLogs,
     ),
@@ -657,6 +683,8 @@ function clearState(state: string): void {
     `${p.db}-wal`,
     `${p.db}-shm`,
     p.env,
+    p.ownerSession,
+    `${p.ownerSession}.lock`,
     p.log,
     p.exit,
     p.blobs,

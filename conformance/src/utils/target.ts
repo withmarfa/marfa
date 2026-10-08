@@ -24,6 +24,8 @@ export interface TargetCredentials {
   managementKey: string;
   controlSocket: string;
   ownerCookie: string;
+  ownerSessionFile?: string;
+  authSecret?: string;
 }
 
 /**
@@ -44,6 +46,12 @@ export function renderEnvFile(
     `MARFA_MANAGEMENT_KEY=${credentials.managementKey}`,
     `MARFA_CONTROL_SOCKET=${credentials.controlSocket}`,
     `MARFA_OWNER_COOKIE=${credentials.ownerCookie}`,
+    ...(credentials.ownerSessionFile === undefined
+      ? []
+      : [`MARFA_OWNER_SESSION_FILE=${credentials.ownerSessionFile}`]),
+    ...(credentials.authSecret === undefined
+      ? []
+      : [`MARFA_FIXTURE_AUTH_SECRET=${credentials.authSecret}`]),
     ...(blobPath === undefined ? [] : [`MARFA_BLOB_PATH=${blobPath}`]),
     ...(statusLogs === undefined ? [] : [`MARFA_STATUS_LOGS=${statusLogs}`]),
     "",

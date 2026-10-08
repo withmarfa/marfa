@@ -1,4 +1,5 @@
 import { ofetch, type FetchOptions } from "ofetch";
+import { authenticateOwner, withOwnerSession } from "./owner-session.js";
 import type {
   ApiResponse,
   MarfaItem,
@@ -54,6 +55,7 @@ export interface MarfaClientOptions {
   baseUrl: string;
   apiKey?: string;
   ownerCookie?: string;
+  ownerSessionFile?: string;
   ownerCredentials?: { email: string; password: string };
 }
 
@@ -141,6 +143,7 @@ export class MarfaClient {
   private apiKey: string;
   private ownerCookie: string | undefined;
   private ownerCredentials: MarfaClientOptions["ownerCredentials"];
+  private ownerSessionFile: string | undefined;
   private ownerAuthenticatedAt = 0;
   private ownerAuthentication: Promise<void> | undefined;
 
@@ -148,48 +151,43 @@ export class MarfaClient {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey ?? "";
     this.ownerCookie = options.ownerCookie;
+    this.ownerSessionFile = options.ownerSessionFile;
     this.ownerCredentials = options.ownerCredentials;
   }
 
   /** Long-running fixtures reauthenticate through the real sign-in operation. */
   private async ensureRecentOwner(): Promise<void> {
+    const credentials = this.ownerCredentials;
     if (
-      !this.ownerCredentials ||
+      !credentials ||
       !this.ownerCookie ||
       Date.now() - this.ownerAuthenticatedAt < 240_000
     )
       return;
     if (this.ownerAuthentication) return this.ownerAuthentication;
-    this.ownerAuthentication = (async () => {
-      const current = await fetch(`${this.baseUrl}/auth/get-session`, {
-        headers: this.authHeaders(),
-      });
-      if (!current.ok)
-        throw new Error(`Owner session lookup answered ${current.status}`);
-      const session = (await current.json()) as {
-        session?: { createdAt: string };
-      } | null;
-      this.ownerAuthenticatedAt =
-        Date.parse(session?.session?.createdAt ?? "") || 0;
-      if (Date.now() - this.ownerAuthenticatedAt < 240_000) return;
-      const response = await fetch(`${this.baseUrl}/auth/sign-in/email`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: new URL(this.baseUrl).origin,
-        },
-        body: JSON.stringify(this.ownerCredentials),
-      });
-      if (!response.ok)
-        throw new Error(`Owner reauthentication answered ${response.status}`);
-      const cookie = response.headers
-        .getSetCookie()
-        .find((value) => value.startsWith("marfa.auth.session_token="))
-        ?.split(";")[0];
-      if (!cookie) throw new Error("Owner reauthentication set no cookie");
-      this.ownerCookie = cookie;
-      this.ownerAuthenticatedAt = Date.now();
-    })();
+    const authenticate = async (save?: (cookie: string) => Promise<void>) => {
+      const session = await authenticateOwner(
+        this.baseUrl,
+        this.ownerCookie,
+        credentials,
+      );
+      this.ownerCookie = session.cookie;
+      this.ownerAuthenticatedAt = session.authenticatedAt;
+      await save?.(session.cookie);
+    };
+    this.ownerAuthentication = this.ownerSessionFile
+      ? withOwnerSession(this.ownerSessionFile, async (session, save) => {
+          if (
+            session.baseUrl !== this.baseUrl ||
+            typeof session.cookie !== "string"
+          )
+            throw new Error(
+              "Shared owner session does not match the target instance",
+            );
+          this.ownerCookie = session.cookie;
+          await authenticate(save);
+        })
+      : authenticate();
     try {
       await this.ownerAuthentication;
     } finally {
