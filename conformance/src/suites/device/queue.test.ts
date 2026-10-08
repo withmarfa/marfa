@@ -3005,6 +3005,94 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toEqual([]);
   });
 
+  it("holds a write made to a refused create's row until a read finds the row its natural key names", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000cb";
+    harness = await hydratedHarness("queue-landed-absent-later-write", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "hidden.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const theirs = {
+      id: THEIRS,
+      version: 2,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "hidden.md",
+      type: "core.note",
+    };
+    let readable = false;
+    scriptWrites(server, {
+      create: [answers.ancestorUnavailable(theirs, 0)],
+      read: [
+        () =>
+          readable
+            ? answers.updated(
+                wireItem({
+                  id: THEIRS,
+                  version: 2,
+                  properties: theirs.properties,
+                  source: "notes",
+                  source_id: "hidden.md",
+                }),
+              )
+            : refusal(404, "item_not_found", "Item not found"),
+      ],
+      tags: [{ kind: "json", status: 200, body: {} }],
+    });
+    const first = await device.drain();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    // Made after the refusal, against the row the copy still shows under the
+    // id it minted.
+    const tagged = await device.addTag(local, "later");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    const edited = await device.update(local, {
+      properties: { title: "later" },
+      version: 0,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    if (!tagged.ok || !edited.ok) return;
+    const second = await device.drain();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+      "a write to the row a refused create made went to an id the server never held",
+    ).toEqual(["POST /items"]);
+    let queue = await queueOf(device);
+    const of = (id: string) => queue.find((row) => row.id === id);
+    for (const write of [tagged.value.id, edited.value.id]) {
+      expect([
+        of(write)?.verdict,
+        of(write)?.reason,
+        of(write)?.depends_on,
+      ]).toEqual(["blocked", "awaiting_dependency", [created.value.id]]);
+    }
+    readable = true;
+    const third = await device.drain();
+    expect(third.ok, JSON.stringify(third)).toBe(true);
+    queue = await queueOf(device);
+    expect(
+      [of(tagged.value.id)?.verdict, of(edited.value.id)?.verdict],
+      "once the row was found, the tag did not go to it, or the edit made against the row this device created did",
+    ).toEqual(["accepted", "refused"]);
+    expect(
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`]);
+  });
+
   it("reads the row a create landed on again after a failure that clears on its own", async () => {
     // Failed reads retry without resending or changing the settled refusal.
     const THEIRS = "01a00000-0000-7000-8000-0000000000c8";

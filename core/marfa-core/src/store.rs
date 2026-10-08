@@ -1016,11 +1016,21 @@ pub fn untaken_creates_for_item(
     conn: &Connection,
     item_id: &str,
 ) -> Result<Vec<String>, CoreError> {
-    Ok(waiting_writes_for_item(conn, item_id)?
-        .into_iter()
-        .filter(|row| row.kind == WriteKind::CreateItem)
-        .map(|row| row.id)
-        .collect())
+    // A create refused onto a row no read has found yet still decides where a
+    // later write to its row goes, or whether it goes at all.
+    let landing = pending_landings(conn)?;
+    Ok(read_writes(
+        conn,
+        "WHERE item_id = ?1 AND kind = ?2",
+        [item_id, WriteKind::CreateItem.as_str()],
+    )?
+    .into_iter()
+    .filter(|row| {
+        matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead))
+            || landing.contains(&row.id)
+    })
+    .map(|row| row.id)
+    .collect())
 }
 
 pub fn now_iso() -> String {
