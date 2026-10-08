@@ -1,3 +1,4 @@
+import { controlRoutes } from "./control/routes.js";
 import { setupRoutes } from "./routes/setup.js";
 import { ownerPages } from "./routes/owner-pages.js";
 import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
@@ -737,6 +738,8 @@ export function createApp(
   if (auth) {
     app.route("/owner", ownerRoutes(storage, auth));
     app.route("/setup", setupRoutes(storage, auth));
+    if (options.localAuthority)
+      app.route("/_control", controlRoutes(storage, auth, config.authBaseUrl));
     app.route("/auth/owner", ownerPages(storage, auth));
   }
   app.route("/export", exportRoutes(storage, blobs, instanceId));

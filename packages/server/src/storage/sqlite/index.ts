@@ -1,3 +1,4 @@
+import { validateRequestAuthority } from "../../auth/request-authority.js";
 import { readSnapshotRunner } from "./read-snapshot.js";
 import { initializeStructuralGeneration } from "./structural-generation.js";
 import { ensureInstanceId } from "../instance-id.js";
@@ -210,7 +211,11 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       options?: { retainCommitHooksOnUncertain?: boolean },
     ): Promise<T> {
       return await withCommitHooks(
-        (body) => db.transaction(async () => await body()),
+        (body) =>
+          db.transaction(async () => {
+            await validateRequestAuthority();
+            return await body();
+          }),
         fn,
         options?.retainCommitHooksOnUncertain,
       );

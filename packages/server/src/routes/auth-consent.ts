@@ -400,26 +400,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             return { skipped: false, priorScopes };
           }
 
-          if (accept) {
-            const prior =
-              (await deps.storage.oauthProvider?.getPriorConsent(
-                clientId,
-                session.user.id,
-              )) ?? [];
-            if (
-              formScopes.some(
-                (scope) =>
-                  [
-                    "instance.read",
-                    "instance.maintain",
-                    "connectors.manage",
-                    "blobs.manage",
-                    "keys.manage",
-                  ].includes(scope) && !prior.includes(scope),
-              )
-            )
-              requireRecentOwnerAuthentication(c);
-          }
           const proxyResp = await proxyConsentDecision(
             auth,
             c.req.url,
@@ -719,6 +699,26 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return runAuditedTransaction(
         deps.storage,
         async () => {
+          if (accept) {
+            const prior =
+              (await deps.storage.oauthProvider?.getPriorConsent(
+                clientId,
+                session.user.id,
+              )) ?? [];
+            if (
+              formScopes.some(
+                (scope) =>
+                  [
+                    "instance.read",
+                    "instance.maintain",
+                    "connectors.manage",
+                    "blobs.manage",
+                    "keys.manage",
+                  ].includes(scope) && !prior.includes(scope),
+              )
+            )
+              requireRecentOwnerAuthentication(c);
+          }
           const proxyResp = await proxyConsentDecision(
             auth,
             c.req.url,

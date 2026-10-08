@@ -1,4 +1,3 @@
-import { validateRequestAuthority } from "../auth/request-authority.js";
 import { generateId } from "@withmarfa/shared";
 import type { AuditLogEntry, Storage } from "./interface.js";
 import {
@@ -21,7 +20,6 @@ export async function runAuditedTransaction<T>(
   try {
     return await storage.runInTransaction(
       async () => {
-        await validateRequestAuthority();
         result = await work();
         const record = typeof entry === "function" ? entry(result) : entry;
         if (record !== null) {

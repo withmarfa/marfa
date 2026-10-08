@@ -255,7 +255,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the owner or local command, which reads no items.",
+        "Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source.",
     },
     400: {
       content: {
@@ -305,7 +305,7 @@ const listKeysRoute = createRoute({
   tags: ["Access"],
   summary: "List API keys",
   description:
-    "Returns the API keys you could have created, your own included, without their plaintext. The owner or local command gets every key. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+    "Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   responses: {
@@ -379,7 +379,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Revoke an API key",
   description:
-    "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+    "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {
