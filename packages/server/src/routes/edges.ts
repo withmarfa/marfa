@@ -650,13 +650,7 @@ export function edgeRoutes(storage: Storage) {
     const outcome = await runAuditedTransaction(
       storage,
       async () => {
-        // Dual gate: the source item's type permission and the edge type's,
-        // and nothing bypasses either. There is no rank left to bypass on,
-        // and the operator flag is not an exception — it is not consulted
-        // here at all, so a credential carrying it is refused on an ordinary
-        // edge exactly like any other credential whose maps do not cover it.
-        // The one carve-out either helper makes is for a reserved namespace,
-        // and that does not fire for an ordinary type.
+        // Both the source item's type map and the edge map must permit the write.
         const sourceItem = requireReadableRow(
           c,
           await storage.items.get(body.source_id),

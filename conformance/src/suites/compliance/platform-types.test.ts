@@ -9,7 +9,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
-let operator: MarfaClient;
+let manager: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 
@@ -18,7 +18,7 @@ beforeAll(async () => {
     "compliance",
     "platform-types",
   ));
-  operator = getManagementClient();
+  manager = getManagementClient();
 });
 
 afterAll(async () => {
@@ -34,7 +34,7 @@ afterAll(async () => {
  */
 describe("platform type maintenance", () => {
   it("lists no drift on an instance whose platform types match the build", async () => {
-    const r = await operator.listPlatformTypeDrift();
+    const r = await manager.listPlatformTypeDrift();
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/platform-types/drift", 200, r.data);
     expect(r.data.data).toEqual([]);
@@ -57,7 +57,7 @@ describe("platform type maintenance", () => {
     expect(missing.error?.error.code).toBe("type_not_found");
   });
 
-  it("refuses the listing to a working key and to no credential", async () => {
+  it("refuses the listing without instance.read and to no credential", async () => {
     const working = await client.listPlatformTypeDrift();
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
@@ -66,7 +66,7 @@ describe("platform type maintenance", () => {
   });
 
   it("refuses to remove a type the build still ships", async () => {
-    const r = await operator.deletePlatformType("core.note");
+    const r = await manager.deletePlatformType("core.note");
     expect(r.status).toBe(409);
     expect(r.error?.error.code).toBe("conflict");
     expect(r.error?.error.details?.type).toBe("core.note");
@@ -80,7 +80,7 @@ describe("platform type maintenance", () => {
     // is for an identifier a row does carry and the build still ships,
     // which is a refusal about the state of the row rather than about
     // whether there is one.
-    const r = await operator.deletePlatformType("core.never-existed");
+    const r = await manager.deletePlatformType("core.never-existed");
     expect(r.status).toBe(404);
     expect(r.error?.error.code).toBe("type_not_found");
   });
@@ -93,20 +93,20 @@ describe("platform type maintenance", () => {
     });
     expect(registered.status).toBe(201);
 
-    const r = await operator.deletePlatformType(id);
+    const r = await manager.deletePlatformType(id);
     expect(r.status).toBe(409);
     expect(r.error?.error.code).toBe("conflict");
     expect(r.error?.error.details?.type).toBe(id);
     // The witness: an identifier no row carries is the `404` beside it, and
     // the registration is still there after the refusal.
-    const absent = await operator.deletePlatformType(
+    const absent = await manager.deletePlatformType(
       `user.platform-door-absent-${ctx.runId}`,
     );
     expect(absent.status).toBe(404);
     expect((await client.getType(id)).status).toBe(200);
   });
 
-  it("refuses removal to a working key", async () => {
+  it("refuses removal without instance.maintain", async () => {
     const r = await client.deletePlatformType("core.note");
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("forbidden");

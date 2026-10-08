@@ -518,8 +518,8 @@ describe("a bulk purge", () => {
 });
 
 describe("a bulk-action job", () => {
-  it("lets the operator key read and cancel any job", async () => {
-    const tag = `limits-operator-${ctx.runId}`;
+  it("lets instance.read and instance.maintain read and cancel any job", async () => {
+    const tag = `limits-manager-${ctx.runId}`;
     await noteWithTag(tag);
     const queued = await client.bulkAction({
       action: "transition",
@@ -531,16 +531,16 @@ describe("a bulk-action job", () => {
     const final = await client.pollBulkActionToTerminal(jobId);
     expect(final.status).toBe("completed");
 
-    const operator = getManagementClient();
-    const read = await operator.bulkActionStatus(jobId);
+    const manager = getManagementClient();
+    const read = await manager.bulkActionStatus(jobId);
     expect(read.status).toBe(200);
     expect(read.data).toEqual(final);
 
-    const cancelled = await operator.bulkActionCancel(jobId);
+    const cancelled = await manager.bulkActionCancel(jobId);
     expect(cancelled.status).toBe(200);
     expect(cancelled.data).toEqual(final);
 
-    // The witness: a credential that is not the operator is refused.
+    // The witness: a credential with neither management permission is refused.
     const other = await createSecondClient(ctx, "limits-other");
     expect((await other.bulkActionStatus(jobId)).status).toBe(403);
   });

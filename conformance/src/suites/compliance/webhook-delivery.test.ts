@@ -199,12 +199,12 @@ async function deliveryOf(
  * holds it answers 409 and is run again.
  */
 async function runRetriesUntil(done: () => boolean, what: string) {
-  const operator = getManagementClient();
+  const manager = getManagementClient();
   await waitFor(
     what,
     async () => {
       if (done()) return true;
-      await operator.runHousekeeping("webhook-poll");
+      await manager.runHousekeeping("webhook-poll");
       await new Promise((r) => setTimeout(r, 200));
       return done() ? true : undefined;
     },

@@ -19,7 +19,7 @@ import {
  */
 let server: FreshServer | undefined;
 let client: MarfaClient;
-let operator: MarfaClient;
+let manager: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("audit-jobs");
@@ -27,7 +27,7 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  operator = new MarfaClient({
+  manager = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.managementKey,
   });
@@ -189,8 +189,8 @@ describe("the audit log of a bulk action", () => {
 });
 
 describe("the audit log of a housekeeping run", () => {
-  it("is not written to by POST /housekeeping/{name}/run, which runs a job the operator named", async () => {
-    const jobs = await operator.listHousekeeping();
+  it("is not written to by POST /housekeeping/{name}/run, which runs a job the manager named", async () => {
+    const jobs = await manager.listHousekeeping();
     expect(jobs.ok, JSON.stringify(jobs.error)).toBe(true);
     const names = ["trash-purge", "event-log-cleanup", "audit-cleanup"];
     for (const name of names) {
@@ -202,7 +202,7 @@ describe("the audit log of a housekeeping run", () => {
     const before = await wholeLog();
     expect(before.length).toBeGreaterThan(0);
     for (const name of names) {
-      const run = await operator.runHousekeeping(name);
+      const run = await manager.runHousekeeping(name);
       expect(run.status, name).toBe(200);
       expect(run.data.outcome, name).toBe("ok");
     }

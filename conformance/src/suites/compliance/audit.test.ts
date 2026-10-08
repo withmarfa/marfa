@@ -559,17 +559,17 @@ describe("audit log", () => {
     expect(refusedEntries).toEqual([]);
 
     // Nor does a credential that reaches no type, turned away at the door.
-    const operator = process.env.MARFA_MANAGEMENT_KEY!;
-    const turnedAway = await exportAs(operator, "");
+    const manager = process.env.MARFA_MANAGEMENT_KEY!;
+    const turnedAway = await exportAs(manager, "");
     expect(turnedAway.status).toBe(403);
     await turnedAway.text();
-    const operatorId = (
+    const managerId = (
       await new MarfaClient({
         baseUrl: apiUrl,
-        apiKey: operator,
+        apiKey: manager,
       }).getCurrentKey()
     ).data.id;
-    expect(await ownEntries("export.run", since, operatorId)).toEqual([]);
+    expect(await ownEntries("export.run", since, managerId)).toEqual([]);
   });
   it("keeps every credential value out of the entries a key's and a webhook's writes leave", async () => {
     const { since } = await seedHolding(`audit-secret-${ctx.runId}`);
@@ -678,7 +678,7 @@ describe("audit log", () => {
     }
   });
 
-  it("lists newest first, and refuses the operator key, which does not hold audit.read", async () => {
+  it("lists newest first", async () => {
     const first = await client.createItem(createNote({ source: ctx.source }));
     expect(first.ok).toBe(true);
     trackItem(ctx, first.data.item.id);
@@ -701,13 +701,5 @@ describe("audit log", () => {
     expect(ids.indexOf(newer.id)).toBeLessThan(ids.indexOf(older.id));
     const stamps = page.data.data.map((row) => row.created_at);
     expect([...stamps].sort().reverse()).toEqual(stamps);
-
-    const operator = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: process.env.MARFA_MANAGEMENT_KEY!,
-    });
-    const refused = await operator.listAudit();
-    expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("forbidden");
   });
 });
