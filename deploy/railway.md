@@ -2,8 +2,6 @@
 
 Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server, a persistent data volume, and a private backup bucket in your Railway project.
 
-**Draft:** live claim, persistence, and password recovery have passed. Final build-revision verification and cleanup remain outstanding.
-
 ## Deploy the template
 
 You need a Railway account with permission to deploy services, volumes, and buckets in your chosen workspace. Railway bills the running service and storage to that workspace; see its [pricing documentation](https://docs.railway.com/pricing).
@@ -86,7 +84,7 @@ To keep the backup bucket for recovery, keep its project and delete only the Mar
 
 ## Template configuration
 
-These are the intended settings for template maintenance. Verify them against the finished template before publishing this guide.
+These settings describe the saved template and its container defaults.
 
 | Setting                     | Value                                                |
 | --------------------------- | ---------------------------------------------------- |
@@ -96,7 +94,7 @@ These are the intended settings for template maintenance. Verify them against th
 | `BLOB_PATH`                 | `/data/blobs`                                        |
 | `NODE_ENV`                  | `production` (set by the container)                  |
 | Dockerfile                  | `deploy/Dockerfile` via `RAILWAY_DOCKERFILE_PATH`    |
-| Build revision              | `VERSION_SHA=${{RAILWAY_GIT_COMMIT_SHA}}`            |
+| Build revision              | `RAILWAY_GIT_COMMIT_SHA` Docker build argument       |
 | Runtime UID                 | `RAILWAY_RUN_UID=0`                                  |
 | Control socket              | `/run/marfa/control.sock`                            |
 | Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`             |
@@ -118,5 +116,7 @@ These are the intended settings for template maintenance. Verify them against th
 | `S3_PREFIX`                 | `blobs`                                              |
 
 Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template.
+
+The container uses Railway's Git build argument when `VERSION_SHA` is empty or unset. An explicit `VERSION_SHA` takes precedence for other build workflows. The resulting revision appears in `/health`; see [Dockerfile build variables](https://docs.railway.com/builds/dockerfiles#using-variables-at-build-time).
 
 Railway mounts volumes as root. The template uses Railway's `RAILWAY_RUN_UID=0` override so the server and command share an OS account that can write the fresh volume. The local socket remains private inside the container; see [volume permissions](https://docs.railway.com/volumes#permissions). The selected source must also allow SSH: [private template images with hidden registry credentials disable SSH](https://docs.railway.com/templates/create#private-docker-images).
