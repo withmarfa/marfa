@@ -450,7 +450,7 @@ describe("an extension lends read on the blobs its namespace names", () => {
     expect(await read(ctx, owner, hash)).toBe(200);
     expect(await read(ctx, namespaceReader, hash)).toBe(200);
     expect(await read(ctx, wildcardReader, hash)).toBe(200);
-    expect(await read(ctx, ownLabelReader, hash)).toBe(200);
+    expect(await read(ctx, ownLabelReader, hash)).toBe(404);
     expect(await read(ctx, otherNamespaceReader, hash)).toBe(404);
     expect(await read(ctx, noExtensionReader, hash)).toBe(404);
     expect(await read(ctx, wrongTypeReader, hash)).toBe(404);

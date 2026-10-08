@@ -88,13 +88,6 @@ interface ConsentParams {
   /** The nonce the response's content security policy names, which the
    *  inline script carries. */
   nonce: string;
-  /**
-   * When `true`, the client has no verified identity — a public / DCR client
-   * (PKCE, `token_endpoint_auth_method: none`). The screen shows a single
-   * boxed caution next to the self-asserted name; a scammer can register a
-   * client named "Google Drive", so the name alone is not trustworthy.
-   */
-  unverified?: boolean;
   scopes: ParsedScope[];
   clientId: string;
   /**
@@ -1039,9 +1032,9 @@ export function renderConsentScreen(params: ConsentParams): string {
     contentHtml = `${groupedTiles(visible)}${hiddenFields(params.scopes)}`;
   }
 
-  // One boxed caution for an unverified (public / DCR) client — no inline
-  // badge, no second warning.
-  const callout = params.unverified ? unverifiedAppCallout() : "";
+  // Every app registered itself without a credential, so its name is only
+  // what it said: one boxed caution beside it, and no second warning.
+  const callout = unverifiedAppCallout();
 
   const errorBanner = params.errorMessage
     ? `<div class="banner banner--error" role="alert">${escapeHtml(params.errorMessage)}</div>`

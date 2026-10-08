@@ -24,7 +24,6 @@ import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import type { BoundCredential } from "../auth/live-credential.js";
 import type { ReadViewAuthority } from "../storage/read-view.js";
-import { extensionLabelOf } from "../auth/extension-label.js";
 
 // ---------------------------------------------------------------------------
 // Hono environment type (shared across all routes)
@@ -127,11 +126,9 @@ export function hashApiKey(raw: string, salt: string): string {
  * every field added to `ApiKey` afterwards until someone remembered to
  * extend the list, and drop it silently: the types agree either way
  * because the missing fields are optional. `oauth_client_id` is the field
- * that shows what that costs — it is optional, it is stamped by the server
- * rather than asked for, and `extensionLabelOf` refuses a label claim on
- * it, so a rebuild that forgot it would hand every app-minted key a label
- * it may not have. Naming what to remove fails closed on the next field;
- * naming what to keep fails open.
+ * that shows what that costs: it is optional and stamped by the server, and
+ * `GET /keys/current` answers this object, so a rebuild that forgot it would
+ * present an app's key as an ordinary one.
  */
 export function toRequestApiKey(
   stored: ApiKey & { key_hash: string; revoked_at: string | null },
@@ -336,11 +333,6 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
     // The permissions the door reads come from the grant beside this
     // principal rather than from here, because a grant is the live answer
     // and a projection would be a copy of it taken at request time.
-    //
-    // The client is named on the principal because one thing downstream
-    // needs to know an app chose this credential's label rather than an
-    // operator: see `extensionLabelOf`.
-    oauth_client_id: oauthToken.clientId,
     type_permissions: typePermissions,
     extension_permissions: {},
     edge_permissions: edgePermissions,
@@ -716,7 +708,6 @@ export function checkExtensionPermission(
   const perm = resolveExtensionPermission(
     namespace,
     apiKey?.extension_permissions,
-    extensionLabelOf(apiKey),
   );
   if (perm === "write" || (level === "read" && perm === "read")) {
     rememberReplayRequirement({ kind: "extension", namespace, level });

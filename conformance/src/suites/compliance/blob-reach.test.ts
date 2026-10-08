@@ -1645,8 +1645,8 @@ describe("which write that names a digest lends it", () => {
     expect((await operator.downloadBlob(hash)).status).toBe(200);
   });
 
-  it("serves a blob an extension names to a key whose label is the namespace, and to no key labeled another", async () => {
-    const hash = await upload("named by an extension a label reads");
+  it("does not serve a blob an extension names to a key whose label is the namespace and whose extension map does not reach it", async () => {
+    const hash = await upload("named by an extension under a key's label");
     const item = await noteSaying("an item whose namespace is a label");
     const namespace = `labeled.${ctx.runId}`;
     const labeled = await client.createKey({
@@ -1656,18 +1656,24 @@ describe("which write that names a digest lends it", () => {
     });
     expect(labeled.ok, JSON.stringify(labeled.error)).toBe(true);
     trackKey(ctx, labeled.data.id);
-    const owner = new MarfaClient({
+    const sameLabel = new MarfaClient({
       baseUrl: apiUrl,
       apiKey: labeled.data.key,
     });
-    const other = await keyHolding({ "core.note": "read" });
+    const mapped = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
 
     const written = await client.setItemExtension(item.id, namespace, {
       cover: hash,
     });
     expect(written.ok, JSON.stringify(written.error)).toBe(true);
-    expect(await readingDoors(owner, hash)).toEqual(SERVED);
-    expect(await readingDoors(other.client, hash)).toEqual(UNKNOWN);
+    // The witness: a key whose extension map reaches the namespace is served
+    // the blob, and the labeled key reads the item it sits on.
+    expect(await readingDoors(mapped.client, hash)).toEqual(SERVED);
+    expect((await sameLabel.getItem(item.id)).status).toBe(200);
+    expect(await readingDoors(sameLabel, hash)).toEqual(UNKNOWN);
   });
 
   it("leaves out of an export archive a digest a property names without lending it, and one only an earlier version names", async () => {

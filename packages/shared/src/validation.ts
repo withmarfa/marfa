@@ -251,7 +251,9 @@ export function resolveTypePermission(
   permissions: Record<string, TypePermission>,
 ): TypePermission {
   // Exact match takes priority
-  const exact = permissions[type];
+  const exact = Object.hasOwn(permissions, type)
+    ? permissions[type]
+    : undefined;
   if (exact !== undefined) {
     return exact;
   }
@@ -291,31 +293,30 @@ export function resolveTypePermission(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the effective permission for an extension namespace.
- * Checks: exact match → wildcard "*" → implicit own-namespace write → "none".
+ * The level an extension map grants on a namespace: its exact entry, else its
+ * `*` entry, else `"none"`.
  */
 export function resolveExtensionPermission(
   namespace: string,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
-  keyLabel: string,
 ): import("./types.js").ExtensionPermission | "none" {
   if (permissions) {
-    // Exact namespace match
-    const exact = permissions[namespace];
+    const exact = Object.hasOwn(permissions, namespace)
+      ? permissions[namespace]
+      : undefined;
     if (exact) return exact;
-    // Wildcard
-    const wildcard = permissions["*"];
+    const wildcard = Object.hasOwn(permissions, "*")
+      ? permissions["*"]
+      : undefined;
     if (wildcard) return wildcard;
   }
-  // Implicit: keys can always write their own namespace (matching key label)
-  if (namespace === keyLabel) return "write";
   return "none";
 }
 
 /**
  * Filters extension namespaces to the ones the requesting credential's
- * extension permissions reach, plus its own label's namespace.
+ * extension permissions reach.
  *
  * There is no privileged reader: one permission model has no rank that sees
  * everything.
@@ -324,11 +325,10 @@ export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
-  keyLabel: string,
 ): Record<string, Record<string, unknown>> {
   const filtered: Record<string, Record<string, unknown>> = {};
   for (const [ns, data] of Object.entries(extensions)) {
-    const perm = resolveExtensionPermission(ns, permissions, keyLabel);
+    const perm = resolveExtensionPermission(ns, permissions);
     if (perm !== "none") {
       filtered[ns] = data;
     }
