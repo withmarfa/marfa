@@ -12,6 +12,7 @@ import {
   connected,
   cursorAhead,
   edgeEvent,
+  copyFrame,
   copyHeadRead,
   copyHeldLog,
   copyItemEvent,
@@ -138,7 +139,7 @@ describe("catch-up replays from the cursor", () => {
 
   it("resumes from zero after hydrating an empty instance, and applies the first event", async () => {
     // An instance nothing has written to yet: the log's head is 0, and the
-    // first event it ever writes is 1 (`device.md` 35).
+    // first event it ever writes is 1 (`device/cursor-zero`).
     harness = await startHarness("catch-up-from-zero");
     const { server, device } = harness;
     scriptHydration(server, { head: "0" });
@@ -1003,6 +1004,7 @@ describe("catch-up replays from the cursor", () => {
       refused.ok,
       "a catch-up took an event id that is not one as its cursor",
     ).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("decoding");
     const status = await device.status();
     expect(
       status.ok && status.value.event_cursor,
@@ -1013,6 +1015,60 @@ describe("catch-up replays from the cursor", () => {
     const taken = await device.catchUp();
     expect(taken.ok, JSON.stringify(taken)).toBe(true);
     expect((await device.get("n11")).ok).toBe(true);
+  });
+
+  it("takes a frame that names an id and carries no data as no event", async () => {
+    harness = await startHarness("catch-up-no-data");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("10", [{ raw: "id: 11\nevent: item.created\n\n" }]),
+      copyReplay("11", [copyItemEvent("11", "item.created", row)]),
+    );
+    // The hydration's own head read answers once more first.
+    expect((await device.catchUp()).ok).toBe(true);
+    const passed = await device.catchUp();
+    expect(passed.ok, JSON.stringify(passed)).toBe(true);
+    if (passed.ok) {
+      expect(passed.value.applied).toBe(0);
+      expect(passed.value.skipped).toBe(0);
+    }
+    // The witness: the same frame carrying its data is an event.
+    const taken = await device.catchUp();
+    expect(taken.ok && taken.value.applied).toBe(1);
+    expect((await device.get("n11")).ok).toBe(true);
+  });
+
+  it("refuses a line longer than 64 MiB, keeping the cursor it had", async () => {
+    harness = await startHarness("catch-up-long-line");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const MOST = 64 * 1024 * 1024;
+    // A comment, which a device reads past, of the most bytes a line may
+    // hold with its line ending, and one byte more.
+    const comment = (bytes: number) => ({ raw: `:${"x".repeat(bytes - 2)}\n` });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [comment(MOST + 1)]),
+      copyReplay("11", [comment(MOST)]),
+    );
+    expect((await device.catchUp()).ok).toBe(true);
+    const refused = await device.catchUp();
+    expect(refused.ok, "a catch-up read a line past the bound").toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("decoding");
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("10");
+    // The witness: a line at the bound is read.
+    const taken = await device.catchUp();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    const after = await device.status();
+    expect(after.ok && after.value.event_cursor).toBe("11");
   });
 
   it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {
@@ -3192,10 +3248,13 @@ describe("catch-up keeps the copy to its slice", () => {
     server.copyAnswer(
       "GET",
       "/types",
+      // The hydration reads the catalog twice, once for its pages and once
+      // for its own replay.
       typeCatalog(),
-      // A type registered while the device was away, whose parent is a type
-      // the device declared. Read against the old catalog it belongs to no
-      // subtree and the row is thrown away.
+      typeCatalog(),
+      // A type the catalog gained while the device was away, whose parent is
+      // a type the device declared. Read against the old catalog it belongs
+      // to no subtree and the row is thrown away.
       {
         kind: "json",
         status: 200,
@@ -3224,12 +3283,17 @@ describe("catch-up keeps the copy to its slice", () => {
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const hydrated = server.requests.length;
     expect((await device.catchUp()).ok).toBe(true);
 
+    const caught = server.requests.slice(hydrated).map((r) => r.pathname);
+    const stream = caught.indexOf("/events");
     expect(
-      server.requests.filter((request) => request.pathname === "/types").length,
-      "the catch-up did not read the type registry, so its idea of the type graph is whatever the last hydration saw",
-    ).toBeGreaterThanOrEqual(2);
+      [caught.indexOf("/types"), caught.indexOf("/edge-types")].every(
+        (at) => at >= 0 && at < stream,
+      ),
+      `the catch-up did not read both catalogs before it opened its stream, so its idea of the type graph is whatever the last hydration saw: ${caught.join(", ")}`,
+    ).toBe(true);
     const held = await device.list();
     expect(
       held.ok ? held.value.map((item) => item.id) : [],
@@ -3686,5 +3750,409 @@ describe("a server that is not the one the copy followed", () => {
       [OTHER_INSTANCE, SCRIPTED_INSTANCE],
       waiting,
     );
+  });
+});
+
+describe("a pin, and the rows it holds", () => {
+  it("lets a held row go when neither the server nor its bin holds a row it pins", async () => {
+    harness = await startHarness("pin-gone-held");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "gone" } }, { item: { id: "stays" } }],
+      },
+    });
+    server.copyAnswer("GET", "/items/gone", answers.itemNotFound("gone"));
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the slice holds the row before the pin.
+    expect((await device.get("gone")).ok).toBe(true);
+
+    const refused = await device.pin("gone");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("not_found");
+      expect(refused.refusal.raw).not.toContain("trashed");
+    }
+    expect(
+      (await device.get("gone")).ok,
+      "the copy kept a row the server and its bin both say they do not hold",
+    ).toBe(false);
+    expect((await device.get("stays")).ok).toBe(true);
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toEqual([]);
+  });
+
+  it("refuses a pin on a copy that has not completed a hydration, sending nothing", async () => {
+    harness = await startHarness("pin-never");
+    const { server, device } = harness;
+    expect((await device.status()).ok).toBe(true);
+    const refused = await device.pin("01a00000-0000-7000-8000-00000000000a");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
+    expect(server.requests, "the pin asked the server").toEqual([]);
+    const status = await device.status();
+    expect(status.ok && [status.value.hydration, status.value.pinned]).toEqual([
+      "never",
+      [],
+    ]);
+  });
+
+  const bound = (version: number, title: string) =>
+    wireItem({
+      id: "bound",
+      type: "core.bookmark",
+      version,
+      properties: { title },
+    });
+  const keptForAWrite = async (label: string, events?: Answer) => {
+    harness = await startHarness(label);
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "stays" } }] },
+    });
+    // Answers are taken in order, so the catch-up's stream is scripted
+    // behind the hydration's.
+    if (events !== undefined) server.copyAnswer("GET", "/events", events);
+    server.copyAnswer("GET", "/items/bound", answers.updated(bound(1, "read")));
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("bound")).ok).toBe(true);
+    const edit = await device.update("bound", {
+      properties: { title: "mine" },
+      version: 1,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    expect((await device.unpin("bound")).ok).toBe(true);
+    // The witness: the unpin kept the row the edit still waits on.
+    const held = await device.get("bound");
+    expect(held.ok && held.value.properties.title).toBe("mine");
+    return { device, write: edit.ok ? edit.value.id : "" };
+  };
+
+  it("lets an unpinned row kept for a waiting write go at the next catch-up that touches it, keeping the write", async () => {
+    const { device, write } = await keptForAWrite(
+      "unpin-kept-catch-up",
+      copyReplay("11", [
+        copyItemEvent("11", "item.updated", bound(2, "theirs")),
+      ]),
+    );
+    const caught = await device.catchUp();
+    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
+    expect(
+      (await device.get("bound")).ok,
+      "a row nothing pins and the slice does not take stayed after an event touched it",
+    ).toBe(false);
+    const queue = await device.queue();
+    expect(queue.ok ? queue.value.map((row) => row.id) : queue).toEqual([
+      write,
+    ]);
+  });
+
+  it("lets an unpinned row kept for a waiting write go at the next hydration, keeping the write", async () => {
+    const { device, write } = await keptForAWrite("unpin-kept-hydration");
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (await device.get("bound")).ok,
+      "a hydration kept a row nothing pins and the slice does not take",
+    ).toBe(false);
+    expect((await device.get("stays")).ok).toBe(true);
+    const queue = await device.queue();
+    expect(queue.ok ? queue.value.map((row) => row.id) : queue).toEqual([
+      write,
+    ]);
+  });
+});
+
+describe("another instance met by a held stream", () => {
+  it("expires the copy when a held stream's marker names another instance", async () => {
+    const other = "00000000-0000-7000-8000-0000000000ff";
+    harness = await startHarness("follow-marker-instance");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const marked = copyLiveReplay("10", []);
+    if (marked.kind !== "sse") throw new Error("a replay must be a stream");
+    server.copyAnswer("GET", "/events", {
+      ...marked,
+      frames: marked.frames.map((frame) =>
+        frame.event === "stream_cursor"
+          ? {
+              ...frame,
+              data: {
+                ...(frame.data as Record<string, unknown>),
+                instance_id: other,
+              },
+            }
+          : frame,
+      ),
+    });
+    const before = await device.status();
+    // The witness: the root names the copy's own instance.
+    expect(before.ok && before.value.instance_id).toBe(SCRIPTED_INSTANCE);
+    const ended = await device.follow(30);
+    expect(ended.ok).toBe(false);
+    if (!ended.ok) expect(ended.refusal.code).toBe("copy_expired");
+    const status = await device.status();
+    expect(
+      status.ok && [status.value.hydration, status.value.event_cursor ?? null],
+    ).toEqual(["expired", null]);
+  });
+});
+
+describe("what a catch-up takes from the stream", () => {
+  it("lets a row the stream lists as outside the item listing go", async () => {
+    harness = await startHarness("unlisted");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "excluded" } }, { item: { id: "stays" } }],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "excluded", version: 2 }),
+          { listed: false },
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the row is held before the event.
+    expect((await device.get("excluded")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect(
+      (await device.get("excluded")).ok,
+      "a row the server no longer lists for this copy stayed in it",
+    ).toBe(false);
+    expect((await device.get("stays")).ok).toBe(true);
+  });
+
+  it("takes a created row's edges from the frames after it, reading nothing for them", async () => {
+    harness = await startHarness("created-edges");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("12", [
+        copyItemEvent("11", "item.created", wireItem({ id: "fresh" })),
+        edgeEvent(
+          "12",
+          "edge.created",
+          wireEdge({
+            id: "fresh-to-n1",
+            source_id: "fresh",
+            target_id: "n1",
+            edge_type: "references",
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const asked = server.requests.length;
+    const caught = await device.catchUp();
+    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(2);
+    const edges = await device.edgesFrom("fresh");
+    expect(edges.ok ? edges.value.map((edge) => edge.id) : edges).toEqual([
+      "fresh-to-n1",
+    ]);
+    expect(
+      server.requests
+        .slice(asked)
+        .map((request) => request.pathname)
+        .filter((path) => path.startsWith("/items/") || path === "/edges"),
+      "the catch-up read a created row's edges, which its stream carries after it",
+    ).toEqual([]);
+  });
+
+  it("hydrates again when the live marker is behind its cursor", async () => {
+    harness = await startHarness("marker-behind");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, copyStreamLive("9")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok ? null : caught.refusal.code).toBe("copy_expired");
+    const status = await device.status();
+    expect(
+      status.ok && [status.value.hydration, status.value.event_cursor ?? null],
+    ).toEqual(["expired", null]);
+  });
+
+  it("ends a catch-up on silence before the marker, at the last event it took", async () => {
+    harness = await startHarness("silence");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      quiet: true,
+      frames: [
+        connected,
+        copyStreamCursor("20"),
+        copyFrame(copyItemEvent("11", "item.created", wireItem({ id: "a" }))),
+      ],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const started = Date.now();
+    const caught = await device.catchUp();
+    expect(
+      Date.now() - started,
+      "a catch-up held a silent stream past its idle",
+    ).toBeLessThan(30_000);
+    expect(caught.ok ? null : caught.refusal.code).toBe("stream_incomplete");
+    const status = await device.status();
+    expect(
+      status.ok && [status.value.hydration, status.value.event_cursor],
+    ).toEqual(["complete", "11"]);
+    expect((await device.get("a")).ok).toBe(true);
+  });
+});
+
+describe("what a held stream takes and tells", () => {
+  it("ends a follow on an event id that is not a number, keeping its cursor", async () => {
+    harness = await startHarness("follow-event-id");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyLiveReplay("11", [copyItemEvent("eleven", "item.created", row)]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(30);
+    expect(followed.ok, "a follow took an id that is not a number").toBe(false);
+    if (!followed.ok) expect(followed.refusal.code).toBe("decoding");
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("10");
+  });
+
+  it("opens a held stream again from its cursor when the server calls it incomplete", async () => {
+    harness = await startHarness("follow-incomplete");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      {
+        kind: "sse",
+        frames: [
+          connected,
+          copyStreamCursor("12"),
+          copyFrame(copyItemEvent("11", "item.created", wireItem({ id: "a" }))),
+          {
+            event: "stream_incomplete",
+            data: { event_type: "stream_incomplete", reason: "replay_failed" },
+          },
+        ],
+      },
+      copyLiveReplay("12", [
+        copyItemEvent("12", "item.created", wireItem({ id: "b" })),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(4);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect(
+      followed.ok &&
+        followed.value.changes
+          .filter((change) => !change.event.startsWith("server."))
+          .map((change) => change.cursor),
+    ).toEqual(["11", "12"]);
+    expect(lastEventIds(harness).slice(2, 4)).toEqual(["10", "11"]);
+  });
+
+  it("names the edge a held stream's change was about", async () => {
+    harness = await startHarness("follow-edge-id");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }, { item: { id: "n2" } }] },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyLiveReplay("11", [
+        edgeEvent(
+          "11",
+          "edge.created",
+          wireEdge({
+            id: "n1-to-n2",
+            source_id: "n1",
+            target_id: "n2",
+            edge_type: "references",
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(2);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect(
+      followed.ok &&
+        followed.value.changes.map((change) => [
+          change.event,
+          change.edge_id,
+          change.cursor,
+        ]),
+    ).toEqual([["edge.created", "n1-to-n2", "11"]]);
+  });
+});
+
+describe("a read older than the row held", () => {
+  it("keeps the row it holds where a pin's read answers an older one", async () => {
+    harness = await startHarness("pin-older-read");
+    const { server, device } = harness;
+    const row = (version: number, title: string, at: string) =>
+      wireItem({
+        id: "held",
+        version,
+        updated_at: at,
+        properties: { title, body: "b" },
+      });
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "held",
+              version: 3,
+              properties: { title: "newer", body: "b" },
+            },
+          },
+        ],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/items/held",
+      answers.updated(row(2, "older", "2026-01-01T00:00:00.000Z")),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const pinned = await device.pin("held");
+    expect(pinned.ok, JSON.stringify(pinned)).toBe(true);
+    const held = await device.get("held");
+    expect(
+      held.ok && [held.value.version, held.value.properties.title],
+      "a pin's read rolled the row back to an older version",
+    ).toEqual([3, "newer"]);
   });
 });

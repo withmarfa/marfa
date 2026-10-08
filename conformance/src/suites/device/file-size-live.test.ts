@@ -68,7 +68,7 @@ it("shows a file's size in the copy before it drains, and the server's once it h
   );
   const added = value(await offline.addFile(fileOf("report.txt", report)));
   const files = [
-    { id: attached[1]?.item_id ?? "", size: photo.length },
+    { id: attached.item.item_id ?? "", size: photo.length },
     { id: added[1]?.item_id ?? "", size: report.length },
   ];
   for (const file of files) {

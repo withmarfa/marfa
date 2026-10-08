@@ -148,7 +148,7 @@ When `GET /types` lists a type, the server MUST answer the `version_policy` and 
 
 When a type declares no `display_hints`, the server MUST answer on `GET /types/{id}` those of its nearest ancestor that declares any, whole.
 
-**Reason:** a type that names only a body hint gets no title hint from its parent, so a reader falls back to `title` (`device.md` 47).
+**Reason:** a type that names only a body hint gets no title hint from its parent, so a reader falls back to `title` (`device/catalog-type-read`).
 
 **Tests:** `compliance/type-inheritance.test.ts › answers the display hints of the nearest type that declares any, whole`.
 
@@ -162,7 +162,7 @@ If `GET /types/{id}` or `DELETE /types/{id}` names an identifier nothing registe
 
 The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
 
-**Reason:** a registered type and an unregistered one are already told apart, a schema holds no item data, and a device resolves an inherited field by walking `parent` (`device.md` 47).
+**Reason:** a registered type and an unregistered one are already told apart, a schema holds no item data, and a device resolves an inherited field by walking `parent` (`device/catalog-type-read`).
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.
 
@@ -284,7 +284,7 @@ If a field of a type other than `string` names a `format` of `bcp47` or `iso3166
 
 When an item names a value for a `datetime` field, the server MUST take a `YYYY-MM-DD` calendar date, or such a date followed by `T`, `HH:MM`, `HH:MM:SS` or `HH:MM:SS` with a decimal fraction, and `Z` or a `±HH:MM` offset, with hours to 23 and minutes and seconds to 59.
 
-**Reason:** a value keeps the precision its source gave it, and a device validates the same values offline as the server does online (`device.md` 57).
+**Reason:** a value keeps the precision its source gave it, and a device validates the same values offline as the server does online (`device/declared-checked`).
 
 **Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
 

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   certifiedRead,
@@ -105,6 +107,28 @@ describe("certified read views", () => {
     },
   );
 
+  it.each([
+    ["a dropped connection", { kind: "drop" } as const],
+    [
+      "a gateway's refusal naming no contract",
+      {
+        kind: "json",
+        status: 502,
+        body: { error: { code: "bad_gateway", message: "upstream" } },
+        contract: null,
+      } as const,
+    ],
+  ])("keeps a certified offline copy after %s", async (_what, answer) => {
+    const h = await prepared();
+    const before = await h.device.queue();
+    h.server.answer("GET", "/items/unavailable", answer);
+    expect((await h.device.pin("unavailable")).ok).toBe(false);
+    const state = await h.device.status();
+    expect(state.ok && state.value.hydration).toBe("complete");
+    expect((await h.device.list()).ok).toBe(true);
+    expect(await h.device.queue()).toEqual(before);
+  });
+
   it("refuses a certified page without explicit termination while retaining unsent work", async () => {
     const h = await prepared();
     const before = await h.device.queue();
@@ -151,5 +175,56 @@ describe("certified read views", () => {
           request.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
       ),
     ).toBe(true);
+  });
+
+  it("reports a hydration that ended on an invalid page as expired, not in progress", async () => {
+    const h = await prepared();
+    h.server.copyAnswer("GET", "/items", {
+      kind: "json",
+      status: 200,
+      body: { data: [] },
+    });
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const rebuilt = await h.device.hydrate(["core.note"], "library");
+    expect(rebuilt.ok).toBe(false);
+    const state = await h.device.status();
+    expect(
+      state.ok && state.value.hydration,
+      "a hydration the server's page expired reported itself as still under way",
+    ).toBe("expired");
+  });
+
+  it("refuses reads of a stored copy that lost its instance, through a reader as through the writer", async () => {
+    const h = await prepared();
+    // The witness: the copy reads before its instance is taken away.
+    expect((await h.device.list()).ok).toBe(true);
+    const store = new DatabaseSync(h.device.store);
+    try {
+      store.exec("DELETE FROM meta WHERE key = 'instance_id'");
+    } finally {
+      store.close();
+    }
+    const bytes = readFileSync(h.device.store);
+    const reader = h.device.reopen({ reader: true });
+    const read = await reader.list();
+    expect(
+      read.ok,
+      "a reader answered a copy that names no instance it can be held to",
+    ).toBe(false);
+    if (!read.ok) expect(read.refusal.code).toBe("hydration_incomplete");
+    const reported = await reader.status();
+    expect(reported.ok && reported.value.hydration).toBe("expired");
+    expect(
+      readFileSync(h.device.store).equals(bytes),
+      "a reader wrote to the store",
+    ).toBe(true);
+
+    const written = await h.device.list();
+    expect(written.ok).toBe(false);
+    if (!written.ok) expect(written.refusal.code).toBe("hydration_incomplete");
+    const state = await h.device.status();
+    expect(
+      state.ok && [state.value.hydration, state.value.event_cursor ?? null],
+    ).toEqual(["expired", null]);
   });
 });

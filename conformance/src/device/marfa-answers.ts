@@ -329,7 +329,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
 ];
 
 /**
- * A registered type declaring a thumbnail (`device.md` 29). A function of
+ * A registered type declaring a thumbnail (`device/thumbnail-from-row`). A function of
  * its id, because the fidelity comparison registers the same type on the
  * real server under an id of its own run.
  */

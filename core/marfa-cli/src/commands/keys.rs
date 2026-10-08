@@ -384,9 +384,11 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             read_line("no key to keep: pass --key, set MARFA_API_KEY, or write the key on stdin")?
         }
     };
-    let checked = Remote::keyed(remote.url(), &key)?;
-    checked.json(&Request::get(&["items", "stats"]))?;
-    credentials::keep(remote.origin(), &Kept::Key { key })?;
+    crate::auth::with_credential_lock(remote.origin(), || {
+        let checked = Remote::keyed(remote.url(), &key)?;
+        checked.json(&Request::get(&["items", "stats"]))?;
+        credentials::keep(remote.origin(), &Kept::Key { key })
+    })?;
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
         format!(
             "kept a key for {} in the keychain; it is now the server a bare command talks to",

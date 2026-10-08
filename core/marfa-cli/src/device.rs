@@ -291,6 +291,11 @@ pub enum ItemsCommand {
     Add(AddArgs),
     /// Attach a file to an item: its upload, a file item naming the bytes,
     /// and an `attached-to` edge, three queued writes.
+    ///
+    /// Answers the text that embeds the file in the item's body,
+    /// `![[title]]`, where the file's title names it alone among the item's
+    /// attachments. Under --json the answer is one object: `upload`, `item`
+    /// and `edge`, each a queued write, and `embed`, the text or null.
     Attach(AttachArgs),
     /// The links and embeds of files in an item's body, read from the local
     /// copy: each with the item it names, or why it names none yet.
@@ -834,15 +839,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}{}",
-                    report.applied,
-                    report.skipped,
-                    report.cursor,
-                    if report.reached_head {
-                        ""
-                    } else {
-                        " (stopped on silence)"
-                    }
+                    "applied {} event(s), skipped {}; cursor {}",
+                    report.applied, report.skipped, report.cursor,
                 )
             })
         }
@@ -971,7 +969,17 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         tier: args.tier.map(Into::into),
                     };
                     let attached = core.attach(&args.id, &args.file, &attachment)?;
-                    output::queued(&[attached.upload, attached.item, attached.edge], json)
+                    if json {
+                        return output::report(&attached, json, String::new).map(|()| Exit::Done);
+                    }
+                    output::queued(
+                        &[attached.upload, attached.item, attached.edge],
+                        json,
+                    )?;
+                    if let Some(embed) = &attached.embed {
+                        println!("embed it in the item's body with {embed}");
+                    }
+                    Ok(())
                 }
                 ItemsCommand::Links { id } => {
                     let links = core.body_links(&id)?;
@@ -1254,12 +1262,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::Types { command } => {
             let core = match command {
-                TypesCommand::Served => store.open_with_server(named)?,
+                TypesCommand::Served => {
+                    stop_on_interrupt();
+                    store.open_with_server(named)?
+                }
                 _ => store.open(None)?,
             };
             match command {
                 TypesCommand::Served => {
-                    let types = core.server_catalog()?.item_types;
+                    let types = core.server_catalog_until(stop_after(None))?.item_types;
                     output::report(&types, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
@@ -1327,12 +1338,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::EdgeTypes { command } => {
             let core = match command {
-                CatalogCommand::Served => store.open_with_server(named)?,
+                CatalogCommand::Served => {
+                    stop_on_interrupt();
+                    store.open_with_server(named)?
+                }
                 _ => store.open(None)?,
             };
             match command {
                 CatalogCommand::Served => {
-                    let types = core.server_catalog()?.edge_types;
+                    let types = core.server_catalog_until(stop_after(None))?.edge_types;
                     output::report(&types, json, || {
                         types
                             .iter()

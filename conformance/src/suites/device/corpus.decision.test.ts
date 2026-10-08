@@ -221,8 +221,21 @@ describe("every device statement is asserted by something", () => {
   });
 
   it("cites a fixture for every numbered statement", () => {
+    // A rule no fixture can assert yet names the issue that makes it
+    // testable instead, which `spec-form.test.ts` holds to its one shape.
+    const WAITING = / waiting on #\d+\.$/;
+    // The witness: an ID statement's waiting line is read as its text ends.
+    const waiting = readText(
+      "device.md",
+      `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Tests:** waiting on #1.\n`,
+    ).found[0];
+    expect(WAITING.test(waiting.text), waiting.text).toBe(true);
     const uncited = allStatements
-      .filter((statement) => citationsIn(statement.text).length === 0)
+      .filter(
+        (statement) =>
+          citationsIn(statement.text).length === 0 &&
+          !WAITING.test(statement.text),
+      )
       .map((statement) => `${statement.chapter} ${statement.number}`);
     expect(
       uncited,
@@ -277,8 +290,20 @@ describe("every device statement is asserted by something", () => {
     ]) {
       expect(SKIPS.test(written), written).toBe(true);
     }
+    // A fixture that runs only on macOS, such as one of the keychain, which
+    // no other platform has, asserts its statement where the device suite
+    // runs on macOS: nightly and on request (`ci.yml`), never on a pull
+    // request.
+    const ON_MACOS = /\.runIf\(process\.platform === "darwin"\)/g;
+    const skips = (text: string) => SKIPS.test(text.replace(ON_MACOS, ""));
+    expect(skips('describe.runIf(process.platform === "darwin")("a")')).toBe(
+      false,
+    );
+    expect(skips('describe.runIf(process.platform === "linux")("a")')).toBe(
+      true,
+    );
     const skipping = fixtureFiles.filter((file) =>
-      SKIPS.test(readFileSync(resolve(here, file), "utf8")),
+      skips(readFileSync(resolve(here, file), "utf8")),
     );
     expect(
       skipping,

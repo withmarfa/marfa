@@ -269,7 +269,7 @@ export function scriptHydration(
     // The state parameter is honored rather than ignored, because a
     // scripted server more generous than the real one lets a device that
     // stopped asking for every state stay green while a real copy silently
-    // holds only active rows (`device.md` 31). `any` is the only value
+    // holds only active rows (`device/list-default-active`). `any` is the only value
     // hydration sends, so anything else narrows the same way the server's
     // listing does.
     const asked = request.query.get("state") ?? "active";
@@ -320,7 +320,7 @@ export function scriptHydration(
 
 /**
  * What `GET /keys/current` answers, which a hydration reads to refuse a type
- * the key cannot read (`device.md` 6): a key reading and writing every type
+ * the key cannot read (`device/hydrate-unreadable-type`): a key reading and writing every type
  * unless answers are named. For a fixture that scripts a hydration's doors
  * itself.
  */
@@ -430,7 +430,7 @@ export function scriptWrites(
     server.answer("POST", "/items", ...options.create);
   if (options.update !== undefined)
     server.answer("PATCH", /^\/items\/[^/]+$/, ...options.update);
-  // A receipt cannot establish present read access (`device.md` 54), so
+  // A receipt cannot establish present read access (`device/read-back-keeps-verdict`), so
   // reconciliation after an accepted or refused write needs a certified read.
   if (options.read !== undefined)
     server.copyAnswer("GET", /^\/items\/[^/]+$/, ...options.read);

@@ -5,6 +5,7 @@ import {
   edgeTypeCatalog,
   copyHeldLog,
   copyLiveReplay,
+  refusal,
   typeCatalog,
 } from "../../device/marfa-answers.js";
 import type {
@@ -304,6 +305,51 @@ describe("The type catalog a working copy holds", () => {
     ).toBe("mentored-by");
   });
 
+  it("keeps the catalogs and the version it held when a refresh fails after the item types", async () => {
+    harness = await startHarness("catalog-part-way");
+    const { server, device } = harness;
+    let registered = false;
+    let edgeTypesFail = false;
+    scriptHydration(server, {
+      head: "1",
+      catalog: typeCatalog(),
+      edgeTypes: () =>
+        edgeTypesFail
+          ? refusal(500, "internal_error", "The edge types could not be read")
+          : edgeTypeCatalog(registered ? [MENTOR] : []),
+    });
+    server.copyAnswer("GET", "/types", () =>
+      typeCatalog(registered ? [RECIPE] : []),
+    );
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const held = value(await device.status(), "the state report");
+
+    // The item types are answered, changed, and the edge types after them
+    // are not.
+    registered = true;
+    edgeTypesFail = true;
+    const failed = await device.catchUp();
+    expect(failed.ok, JSON.stringify(failed)).toBe(false);
+    expect(
+      value(await device.status(), "the state report").catalog_version,
+    ).toBe(held.catalog_version);
+    expect(
+      (await device.itemType("acme.recipe")).ok,
+      "the copy took the item types of a refresh that failed",
+    ).toBe(false);
+
+    // The witness: the same refresh, answered whole, is taken.
+    edgeTypesFail = false;
+    value(await device.catchUp(), "a catch-up against the changed catalog");
+    expect(
+      value(await device.status(), "the state report").catalog_version,
+    ).not.toBe(held.catalog_version);
+    expect(
+      value(await device.itemType("acme.recipe"), "acme.recipe").label,
+    ).toBe("Family recipe");
+  });
+
   it("tells a held stream's caller when it reads a changed catalog", async () => {
     harness = await startHarness("catalog-follow");
     const { server, device } = harness;
@@ -337,7 +383,42 @@ describe("The type catalog a working copy holds", () => {
       "a held stream read a changed catalog and did not tell its caller",
     ).toEqual([{ event: "catalog.changed", item_id: null, edge_id: null }]);
     expect(
+      followed.changes.map((change) => change.cursor),
+      "the change did not name the cursor the stream holds",
+    ).toEqual(["1"]);
+    expect(
       value(await device.edgeType("mentor-of"), "mentor-of").reverse_name,
     ).toBe("mentored-by");
+  });
+
+  it("replaces a server's catalog it holds with the one the next hydration reads", async () => {
+    harness = await startHarness("catalog-rehydrate");
+    const { server, device } = harness;
+    let registered = true;
+    scriptHydration(server, {
+      head: "1",
+      catalog: typeCatalog([RECIPE]),
+      edgeTypes: () => edgeTypeCatalog(registered ? [MENTOR] : []),
+    });
+    server.copyAnswer("GET", "/types", () =>
+      typeCatalog(registered ? [RECIPE] : []),
+    );
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    // The witness: the first hydration holds the registered types.
+    value(await device.itemType("acme.recipe"), "acme.recipe");
+    value(await device.edgeType("mentor-of"), "mentor-of");
+
+    registered = false;
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    for (const read of [
+      await device.itemType("acme.recipe"),
+      await device.edgeType("mentor-of"),
+    ]) {
+      expect(
+        read.ok,
+        "a hydration kept a type the server's catalog no longer holds",
+      ).toBe(false);
+      if (!read.ok) expect(read.refusal.code).toBe("not_found");
+    }
   });
 });
