@@ -294,6 +294,25 @@ describe("the reference checks see what they are for", () => {
     });
   });
 
+  it("checks CLI citations and continued titles in an ID chapter", () => {
+    const chapter = [
+      "### `sample/cli-rule`",
+      "",
+      "The command MUST answer.",
+      "",
+      "**Tests:** `cli/folder.test.ts › no such CLI title`, `› no such continued CLI title`.",
+    ].join("\n");
+    const cited = citationsInText(chapter).map((c): Citation => ({
+      spec: "sample.md",
+      ...c,
+    }));
+    expect(cited).toHaveLength(2);
+    expect(unresolvedTitles(cited, titlesIn)).toEqual([
+      "sample.md: cli/folder.test.ts › no such CLI title",
+      "sample.md: cli/folder.test.ts › no such continued CLI title",
+    ]);
+  });
+
   it("reads a citation in an ID statement's Tests paragraph and holds its title to the fixture", () => {
     const chapter = [
       "### `sample/cited-rule`",

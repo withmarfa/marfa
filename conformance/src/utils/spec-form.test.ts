@@ -59,7 +59,7 @@ const EARS = new RegExp(
 );
 
 const CITATION =
-  "`(?:(?:correctness|compliance|device|sync)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
+  "`(?:(?:correctness|compliance|device|sync|cli)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
 const CITATIONS = new RegExp(`^${CITATION}(?:, ${CITATION})*\\.$`);
 const WAITING = /^waiting on #\d+\.$/;
 
@@ -124,7 +124,8 @@ function violations(name: string, text: string): Record<Rule, string[]> {
       const tests = statement.tests.trim();
       const spans = tests.match(/`[^`]+`/g) ?? [];
       const cited =
-        CITATIONS.test(tests) && citationsIn(tests).length === spans.length;
+        CITATIONS.test(tests) &&
+        citationsIn(tests, true).length === spans.length;
       if (!cited && !WAITING.test(tests)) found.testsShape.push(where(id));
     }
 
@@ -381,6 +382,17 @@ describe("the form check sees what it is for", () => {
     BAD.split("\n").findIndex((l) => l.includes(marker)) + 1;
   const at = (marker: string) => `sample line ${String(line(marker))}`;
   const s = (id: string) => `sample sample/${id}`;
+
+  it("accepts CLI fixtures and continued titles in ID rules", () => {
+    const text = [
+      "### `sample/cli-rule`",
+      "",
+      "The command MUST answer.",
+      "",
+      "**Tests:** `cli/folder.test.ts › one`, `› two`.",
+    ].join("\n");
+    expect(violations("sample", text)).toEqual(empty());
+  });
 
   it("passes a chapter that follows the form in every way it may", () => {
     const readable = readChapter("sample", GOOD);

@@ -198,6 +198,27 @@ describe("the grammar of an ID", () => {
 });
 
 describe("the citations in a text", () => {
+  it("reads CLI citations in ID metadata without changing numbered parsing", () => {
+    const tests =
+      "`cli/folder.test.ts › one`, `› two`, `device/folders.test.ts › three`, `› four`.";
+    expect(citationsIn(tests, true)).toEqual([
+      { file: "cli/folder.test.ts", title: "one" },
+      { file: "cli/folder.test.ts", title: "two" },
+      { file: "device/folders.test.ts", title: "three" },
+      { file: "device/folders.test.ts", title: "four" },
+    ]);
+    expect(citationsInText(`1. A rule. ${tests}`)).toEqual([
+      { file: "device/folders.test.ts", title: "three" },
+      { file: "device/folders.test.ts", title: "four" },
+    ]);
+    expect(
+      citationsIn(
+        "`cli/folder.test.ts › one`, `not a fixture`, `› two`.",
+        true,
+      ),
+    ).toEqual([{ file: "cli/folder.test.ts", title: "one" }]);
+  });
+
   it("expands the shorthand only after a comma and a space", () => {
     expect(
       citationsIn("`compliance/a.test.ts › one`, `› two`, `› three`."),
