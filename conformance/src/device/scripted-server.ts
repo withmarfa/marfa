@@ -35,6 +35,8 @@ export interface SseFrame {
   id?: string;
   event?: string;
   data?: unknown;
+  /** The frame's text as it is, for one the server's own encoder never writes. */
+  raw?: string;
 }
 
 export type Answer =
@@ -116,6 +118,7 @@ function matches(route: Route, method: string, pathname: string): boolean {
 const KEEPALIVE_MS = 250;
 
 function renderFrame(frame: SseFrame): string {
+  if (frame.raw !== undefined) return frame.raw;
   if (frame.comment !== undefined) return `: ${frame.comment}\n\n`;
   const lines: string[] = [];
   if (frame.id !== undefined) lines.push(`id: ${frame.id}`);

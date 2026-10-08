@@ -1680,6 +1680,20 @@ If a catch-up's or a held stream's stream names an event id that is not a number
 
 **Tests:** `device/catch-up.test.ts › refuses an event id that is not a number, keeping the cursor it had`, `› ends a follow on an event id that is not a number, keeping its cursor`.
 
+### `device/event-no-data`
+
+When a catch-up's stream sends a frame that names an id and an event and carries no data, a device MUST take the frame as no event and apply nothing of what it names to the frame after it.
+
+**Tests:** `device/catch-up.test.ts › takes a frame that names an id and carries no data as no event`.
+
+### `device/event-line-bound`
+
+If a catch-up's stream sends a line of more than 67,108,864 bytes (64 MiB), its line ending included, then a device MUST end the catch-up `decoding` and keep the cursor it had.
+
+**Reason:** no event the server sends comes near the bound, and holding a line without one would take memory without end.
+
+**Tests:** `device/catch-up.test.ts › refuses a line longer than 64 MiB, keeping the cursor it had`.
+
 ## A store opened to read
 
 ### `device/reader-not-writer`
@@ -1884,7 +1898,7 @@ When a device reads the catalog while a refresh replaces it, a device MUST answe
 
 If a refresh of the catalog fails part way, then a device MUST keep the catalogs and the catalog version it held.
 
-**Tests:** waiting on #1444.
+**Tests:** `device/catalog.test.ts › keeps the catalogs and the version it held when a refresh fails after the item types`.
 
 ### `device/catalog-shipped`
 

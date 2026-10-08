@@ -1017,6 +1017,60 @@ describe("catch-up replays from the cursor", () => {
     expect((await device.get("n11")).ok).toBe(true);
   });
 
+  it("takes a frame that names an id and carries no data as no event", async () => {
+    harness = await startHarness("catch-up-no-data");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("10", [{ raw: "id: 11\nevent: item.created\n\n" }]),
+      copyReplay("11", [copyItemEvent("11", "item.created", row)]),
+    );
+    // The hydration's own head read answers once more first.
+    expect((await device.catchUp()).ok).toBe(true);
+    const passed = await device.catchUp();
+    expect(passed.ok, JSON.stringify(passed)).toBe(true);
+    if (passed.ok) {
+      expect(passed.value.applied).toBe(0);
+      expect(passed.value.skipped).toBe(0);
+    }
+    // The witness: the same frame carrying its data is an event.
+    const taken = await device.catchUp();
+    expect(taken.ok && taken.value.applied).toBe(1);
+    expect((await device.get("n11")).ok).toBe(true);
+  });
+
+  it("refuses a line longer than 64 MiB, keeping the cursor it had", async () => {
+    harness = await startHarness("catch-up-long-line");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const MOST = 64 * 1024 * 1024;
+    // A comment, which a device reads past, of the most bytes a line may
+    // hold with its line ending, and one byte more.
+    const comment = (bytes: number) => ({ raw: `:${"x".repeat(bytes - 2)}\n` });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [comment(MOST + 1)]),
+      copyReplay("11", [comment(MOST)]),
+    );
+    expect((await device.catchUp()).ok).toBe(true);
+    const refused = await device.catchUp();
+    expect(refused.ok, "a catch-up read a line past the bound").toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("decoding");
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("10");
+    // The witness: a line at the bound is read.
+    const taken = await device.catchUp();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    const after = await device.status();
+    expect(after.ok && after.value.event_cursor).toBe("11");
+  });
+
   it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {
     harness = await startHarness("follow-backoff");
     const { server, device } = harness;
