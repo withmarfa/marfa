@@ -257,49 +257,74 @@ describe("the status checker", () => {
     expect(report.unexplained).toEqual(["GET /unlisted"]);
   });
 
-  it("counts public 404 probes of private socket paths separately from served routes", () => {
-    const paths = [
-      ["GET", "/_control/setup/status"],
-      ["POST", "/_control/setup/claim"],
-    ] as const;
+  it("separates real startup socket log shapes from public HTTP operations", () => {
+    const local = [
+      logLine({
+        method: "GET",
+        path: "/_control/setup/status",
+        route: "/_control/setup/status",
+        status: 200,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/_control/setup/claim",
+        route: "/_control/setup/claim",
+        status: 201,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/keys",
+        route: "/keys",
+        status: 201,
+        transport: "local_socket",
+      }),
+      logLine({
+        method: "POST",
+        path: "/_control/setup/claim",
+        route: "/_control/setup/claim",
+        status: 409,
+        error_code: "owner_exists",
+        transport: "local_socket",
+      }),
+    ];
     const report = reportStatuses(
-      parseRequestLines(
-        paths
-          .map(([method, path]) =>
-            logLine({
-              method,
-              path,
-              route: path,
-              status: 404,
-            }),
-          )
-          .join("\n"),
-      ),
+      parseRequestLines([...local, OBSERVED_200].join("\n")),
       documentDeclaring([200]),
     );
-    expect([...report.absentRoutes].sort()).toEqual(
-      paths.map(([method, path]) => `${method} ${path}`).sort(),
-    );
+    expect(
+      [...report.local].map(([operation, statuses]) => [
+        operation,
+        [...statuses],
+      ]),
+    ).toEqual([
+      ["GET /_control/setup/status", [200]],
+      ["POST /_control/setup/claim", [201, 409]],
+      ["POST /keys", [201]],
+    ]);
+    expect([...report.observed.keys()]).toEqual(["GET /items/{id}"]);
     expect(report.unpublished.size).toBe(0);
     expect(report.unexplained).toEqual([]);
-    expect(report.lines).toBe(2);
+    expect(report.lines).toBe(5);
   });
 
-  it.each([200, 201, 401, 403, 500])(
-    "still reports private-path probes answering %s",
-    (status) => {
+  it.each([undefined, "http", "unrecognized"])(
+    "does not exempt control paths without explicit local transport (%s)",
+    (transport) => {
       const report = reportStatuses(
         parseRequestLines(
           logLine({
             method: "POST",
             path: "/_control/setup/claim",
             route: "/_control/setup/claim",
-            status,
+            status: 201,
+            transport,
           }),
         ),
         documentDeclaring([200]),
       );
-      expect(report.absentRoutes.size).toBe(0);
+      expect(report.local.size).toBe(0);
       expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
     },
   );
@@ -324,7 +349,7 @@ describe("the status checker", () => {
       ),
       documentDeclaring([200]),
     );
-    expect(report.absentRoutes.size).toBe(0);
+    expect(report.local.size).toBe(0);
     expect(report.unexplained).toEqual(["GET /unlisted"]);
     expect(report.undeclared).toMatchObject([
       { operation: "GET /items/{id}", status: 404 },
@@ -446,6 +471,7 @@ describe("the status checker", () => {
     expect(lines).toEqual([
       {
         method: "GET",
+        transport: "http",
         route: "/items/{id}",
         path: "/items/019d1234-5678-7abc-8def-1234567890ab",
         status: 200,
@@ -625,17 +651,22 @@ describe("the status checker", () => {
       expect(clean.stderr).toBe("");
       expect(clean.status).toBe(0);
 
-      const privateProbe = (status: number) =>
+      const controlRequest = (transport: "http" | "local_socket") =>
         logLine({
           method: "POST",
           path: "/_control/setup/claim",
           route: "/_control/setup/claim",
-          status,
+          status: 201,
+          transport,
         });
-      const absent = await run(stateWith([OBSERVED_200, privateProbe(404)]));
-      expect(absent.stderr).toBe("");
-      expect(absent.status).toBe(0);
-      const exposed = await run(stateWith([OBSERVED_200, privateProbe(200)]));
+      const privateRun = await run(
+        stateWith([OBSERVED_200, controlRequest("local_socket")]),
+      );
+      expect(privateRun.stderr).toBe("");
+      expect(privateRun.status).toBe(0);
+      const exposed = await run(
+        stateWith([OBSERVED_200, controlRequest("http")]),
+      );
       expect(exposed.stderr).toContain("POST /_control/setup/claim");
       expect(exposed.status).toBe(1);
 

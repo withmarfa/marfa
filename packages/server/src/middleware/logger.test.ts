@@ -340,9 +340,11 @@ describe("the matched route on a request line", () => {
     build: (app: Hono) => void,
     path: string,
     method = "GET",
+    transport: "http" | "local_socket" = "http",
+    headers: Record<string, string> = {},
   ): Promise<Record<string, unknown>> {
     const app = new Hono();
-    app.use("*", loggerMiddleware());
+    app.use("*", loggerMiddleware(transport));
     // A second universal middleware, as the real chain has several: none of
     // them is the route that answered.
     app.use("*", async (_c, next) => next());
@@ -355,7 +357,7 @@ describe("the matched route on a request line", () => {
       return true;
     };
     try {
-      await app.request(path, { method });
+      await app.request(path, { method, headers });
     } finally {
       process.stdout.write = writer;
     }
@@ -365,6 +367,22 @@ describe("the matched route on a request line", () => {
       unknown
     >;
   }
+
+  it("records the listener transport and ignores incoming transport headers", async () => {
+    for (const transport of ["http", "local_socket"] as const) {
+      const entry = await lineFor(
+        (app) => {
+          app.get("/_control/setup/status", (c) => c.json({ claimed: false }));
+        },
+        "/_control/setup/status",
+        "GET",
+        transport,
+        { transport: "local_socket", "X-Marfa-Transport": "local_socket" },
+      );
+      expect(entry.transport).toBe(transport);
+      expect(entry.status).toBe(200);
+    }
+  });
 
   it("names the template in the document's spelling, not the concrete path", async () => {
     const entry = await lineFor((app) => {

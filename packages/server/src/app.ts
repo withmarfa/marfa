@@ -239,7 +239,10 @@ export function createApp(
   });
 
   // Structured logging (wraps entire request lifecycle)
-  app.use("*", loggerMiddleware());
+  app.use(
+    "*",
+    loggerMiddleware(options.localAuthority ? "local_socket" : "http"),
+  );
 
   // After the logger, so its refusal carries `X-Request-ID` like any other.
   app.use("*", async (c, next) => {

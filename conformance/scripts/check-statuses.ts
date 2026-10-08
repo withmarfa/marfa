@@ -99,7 +99,7 @@ console.log(formatObserved(report));
 console.log(
   `\n${String(report.lines)} request lines from ${String(logs.length)} server${logs.length === 1 ? "" : "s"}, over ${String(report.observed.size)} published operations` +
     `, plus ${String(report.unpublished.size)} served routes the document does not publish` +
-    ` and ${String(report.absentRoutes.size)} probes confirming paths absent from public HTTP.`,
+    ` and ${String(report.local.size)} operations on the private local socket.`,
 );
 
 if (report.undeclared.length > 0) {

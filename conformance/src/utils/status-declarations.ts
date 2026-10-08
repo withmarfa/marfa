@@ -17,6 +17,8 @@ import { readFileSync } from "node:fs";
 /** One request as `middleware/logger.ts` writes it. */
 export interface RequestLine {
   method: string;
+  /** Assigned by the server listener, never by request headers. */
+  transport: "http" | "local_socket";
   /** The route template, in the document's spelling: `/items/{id}`. */
   route: string;
   /** The concrete path, which is what resolves a wildcard route. */
@@ -45,8 +47,8 @@ export interface StatusReport {
    * server serves and neither publishes nor says why.
    */
   unexplained: string[];
-  /** Deliberate probes that confirmed a path is absent from public HTTP. */
-  absentRoutes: Set<string>;
+  /** Private socket operations, outside the public HTTP contract. */
+  local: Map<string, Set<number>>;
   undeclared: UndeclaredStatus[];
   /**
    * `METHOD /path status code` for a refusal code drawn on a declared
@@ -92,14 +94,6 @@ export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
     "the sign-in library's own endpoints, a browser's and an OAuth client's rather than an API caller's",
   "POST /auth/*":
     "the same; the one door under it the document publishes, client registration, is resolved by its path",
-};
-
-/** Private socket paths deliberately probed over public HTTP for a 404. */
-const ABSENT_ROUTE_PROBES: Readonly<Record<string, string>> = {
-  "GET /_control/setup/status":
-    "claim status exists only on the private local socket",
-  "POST /_control/setup/claim":
-    "local claim authority is never exposed through public HTTP",
 };
 
 /**
@@ -178,6 +172,7 @@ export function parseRequestLines(log: string): RequestLine[] {
     }
     out.push({
       method: line.method.toUpperCase(),
+      transport: line.transport === "local_socket" ? "local_socket" : "http",
       route: line.route,
       path: line.path,
       status: line.status,
@@ -318,9 +313,16 @@ export function reportStatuses(
   const declared = declaredStatuses(document);
   const observed = new Map<string, Map<number, Set<string>>>();
   const unpublished = new Map<string, Set<number>>();
-  const absentRoutes = new Set<string>();
+  const local = new Map<string, Set<number>>();
 
   for (const line of lines) {
+    if (line.transport === "local_socket") {
+      const operation = `${line.method} ${line.route}`;
+      const statuses = local.get(operation) ?? new Set<number>();
+      statuses.add(line.status);
+      local.set(operation, statuses);
+      continue;
+    }
     // HEAD is answered by the GET handler unless the document gives it an
     // operation of its own, so it is held to what GET declares.
     const method =
@@ -337,16 +339,6 @@ export function reportStatuses(
         ? byPath
         : byRoute;
     if (!declared.has(operation)) {
-      // A 404 probe does not establish that the server serves this route.
-      // Only these exact probes qualify; other statuses still expose a gap.
-      if (
-        line.status === 404 &&
-        line.route === line.path &&
-        ABSENT_ROUTE_PROBES[`${line.method} ${line.path}`] !== undefined
-      ) {
-        absentRoutes.add(`${line.method} ${line.path}`);
-        continue;
-      }
       const statuses = unpublished.get(operation) ?? new Set<number>();
       statuses.add(line.status);
       unpublished.set(operation, statuses);
@@ -426,7 +418,7 @@ export function reportStatuses(
   return {
     observed,
     unpublished,
-    absentRoutes,
+    local,
     unexplained,
     undeclared,
     undeclaredCodes,
