@@ -1,6 +1,6 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
- * Operator surface for shipped types an instance still carries that its
+ * Management operations for shipped types an instance still carries that its
  * build no longer names.
  *
  * The seed is an upsert with no prune, so deleting a type's JSON removes it
@@ -31,7 +31,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { wholeListOf } from "./_schemas.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { operatorOnly } from "../middleware/auth.js";
+import { standingPermission, authorityId } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -67,9 +67,9 @@ const listDriftRoute = createRoute({
   tags: ["Types"],
   summary: "List stale platform types",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   description:
-    "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.",
+    "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.",
   responses: {
     200: {
       content: {
@@ -98,7 +98,7 @@ const listDriftRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "`forbidden`: you aren't using the operator key.",
+      description: "`forbidden`: you lack the required management permission.",
     },
   },
 });
@@ -110,9 +110,9 @@ const deletePlatformTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a stale platform type",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.maintain"),
   description:
-    "Deletes one platform type that this build no longer ships. The type stops resolving at once. Operator key only.",
+    "Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.",
   request: {
     params: z.object({
       id: z.string().describe("The identifier of the stale type to delete."),
@@ -141,7 +141,7 @@ const deletePlatformTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "`forbidden`: you aren't using the operator key.",
+      description: "`forbidden`: you lack the required management permission.",
     },
     404: {
       content: {
@@ -279,7 +279,7 @@ export function platformTypeRoutes(storage: Storage) {
         resource_type: "type",
         resource_id: id,
         client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
+        key_id: authorityId(c),
         details: { type: id },
       },
     );

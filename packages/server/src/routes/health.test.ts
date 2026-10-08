@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import { healthRoutes, operatorCaller, PROBE_TIMEOUT_MS } from "./health.js";
+import {
+  healthRoutes,
+  instanceReadCaller,
+  PROBE_TIMEOUT_MS,
+} from "./health.js";
 import {
   DISK_DEGRADED_BELOW_BYTES,
   DISK_DOWN_BELOW_BYTES,
@@ -71,7 +75,7 @@ function okProbes(overrides: Partial<HealthProbes> = {}): HealthProbes {
 
 /** Who asked, as the app would have found out from the key table. */
 const nobody = () => Promise.resolve(false);
-const theOperator = () => Promise.resolve(true);
+const instanceReader = () => Promise.resolve(true);
 
 interface HealthBody {
   status: string;
@@ -114,7 +118,7 @@ describe("GET /health", () => {
         buildBlobs(() => Promise.resolve(null)),
         { diskReserveBytes: 4 * DISK_DEGRADED_BELOW_BYTES },
         okProbes({ availableBytes: () => Promise.resolve(free) }),
-        theOperator,
+        instanceReader,
       );
     // Past the fixed line and inside the reserve.
     const inside = await app(2 * DISK_DEGRADED_BELOW_BYTES).request("/");
@@ -134,7 +138,7 @@ describe("GET /health", () => {
       buildBlobs(() => Promise.resolve(null)),
       {},
       okProbes(),
-      theOperator,
+      instanceReader,
     );
 
     const started = Date.now();
@@ -178,7 +182,7 @@ describe("GET /health", () => {
       buildBlobs(() => Promise.resolve(null)),
       {},
       okProbes(),
-      theOperator,
+      instanceReader,
     );
 
     const res = await app.request("/");
@@ -325,7 +329,7 @@ describe("GET /health failing status", () => {
         okProbes({
           availableBytes: () => Promise.reject(new Error("statfs unsupported")),
         }),
-        theOperator,
+        instanceReader,
       ),
     );
     expect(status).toBe(200);
@@ -372,16 +376,16 @@ describe("GET /health error text", () => {
       .components;
   }
 
-  it("tells the operator key what each component said", async () => {
+  it("tells an instance reader what each component said", async () => {
     // The witness for the case below: the same answer, producible.
-    const seen = await components(theOperator);
+    const seen = await components(instanceReader);
     expect(seen.database?.error).toContain("/data/marfa.db");
     expect(seen.database_write?.error).toContain("SQLITE_FULL");
     expect(seen.disk?.error).toContain("bytes available");
     expect(seen.blob_storage?.error).toContain("EACCES");
   });
 
-  it("tells a caller that is not the operator key no error text, though every component is down", async () => {
+  it("tells a caller that is not an instance reader no error text, though every component is down", async () => {
     const seen = await components(nobody);
     expect(Object.values(seen).map((one) => one.status)).toEqual([
       "down",
@@ -405,7 +409,7 @@ describe("GET /health error text from a wrapped failure", () => {
       buildBlobs(() => Promise.resolve(null)),
       {},
       okProbes({ write: () => Promise.reject(wrapped) }),
-      theOperator,
+      instanceReader,
     ).request("/");
 
     const body = (await res.json()) as HealthBody;
@@ -431,7 +435,7 @@ describe("GET /health error text from a failed query with no failure inside it",
       buildBlobs(() => Promise.resolve(null)),
       {},
       okProbes({ write: () => Promise.reject(bare) }),
-      theOperator,
+      instanceReader,
     ).request("/");
 
     const body = (await res.json()) as HealthBody;
@@ -441,19 +445,21 @@ describe("GET /health error text from a failed query with no failure inside it",
   });
 });
 
-describe("operatorCaller", () => {
+describe("instanceReadCaller", () => {
   const SALT = "a-salt-for-this-test";
-  const keys = (is_operator: boolean) =>
+  const keys = (readsInstance: boolean) =>
     ({
       validate: (hash: string) =>
         Promise.resolve(
-          hash === hashApiKey("marfa_k1_known", SALT) ? { is_operator } : null,
+          hash === hashApiKey("marfa_k1_known", SALT)
+            ? { permissions: readsInstance ? ["instance.read"] : [] }
+            : null,
         ),
-    }) as unknown as Parameters<typeof operatorCaller>[0]["keys"];
+    }) as unknown as Parameters<typeof instanceReadCaller>[0]["keys"];
 
-  it("says yes to the operator key, and only to it", async () => {
+  it("requires instance.read on a valid stored key", async () => {
     const asked = (storageKeys: ReturnType<typeof keys>, header?: string) =>
-      operatorCaller({ keys: storageKeys }, SALT)(header);
+      instanceReadCaller({ keys: storageKeys }, SALT)(header);
 
     expect(await asked(keys(true), "Bearer marfa_k1_known")).toBe(true);
     expect(await asked(keys(false), "Bearer marfa_k1_known")).toBe(false);
@@ -463,12 +469,12 @@ describe("operatorCaller", () => {
   });
 
   it("says no, and does not throw, when the database cannot look the key up", async () => {
-    const asked = operatorCaller(
+    const asked = instanceReadCaller(
       {
         keys: {
           validate: () => Promise.reject(new Error("unreadable")),
         },
-      } as unknown as Parameters<typeof operatorCaller>[0],
+      } as unknown as Parameters<typeof instanceReadCaller>[0],
       SALT,
     );
 

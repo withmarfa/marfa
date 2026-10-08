@@ -1,16 +1,14 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ALL_TYPES } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { operatorOnly } from "../middleware/auth.js";
+import { standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
-// A single module-level cache is sufficient: the platform gate refuses
-// working credentials, so every caller that reaches the handler sees
-// the same instance-wide counts.
+// Every admitted caller sees the same instance-wide counts.
 interface CacheEntry {
   response: Record<string, unknown>;
   at: number;
@@ -47,9 +45,9 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Requires instance.read: the counters are instance-wide rather than permission-scoped.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   responses: {
     200: {
       content: {
@@ -73,7 +71,7 @@ const getMetricsRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not the operator key",
+      description: "Caller lacks instance.read",
     },
   },
 });

@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { operatorOnly } from "../middleware/auth.js";
+import { standingPermission, authorityId } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -42,7 +42,6 @@ import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
   OkResponseSchema,
-  OPERATOR_ONLY_RESPONSE,
 } from "../openapi.js";
 import {
   requireBlobUpload,
@@ -154,7 +153,7 @@ const BlobOrphanSchema = z
 
 /** Who may read a blob: the rule each reading door states on its `hash`. */
 const READ_RULE =
-  "You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob.";
+  "You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.";
 
 const HashParam = z.object({
   hash: z.string().describe(`The blob's hash, \`sha256:<hex>\`. ${READ_RULE}`),
@@ -358,9 +357,9 @@ const listBlobStoresRoute = createRoute({
   tags: ["Blobs"],
   summary: "List blob stores",
   description:
-    "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires the operator key.",
+    "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   responses: {
     200: {
       content: {
@@ -378,7 +377,12 @@ const listBlobStoresRoute = createRoute({
       description: "Returns every store, in one page.",
     },
     ...unauthorized,
-    403: OPERATOR_ONLY_RESPONSE,
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller lacks the required management permission.",
+    },
   },
 });
 
@@ -538,9 +542,9 @@ const deleteBlobLocationRoute = createRoute({
   tags: ["Blobs"],
   summary: "Delete a blob's copy in a store",
   description:
-    "Deletes the copy of a blob that one store holds, and its row in the location log. Requires the operator key.",
+    "Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("blobs.manage"),
   request: { params: HashAndStoreParam },
   responses: {
     200: {
@@ -552,7 +556,12 @@ const deleteBlobLocationRoute = createRoute({
     },
     400: INVALID_HASH_RESPONSE,
     ...unauthorized,
-    403: OPERATOR_ONLY_RESPONSE,
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller lacks the required management permission.",
+    },
     404: {
       content: {
         "application/json": {
@@ -584,9 +593,9 @@ const listBlobOrphansRoute = createRoute({
   tags: ["Blobs"],
   summary: "List orphaned blobs",
   description:
-    "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires the operator key.",
+    "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.",
   security: [{ bearerAuth: [] }],
-  middleware: operatorOnly,
+  middleware: standingPermission("instance.read"),
   responses: {
     200: {
       content: {
@@ -598,7 +607,12 @@ const listBlobOrphansRoute = createRoute({
         "Returns every orphan, in one page. A later run purges a blob once it has been listed longer than the grace period. It leaves the list if something references it again or you upload its bytes again.",
     },
     ...unauthorized,
-    403: OPERATOR_ONLY_RESPONSE,
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller lacks the required management permission.",
+    },
   },
 });
 
@@ -804,7 +818,7 @@ export function blobRoutes(
           },
           (recorded) => ({
             client_ip: c.get("clientIp") ?? null,
-            key_id: c.get("apiKey")?.id,
+            key_id: authorityId(c),
             action: "blob.upload",
             resource_type: "blob",
             resource_id: hash,
@@ -847,7 +861,7 @@ export function blobRoutes(
     return c.json({ data, next_cursor: null }, 200);
   });
 
-  // GET /blobs/stores — the attached stores (operator key only). Registered
+  // GET /blobs/stores — the attached stores (instance.read). Registered
   // ahead of `/{hash}` so the literal segment is never read as a hash.
   router.openapi(listBlobStoresRoute, async (c) => {
     const data = await storage.blobs.listStores();
@@ -940,7 +954,7 @@ export function blobRoutes(
     try {
       await dropBlobCopy(storage, blobs, hash, params.store, minCopies, {
         client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
+        key_id: authorityId(c),
       });
     } catch (err) {
       if (err instanceof LocationNotFound) {

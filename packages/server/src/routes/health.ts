@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { ErrorCode } from "@withmarfa/shared";
 import { shapedError } from "../middleware/error-handler.js";
 import { platformDrift } from "../storage/platform-drift.js";
@@ -69,12 +69,12 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
 }
 
 /**
- * Whether a request's credential is the operator key, read from the key
+ * Whether a stored key holds instance.read, read from the key
  * table alone. It is not the credential middleware: that one stamps the
  * key as used, which is a write, and this door is asked precisely when
  * writes may be failing. A database that cannot look the key up says no.
  */
-export function operatorCaller(
+export function instanceReadCaller(
   storage: Pick<Storage, "keys">,
   salt: string,
 ): (authorization: string | undefined) => Promise<boolean> {
@@ -84,7 +84,7 @@ export function operatorCaller(
       const key = await storage.keys.validate(
         hashApiKey(authorization.slice(7), salt),
       );
-      return key?.is_operator === true;
+      return key?.permissions?.includes("instance.read") === true;
     } catch {
       return false;
     }
@@ -184,9 +184,8 @@ export function healthRoutes(
   blobs: BlobLayer,
   config: Pick<AppConfig, "versionFile" | "placement" | "diskReserveBytes">,
   probes: HealthProbes,
-  /** Whether a request's credential is the operator key. Left out, nobody
-   *  is, which tells nobody anything. */
-  isOperator: (authorization: string | undefined) => Promise<boolean> = () =>
+  /** Read-only authority resolution; health must remain available when writes fail. */
+  mayReadDetails: (c: Context<AppEnv>) => Promise<boolean> = () =>
     Promise.resolve(false),
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
@@ -240,8 +239,8 @@ export function healthRoutes(
 
     // The text of an error is the database's or the operating system's own,
     // and carries paths and driver detail. This door takes no credential,
-    // so only the operator key is told it.
-    if (!(await isOperator(c.req.header("Authorization")))) {
+    // so only a holder of instance.read is told it.
+    if (!(await mayReadDetails(c))) {
       for (const component of Object.values(components)) {
         delete component.error;
       }
@@ -279,7 +278,7 @@ export function healthRoutes(
     // the drift figure above: this endpoint is unauthenticated, and the
     // value itself would advertise what another build wrote to anyone who
     // asks. The true stored string is on the boot log, behind the
-    // operator's access to it.
+    // machine administrator's access to it.
     //
     // Not a component, and this is the shape decision rather than the
     // field. It carries no status and never moves `overall`, which is

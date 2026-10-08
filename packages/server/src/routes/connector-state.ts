@@ -9,7 +9,7 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { DEFAULT_CONNECTOR_HOLD_MS } from "../config.js";
 import type { AppConfig } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { mayReadType, requireAuth } from "../middleware/auth.js";
+import { mayReadType, requireAuth, authorityId } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -28,10 +28,10 @@ import {
   IdParam,
   connectorOrRefuse,
   listQueryResponse,
-  ownKeyOrOperatorResponses,
+  ownKeyOrManagerResponses,
   ownKeyResponses,
   requireOwnKey,
-  requireOwnKeyOrOperator,
+  requireOwnKeyOrManager,
 } from "./connectors.js";
 
 export const MAX_STATE_BYTES = 512 * 1024;
@@ -321,7 +321,7 @@ const deleteStateRoute = createRoute({
       content: { "application/json": { schema: OkResponseSchema } },
       description: "Returns `ok: true`.",
     },
-    ...ownKeyOrOperatorResponses,
+    ...ownKeyOrManagerResponses,
   },
 });
 
@@ -536,15 +536,14 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(deleteStateRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKeyOrOperator(connector.key_id, key);
+    requireOwnKeyOrManager(connector.key_id, c);
     await runAuditedTransaction(
       storage,
       () => storage.connectorState.clear(connector.source),
       (cleared) => ({
         client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
+        key_id: authorityId(c),
         action: "connector_state.delete",
         resource_type: "connector",
         resource_id: connector.id,
