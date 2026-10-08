@@ -2638,14 +2638,6 @@ If a pin of a row is refused because the server holds the row in the bin, then a
 
 **Tests:** `device/bin-live.test.ts › keeps a row it holds in the bin when a pin of it is refused`.
 
-### `device/read-back-binned`
-
-If a drain reads back a row by id and the server answers it as gone while its bin holds the row, then a device MUST keep the row the copy holds.
-
-**Reason:** a read by id answers a row in the bin as one that is gone (`items/get-missing`), and a slice holds its rows in the bin as in any other state.
-
-**Tests:** `device/bin-live.test.ts › keeps a row it holds in the bin when a drain reads it back`.
-
 ### `device/pin-trashed-unread`
 
 If a caller pins a row the server holds in the bin, of a type the key may not read, then a device MUST refuse it `not_found` without the code `trashed`.
