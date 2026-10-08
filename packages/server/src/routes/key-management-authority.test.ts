@@ -46,7 +46,7 @@ describe("management key authority", () => {
     });
     expect(list.status).toBe(200);
     expect(
-      (await list.json()).data.some(
+      ((await list.json()) as { data: { id: string }[] }).data.some(
         (key: { id: string }) => key.id === target.id,
       ),
     ).toBe(true);
@@ -103,7 +103,9 @@ describe("management key authority", () => {
       method: "PATCH",
     });
     expect(narrowed.status).toBe(200);
-    expect((await narrowed.json()).oauth_client_id).toBe(app.clientId);
+    expect(
+      ((await narrowed.json()) as { oauth_client_id: string }).oauth_client_id,
+    ).toBe(app.clientId);
   });
 
   it("never combines an app token with an owner cookie", async () => {
@@ -133,8 +135,48 @@ describe("management key authority", () => {
       method: "PATCH",
     });
     expect(response.status).toBe(403);
-    expect((await response.json()).error.details.required_scope).toBe(
-      "config.manage",
-    );
+    expect(
+      (
+        (await response.json()) as {
+          error: { details: { required_scope: string } };
+        }
+      ).error.details.required_scope,
+    ).toBe("config.manage");
+  });
+  it("preserves descendant keys on disconnect and revokes them only when explicitly requested", async () => {
+    ctx = await createTestContext();
+    for (const revokeKeys of [false, true]) {
+      const app = await seedOauthBearer(ctx, ["keys.mint", "instance.read"]);
+      const parent = await mint(
+        ctx,
+        `parent-${revokeKeys}`,
+        ["keys.mint", "instance.read"],
+        app.token,
+      );
+      const child = await mint(
+        ctx,
+        `child-${revokeKeys}`,
+        ["instance.read"],
+        parent.key,
+      );
+      const disconnected = await ctx.ownerRequest(
+        `/auth/grants/${app.grantId}${revokeKeys ? "?revoke_keys=true" : ""}`,
+        { method: "DELETE" },
+      );
+      expect(disconnected.status).toBe(204);
+      for (const key of [parent, child]) {
+        const response = await ctx.app.request("/metrics", {
+          headers: { authorization: `Bearer ${key.key}` },
+        });
+        expect(response.status).toBe(revokeKeys ? 401 : 200);
+      }
+      expect(
+        (
+          await ctx.app.request("/metrics", {
+            headers: { authorization: `Bearer ${app.token}` },
+          })
+        ).status,
+      ).toBe(401);
+    }
   });
 });

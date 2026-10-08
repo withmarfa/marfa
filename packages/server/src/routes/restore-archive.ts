@@ -149,7 +149,7 @@ const restoreArchiveRoute = createRoute({
   summary: "Restore from an archive",
   description:
     "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires direct owner or local authority. The owner must have authenticated within five minutes.",
-  security: [{ bearerAuth: [] }],
+  security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: {
     body: {

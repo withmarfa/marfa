@@ -807,6 +807,13 @@ export function createApp(
   })) {
     app.openAPIRegistry.register(name, schema);
   }
+  app.openAPIRegistry.registerComponent("securitySchemes", "ownerSession", {
+    type: "apiKey",
+    in: "cookie",
+    name: "marfa.auth.session_token",
+    description:
+      "The owner's browser sign-in. Writes require this instance's Origin; sensitive changes require actual authentication within five minutes. Apps cannot use this authority.",
+  });
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
     scheme: "bearer",

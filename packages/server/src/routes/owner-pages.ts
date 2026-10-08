@@ -1,3 +1,4 @@
+import { managementPages } from "./management-pages.js";
 import { Hono } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -53,5 +54,6 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
       }),
     );
   });
+  router.route("/", managementPages());
   return router;
 }

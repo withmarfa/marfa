@@ -31,6 +31,7 @@ import {
   isDirectAuthority,
   holdsPermission,
   requirePermission,
+  requireRecentOwnerAuthentication,
   standingRule,
   authorityId,
 } from "../middleware/auth.js";
@@ -53,6 +54,11 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { errorMessage } from "../error-text.js";
+
+const keySecurity: Record<string, string[]>[] = [
+  { bearerAuth: [] },
+  { ownerSession: [] },
+];
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -189,7 +195,7 @@ const createKeyRoute = createRoute({
   summary: "Create an API key",
   description:
     "Creates an API key and returns it with its plaintext `key`, shown only here. If the body names none of `permissions`, the five permission maps and `sources`, the key gets everything you hold; if it names any, the key holds only what it names.",
-  security: [{ bearerAuth: [] }],
+  security: keySecurity,
   middleware: mintDoor,
   request: {
     body: {
@@ -306,7 +312,7 @@ const listKeysRoute = createRoute({
   summary: "List API keys",
   description:
     "Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
-  security: [{ bearerAuth: [] }],
+  security: keySecurity,
   middleware: keyDoors,
   responses: {
     200: {
@@ -380,7 +386,7 @@ const revokeKeyRoute = createRoute({
   summary: "Revoke an API key",
   description:
     "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
-  security: [{ bearerAuth: [] }],
+  security: keySecurity,
   middleware: keyDoors,
   request: {
     params: z.object({
@@ -484,7 +490,7 @@ const updateKeyRoute = createRoute({
   summary: "Update an API key",
   description:
     "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
-  security: [{ bearerAuth: [] }],
+  security: keySecurity,
   middleware: keyDoors,
   request: {
     params: z.object({
@@ -793,6 +799,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         if (body.enforcement_override !== undefined)
           requirePermission(c, "config.manage");
         const direct = isDirectAuthority(c);
+        if (direct) requireRecentOwnerAuthentication(c);
         const callerKey = direct ? undefined : requireAuth(c);
         const callerGrant = c.get("oauthGrant");
         const fromApp = c.get("authType") === "oauth";
@@ -878,7 +885,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         details: mintDetails(c, grantItemId),
       }),
     );
-    return c.json({ ...stored, key: rawKey }, 201);
+    return c.json(KeyResponseSchema.parse({ ...stored, key: rawKey }), 201);
   });
 
   router.openapi(listKeysRoute, async (c) => {
@@ -941,6 +948,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           if (body.enforcement_override !== undefined)
             requirePermission(c, "config.manage");
           const direct = isDirectAuthority(c);
+          if (direct) requireRecentOwnerAuthentication(c);
           const manager = !direct && holdsPermission(c, "keys.manage");
           const requested = {
             type_permissions: body.type_permissions,
