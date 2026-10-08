@@ -2534,15 +2534,7 @@ export interface OwnerRecord {
   createdAt: Date;
 }
 
-/**
- * The owner: the one account on the instance's sign-in surface.
- *
- * Sign-up is disabled on every instance and `POST /owner` refuses once an
- * account exists, so the account created first is the owner and there is
- * no second. Read from `auth_user` rather than kept as a separate marker,
- * because a marker could outlive the row and close the door with nobody
- * behind it.
- */
+/** The owner named by the durable, completed instance claim. */
 export interface OwnerStore {
   /** The owner, or `null` on an instance that has none yet. */
   find(): Promise<OwnerRecord | null>;
@@ -2569,6 +2561,8 @@ export interface OwnerStore {
  * traffic this is built for — low thousands of requests a second at peak.
  */
 export interface RateLimitStore {
+  /** Clear password sign-in locks for one account, including its address windows. */
+  clearSignIn(email: string): Promise<void>;
   /**
    * Atomic upsert that increments the counter for `(family, key)` by 1.
    * If the existing row's `expires_at` has already passed, the row is

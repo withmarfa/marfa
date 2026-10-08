@@ -1,3 +1,5 @@
+import { changeOwnerPassword } from "./instance-claim.js";
+import { requireOwnerOrigin } from "./owner-browser.js";
 import { withSessionEndAudit } from "./session-end-audit.js";
 import {
   CredentialPersistencePhase,
@@ -84,6 +86,7 @@ interface BetterAuthCredentialContext {
   password: {
     hash: (password: string) => Promise<string>;
     config: { minPasswordLength: number; maxPasswordLength: number };
+    verify: (input: { hash: string; password: string }) => Promise<boolean>;
   };
   internalAdapter: {
     findUserByEmail: (
@@ -99,6 +102,13 @@ interface BetterAuthCredentialContext {
       createdAt: Date;
     } | null>;
     linkAccount: (account: Record<string, unknown>) => Promise<unknown>;
+    findAccounts: (
+      userId: string,
+    ) => Promise<{ providerId: string; password?: string | null }[]>;
+    updatePassword: (userId: string, password: string) => Promise<void>;
+    deleteUserSessions: (userId: string) => Promise<void>;
+    listSessions: (userId: string) => Promise<{ id: string; token: string }[]>;
+    deleteSessions: (tokens: string[]) => Promise<void>;
   };
 }
 
@@ -130,7 +140,7 @@ export interface MarfaAuthSessionUser {
 /** A live Better Auth session (cookie-backed). */
 export interface MarfaAuthSession {
   user: MarfaAuthSessionUser;
-  session: { id: string };
+  session: { id: string; token: string; createdAt: Date };
 }
 
 /** What the device plugin answers about a user code. `clientId` and `scope`
@@ -175,7 +185,10 @@ export interface MarfaAuth {
    * OAuth consent flow uses this to gate `/auth/authorize` without
    * requiring admin bearer tokens.
    */
-  getSession: (headers: Headers) => Promise<MarfaAuthSession | null>;
+  getSession: (
+    headers: Headers,
+    options?: { readOnly?: boolean },
+  ) => Promise<MarfaAuthSession | null>;
   /**
    * Create an email + password account without going through sign-up.
    *
@@ -186,10 +199,16 @@ export interface MarfaAuth {
    * already proven, because whoever calls this asked for the account
    * rather than a stranger claiming it.
    *
-   * `POST /owner` is the door over this, and it is how an instance gets
-   * its owner; the test harness calls it directly to put a person behind
-   * the sign-in page without going through that door.
+   * The instance claim service is the only account-creation entry point.
+   * Its transaction consumes setup authority and records the durable owner.
    */
+  verifyEmailPassword: (userId: string, password: string) => Promise<boolean>;
+  /** Replace the credential and revoke every browser session inside the caller's transaction. */
+  resetEmailPassword: (
+    userId: string,
+    password: string,
+    keepSessionId?: string,
+  ) => Promise<void>;
   createEmailAccount: (
     params: {
       email: string;
@@ -319,6 +338,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         ctx.logger.error(error instanceof Error ? error.name : "", error);
       },
     },
+    session: { deferSessionRefresh: true },
     emailAndPassword: {
       enabled: true,
       // Auto-sign-in keeps the consent flow seamless when an account
@@ -441,6 +461,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // been signed out. Errors propagate (e.g. a malformed JWT throws).
   const api = instance.api as {
     getSession: (params: {
+      query?: { disableRefresh: boolean; disableCookieCache: boolean };
       headers: Headers;
     }) => Promise<MarfaAuthSession | null>;
     deviceVerify: (params: {
@@ -631,7 +652,57 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     );
   };
 
-  return {
+  const credentialContext = () =>
+    (instance as unknown as { $context: Promise<BetterAuthCredentialContext> })
+      .$context;
+  const verifyEmailPassword = async (userId: string, password: string) => {
+    const ctx = await credentialContext();
+    const account = (await ctx.internalAdapter.findAccounts(userId)).find(
+      (a) => a.providerId === "credential",
+    );
+    return (
+      !!account?.password &&
+      ctx.password.verify({ hash: account.password, password })
+    );
+  };
+  const resetEmailPassword = async (
+    userId: string,
+    password: string,
+    keepSessionId?: string,
+  ) => {
+    if (!options.storage)
+      throw new Error("Password replacement requires transactional storage");
+    options.storage.assertInWriteTransaction();
+    const ctx = await credentialContext();
+    const { minPasswordLength, maxPasswordLength } = ctx.password.config;
+    if (
+      typeof password !== "string" ||
+      password.length < minPasswordLength ||
+      password.length > maxPasswordLength
+    )
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Password must contain ${String(minPasswordLength)} to ${String(maxPasswordLength)} characters.`,
+      );
+    const account = (await ctx.internalAdapter.findAccounts(userId)).find(
+      (a) => a.providerId === "credential",
+    );
+    if (!account)
+      throw new MarfaError(
+        ErrorCode.OWNER_NOT_FOUND,
+        "The owner's password account is unavailable.",
+      );
+    const hash = await ctx.password.hash(password);
+    await ctx.internalAdapter.updatePassword(userId, hash);
+    if (keepSessionId) {
+      const others = (await ctx.internalAdapter.listSessions(userId))
+        .filter((s) => s.id !== keepSessionId)
+        .map((s) => s.token);
+      if (others.length) await ctx.internalAdapter.deleteSessions(others);
+    } else await ctx.internalAdapter.deleteUserSessions(userId);
+  };
+
+  const facade: MarfaAuth = {
     handler: async (request: Request, clientAddress: string | null) => {
       // Set on the request's own headers rather than on a copy: copying a
       // request the server received starts reading its body, which is
@@ -641,6 +712,33 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
       }
       const path = new URL(request.url).pathname.replace(/^\/auth/, "");
+      if (
+        path === "/change-password" &&
+        request.method === "POST" &&
+        options.storage
+      ) {
+        requireOwnerOrigin(facade, request.headers);
+        const body = (await request.json()) as {
+          currentPassword?: unknown;
+          newPassword?: unknown;
+        };
+        if (
+          typeof body.currentPassword !== "string" ||
+          typeof body.newPassword !== "string"
+        )
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            "Current and new passwords are required.",
+          );
+        await changeOwnerPassword(options.storage, facade, request.headers, {
+          currentPassword: body.currentPassword,
+          password: body.newPassword,
+        });
+        return Response.json(
+          { token: null, user: null },
+          { headers: { "cache-control": "no-store" } },
+        );
+      }
       const phase =
         ["/oauth2/token", "/oauth2/revoke", "/change-password"].includes(
           path,
@@ -712,8 +810,15 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       );
     },
     api: instance.api,
-    getSession: (headers: Headers) =>
-      credentialOperation("/get-session", () => api.getSession({ headers })),
+    getSession: (headers: Headers, lookup = {}) =>
+      credentialOperation("/get-session", () =>
+        api.getSession({
+          headers,
+          ...(lookup.readOnly
+            ? { query: { disableRefresh: true, disableCookieCache: true } }
+            : {}),
+        }),
+      ),
     deviceVerify: (code, headers) =>
       credentialOperation("/device", () => deviceVerify(code, headers)),
     deviceApprove: (code, headers) =>
@@ -725,8 +830,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         deviceDecision((params) => api.deviceDeny(params))(code, headers),
       ),
     createEmailAccount,
+    verifyEmailPassword,
+    resetEmailPassword,
     ready,
     baseURL: options.baseURL,
     signingSecret,
   };
+  return facade;
 }
