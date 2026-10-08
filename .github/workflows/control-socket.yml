@@ -17,6 +17,7 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,6 +33,7 @@ jobs:
       - run: pnpm exec vitest run packages/server/src/control/socket.test.ts
   macos:
     runs-on: macos-26
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

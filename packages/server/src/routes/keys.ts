@@ -385,7 +385,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Revoke an API key",
   description:
-    "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+    "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
   security: keySecurity,
   middleware: keyDoors,
   request: {
@@ -489,7 +489,7 @@ const updateKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+    "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
   security: keySecurity,
   middleware: keyDoors,
   request: {

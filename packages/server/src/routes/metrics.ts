@@ -16,26 +16,37 @@ interface CacheEntry {
 let metricsCache: CacheEntry | undefined;
 
 const MetricCountSchema = z
-  .object({ total: z.number() })
+  .object({ total: z.number().describe("Number of records.") })
+  .describe("An instance-wide record count.")
   .openapi("MetricCount");
 
 const MetricsResponseSchema = z.object({
-  items: z.object({
-    total: z.number(),
-    by_state: z.record(z.string(), z.number()),
-  }),
-  blobs: z.object({
-    count: z.number(),
-    total_bytes: z.number(),
-  }),
-  types: z.object({
-    core: z.number(),
-    registered: z.number(),
-  }),
-  keys: MetricCountSchema,
-  webhooks: MetricCountSchema,
-  uptime_seconds: z.number(),
-  cached_at: z.string(),
+  items: z
+    .object({
+      total: z.number().describe("Number of items across all states."),
+      by_state: z
+        .record(z.string(), z.number())
+        .describe("Item counts by state."),
+    })
+    .describe("Instance-wide item counts."),
+  blobs: z
+    .object({
+      count: z.number().describe("Number of stored blobs."),
+      total_bytes: z.number().describe("Total size of stored blobs, in bytes."),
+    })
+    .describe("Stored blob counts and size."),
+  types: z
+    .object({
+      core: z.number().describe("Number of built-in types."),
+      registered: z.number().describe("Number of registered types."),
+    })
+    .describe("Built-in and registered type counts."),
+  keys: MetricCountSchema.describe("Number of unrevoked keys."),
+  webhooks: MetricCountSchema.describe("Number of webhook registrations."),
+  uptime_seconds: z
+    .number()
+    .describe("Seconds since this server process started."),
+  cached_at: z.string().describe("When these counters were collected, in UTC."),
 });
 
 const getMetricsRoute = createRoute({
@@ -45,7 +56,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Requires instance.read: the counters are instance-wide rather than permission-scoped.",
+    "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   responses: {

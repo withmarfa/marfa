@@ -1268,14 +1268,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
+         * @description Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.
          */
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
+         * @description Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1315,7 +1315,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires direct owner or local authority. The owner must have authenticated within five minutes.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -1529,7 +1529,7 @@ export interface paths {
         };
         /**
          * Get server metrics
-         * @description Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Requires instance.read: the counters are instance-wide rather than permission-scoped.
+         * @description Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.
          */
         get: operations["getServerMetrics"];
         put?: never;
@@ -3896,10 +3896,15 @@ export interface components {
                 };
             };
         };
+        /** @description The single owner of the instance. */
         Owner: {
+            /** @description Unique identifier for the owner. */
             id: string;
+            /** @description Email address used to sign in. */
             email: string;
+            /** @description Display name of the owner. */
             name: string;
+            /** @description When the owner was created, in UTC. */
             created_at: string;
         };
         /** @description An error response. */
@@ -4055,7 +4060,9 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description Number of unrevoked keys. */
         MetricCount: {
+            /** @description Number of records. */
             total: number;
         };
         /** @description An error response. */
@@ -19902,10 +19909,16 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: email */
+                    /**
+                     * Format: email
+                     * @description Email address the owner uses to sign in.
+                     */
                     email: string;
+                    /** @description Password for the new owner. */
                     password: string;
+                    /** @description Display name. Defaults to the part before @ in the email address when omitted or blank. */
                     name?: string;
+                    /** @description Machine-issued setup code. Omit when using a setup-only browser session. */
                     code?: string;
                 };
             };
@@ -21430,23 +21443,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description Instance-wide item counts. */
                         items: {
+                            /** @description Number of items across all states. */
                             total: number;
+                            /** @description Item counts by state. */
                             by_state: {
                                 [key: string]: number;
                             };
                         };
+                        /** @description Stored blob counts and size. */
                         blobs: {
+                            /** @description Number of stored blobs. */
                             count: number;
+                            /** @description Total size of stored blobs, in bytes. */
                             total_bytes: number;
                         };
+                        /** @description Built-in and registered type counts. */
                         types: {
+                            /** @description Number of built-in types. */
                             core: number;
+                            /** @description Number of registered types. */
                             registered: number;
                         };
                         keys: components["schemas"]["MetricCount"];
-                        webhooks: components["schemas"]["MetricCount"];
+                        webhooks: components["schemas"]["MetricCount"] & unknown;
+                        /** @description Seconds since this server process started. */
                         uptime_seconds: number;
+                        /** @description When these counters were collected, in UTC. */
                         cached_at: string;
                     };
                 };

@@ -12,11 +12,12 @@ import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
 const OwnerSchema = z
   .object({
-    id: z.string(),
-    email: z.string(),
-    name: z.string(),
-    created_at: z.string(),
+    id: z.string().describe("Unique identifier for the owner."),
+    email: z.string().describe("Email address used to sign in."),
+    name: z.string().describe("Display name of the owner."),
+    created_at: z.string().describe("When the owner was created, in UTC."),
   })
+  .describe("The single owner of the instance.")
   .openapi("Owner");
 const failure = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
@@ -61,10 +62,25 @@ const createOwnerRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            email: z.email().max(254),
-            password: z.string(),
-            name: z.string().trim().max(200).optional(),
-            code: z.string().optional(),
+            email: z
+              .email()
+              .max(254)
+              .describe("Email address the owner uses to sign in."),
+            password: z.string().describe("Password for the new owner."),
+            name: z
+              .string()
+              .trim()
+              .max(200)
+              .optional()
+              .describe(
+                "Display name. Defaults to the part before @ in the email address when omitted or blank.",
+              ),
+            code: z
+              .string()
+              .optional()
+              .describe(
+                "Machine-issued setup code. Omit when using a setup-only browser session.",
+              ),
           }),
         },
       },

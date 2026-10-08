@@ -5893,16 +5893,20 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the owner."
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "description": "Email address used to sign in."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name of the owner."
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the owner was created, in UTC."
           }
         },
         "required": [
@@ -5910,7 +5914,8 @@
           "email",
           "name",
           "created_at"
-        ]
+        ],
+        "description": "The single owner of the instance."
       },
       "OwnerNotFoundRefusal": {
         "type": "object",
@@ -6304,12 +6309,14 @@
         "type": "object",
         "properties": {
           "total": {
-            "type": "number"
+            "type": "number",
+            "description": "Number of records."
           }
         },
         "required": [
           "total"
-        ]
+        ],
+        "description": "Number of unrevoked keys."
       },
       "WriteContentionRefusal": {
         "type": "object",
@@ -35876,7 +35883,7 @@
           "Access"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. `keys.manage` and direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+        "description": "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
         "security": [
           {
             "bearerAuth": []
@@ -36197,7 +36204,7 @@
           "Access"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+        "description": "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
         "security": [
           {
             "bearerAuth": []
@@ -37233,7 +37240,7 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires direct owner or local authority. The owner must have authenticated within five minutes.",
+        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
         "security": [
           {
             "ownerSession": []
@@ -38528,17 +38535,21 @@
                   "email": {
                     "type": "string",
                     "maxLength": 254,
-                    "format": "email"
+                    "format": "email",
+                    "description": "Email address the owner uses to sign in."
                   },
                   "password": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Password for the new owner."
                   },
                   "name": {
                     "type": "string",
-                    "maxLength": 200
+                    "maxLength": 200,
+                    "description": "Display name. Defaults to the part before @ in the email address when omitted or blank."
                   },
                   "code": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Machine-issued setup code. Omit when using a setup-only browser session."
                   }
                 },
                 "required": [
@@ -41639,7 +41650,7 @@
           "Admin"
         ],
         "summary": "Get server metrics",
-        "description": "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Requires instance.read: the counters are instance-wide rather than permission-scoped.",
+        "description": "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
         "security": [
           {
             "bearerAuth": []
@@ -41657,61 +41668,79 @@
                       "type": "object",
                       "properties": {
                         "total": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Number of items across all states."
                         },
                         "by_state": {
                           "type": "object",
                           "additionalProperties": {
                             "type": "number"
-                          }
+                          },
+                          "description": "Item counts by state."
                         }
                       },
                       "required": [
                         "total",
                         "by_state"
-                      ]
+                      ],
+                      "description": "Instance-wide item counts."
                     },
                     "blobs": {
                       "type": "object",
                       "properties": {
                         "count": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Number of stored blobs."
                         },
                         "total_bytes": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Total size of stored blobs, in bytes."
                         }
                       },
                       "required": [
                         "count",
                         "total_bytes"
-                      ]
+                      ],
+                      "description": "Stored blob counts and size."
                     },
                     "types": {
                       "type": "object",
                       "properties": {
                         "core": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Number of built-in types."
                         },
                         "registered": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Number of registered types."
                         }
                       },
                       "required": [
                         "core",
                         "registered"
-                      ]
+                      ],
+                      "description": "Built-in and registered type counts."
                     },
                     "keys": {
                       "$ref": "#/components/schemas/MetricCount"
                     },
                     "webhooks": {
-                      "$ref": "#/components/schemas/MetricCount"
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/MetricCount"
+                        },
+                        {
+                          "description": "Number of webhook registrations."
+                        }
+                      ]
                     },
                     "uptime_seconds": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Seconds since this server process started."
                     },
                     "cached_at": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "When these counters were collected, in UTC."
                     }
                   },
                   "required": [
