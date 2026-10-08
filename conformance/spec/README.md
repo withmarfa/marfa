@@ -25,7 +25,8 @@ The contract has two halves.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, export and restore.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
-- `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.
+- `keys-and-oauth.md`: ordinary keys, management permissions, direct authority and the OAuth provider.
+- `instance-claim.md`: setup proof, the one owner, browser handoff and password recovery.
 - `instance.md`: what an instance says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the server sends.
 - `coverage.md`: every published operation, with its fixture and status.
@@ -42,7 +43,7 @@ The contract has two halves.
 ```markdown
 ### `housekeeping/run-unknown-name`
 
-When the operator key asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
+When a caller holding `instance.maintain` asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Reason:** optional, when the rule does not explain itself.
 
@@ -118,7 +119,7 @@ When a chapter moves, `scripts/spec-ids.ts` moves every reference from its old n
 
 - Each fixture file mints its own key with a `source` unique to the file.
 - Every row a file writes carries that source, or one built from it that the file's own keys claim.
-- The operator-only operations run as the operator key.
+- Management operations use their named permissions; owner-only operations use a direct owner session or the private local command.
 
 **The device's half** runs against a scripted server the fixture controls. A device must reach verdicts for failures the real server cannot be asked for, such as a dropped connection, a server at rest, a spent credential or a retry ceiling.
 
@@ -128,7 +129,5 @@ Each device chapter lists what the real server cannot produce, and why. `src/sui
 
 - **Enrichment and OCR are off for a run.** The enrichment statements in `housekeeping.md` are asserted by fixtures that each boot a server of their own with enrichment on.
 - **Rate limiting is off for a run.** A run mints and revokes one key per file, which would spend the key operations' allowance. That allowance, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. No statement covers the caps on other paths.
-- **The boot mint.** A fresh instance mints its first key, the operator key, once, through `POST /keys`, with the one-time secret its boot log prints as the bearer token.
-  - `scripts/marfa-server.ts` performs it, and `src/utils/target.test.ts` pins how the answer is read.
-  - No fixture repeats it, because the first mint uses up the secret.
-  - A boot mint naming `sources` is refused `403 forbidden`, and the secret still mints afterwards. `packages/server/src/routes/keys.test.ts` asserts it.
+- **Instance claim.** Normal server fixtures obtain machine authority through the private local listener, claim the owner through the production claim operation, then issue ordinary credentials through authorized operations; dedicated claim fixtures start unclaimed.
+- **Operating-system authority.** Public HTTP conformance can prove that network requests cannot reach the private control operations; it cannot prove file ownership, socket modes, unsafe-path rejection or refusal of a different OS account, which are exercised separately by the platform CI checks and packaged-container checks.
