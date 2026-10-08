@@ -275,6 +275,7 @@ fn readiness(
     rows: &HashMap<&str, &QueuedWrite>,
     verdicts: &HashMap<String, Option<Verdict>>,
     waiting: &HashSet<String>,
+    landing: &HashSet<String>,
 ) -> Readiness {
     // Ordering before dependencies, so a write that would be refused does
     // not let the writes behind it past the one ahead.
@@ -290,6 +291,11 @@ fn readiness(
             // A dependency missing from the queue has no answer either.
             return Readiness::Held;
         };
+        // Refused onto a row no read can find yet: whether what waits on it
+        // goes to that row or is refused is not known until a read finds it.
+        if landing.contains(dependency) {
+            return Readiness::Held;
+        }
         match verdict {
             Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => {}
             Some(terminal @ (Verdict::Refused | Verdict::Dead)) => {
@@ -614,6 +620,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         .collect();
 
     let rows: HashMap<&str, &QueuedWrite> = all.iter().map(|row| (row.id.as_str(), row)).collect();
+    let mut landing = store::pending_landings(&*core.conn()?)?;
     // Sent and unanswered, or held, this pass. A write to the same subject
     // behind one waits for the next pass: once sent under its key, a body
     // cannot be moved onto the answer ahead of it.
@@ -632,7 +639,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         };
         let row = current.as_ref().unwrap_or(row);
 
-        let ready = match readiness(row, &rows, &answers, &waiting) {
+        let ready = match readiness(row, &rows, &answers, &waiting, &landing) {
             Readiness::Ready => match crate::body::rule::lost_body(&*core.conn()?, row)? {
                 Some(reason) => Readiness::RefusedWith(reason),
                 None => Readiness::Ready,
@@ -830,6 +837,12 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         }
         waited(&mut report, settled.retry_after_seconds);
         answers.insert(row.id.clone(), settled.verdict);
+        if row.kind == WriteKind::CreateItem
+            && store::meta_get(&*core.conn()?, &receipt_key(&row.id))?
+                .is_some_and(|receipt| receipt.starts_with("land:"))
+        {
+            landing.insert(row.id.clone());
+        }
         // A credential refusal can hide a receipt for a committed write.
         // Its followers must keep their bodies unsent until that receipt arrives.
         let credential_block = settled.verdict == Some(Verdict::Blocked)
@@ -1343,7 +1356,7 @@ fn settle_success(
     let read = match read_owed(core, &owed) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
-            settled.unavailable = Some(error.to_string());
+            settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -1588,13 +1601,11 @@ fn land(
     let mut settled = Settled::plain(Some(Verdict::Refused), Some(code), row.refusals);
     let read = match read_owed(core, &owed) {
         Ok(read @ ReadBack::Item { held: Some(_), .. }) => read,
-        Ok(_) => {
-            settled.unavailable =
-                Some("the row named by the receipt is not returned to this read view".into());
-            return Ok(settled);
-        }
+        // The receipt stays owed and the writes behind the create stay held,
+        // but nothing else waits on a row the server may never hold again.
+        Ok(_) => return Ok(settled),
         Err(error) if error.is_environmental() => {
-            settled.unavailable = Some(error.to_string());
+            settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -2818,9 +2829,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
-        assert!(settled.unavailable.is_some());
+        // An absent target leaves the receipt owed without ending the pass.
+        assert!(settled.unavailable.is_none());
         {
             let conn = core.conn().unwrap();
+            assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
             assert_eq!(
                 store::queued_write(&conn, &dependant.id).unwrap().unwrap(),
                 dependant

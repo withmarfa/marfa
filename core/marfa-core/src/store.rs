@@ -2318,6 +2318,19 @@ pub fn record_verdict(
     Ok(())
 }
 
+/// The refused creates whose move onto the row their natural key names waits
+/// for a read that finds the row.
+pub fn pending_landings(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT substr(key, length('receipt_pending/') + 1) FROM meta
+          WHERE key LIKE 'receipt_pending/%' AND value LIKE 'land:%'",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(ids)
+}
+
 pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
     conn.execute(
         "UPDATE queue SET refusals = MIN(refusals + 1, ?2) WHERE id = ?1",
