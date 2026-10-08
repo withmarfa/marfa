@@ -333,7 +333,7 @@
     }
   },
   "routes/keys.ts": {
-    "boundary": "Audited create/update/revoke and atomic bootstrap claim/secret consumption; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts and bootstrap-audit-outcome.test.ts.",
+    "boundary": "Audited ordinary key create/update/revoke; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts.",
     "calls": {
       "KeyStore.create": 1,
       "runAuditedTransaction": 3
