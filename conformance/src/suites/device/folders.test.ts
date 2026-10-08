@@ -7160,7 +7160,7 @@ describe("what frontmatter says", () => {
     // A subtype naming only a body inherits no title from its parent: the
     // server's read of the type answers the subtype's block alone
     // (`types/read-display-hints`), so the folder falls back to `title`
-    // (`device.md` 47).
+    // (`device/catalog-type-read`).
     harness = await folderHarness("folder-partial-hints", {
       settings: { search: { types: ["user.quote"] } },
       catalog: {

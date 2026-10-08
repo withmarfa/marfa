@@ -9,7 +9,7 @@ import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
 /**
- * A slice of both tiers (`device.md` 86 and 87), against a real server and
+ * A slice of both tiers (`device/tier-all-hydrate`, `device/tier-all-listing` and `device/tier-all-move`), against a real server and
  * the real binary. Every device step is its own process, so each one opens
  * the store afresh, as an app does after a restart, and a local write runs in
  * a process that names no server at all.

@@ -11,12 +11,16 @@ use crate::model::{THUMBNAIL_MAX_BYTES, Thumbnail};
 /// removed.
 pub(crate) const MAX_TAG_LENGTH: usize = 128;
 
-/// The tags a write may carry, as the server holds them: not empty, not blank
+/// Most tags one item may hold: the server's `MAX_TAGS_PER_ITEM`.
+pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
+
+/// The tags a write may carry, as the server holds them: at most
+/// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
 /// as JavaScript's `trim` reads blank, and at most `MAX_TAG_LENGTH` UTF-16
 /// code units. A write the server would refuse is refused here, so it is
 /// never saved or queued only to come back refused.
 pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
-    let errors: Vec<String> = tags
+    let mut errors: Vec<String> = tags
         .iter()
         .enumerate()
         .filter_map(|(index, tag)| {
@@ -32,7 +36,27 @@ pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
             Some(format!("tags[{index}]: {problem}"))
         })
         .collect();
+    if tags.len() > MAX_TAGS_PER_ITEM {
+        errors.insert(
+            0,
+            format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item"),
+        );
+    }
     refuse(errors)
+}
+
+/// The server refuses a tag write that leaves an item more tags than the
+/// bound only where it holds more than it did, so a row an archive restored
+/// over the bound can still shed them.
+pub(crate) fn tag_count(before: usize, after: usize) -> Result<(), CoreError> {
+    refuse(
+        (after > MAX_TAGS_PER_ITEM && after > before)
+            .then(|| {
+                format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item (including existing tags)")
+            })
+            .into_iter()
+            .collect(),
+    )
 }
 
 /// The property names a write may carry, as the server holds them: not empty.

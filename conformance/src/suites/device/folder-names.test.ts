@@ -133,6 +133,105 @@ describe("a folder's file naming a tag or a property the server refuses", () => 
   });
 });
 
+describe("a folder's file whose tags would leave its item more than 100", () => {
+  const FULL = "01a00000-0000-7000-8000-00000000000c";
+  const LATER = "01a00000-0000-7000-8000-00000000000d";
+  const named = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, index) => `${prefix}${String(index)}`);
+  const row = (id: string, title: string, tags: string[]) => ({
+    item: {
+      id,
+      type: "core.note",
+      properties: { title, body: `${title}\n` },
+    },
+    tags,
+  });
+
+  it("is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved", async () => {
+    folder = await folderHarness("tag-count", {
+      settings: { search: { types: ["core.note"] } },
+      rows: {
+        "core.note": [
+          row(FULL, "full", named("f", 100)),
+          row(ROW, "held", named("h", 60)),
+          row(LATER, "later", []),
+        ],
+      },
+    });
+    const f = folder;
+    expect((await f.folder.pull()).ok).toBe(true);
+    const before = await f.folder.device().queue();
+    expect(before.ok).toBe(true);
+
+    const edit = (name: string, change: (text: string) => string) => {
+      const path = join(f.dir, name);
+      writeFileSync(path, change(readFileSync(path, "utf8")), "utf8");
+    };
+    const lines = (tags: string[]) =>
+      tags.map((tag) => `  - ${tag}\n`).join("");
+    edit("full.md", (text) => {
+      expect(text).toContain("  - f0\n");
+      return text.replace("  - f0\n", "  - swapped\n");
+    });
+    edit("held.md", (text) => {
+      expect(text).toContain("tags:\n");
+      return (
+        text.replace("tags:\n", `tags:\n${lines(named("added", 50))}`) +
+        "an edited body\n"
+      );
+    });
+    edit("later.md", (text) => text + "an edited body\n");
+
+    for (const pass of ["first", "again"]) {
+      const scanned = await f.folder.scan();
+      expect(scanned.ok, `${pass}: ${JSON.stringify(scanned)}`).toBe(true);
+      if (!scanned.ok) return;
+      expect(scanned.value.flagged).toEqual([
+        expect.objectContaining({ path: "held.md", flag: "refused" }),
+      ]);
+      expect(scanned.value.flagged[0]?.reason).toContain("validation_error");
+      expect(scanned.value.flagged[0]?.reason).toContain("100 tags");
+    }
+
+    const queue = await f.folder.device().queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok || !before.ok) return;
+    const fresh = queue.value.slice(before.value.length);
+    expect(
+      fresh.filter((write) => write.item_id === ROW),
+      "a write of the refused file was queued",
+    ).toEqual([]);
+    // The witnesses: the file sorting after it, and a swap on an item at
+    // 100, are queued, the swap's removal ahead of its add.
+    expect(
+      fresh
+        .filter((write) => write.item_id === LATER)
+        .map((write) => write.kind),
+    ).toEqual(["update_item"]);
+    expect(
+      fresh
+        .filter((write) => write.item_id === FULL)
+        .map((write) => [write.kind, write.tag]),
+    ).toEqual([
+      ["remove_tag", "f0"],
+      ["add_tag", "swapped"],
+    ]);
+
+    // Dropping the added tags takes the edit.
+    edit("held.md", (text) => text.replace(lines(named("added", 50)), ""));
+    const taken = await f.folder.scan();
+    expect(taken.ok && taken.value.flagged).toEqual([]);
+    const after = await f.folder.device().queue();
+    expect(
+      after.ok &&
+        after.value
+          .slice(before.value.length)
+          .filter((write) => write.item_id === ROW)
+          .map((write) => write.kind),
+    ).toEqual(["update_item"]);
+  });
+});
+
 describe("a folder whose settings hold a default the server refuses", () => {
   it("stops where it is told, naming the setting, and runs with a default it takes", async () => {
     const refusedDefaults: Array<[FolderSettings, string]> = [

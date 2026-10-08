@@ -34,6 +34,8 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
     let url = Remote::url_named(named)?;
     let remote = Remote::public_at(&url)?;
     let origin = remote.origin().to_string();
+    // A lock no command may use would leave an approved token nowhere to go.
+    auth::with_credential_lock(&origin, || Ok(()))?;
     let discovery = auth::discover(&remote)?;
 
     // A replaced sign-in is left to expire, not revoked: revoking its
@@ -111,7 +113,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
     if args.print_token {
         return print_set(&token, &client_id, out);
     }
-    match credentials::keep(&origin, &kept) {
+    match auth::with_credential_lock(&origin, || credentials::keep(&origin, &kept)) {
         Ok(()) => out.record(
             &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
             || format!("signed in to {origin}; the token is in the keychain"),

@@ -588,7 +588,7 @@ If a `GET /items` request sends a `cursor` that another listing or another order
 
 ## Search
 
-`GET /search?q=` matches full text. A device matches the same way, by `device.md` 123 to 145.
+`GET /search?q=` matches full text. A device matches the same way, as the device chapter's section "Search, matched as the server matches" says.
 
 ### `search-and-filters/search-q-required`
 
@@ -788,7 +788,7 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 The server MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first.
 
-**Reason:** a device ranks by the same measure (`device.md` 138), so the two orders agree where they rank the same rows.
+**Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same rows.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
 

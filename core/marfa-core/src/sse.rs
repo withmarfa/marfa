@@ -60,6 +60,9 @@ impl<R: BufRead> Frames<R> {
                 if read == 0 {
                     return Ok(None);
                 }
+                // Nor does what it named reach the frame after it.
+                id = None;
+                name = None;
                 continue;
             }
             if let Some(text) = line.strip_prefix(':') {

@@ -27,7 +27,7 @@ import {
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-// `device.md` 88 to 99: a body written through a working copy, against the
+// The links and embeds in a body written through a working copy, against the
 // run's server.
 
 let client: MarfaClient;
@@ -55,14 +55,17 @@ function value<T>(result: Outcome<T>): T {
   return result.value;
 }
 
-async function copy(url = apiUrl): Promise<CliDevice> {
+async function copy(
+  url = apiUrl,
+  types = ["core.note", "core.file"],
+): Promise<CliDevice> {
   const made = new CliDevice({
     binary: requireBinary(),
     store: newStore("body-edges"),
     url,
     key: apiKey,
   });
-  value(await made.hydrate(["core.note", "core.file"], "library"));
+  value(await made.hydrate(types, "library"));
   return made;
 }
 
@@ -173,6 +176,65 @@ describe("links", () => {
       { state: "item", id: later.id },
       { state: "item", id: remote },
     ]);
+  });
+
+  it("makes no edge for a link to the item itself or in a comment, and reads an event's description as its body", async () => {
+    const target = await note(device, named("Commented target"));
+    const host = await note(device, named("Self host"));
+    await drained(device);
+    await setBody(
+      device,
+      host.id,
+      [
+        `[[${host.id}]] and [[${named("Self host")}]]`,
+        `<!-- [[${named("Commented target")}]] -->`,
+        `%% [[${named("Commented target")}]] %%`,
+      ].join("\n"),
+    );
+    await drained(device);
+    expect(
+      await referencesFrom(host.id),
+      "a link to the item itself, or one in a comment, made an edge",
+    ).toEqual([]);
+
+    // The witness: the same name outside a comment, in the property an
+    // event keeps its body in, is a link.
+    const made = value(
+      await device.create({
+        type: "core.event",
+        properties: {
+          title: named("Event host"),
+          description: `[[${named("Commented target")}]]`,
+        },
+      }),
+    );
+    trackItem(ctx, made.item_id!);
+    await drained(device);
+    expect(await referencesFrom(made.item_id!)).toEqual([target.id]);
+  });
+
+  it("pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it", async () => {
+    const remote = await remoteNote(named("Pinned remote"));
+    const host = await note(
+      device,
+      named("Pin host"),
+      `[[${named("Pinned remote")}]]`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([remote]);
+    expect(
+      value(await device.status()).pinned,
+      "an item only the server holds was linked without being held",
+    ).toContain(remote);
+    expect(value(await device.get(remote)).id).toBe(remote);
+
+    await setBody(device, host.id, "no link now");
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([]);
+    expect(
+      value(await device.status()).pinned,
+      "a body's pin stayed after no edge needed it",
+    ).not.toContain(remote);
   });
 
   it("queues no edge write for an edit that leaves the body as it was", async () => {
@@ -347,6 +409,159 @@ describe("links", () => {
       "a refused edge left the queue without a discard",
     ).toBe("refused");
   });
+
+  it("queues a body's edge to wait on the write that changed the body", async () => {
+    const target = await note(device, named("Waited on target"));
+    const host = await note(device, named("Waiting edit host"));
+    await drained(device);
+    const edit = await setBody(device, host.id, `[[${target.id}]]`);
+    const edge = (await unsent(device)).find(
+      (write) => write.kind === "create_edge" && write.item_id === host.id,
+    );
+    expect(edge?.target_id).toBe(target.id);
+    expect(
+      edge?.depends_on,
+      "the edge would be sent whatever became of the body's write",
+    ).toContain(edit.id);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([target.id]);
+  });
+
+  it("reads a retyped item's body in the property its new type keeps it in", async () => {
+    const events = await copy(apiUrl, ["core.note", "core.event", "core.file"]);
+    const target = await note(events, named("Retype target"));
+    const host = await note(events, named("Retyped host"), `[[${target.id}]]`);
+    await drained(events);
+    expect(await referencesFrom(host.id)).toEqual([target.id]);
+    let held = value(await events.get(host.id));
+    value(
+      await events.update(host.id, {
+        version: held.version,
+        type: "core.event",
+        replace: true,
+        properties: {
+          title: named("Retyped host"),
+          description: `[[${target.id}]]`,
+        },
+      }),
+    );
+    expect(
+      (await unsent(events)).map((write) => write.kind),
+      "a body the retype only moved changed its edges",
+    ).toEqual(["update_item"]);
+    // The witness: the event's description is its body now. Neither write
+    // is sent: a retype the server takes changes the read view, which
+    // expires the copy.
+    held = value(await events.get(host.id));
+    expect(held.type).toBe("core.event");
+    value(
+      await events.update(host.id, {
+        version: held.version,
+        properties: { description: "no link" },
+      }),
+    );
+    expect((await unsent(events)).map((write) => write.kind)).toEqual([
+      "update_item",
+      "update_item",
+      "delete_edge",
+    ]);
+  });
+
+  it("reads an edit based on an older version once the server answers it, and sends its edges at the next drain", async () => {
+    const target = await note(device, named("Older edit target"));
+    const host = await note(device, named("Older edit host"));
+    await drained(device);
+    const read = value(await device.get(host.id)).version;
+    value(
+      await device.update(host.id, {
+        version: read,
+        properties: { title: named("Older edit host, renamed") },
+      }),
+    );
+    await drained(device);
+    expect(value(await device.get(host.id)).version).toBeGreaterThan(read);
+    value(
+      await device.update(host.id, {
+        version: read,
+        asRead: true,
+        properties: { body: `[[${target.id}]]` },
+      }),
+    );
+    expect(
+      (await unsent(device)).map((write) => write.kind),
+      "an edit the server will merge was read against the copy's newer row",
+    ).toEqual(["update_item"]);
+    await drained(device);
+    const queued = (await unsent(device)).filter(
+      (write) => write.kind === "create_edge" && write.item_id === host.id,
+    );
+    expect(
+      queued.map((write) => write.target_id),
+      "the merged body's link was not read once the server answered",
+    ).toEqual([target.id]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([target.id]);
+  });
+
+  it("takes the edge of a link to an item renamed since, when the link is taken out", async () => {
+    const plan = await note(device, named("Plan"));
+    const host = await note(
+      device,
+      named("Renamed link host"),
+      `see [[${named("Plan")}]]`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([plan.id]);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: named("Plan v2") },
+      }),
+    );
+    await drained(device);
+    expect(
+      targets(value(await device.bodyLinks(host.id)).links),
+      "a rename made a link with an edge read as naming nothing",
+    ).toEqual([{ state: "item", id: plan.id }]);
+    await setBody(device, host.id, "no link");
+    const deletes = (await unsent(device)).filter(
+      (write) => write.kind === "delete_edge",
+    );
+    expect(deletes.map((write) => [write.item_id, write.target_id])).toEqual([
+      [host.id, plan.id],
+    ]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([]);
+  });
+
+  it("stops waiting on a name once another writer takes it out of the body", async () => {
+    const host = await note(
+      device,
+      named("Changed elsewhere host"),
+      `[[${named("Never linked")}]]`,
+    );
+    await drained(device);
+    expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+      { state: "missing" },
+    ]);
+    const stored = await client.getItem(host.id);
+    expect(stored.ok).toBe(true);
+    const changed = await client.updateItem(host.id, {
+      version: stored.data.item.version,
+      properties: { body: "changed elsewhere" },
+    });
+    expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+    value(await device.catchUp());
+    await remoteNote(named("Never linked"));
+    value(await device.catchUp());
+    await drained(device);
+    expect(
+      await referencesFrom(host.id),
+      "a name the body no longer carries was linked when its item arrived",
+    ).toEqual([]);
+    expect(value(await device.bodyLinks(host.id)).links).toEqual([]);
+  });
 });
 
 describe("embeds", () => {
@@ -406,13 +621,17 @@ describe("embeds", () => {
     const host = await note(device, named("Attach host"));
     const first = value(await device.attach(host.id, join(dir, name)));
     const second = value(await device.attach(host.id, join(dir, name)));
-    const files = [first[1].item_id!, second[1].item_id!];
+    const files = [first.item.item_id!, second.item.item_id!];
     for (const file of files) trackItem(ctx, file);
     const texts = [];
     for (const file of files) {
       texts.push(value(await device.embedText(host.id, file)).embed);
     }
     expect(texts).toEqual([`![[${name}]]`, `![[pasted-${ctx.runId} 2.png]]`]);
+    expect(
+      [first.embed, second.embed],
+      "the attach did not answer the text that embeds the file it attached",
+    ).toEqual(texts);
     const before = (await unsent(device)).length;
     await setBody(device, host.id, texts.join("\n"));
     const after = await unsent(device);
@@ -425,6 +644,70 @@ describe("embeds", () => {
     expect(await attachedTo(host.id)).toEqual([...files].sort());
     const refused = await device.embedText(host.id, host.id);
     expect(refused.ok, "a note was given embed text").toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
+    const elsewhere = await note(device, named("Unattached host"));
+    const unattached = await device.embedText(elsewhere.id, files[0]!);
+    expect(
+      unattached.ok,
+      "a file was given embed text in an item it is not attached to",
+    ).toBe(false);
+    if (!unattached.ok) {
+      expect(unattached.refusal.code).toBe("invalid");
+      expect(unattached.refusal.raw).toContain("not attached");
+    }
+  });
+
+  it("keeps a title its caller gives, and answers no embed text where that title is shared", async () => {
+    const dir = scratch();
+    const name = `given-${ctx.runId}.png`;
+    writeFileSync(join(dir, name), `given ${ctx.runId}`);
+    const host = await note(device, named("Given title host"));
+    const first = value(await device.attach(host.id, join(dir, name)));
+    const given = value(
+      await device.attach(host.id, join(dir, name), { title: name }),
+    );
+    for (const file of [first, given]) trackItem(ctx, file.item.item_id!);
+    // The witness: an attach whose title names its file alone answers one.
+    expect(first.embed).toBe(`![[${name}]]`);
+    expect(
+      value(await device.get(given.item.item_id!)).properties.title,
+      "the title the caller gave was changed",
+    ).toBe(name);
+    expect(
+      given.embed,
+      "the attach answered embed text that names two attachments",
+    ).toBeNull();
+  });
+
+  it("reads an embed as the file attached to the item before other file items of that name", async () => {
+    const dir = scratch();
+    const name = `shared-${ctx.runId}.png`;
+    writeFileSync(join(dir, name), `shared ${ctx.runId}`);
+    const standalone = value(await device.addFile(join(dir, name)))[1];
+    trackItem(ctx, standalone.item_id!);
+    const host = await note(device, named("Lookup host"));
+    const attached = value(await device.attach(host.id, join(dir, name)));
+    trackItem(ctx, attached.item.item_id!);
+    await drained(device);
+    await setBody(device, host.id, `![[${name}]]`);
+    expect(
+      (await unsent(device)).map((write) => write.kind),
+      "the embed made an edge to another file of the name",
+    ).toEqual(["update_item"]);
+    expect(targets(value(await device.bodyLinks(host.id)).embeds)).toEqual([
+      { state: "item", id: attached.item.item_id! },
+    ]);
+    // The witness: in an item with no attachment of the name, both files
+    // answer to it.
+    const other = await note(
+      device,
+      named("Unattached lookup host"),
+      `![[${name}]]`,
+    );
+    await drained(device);
+    expect(targets(value(await device.bodyLinks(other.id)).embeds)).toEqual([
+      { state: "ambiguous" },
+    ]);
   });
 });
 

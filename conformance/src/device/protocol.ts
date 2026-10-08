@@ -11,7 +11,7 @@
 
 export type Tier = "library" | "feed";
 
-/** The tiers a slice holds: one, or `all` for both (`device.md` 1). */
+/** The tiers a slice holds: one, or `all` for both (`device/slice-held`). */
 export type SliceTier = Tier | "all";
 
 export interface Refusal {
@@ -69,14 +69,14 @@ export interface CatchUpReport {
   reached_head: boolean;
 }
 
-/** One event a held stream applied (`device.md` 40). */
+/** One event a held stream applied (`device/follow-applies`). */
 export interface Change {
   event: string;
   item_id: string | null;
   edge_id: string | null;
   cursor: string;
   /** Why the server cannot be reached, on `server.unreachable` alone
-   *  (`device.md` 40). */
+   *  (`device/follow-applies`). */
   reason: string | null;
 }
 
@@ -167,6 +167,15 @@ export interface SearchHit {
   item: Item;
   score: number;
   snippet: string;
+}
+
+/** The three writes a file attached to an item is, and the text that embeds
+ *  the file in that item's body, `null` where no embed names it alone. */
+export interface Attached {
+  upload: QueuedWrite;
+  item: QueuedWrite;
+  edge: QueuedWrite;
+  embed: string | null;
 }
 
 /** One queued write, as the queue reports it.
@@ -263,7 +272,7 @@ export interface DrainReport {
   verdicts: DrainVerdict[];
   /** Why the drain stopped before the queue was empty. A refused credential
    *  ends a pass early here (`queue-and-verdicts/credential-stops-drain`); an answer on
-   *  another contract ends one as a refusal instead (`device.md` 42). */
+   *  another contract ends one as a refusal instead (`device/contract-drain-ends`). */
   stopped: string | null;
   /** The sources the server said the credential's key does not claim, where
    *  a create naming one was refused for it (`queue-and-verdicts/unclaimed-reported`). */
@@ -291,7 +300,7 @@ export interface DrainVerdict {
   refusal: WriteRefusal | null;
 }
 
-/** What a link or an embed in a body names (`device.md` 97). */
+/** What a link or an embed in a body names (`device/body-links-read`). */
 export type BodyTarget =
   | { state: "item"; id: string }
   | { state: "pending" }
@@ -524,12 +533,13 @@ export interface DeviceUnderTest {
       } | null;
     }>
   >;
-  /** A file attached to an item: the upload, the file item, the edge. */
+  /** A file attached to an item: the upload, the file item, the edge, and
+   *  the text that embeds the file in the item's body. */
   attach(
     item: string,
     path: string,
     options?: { mimeType?: string; title?: string; type?: string; tier?: Tier },
-  ): Promise<Outcome<QueuedWrite[]>>;
+  ): Promise<Outcome<Attached>>;
 
   /** A file added as an item of its own: the upload, the file item. */
   addFile(

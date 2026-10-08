@@ -222,13 +222,20 @@ describe("every device statement is asserted by something", () => {
 
   it("cites a fixture for every numbered statement", () => {
     // A rule no fixture can assert yet names the issue that makes it
-    // testable instead (`spec/README.md`), which reads as waiting, not as
-    // asserted.
-    const WAITING = /\bwaiting on #\d+\.$/;
-    expect(WAITING.test("Some rule. waiting on #1444.")).toBe(true);
+    // testable instead, which `spec-form.test.ts` holds to its one shape.
+    const WAITING = / waiting on #\d+\.$/;
+    // The witness: an ID statement's waiting line is read as its text ends.
+    const waiting = readText(
+      "device.md",
+      `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Tests:** waiting on #1.\n`,
+    ).found[0];
+    expect(WAITING.test(waiting.text), waiting.text).toBe(true);
     const uncited = allStatements
-      .filter((statement) => citationsIn(statement.text).length === 0)
-      .filter((statement) => !WAITING.test(statement.text.trim()))
+      .filter(
+        (statement) =>
+          citationsIn(statement.text).length === 0 &&
+          !WAITING.test(statement.text),
+      )
       .map((statement) => `${statement.chapter} ${statement.number}`);
     expect(
       uncited,

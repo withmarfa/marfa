@@ -5758,7 +5758,11 @@ Output:
 
 ```text
 Attach a file to an item: its upload, a file item naming the bytes, and an `attached-to` edge, three
-queued writes
+queued writes.
+
+Answers the text that embeds the file in the item's body, `![[title]]`, where the file's title names
+it alone among the item's attachments. Under --json the answer is one object: `upload`, `item` and
+`edge`, each a queued write, and `embed`, the text or null.
 
 Usage: marfa device items attach [OPTIONS] <ID> <FILE>
 
@@ -5794,7 +5798,7 @@ Options:
           [possible values: library, feed]
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 
 Server:
       --url <URL>

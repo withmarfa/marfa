@@ -35,6 +35,8 @@ export interface SseFrame {
   id?: string;
   event?: string;
   data?: unknown;
+  /** The frame's text as it is, for one the server's own encoder never writes. */
+  raw?: string;
 }
 
 export type Answer =
@@ -50,7 +52,13 @@ export type Answer =
        */
       contract?: string | string[] | null;
     }
-  | { kind: "sse"; frames: SseFrame[]; hold?: boolean }
+  | {
+      kind: "sse";
+      frames: SseFrame[];
+      hold?: boolean;
+      /** Held open with no keepalive: a server that has gone quiet. */
+      quiet?: boolean;
+    }
   /** Bytes as they are, which is what a blob's link serves. */
   | {
       kind: "bytes";
@@ -68,7 +76,7 @@ export type Answer =
    * connection that died and a 5xx is an answer, and a device may
    * reasonably treat those two differently from a server that simply never
    * replies. It is also the only way to keep a device command running long
-   * enough for a second one to meet it, which is what `device.md` 3 is
+   * enough for a second one to meet it, which is what `device/reading-handle-refuses` is
    * about.
    */
   | { kind: "stall" }
@@ -110,6 +118,7 @@ function matches(route: Route, method: string, pathname: string): boolean {
 const KEEPALIVE_MS = 250;
 
 function renderFrame(frame: SseFrame): string {
+  if (frame.raw !== undefined) return frame.raw;
   if (frame.comment !== undefined) return `: ${frame.comment}\n\n`;
   const lines: string[] = [];
   if (frame.id !== undefined) lines.push(`id: ${frame.id}`);
@@ -374,6 +383,11 @@ export class ScriptedServer {
     // up rather than waiting for the server to end the answer.
     if (!answer.hold) {
       response.end();
+      return;
+    }
+    if (answer.quiet === true) {
+      this.stalled.add(response);
+      response.on("close", () => this.stalled.delete(response));
       return;
     }
     // Kept alive, because a live subscription is. A held stream that went

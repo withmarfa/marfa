@@ -1,610 +1,3527 @@
 # The device
 
-A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log, and read locally. The server reconciles; a device holds a copy and a queue. `queue-and-verdicts.md` states the queue and the answer to every write, and `folders.md` states one particular device surface.
-
-Statements here are about a device's observable behavior, asserted by the device fixtures under `src/suites/device/` against a scripted server. The server statements they depend on are the server's own chapters, asserted over HTTP.
+A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log and read locally, with a queue of the writes the server has not answered. `queue-and-verdicts.md` states the queue and the answer to every write, `folders.md` states a folder, and the server's own chapters state what the server answers.
 
 ## The working copy
 
-1. A working copy holds one slice: a type list and a tier, which is `library`, `feed` or `all`, both of them (86, 87). A type is held with its subtree; a row of a type outside the list, or of a tier the slice does not hold, is not held, but for a `system.*` row of a type the list names (63). **A slice may also name edge types it holds whole**: every edge of each that the key can read, whichever of its ends the copy holds, read by the hydration from the edge listing (`edges/list-type-filter` and `edges/list-paginate`), which leaves out a row the key cannot read (`edges/read-list-withheld` and `edges/read-list-short`), so the hydration walks it to its last cursor past a page left short or empty. A slice naming none holds an edge only from a row it holds, so a question asked along `parent-of`, what lies beneath a project, cannot be answered from a copy that does not hold the projects; one naming `parent-of` answers it. **A copy may also hold rows pinned by id**, whatever the slice says of them: a pin reads the row with the edges it draws at once, and a pin of a row pinned already reads it again and says it was pinned; a pin of a row neither the server nor the copy holds is refused and leaves nothing pinned. A row of this device's own create that the server does not hold yet can be pinned, and its pin moves to the id the create is answered with, or goes with the row when a fresh certified read confirms absence after the create is refused. A write still waiting on a pinned row is laid over what the pin reads (`queue-and-verdicts/waiting-over-answer`); a catch-up keeps it current (14), a hydration keeps every pin, the one that follows an aged-out cursor (16) included, and reads each pinned row again, and a pinned row the server does not hold or the key can no longer read stays pinned, holds nothing, and does not stop the hydration. Taking the pin off says whether the row was pinned, and lets a row the slice does not take go, with the edges it draws but those of a type held whole; one with writes still waiting stays until an answered move, the next catch-up that touches it or the next hydration lets it go. A row something on the device depends on stays current after it stops matching, rather than going with nothing to say it went. `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `› holds one tier and not the other`, `› holds both tiers in a slice of both, hydrated again from one of them`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› lets an unpinned row outside the slice go`, `device/fidelity.test.ts › matches the edge listing a hydration walks for a type held whole`, `device/hydration.test.ts › walks every page of an edge type held whole`, `› walks past an empty edge page that still carries a cursor`, `device/catch-up.test.ts › reads a row pinned already again, and says it was`, `› refuses to pin a row the server does not hold`, `› keeps a pin across the hydration that follows an aged-out cursor`, `› keeps a pin the key can no longer read, and completes the hydration`, `device/fidelity.test.ts › matches the refusals a device must not retry`, `device/catch-up.test.ts › pins a row of its own create the server does not hold yet, and moves the pin to the id the create is answered with`, `› takes the pin off a row whose create was refused`, `› keeps the pin until a fresh read confirms absence after a create refusal`, `› lays a waiting write over a row it pins`, `› says whether a row it unpins was pinned`, `› keeps the edges of a type held whole when it unpins a row`, `› keeps a row it unpins while a write to it still waits, and lets it go once answered`.
-2. A working copy is bound to one server by origin — scheme, host, port and path prefix — and the key is no part of that identity and is never written to the store. A store opened against a different origin is refused, and the refusal names both. **It is bound to the instance too**: hydration captures the `instance_id` in the certified stream tuple. Catch-up and held-stream markers must name that same instance and read view; another instance cannot be mistaken for progress merely because its log has a larger cursor. A held follow also checks the server's root before opening its stream. **A drain and a folder's settings edit check the root before sending**, and another instance expires only the captured copy, sending nothing and preserving its queue. A delayed reply cannot expire a later rebuilt generation. A pin uses a conditional read under the captured certificate before taking a row. A copy naming no valid instance and proof must hydrate again. **Nothing is sent while the instance is unconfirmed**: a root that answers a failure that clears on its own ends a drain's pass with nothing sent, nothing counted against any write and the reason given, since a restart is when another instance appears, and the next drain asks again. `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› keeps the key out of the store`, `device/catch-up.test.ts › hydrates again when another instance answers at the same address`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `› sends nothing while the server cannot say which instance it is`, `device/folders.test.ts › sends no settings edit while the server cannot say which instance it is`.
-3. One store has one writer. A second opener gets a handle that reads and refuses every write, and says which it is. `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
-4. A read is refused where the store holds a slice it cannot answer from, and the refusal says so rather than answering with a partial copy. Two stores refuse: one whose hydration was interrupted, and **one that has expired** (16). The second is the one worth stating, because that copy is complete as of the moment it stopped: it refuses because it can no longer be kept current, and a copy that has quietly stopped tracking is the failure this whole chapter is about. The refusal is the same for both and the report is not (5). A hydration clears both. A store that has never hydrated holds no slice and is not refused: it answers from what its app has saved (56). `device/working-copy.test.ts › refuses a read after an interrupted hydration`, `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`.
-5. A device reports its own state: the origin it is bound to, the instance it was hydrated from (2), the slice, the edge types it holds whole, the rows it holds pinned, the cursor, what it holds, the version of the catalog it holds (49), and its hydration, which is one of four words. `never`, nothing has been pulled and the store holds only what Marfa ships and what the app has saved (56). `in_progress`, a hydration started and has not finished, which covers one still running and one that was interrupted (9). `complete`, the copy holds its slice and a cursor, and nothing has told it otherwise. `expired`, a catch-up or a held stream learned that the server's log no longer continues from the cursor it kept, or a catch-up, a held stream, a drain, a purge, a pin or a folder's settings edit found another instance at the origin (2), and the cursor was dropped (16). The last is a record of an answer rather than a reading of the log: a copy whose cursor aged out an hour ago and has not asked since reports `complete`, because nothing has told it. The last two are the same copy at different moments, and `expired` and `never` are the two a caller must not confuse: reads are refused on one and answered on the other, and the remedy for the first is a hydration while the second needs none to save, though it needs one to read what a server holds, and only the report says which. The report is answerable before a hydration and is how a caller learns one is owed. `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `› keeps a pinned row outside the slice current`, `› lets an unpinned row outside the slice go`.
+A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A pin holds one row by id whatever the slice says of it.
+
+### `device/slice-held`
+
+A device MUST hold a row the item listing marks as listed whose type is a type its slice names, or a type under one by name or by declared parent, at a tier its slice holds.
+
+**Tests:** `device/hydration.test.ts › asks the item listing for each declared type at the slice's tier, every state`, `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `› holds one tier and not the other`, `device/catch-up.test.ts › holds an item whose type was registered after the stream opened, in the slice through its parent`.
+
+### `device/slice-type-outside`
+
+Where a row is not pinned, a device MUST NOT hold it while its type is outside the slice.
+
+**Tests:** `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `device/catch-up.test.ts › does not add a row that was never in the slice`.
+
+### `device/slice-tier-outside`
+
+Where a row is not pinned and its type is not a `system.*` type, a device MUST NOT hold it at a tier its slice does not hold.
+
+**Tests:** `device/working-copy.test.ts › holds one tier and not the other`.
+
+### `device/slice-edge-whole`
+
+Where a slice names an edge type to hold whole, a device MUST hold every edge of that type the edge listing gives it, whichever of the edge's ends the copy holds.
+
+**Reason:** a slice that holds no projects can still answer what lies beneath one when it holds `parent-of` whole.
+
+**Tests:** `device/working-copy.test.ts › holds a named edge type whole, whichever end it holds`.
+
+### `device/slice-edge-walk`
+
+When a device hydrates an edge type held whole, a device MUST read the edge listing for that type until a page answers no `next_cursor`, past a page that is short or empty.
+
+**Reason:** the listing leaves out an edge the key cannot read and leaves its page short (`edges/read-list-withheld` and `edges/read-list-short`), so only the cursor says the listing is done.
+
+**Tests:** `device/hydration.test.ts › walks every page of an edge type held whole`, `› walks past an empty edge page that still carries a cursor`, `device/fidelity.test.ts › matches the edge listing a hydration walks for a type held whole`.
+
+### `device/pin-holds`
+
+When a device pins a row, a device MUST hold the row whatever its slice says of it.
+
+**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`.
+
+### `device/pin-reads-edges`
+
+When a device pins a row, a device MUST read the row and the edges it draws before the pin returns.
+
+**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`, `› keeps a pinned row outside the slice current`.
+
+### `device/pin-again-reads`
+
+When a device pins a row it holds pinned already, a device MUST read the row again.
+
+**Tests:** `device/catch-up.test.ts › reads a row pinned already again, and says it was`.
+
+### `device/pin-says-pinned`
+
+When a device pins a row, a device MUST say whether the row was pinned already.
+
+**Tests:** `device/catch-up.test.ts › reads a row pinned already again, and says it was`.
+
+### `device/pin-not-hydrated`
+
+While its copy does not hold the read view of a completed hydration, a device MUST refuse a pin `hydration_incomplete`, sending nothing.
+
+**Tests:** `device/catch-up.test.ts › refuses a pin on a copy that has not completed a hydration, sending nothing`.
+
+### `device/pin-absent`
+
+If the server answers a pin's read that it holds no such row and its bin holds none either, then a device MUST refuse the pin `not_found`, unless the row is a create of this device's that the server has not answered.
+
+**Tests:** `device/catch-up.test.ts › refuses to pin a row the server does not hold`, `› lets a held row go when neither the server nor its bin holds a row it pins`.
+
+### `device/pin-absent-evicts`
+
+If the server answers a pin's read that it holds no such row and its bin holds none either, then a device MUST let go a row of that id the copy holds, unless the row is a create of this device's that the server has not answered.
+
+**Reason:** the read is certified under the copy's read view, so the server's answer is that the row is gone for this copy.
+
+**Tests:** `device/catch-up.test.ts › lets a held row go when neither the server nor its bin holds a row it pins`.
+
+### `device/pin-absent-unpinned`
+
+If a device refuses a pin of a row it did not hold pinned, then a device MUST leave the row unpinned.
+
+**Reason:** a pin left behind would have every hydration ask for a row the server does not hold.
+
+**Tests:** `device/catch-up.test.ts › refuses to pin a row the server does not hold`, `device/bin-live.test.ts › refuses to pin a row in the bin, saying so`.
+
+### `device/pin-own-create`
+
+Where a row is a create of this device's that the server has not answered, a device MUST take a pin of it although the server answers that it holds no such row.
+
+**Tests:** `device/catch-up.test.ts › pins a row of its own create the server does not hold yet, and moves the pin to the id the create is answered with`.
+
+### `device/pin-follows-create`
+
+When a pinned create is answered with the id of another row, a device MUST move the pin to that id.
+
+**Tests:** `device/catch-up.test.ts › pins a row of its own create the server does not hold yet, and moves the pin to the id the create is answered with`.
+
+### `device/pin-refused-create`
+
+When a certified read confirms that the server holds no row for a pinned create it refused, a device MUST let the row go with its pin.
+
+**Tests:** `device/catch-up.test.ts › takes the pin off a row whose create was refused`, `› keeps the pin until a fresh read confirms absence after a create refusal`.
+
+### `device/pin-refused-create-unread`
+
+If the read that would confirm a refused create's absence fails, then a device MUST keep the pin.
+
+**Tests:** `device/catch-up.test.ts › keeps the pin until a fresh read confirms absence after a create refusal`.
+
+### `device/pin-waiting-write`
+
+When a device pins a row that a write of its own still waits on, a device MUST show the waiting write over the row the pin reads.
+
+**Tests:** `device/catch-up.test.ts › lays a waiting write over a row it pins`.
+
+### `device/pin-survives-hydration`
+
+When a device hydrates, a device MUST keep every pin it holds, the hydration that follows an expired copy included.
+
+**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`.
+
+### `device/pin-read-on-hydration`
+
+When a device hydrates, a device MUST hold each pinned row as the server answers it then, read by id where the slice does not bring it.
+
+**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`.
+
+### `device/pin-gone-kept`
+
+If a hydration's read of a pinned row answers that the server holds no such row, then a device MUST keep the pin and hold no row for it.
+
+**Reason:** the server answers a row of a type the key can no longer read as one it does not hold.
+
+**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`, `device/fidelity.test.ts › matches the refusals a device must not retry`.
+
+### `device/pin-gone-completes`
+
+If a hydration's read of a pinned row answers that the server holds no such row, then a device MUST complete the hydration.
+
+**Reason:** a row the key can no longer read would otherwise stop every hydration of the copy.
+
+**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`.
+
+### `device/unpin-says`
+
+When a device takes a pin off, a device MUST say whether the row was pinned.
+
+**Tests:** `device/catch-up.test.ts › says whether a row it unpins was pinned`.
+
+### `device/unpin-lets-go`
+
+When a device takes the pin off a row its slice does not take and no write of its own to the row waits, a device MUST let the row go.
+
+**Tests:** `device/catch-up.test.ts › lets an unpinned row outside the slice go`.
+
+### `device/unpin-edges`
+
+When a device lets an unpinned row go, a device MUST let go the edges the row draws, but those of a type its slice holds whole.
+
+**Tests:** `device/catch-up.test.ts › keeps the edges of a type held whole when it unpins a row`.
+
+### `device/unpin-waiting`
+
+When a device takes the pin off a row its slice does not take while a write of its own to the row still waits, a device MUST keep the row.
+
+**Tests:** `device/catch-up.test.ts › keeps a row it unpins while a write to it still waits, and lets it go once answered`, `› lets an unpinned row kept for a waiting write go at the next catch-up that touches it, keeping the write`.
+
+### `device/unpin-answered`
+
+When the write that kept an unpinned row its slice does not take is answered, a device MUST let the row go.
+
+**Tests:** `device/catch-up.test.ts › keeps a row it unpins while a write to it still waits, and lets it go once answered`.
+
+### `device/unpin-hydration`
+
+When a device hydrates, a device MUST let go a row that is not pinned and that its slice does not take, whether or not a write of its own to the row still waits, and keep the write queued.
+
+**Tests:** `device/catch-up.test.ts › lets an unpinned row kept for a waiting write go at the next hydration, keeping the write`.
+
+### `device/origin-refused`
+
+If a device is asked to reach a server at an origin other than the one its copy was hydrated from, by scheme, host, port or path prefix, then a device MUST refuse `wrong_server`.
+
+**Tests:** `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› refuses a store opened at another path prefix of its host, sending nothing there`, `device/local-refusals.test.ts › refuses a write to a store bound to another server`.
+
+### `device/origin-refused-names`
+
+When a device refuses `wrong_server`, a device MUST name the origin the copy belongs to and the origin it was offered.
+
+**Tests:** `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› refuses a store opened at another path prefix of its host, sending nothing there`.
+
+### `device/origin-refused-sends-nothing`
+
+When a device refuses `wrong_server`, a device MUST send nothing to the server it was offered and leave the copy as it was.
+
+**Tests:** `device/local-refusals.test.ts › refuses a write to a store bound to another server`, `device/working-copy.test.ts › refuses a store opened at another path prefix of its host, sending nothing there`.
+
+### `device/origin-key-free`
+
+When a device opens a store at the origin it is bound to under another key, a device MUST use the store and send its requests under that key.
+
+**Reason:** the key is no part of the copy's identity, so a rotated key does not strand a copy.
+
+**Tests:** `device/working-copy.test.ts › opens a store under another key at the origin it is bound to`.
+
+### `device/key-not-stored`
+
+A device MUST NOT write its key to the store.
+
+**Tests:** `device/working-copy.test.ts › keeps the key out of the store`.
+
+### `device/instance-marker`
+
+If a catch-up's stream names an instance other than the one the copy was hydrated from, then a device MUST expire the copy.
+
+**Reason:** a larger cursor in another instance's log is not progress in this one.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when another instance answers at the same address`.
+
+### `device/instance-follow`
+
+If the server's root names an instance other than the one the copy was hydrated from when a device opens a held stream, then a device MUST expire the copy.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when another instance answers at the same address`.
+
+### `device/instance-follow-marker`
+
+If a held stream names an instance other than the one the copy was hydrated from, then a device MUST expire the copy.
+
+**Tests:** `device/catch-up.test.ts › expires the copy when a held stream's marker names another instance`.
+
+### `device/instance-drain-expires`
+
+If the server's root names an instance other than the one the copy was hydrated from when a drain is about to send, then a device MUST expire the copy.
+
+**Tests:** `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`.
+
+### `device/instance-drain-sends-nothing`
+
+If the server's root names an instance other than the one the copy was hydrated from when a drain is about to send, then a device MUST send no write.
+
+**Tests:** `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`.
+
+### `device/instance-unconfirmed`
+
+If the server's root answers a failure that clears on its own when a drain is about to send, then a device MUST end the pass with no write sent.
+
+**Reason:** a restart is when another instance appears, so a server that cannot say which instance it is cannot be sent a write.
+
+**Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`.
+
+### `device/instance-unconfirmed-says`
+
+If a drain's pass ends because the server could not say which instance it is, then a device MUST say so in the drain's report.
+
+**Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`.
+
+### `device/instance-unconfirmed-uncounted`
+
+If a drain's pass ends because the server could not say which instance it is, then a device MUST count nothing against any write.
+
+**Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`.
+
+### `device/instance-unconfirmed-settings`
+
+If the server's root answers a failure that clears on its own when a folder's settings edit is about to be sent, then a device MUST send nothing.
+
+**Tests:** `device/folders.test.ts › sends no settings edit while the server cannot say which instance it is`.
+
+### `device/late-answer`
+
+If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
+
+**Tests:** waiting on #1890.
+
+### `device/proof-lost`
+
+While its copy holds a slice and no valid cursor, read view or instance, a device MUST refuse a local read `hydration_incomplete`, through a reading handle as through the writer.
+
+**Tests:** `device/read-view.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+
+### `device/reading-handle-reads`
+
+While another process holds the writer role for a store it opens, a device MUST answer reads from the store.
+
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
+
+### `device/reading-handle-refuses`
+
+While a device holds a reading handle, a device MUST refuse every write `reading_handle`, a hydration, a catch-up and a held stream included.
+
+**Reason:** two writers of one file would each queue into it and neither would see the other's rows.
+
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`.
+
+### `device/reading-handle-queues-nothing`
+
+While a device holds a reading handle, a device MUST queue nothing.
+
+**Tests:** `device/local-refusals.test.ts › refuses a write from a reading handle`.
+
+### `device/read-refused-in-progress`
+
+While a hydration has started and not completed, a device MUST refuse a local read `hydration_incomplete`.
+
+**Reason:** what such a copy holds is a piece of a copy, and an answer from it would read as the whole.
+
+**Tests:** `device/working-copy.test.ts › refuses a read after an interrupted hydration`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+
+### `device/read-refused-expired`
+
+While its copy is expired, a device MUST refuse a local read `hydration_incomplete`.
+
+**Reason:** an expired copy is complete as of the moment it stopped and can no longer be kept current, and a copy that has quietly stopped tracking is the failure this chapter guards against.
+
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`.
+
+### `device/write-refused-incomplete`
+
+While a hydration has started and not completed, or its copy is expired, a device MUST refuse a local write `hydration_incomplete`.
+
+**Tests:** `device/working-copy.test.ts › refuses a local write after an interrupted hydration`, `› reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+
+### `device/read-after-hydration`
+
+When a hydration completes, a device MUST answer local reads again.
+
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+
+### `device/read-never-hydrated`
+
+While its copy has never hydrated, a device MUST answer a local read from what the copy holds.
+
+**Tests:** `device/working-copy.test.ts › answers a read before any hydration from what the copy holds`.
+
+### `device/report-fields`
+
+A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds and its hydration.
+
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
+
+### `device/report-before-hydration`
+
+A device MUST answer its state report before it has hydrated.
+
+**Reason:** the report is how a caller learns that a hydration is owed.
+
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`.
+
+### `device/report-no-request`
+
+When a device reports its state, a device MUST send nothing to the server.
+
+**Reason:** `expired` is the record of an answer rather than a reading of the log, so a copy whose cursor aged out reports `complete` until a catch-up or a held stream learns it.
+
+**Tests:** `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+
+### `device/report-never`
+
+While no hydration has started and none has declared a slice, a device MUST report its hydration as `never`.
+
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
+
+### `device/report-in-progress`
+
+While a hydration has started and not completed, whether it still runs or was interrupted, a device MUST report its hydration as `in_progress`.
+
+**Tests:** `device/working-copy.test.ts › reports an interrupted re-hydration as in progress, not as a copy that aged out`.
+
+### `device/report-complete`
+
+While its copy holds its slice, a cursor, the read view and the instance it was hydrated under, a device MUST report its hydration as `complete`.
+
+**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`, `device/read-view.test.ts › keeps a certified offline copy after an uncertified %i`, `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+
+### `device/report-expired`
+
+While no hydration is under way and its copy holds a slice and no valid cursor, read view or instance, a device MUST report its hydration as `expired`.
+
+**Reason:** `expired` and `never` are the two a caller must not confuse: reads are refused on the first and answered on the second, and only the first needs a hydration to be read again.
+
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/read-view.test.ts › reports a hydration that ended on an invalid page as expired, not in progress`, `› refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
 ## Hydration
 
-6. Hydration declares at least one type. An empty list, a bare wildcard and a name outside the type grammar (`types/id-grammar` and `types/id-reserved-scope-root`), or a wildcard whose root is, are refused before anything is read. **Within an unchanged certified read view, a type the catalog just read does not hold is refused before the copy it had is cleared**, naming it, as is an edge type to hold whole that the edge type catalog does not hold: the listing refuses such a type only once the copy is gone, and a mistyped name would otherwise leave the device with no copy at all until a good hydration completed. A wildcard may name nothing and is taken as declared. **So is a type the key cannot read, nor any type under it**, naming it, before the copy it had is cleared: the listing refuses such a type `403 type_not_permitted` (`search-and-filters/type-unreadable`), so the device refuses it first, with the copy it had still in place, rather than clearing the copy and then failing. The key's own map decides, as `GET /keys/current` answers it, and a type is readable when the key reads it or a type the catalog just read places under it, by name or by declared parent, because the listing serves such a type's readable descendants (`search-and-filters/type-descendant-readable`). **A credential that is not a key cannot read its own map**, so the first page of each type it names is read before anything is cleared, and the listing's `403 type_not_permitted` is taken as the refusal, naming the type, with the old slice, its declaration and the queue untouched. A wildcard names whatever is under it and is taken as declared. The one slice of every type is a folder's whose search names none (`folders.md` 2): it is read as a listing that names no type, which leaves `system.*` out, and the copy reports its types as `*`. `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`, `› refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`, `› refuses a type the key cannot read, naming it, before anything is cleared` (which also drives a signed-in app's token), `core/marfa-core/src/refusal_tests.rs › a_type_name_is_held_to_the_servers_grammar_before_anything_is_read`, `core/marfa-core/src/hydrate.rs › a_type_a_non_key_credential_may_not_read_is_refused_before_anything_is_cleared`, `core/marfa-core/src/hydrate.rs › a_key_that_reads_only_a_descendant_of_a_declared_type_hydrates_it`, `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
-7. **Hydration takes the log's head cursor before it reads a single row.** It captures the instance and read-view fence with that cursor, walks certified pages to explicit termination, and internally replays from the captured cursor before publishing completeness. Only a valid live marker under that same view completes hydration; a cursor taken after the pages or completion before replay would miss writes made while the pages were read. `device/hydration.test.ts › takes the cursor before the snapshot, so a write during the snapshot replays`.
-8. Hydration replaces the slice. Whatever the store held before is gone, the edge types held whole are the ones this hydration names, and the item type and edge type catalogs are replaced with the server's (47). The pins stay, and each pinned row is read again (1). `device/hydration.test.ts › replaces what the store held`, `device/catch-up.test.ts › hydrates again with other edge types held whole, and applies no event of one it no longer holds`, `device/hydration.test.ts › walks past an empty page that still carries a cursor`, `device/working-copy.test.ts › holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`.
-9. Hydration is not resumable. An interrupted hydration leaves the store refusing reads until another hydration completes; there is no partial state a caller can accept. `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
-10. A hydration reports what it pulled: the types, the tier, the edge types it holds whole, the counts, the pages and the cursor it stored. `device/hydration.test.ts › reports the counts, the pages and the cursor it stored`, `device/working-copy.test.ts › holds a named edge type whole, whichever end it holds`.
+A hydration reads the server's copy stream and listings under one certified read view (`read-views.md`) and replaces the copy with what they hold.
+
+### `device/hydrate-empty-refused`
+
+If a hydration declares no type, then a device MUST refuse it `invalid` before it reads anything.
+
+**Tests:** `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`.
+
+### `device/hydrate-bare-wildcard`
+
+If a hydration declares `*` alone, then a device MUST refuse it `invalid` before it reads anything.
+
+**Tests:** `device/hydration.test.ts › refuses an empty type list and a bare wildcard before reading anything`.
+
+### `device/hydrate-grammar`
+
+If a hydration declares a type name outside the type grammar (`types/id-grammar` and `types/id-reserved-scope-root`), or a wildcard whose root is not lowercase dotted segments, then a device MUST refuse it `invalid`, naming it, before it reads anything.
+
+**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`, `› refuses a wildcard whose root breaks the grammar before reading anything, and takes one that names nothing`.
+
+### `device/hydrate-wildcard-empty`
+
+When a hydration declares a wildcard that names no type the catalog holds, a device MUST take it as declared.
+
+**Tests:** `device/hydration.test.ts › refuses a wildcard whose root breaks the grammar before reading anything, and takes one that names nothing`.
+
+### `device/hydrate-unheld-type`
+
+While the read view is the one the copy was hydrated under, if a hydration declares a type the catalog it read does not hold, then a device MUST refuse it `unknown_type`, naming the type, before it clears the copy.
+
+**Reason:** the listing refuses such a type only once the copy is gone, and a mistyped name would leave the device with no copy at all.
+
+**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`.
+
+### `device/hydrate-unheld-edge-type`
+
+While the read view is the one the copy was hydrated under, if a hydration names an edge type to hold whole that the edge type catalog does not hold, then a device MUST refuse it `unknown_type`, naming the edge type, before it clears the copy.
+
+**Tests:** `device/hydration.test.ts › refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had`.
+
+### `device/hydrate-unreadable-type`
+
+While the read view is the one the copy was hydrated under, if a hydration declares a type that the key reads neither itself nor any type under it, then a device MUST refuse it `forbidden`, naming the type, before it clears the copy or changes its queue.
+
+**Reason:** the listing refuses such a type `403 type_not_permitted` (`search-and-filters/type-unreadable`) only once the copy is gone.
+
+**Tests:** `device/hydration.test.ts › refuses a type the key cannot read, naming it, before anything is cleared`.
+
+### `device/hydrate-readable-descendant`
+
+Where the key reads a type under a declared type, by name or by declared parent, a device MUST hydrate the declared type although the key does not read it.
+
+**Reason:** the listing serves a type's readable descendants (`search-and-filters/type-descendant-readable`).
+
+**Tests:** `device/hydration.test.ts › hydrates a type whose descendant alone the key reads, by name or by declared parent`.
+
+### `device/hydrate-unreadable-non-key`
+
+Where the credential is not a key, if the item listing refuses a declared type `403 type_not_permitted`, then a device MUST refuse the hydration `forbidden`, naming the type, before it clears the copy.
+
+**Reason:** such a credential cannot read its own type map, so the first page of each declared type is the only way to learn it before the copy is cleared.
+
+**Tests:** `device/hydration.test.ts › refuses a type the key cannot read, naming it, before anything is cleared`.
+
+### `device/hydrate-head-first`
+
+When a device hydrates, a device MUST read the log's head before it reads any row.
+
+**Reason:** a head read after the pages would step over a write made while they were read.
+
+**Tests:** `device/hydration.test.ts › takes the cursor before the snapshot, so a write during the snapshot replays`.
+
+### `device/hydrate-listing`
+
+When a device hydrates, a device MUST read the item listing for each type its slice names, at the slice's tier, in every state, with each row's edges and metadata.
+
+**Reason:** a row leaving the active state is a change a catch-up has to see, so the copy holds every state and a local read chooses which to answer.
+
+**Tests:** `device/hydration.test.ts › asks the item listing for each declared type at the slice's tier, every state`, `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`.
+
+### `device/hydrate-page-walk`
+
+When a device hydrates, a device MUST read each item listing until a page answers no `next_cursor`, past a page that is empty.
+
+**Tests:** `device/hydration.test.ts › walks past an empty page that still carries a cursor`, `› reports the counts, the pages and the cursor it stored`.
+
+### `device/hydrate-repeated-cursor`
+
+If a listing a hydration walks answers a `next_cursor` the hydration has already read, then a device MUST expire the copy `copy_expired` with the reason `read_view_invalid`.
+
+**Reason:** a listing that hands back a cursor it gave before would be walked for good.
+
+**Tests:** `device/hydration.test.ts › expires the copy when a listing hands back a cursor it already read`.
+
+### `device/hydrate-replays`
+
+When a device has read a hydration's pages, a device MUST apply the events written since the head it read before it reports the hydration complete.
+
+**Tests:** `device/hydration.test.ts › applies a write made during the snapshot before the hydration returns`.
+
+### `device/hydrate-live-marker`
+
+If a hydration's replay ends before a valid live marker, then a device MUST end the hydration `stream_incomplete` and not report it complete.
+
+**Tests:** `device/hydration.test.ts › does not complete a hydration whose replay sends no live marker`.
+
+### `device/hydrate-replaces`
+
+When a device hydrates, a device MUST replace the rows and edges it held with those of the slice the hydration declares.
+
+**Tests:** `device/hydration.test.ts › replaces what the store held`.
+
+### `device/hydrate-edge-types-replaced`
+
+When a device hydrates, a device MUST hold whole only the edge types that hydration names.
+
+**Tests:** `device/catch-up.test.ts › hydrates again with other edge types held whole, and applies no event of one it no longer holds`, `device/working-copy.test.ts › holds a named edge type whole, whichever end it holds`.
+
+### `device/hydrate-catalog-replaced`
+
+When a device hydrates, a device MUST replace the item type and edge type catalogs it holds with the server's.
+
+**Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `› replaces a server's catalog it holds with the one the next hydration reads`.
+
+### `device/hydrate-keeps-queue`
+
+When a device hydrates, a device MUST keep its queue and show each write still waiting over the new copy.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
+
+### `device/hydrate-not-resumed`
+
+When a device hydrates after an interrupted hydration, a device MUST read every page of the slice again.
+
+**Tests:** `device/hydration.test.ts › leaves an interrupted hydration to be run again, never resumed`.
+
+### `device/hydrate-report`
+
+When a hydration completes, a device MUST report the types, tier and edge types it declared, how many items and edges the copy then holds, how many listing pages it read and the cursor it stored.
+
+**Tests:** `device/hydration.test.ts › reports the counts, the pages and the cursor it stored`, `› walks every page of an edge type held whole`, `› applies a write made during the snapshot before the hydration returns`, `device/working-copy.test.ts › holds a named edge type whole, whichever end it holds`.
+
+### `device/hydrate-every-type`
+
+When a folder whose search names no type hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders.md` 2), and report the slice's types as `*`.
+
+**Tests:** `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
 
 ## Catch-up
 
-11. Catch-up resumes at the cursor the store holds, and every event the stream carries after it reaches the working copy. Which of two events touching one row wins is decided by the version and then the modification time each carries (13), and by the order the stream delivered them wherever both are the same. `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› applies a transition, a delete and a restore, none of which move the version`.
-12. **The cursor is the last event applied, never the highest id seen**, until the replay's marker moves it past events the device was never sent (17). The server delivers ids in order (`events/ids-ascending`), so the two agree while every event is applied; they part where one is not, and a mark set from what merely arrived would step over it for good. The scripted server hands the device a lower id after a higher one to show the rule holds however the ids arrive. `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
-13. **An event carrying a version strictly older than the row held is skipped**, and skipping it is a success that still advances the cursor: a cursor left behind refetches the same stale event forever. Strictly older, because the version moves on a write to an item's fields and on nothing else — a transition, a delete, a restore and a tag write each move the modification time and leave the version where it was, so every one of those events carries the version the device already holds, and a device that skipped them would never learn a row had been archived, deleted or restored while reporting every catch-up as clean. Two events can therefore share a version, and the version alone cannot order them. The modification time can, since the server stamps it on every write and never moves it back, so an event at the version held stamped before the row held is skipped as older; where both are the same the stream's order decides, which is the whole of the exception. **Every row of the server's the copy takes is held to the same order, whatever brings it**: a fresh certified read after a write's answer, a refusal's read-back, the read of a row a create landed on, a pin's read, a withdraw's read and a hydration's page. A follow and a drain run on one core at once, and an event the follow applies while a read is out is later than what the read brings back; written over it, the copy would go back under a change whose event is already behind the cursor, and nothing would put it right. A device's own write moves neither the version nor the time on the row it shows, so the order is always the server's. `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the row it holds`, `› applies a transition, a delete and a restore, none of which move the version`, `› applies a tag write that leaves the version where it was`, `device/verdicts.test.ts › refused: keeps the row the copy holds where the read-back answers an older one`.
+A device takes an event when it applies it or skips it; both move its cursor past the event. Every rule here holds within an unchanged read view; a changed one expires the copy (`device/view-changed`).
 
-14. Within an unchanged certified read view (52), an event for a row that has left the slice, by a changed type or a tier the slice does not hold, removes the row from the working copy; a move between the tiers of a slice of both is not one (87). The edges the row draws go with it, but those of a type the slice holds whole (1); an edge a held row draws to it stays, as hydration keeps it (43). A purged row takes the edges at both ends, and its pin. A row that was never in the slice is not added. **A pinned row is never removed for leaving the slice**: an event for it is applied as for any held row, whatever its type and tier, and short of a purge it goes only when its pin is taken off and the slice does not take it (1). **An edge event of a type held whole is applied whatever its source**, where any other is applied only from a row the copy holds, and an edge an update moves to a source the copy does not hold leaves the copy (`edges/move-source` and `edges/move-announced`), unless a write of this device's to the edge still waits, which is laid over it until it is answered. **A row that enters the slice is added with its tags and its edges**: a created row's edges arrive as their own frames after it, and a row the copy never held that the slice now takes, which came in by a retype or a move of tier, has its edges read with it, every page of them, before the event is applied, since the frames of the edges it drew went by while the copy did not hold it; a read that fails ends a catch-up before that event, and a held stream opens again after its wait (40) rather than ending over it. **The stream is asked for every type the key reads**, never the slice's alone: the server narrows a stream by the type a row has now, so a stream narrowed to the slice withholds the frame of a row retyped out of it, and the copy would hold that row as it was for good. `device/catch-up.test.ts › evicts a row that leaves the slice`, `› keeps the edges a held row draws to a row that leaves the slice`, `› drops the edges at both ends of a purged row`, `› does not add a row that was never in the slice`, `› adds a row entering the slice by retype, with its tags and its edges`, `› adds a row entering the slice by a move of tier, with its edges`, `› adds a row entering the slice with every page of its edges`, `› leaves the cursor before a row entering the slice whose edges it could not read`, `› keeps a held stream going over a row entering the slice whose edges it could not read at first`, `› learns a row retyped out of its slice, asking the stream for every type`, `› applies an edge of a type held whole whatever its source`, `› moves an edge whose source moved within the slice, and drops one whose source moved outside it`, `› keeps an edge whose source moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's target over the server's change to the edge`, `› keeps a pinned row outside the slice current`, `› keeps a pinned row that leaves the slice`, `› lets an unpinned row outside the slice go`, `› takes the pin off a purged row`.
-15. Catch-up refreshes the item type and edge type catalogs before it applies anything, so a type registered while the device was away resolves. It reads the catalog again before applying an event that names a type the catalog does not hold, or an image's data URI under a property the catalog does not know as that type's thumbnail, whether the type leaves the property undeclared or declares it as text, since the catalog cannot tell either from a property the type has since made its thumbnail. It does so once for each such type or property in a catch-up, looking at every image an item carries, and then takes the event by the catalog as it is: a type registered after the catch-up began resolves too, an image read again for does not hide a thumbnail after it in the same item, and a type the server will not describe, or an image under a property that stays text, costs one read rather than one for every event naming it. `device/catch-up.test.ts › refreshes the type catalog before applying`, `› reads the catalog again, once for each, for a type an event names that it does not hold`, `› reads the catalog once for an image under a property no type declares, not once for each event carrying it`, `device/working-copy.test.ts › keeps a thumbnail out of its index when a catch-up meets it after an image already read again for`.
-16. **A copy whose server's log no longer continues from its cursor expires.** That is a cursor older than the log's oldest retained event (`catchup_too_old`), a log that ends behind the cursor, as a server restored from an earlier point holds, whether the stream's head, its marker or a `cursor_ahead` frame says so (`events/stream-cursor-head` and `events/cursor-ahead`), and another instance at the origin (2). Each ends the catch-up or the held stream with `copy_expired`, naming the reason: the device hydrates again rather than reconnecting, and the queue survives that hydration intact (`queue-and-verdicts/rehydration-keeps-queue`). The cursor is dropped rather than left to be retried, which is what the report reads afterwards (5). A log whose head is the cursor still requires a valid live marker before catch-up reports completion (52). A server restored to a point still ahead of the cursor, under the same instance, cannot be told from one that moved on. `device/catch-up.test.ts › ends on an aged-out cursor and hydrates again rather than reconnecting`, `› refuses reads after the cursor ages out, until a hydration`, `› hydrates again when the server's log ends behind its cursor, keeping the queue`, `› hydrates again when the server says its cursor is ahead of the log`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`, `› hydrates again when another instance answers at the same address`, `device/fidelity.test.ts › matches the frame a cursor past the log's head gets`.
-17. Catch-up never advances the cursor past an event it was sent and did not apply. A stream that ends early leaves the cursor where the last applied event put it, and the next catch-up resumes from there. **The replay's marker (`events/stream-live-cursor`) ends a catch-up and moves the cursor to the marker's cursor where that is further**: the events between are ones the credential withheld from this device, since it asks for every type (14), and no stream sends them while its grants stay as they are (a grant widened since is a reason to hydrate again, as it already was for any event stepped over mid-log), so a cursor left before them would stop short of the head on every catch-up and age out on a quiet slice. A missing, malformed or inconsistent marker tuple expires the copy (52); a well-formed marker behind the cursor is a log that ends behind it (16). A stream that ends before a valid live marker reports `stream_incomplete`, preserving the last certified offline copy and any already applied cursor progress, rather than reporting a complete replay. Silence ends a catch-up before the marker only where the stream wrote nothing at all for the catch-up's idle: any frame, a comment included, restarts it, and a replay reading withheld rows writes a comment while it reads (`events/stream-live-cursor`). A held stream moves its cursor on the marker the same way (40). `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `› moves the cursor past the rows the stream withheld, and resumes from there`, `› expires the copy when a live marker names no position`, `› moves a held stream's cursor past the rows it withheld`, `device/fidelity.test.ts › matches the marker that ends a replay whose rows were withheld`.
-18. Catch-up reports what it did: how many events it applied, how many it skipped, the cursor it reached, and whether it reached the log's head, which the replay's marker says where no event the device is sent reaches it. A catch-up that stopped short of the head says so rather than reporting a clean pass. `device/catch-up.test.ts › reports reaching the head, and reports stopping short of it`, `› moves the cursor past the rows the stream withheld, and resumes from there`.
+### `device/catch-up-resumes`
 
-## What a device may never do locally
+When a device catches up, a device MUST open the event stream at the cursor it holds.
 
-Every statement here is a refusal, and each of them is a refusal because the silent version is a working copy that disagrees with the server with nothing anywhere to say so.
+**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› leaves the cursor at the last applied event when the stream ends early`.
 
-19. A device never merges. Two values for one field are the server's to reconcile, and a device that picked one would have to be believed by the other devices, which nothing makes them do. `device/local-refusals.test.ts › refuses to merge two values for one field`.
-20. A device never mints or advances a version. A version comes from the server or a write does not carry one. `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
-21. A device never resolves a conflict. It reports the verdict and the server's envelope and stops (`queue-and-verdicts/conflict-blocks`). `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`.
-22. A local create naming tags or edges either queues them as their own writes or refuses the create. It never drops them and answers as though it had not been asked. `device/local-refusals.test.ts › refuses a local create whose tags and edges it cannot queue`.
-23. A local update never drops a field it does not recognize. It sends it or refuses the update. `device/local-refusals.test.ts › refuses an update carrying a field it cannot send`.
-24. **A filter a device does not implement is refused, never ignored.** An ignored filter answers every row, which reads as a matched filter and is the hardest kind of wrong answer to notice. A local list and a local search implement the server's listing grammar (36), so the expressions refused are the ones the grammar refuses, and each is refused as the server refuses it: a nested property path, a field the grammar does not know, an operator its field does not take, `AND` and `OR` in one expression, an unterminated string, a bare word where a value goes, a number no double holds, a `null` literal after any operator that takes a value (`search-and-filters/filter-null-refused`), an empty expression, more than ten conditions and more than 2048 characters each answer the binary's `validation` class carrying the server's own `validation_error`, whether or not the expression would have matched anything, and on a search with no words as on any other. The limits are refused one past where they stop, and ten conditions and 2048 characters are answered. **A `backref` condition is refused as well**, in the binary's `invalid` class and carrying no server code, because the server answers it: a copy holds the edges its own items draw, not an edge drawn to one of them from a row outside the slice, so it would miss the rows such an edge selects and answer the rows it excludes. The same expression with `edge` for `backref` is answered. **The one term answered where the server refuses it** is `edge[<type>]` naming an edge type the key may not read, which the server refuses `403 edge_permission_denied` (`edges/filter-term-hidden`). A local list consults none of the key's edge permissions, and makes no read of the server to learn them, so it cannot tell such a type from one nothing in its slice draws. The server gives the copy no edge of such a type, so the term is answered from the edges the copy holds: `exists` and `eq` answer none of the rows the server gave it, and `not_exists` and `neq` every one, but for an edge of that type this device queued and the server has not yet answered, which the copy holds as it holds any queued write. `device/fidelity.test.ts › answers from the copy an edge term the server refuses to a key that may not read its type`. `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses on a search with no words`, `› refuses a backref condition on a list and a search`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, core `filter::tests::refuses_a_null_literal_and_names_the_test_that_asks_for_absence`.
-25. **A device never queues a purge, and never purges its copy alone.** A purge is sent at once or refused (75 to 82): one held in a queue would destroy a row on the server long after the person who asked had stopped looking, past any edit made meanwhile, and one made to the copy alone would show a row gone that the server still holds. `device/local-refusals.test.ts › queues no purge, and keeps the row, when the purge cannot be sent`.
-26. A device never writes to a store it does not hold the writer handle for, and never to one bound to another server. `device/local-refusals.test.ts › refuses a write from a reading handle`, `› refuses a write to a store bound to another server`, `› refuses a hydration, a catch-up and a follow from a reading handle`.
-27. **A device never expires an item.** The event log has a retention and items do not. A device that swept its own copy by age would drop rows the server still holds and go on reporting the slice as complete, and the feed is not a place things fall out of. `device/working-copy.test.ts › keeps an item however old it is`.
+### `device/catch-up-takes`
+
+When a catch-up's stream carries an event, a device MUST take it by the rules of this chapter, applying it where it changes the copy and skipping it otherwise.
+
+**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› applies a transition, a delete and a restore, none of which move the version`.
+
+### `device/catch-up-cursor-taken`
+
+When a device takes an event, a device MUST set its cursor to that event's id, never to the highest id it has seen.
+
+**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good.
+
+**Tests:** `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
+
+### `device/catch-up-older-version`
+
+If an event carries a version older than the version of the row or edge the copy holds, then a device MUST skip it.
+
+**Tests:** `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`.
+
+### `device/catch-up-older-stamp`
+
+If an event carries the version of the row or edge the copy holds and an `updated_at` before the one held, then a device MUST skip it.
+
+**Reason:** a transition, a delete, a restore and a tag write move `updated_at` and leave the version where it was, so the version alone cannot order them.
+
+**Tests:** `device/catch-up.test.ts › skips an event at the version it holds that was stamped before the row it holds`.
+
+### `device/catch-up-skip-advances`
+
+When a device skips an event, a device MUST move its cursor past it.
+
+**Reason:** a cursor left behind would fetch the same stale event on every catch-up.
+
+**Tests:** `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the row it holds`.
+
+### `device/catch-up-same-stamp`
+
+When an event carries the version and the `updated_at` of the row the copy holds, a device MUST apply it.
+
+**Reason:** every transition, delete, restore and tag write carries the version the copy holds, and a device that skipped them would never learn a row had been archived, deleted or restored.
+
+**Tests:** `device/catch-up.test.ts › applies a transition, a delete and a restore, none of which move the version`, `› applies a tag write that leaves the version where it was`.
+
+### `device/server-row-order`
+
+When a device takes a row from any read of the server, a device MUST NOT replace a row it holds that is later by version and then by `updated_at`.
+
+**Reason:** a held stream applies events while a drain's or a pin's read is out, and a read written over a later event would roll the row back under a cursor already past that event.
+
+**Tests:** `device/verdicts.test.ts › refused: keeps the row the copy holds where the read-back answers an older one`, `device/catch-up.test.ts › keeps the row it holds where a pin's read answers an older one`.
+
+### `device/catch-up-leaves-slice`
+
+When an event shows that a row that is not pinned has left the slice by its type or its tier, a device MUST let the row go, whether or not a write of its own to the row still waits.
+
+**Tests:** `device/catch-up.test.ts › evicts a row that leaves the slice`, `› learns a row retyped out of its slice, asking the stream for every type`, `› applies nothing on a held stream from outside its slice`, `› lets an unpinned row kept for a waiting write go at the next catch-up that touches it, keeping the write`.
+
+### `device/catch-up-unlisted`
+
+When an event marks a row that is not pinned as not listed for the copy, a device MUST let the row go.
+
+**Tests:** `device/catch-up.test.ts › lets a row the stream lists as outside the item listing go`.
+
+### `device/catch-up-leaving-edges`
+
+When a row leaves the copy, a device MUST let go the edges it draws, but those of a type the slice holds whole.
+
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`, `› keeps the edges a held row draws to a row that leaves the slice`.
+
+### `device/catch-up-leaving-edges-to`
+
+When a row leaves the copy, a device MUST keep the edges a row it holds draws to it.
+
+**Tests:** `device/catch-up.test.ts › keeps the edges a held row draws to a row that leaves the slice`.
+
+### `device/catch-up-purged-edges`
+
+When an event says a row was purged, a device MUST let go the row and every edge at either end of it.
+
+**Tests:** `device/catch-up.test.ts › drops the edges at both ends of a purged row`.
+
+### `device/catch-up-purged-pin`
+
+When an event says a pinned row was purged, a device MUST take the pin off.
+
+**Tests:** `device/catch-up.test.ts › takes the pin off a purged row`.
+
+### `device/catch-up-never-held`
+
+When an event names a row that is not pinned, that the copy does not hold and that the slice does not take, a device MUST NOT add the row.
+
+**Tests:** `device/catch-up.test.ts › does not add a row that was never in the slice`, `› keeps a pinned row outside the slice current`.
+
+### `device/catch-up-pinned`
+
+When an event names a pinned row, a device MUST apply it whatever the row's type and tier.
+
+**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› keeps a pinned row that leaves the slice`.
+
+### `device/catch-up-edge-whole`
+
+Where an edge's type is held whole, a device MUST apply an event for the edge whatever its source.
+
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`.
+
+### `device/catch-up-edge-source`
+
+Where an edge's type is not held whole, a device MUST apply an event that creates or changes the edge only where the copy holds the edge's source or a write of its own to the edge still waits.
+
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`, `› moves an edge whose source moved within the slice, and drops one whose source moved outside it`, `› keeps an edge whose source moved outside the slice while a move of its own waits`.
+
+### `device/catch-up-edge-moved-out`
+
+When an event moves an edge whose type is not held whole to a source the copy does not hold, a device MUST let the edge go, unless a write of its own to the edge still waits.
+
+**Reason:** an edge's frames name its new source (`edges/move-source` and `edges/move-announced`), and no later frame would reach a copy that does not hold that source.
+
+**Tests:** `device/catch-up.test.ts › moves an edge whose source moved within the slice, and drops one whose source moved outside it`, `› keeps an edge whose source moved outside the slice while a move of its own waits`.
+
+### `device/catch-up-edge-own-write`
+
+While a write of its own to an edge still waits, a device MUST show that write over the server's change to the edge.
+
+**Tests:** `device/catch-up.test.ts › keeps an edge whose source moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's target over the server's change to the edge`, `› applies an edge event beneath an edge edit it has not had answered`.
+
+### `device/catch-up-entering-tags`
+
+When an event brings a row into the copy, a device MUST hold the row with its tags.
+
+**Tests:** `device/catch-up.test.ts › adds a row entering the slice by retype, with its tags and its edges`.
+
+### `device/catch-up-created-edges`
+
+When an event creates a row the slice takes, a device MUST take the row's edges from the edge events that follow it, reading nothing for them.
+
+**Tests:** `device/catch-up.test.ts › takes a created row's edges from the frames after it, reading nothing for them`.
+
+### `device/catch-up-entering-edges`
+
+When an event brings a row the copy did not hold into the slice by a retype or a move of tier, a device MUST read every page of the row's edges before it applies the event.
+
+**Reason:** the frames of the edges the row drew went by while the copy did not hold it.
+
+**Tests:** `device/catch-up.test.ts › adds a row entering the slice by retype, with its tags and its edges`, `› adds a row entering the slice by a move of tier, with its edges`, `› adds a row entering the slice with every page of its edges`.
+
+### `device/catch-up-entering-read-fails`
+
+If a catch-up cannot read the edges of a row entering the slice, then a device MUST end the catch-up with its cursor before that event.
+
+**Tests:** `device/catch-up.test.ts › leaves the cursor before a row entering the slice whose edges it could not read`.
+
+### `device/follow-entering-read-fails`
+
+If a held stream cannot read the edges of a row entering the slice for a reason that clears on its own, then a device MUST open the stream again after its wait rather than end it.
+
+**Tests:** `device/catch-up.test.ts › keeps a held stream going over a row entering the slice whose edges it could not read at first`.
+
+### `device/stream-every-type`
+
+A device MUST ask the event stream for every type the key reads, never for its slice's types alone.
+
+**Reason:** the server narrows a stream by the type a row has now, so a stream narrowed to the slice withholds the frame of a row retyped out of it.
+
+**Tests:** `device/catch-up.test.ts › learns a row retyped out of its slice, asking the stream for every type`.
+
+### `device/catch-up-catalog-first`
+
+When a device catches up, a device MUST read the item type and edge type catalogs before it opens its stream.
+
+**Tests:** `device/catch-up.test.ts › refreshes the type catalog before applying`.
+
+### `device/catch-up-catalog-unknown-type`
+
+When an event names a type the catalog does not hold, a device MUST read the catalogs again before it takes the event.
+
+**Tests:** `device/catch-up.test.ts › reads the catalog again, once for each, for a type an event names that it does not hold`.
+
+### `device/catch-up-catalog-image`
+
+When an event carries an image data URI under a property the catalog does not know as its type's thumbnail, a device MUST read the catalogs again before it takes the event.
+
+**Reason:** the catalog cannot tell such a property from one the type has since made its thumbnail, whose base64 must stay out of the index.
+
+**Tests:** `device/catch-up.test.ts › reads the catalog once for an image under a property no type declares, not once for each event carrying it`.
+
+### `device/catch-up-catalog-once`
+
+When a catch-up has read the catalogs again for a type or a property an event names, a device MUST take later events naming it by the catalog as it is, without reading it again.
+
+**Reason:** a type the server will not describe would otherwise cost one read of the catalog for every event naming it.
+
+**Tests:** `device/catch-up.test.ts › reads the catalog again, once for each, for a type an event names that it does not hold`, `› reads the catalog once for an image under a property no type declares, not once for each event carrying it`.
+
+### `device/expire-aged-cursor`
+
+If the stream says the log no longer holds the event after the cursor (`catchup_too_old`), then a device MUST end the catch-up or the held stream `copy_expired`.
+
+**Tests:** `device/catch-up.test.ts › ends on an aged-out cursor and hydrates again rather than reconnecting`, `› ends a follow whose cursor the log has aged past, and forgets the cursor`.
+
+### `device/expire-log-behind`
+
+If the stream's head, its live marker or a `cursor_ahead` frame names a position behind the cursor, then a device MUST end the catch-up or the held stream `copy_expired`.
+
+**Reason:** a server restored from an earlier point holds a log that ends behind the cursor (`events/stream-cursor-head` and `events/cursor-ahead`), and its later events are not the ones the copy missed.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `› hydrates again when the server says its cursor is ahead of the log`, `› hydrates again when the live marker is behind its cursor`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`, `device/fidelity.test.ts › matches the frame a cursor past the log's head gets`.
+
+### `device/expire-drops-cursor`
+
+When a device expires its copy, a device MUST drop its cursor.
+
+**Tests:** `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`.
+
+### `device/expire-no-reconnect`
+
+When a held stream's copy expires, a device MUST end the stream rather than ask for it again.
+
+**Tests:** `device/catch-up.test.ts › ends a follow whose cursor the log has aged past, and forgets the cursor`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`.
+
+### `device/expire-keeps-queue`
+
+When a device expires its copy, a device MUST keep its queue.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/read-view.test.ts › expires on %s without losing unsent work`.
+
+### `device/catch-up-incomplete`
+
+If a catch-up's stream ends before its live marker, then a device MUST end the catch-up `stream_incomplete`.
+
+**Reason:** a catch-up that stopped short of the head must not read as a clean pass.
+
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `› reports reaching the head, and reports stopping short of it`.
+
+### `device/catch-up-incomplete-cursor`
+
+If a catch-up's stream ends before its live marker, then a device MUST keep its cursor at the last event it took and keep its copy complete.
+
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
+
+### `device/catch-up-silence`
+
+If a catch-up's stream sends nothing at all for its idle wait before its live marker, then a device MUST end the catch-up `stream_incomplete` at the last event it took.
+
+**Tests:** `device/catch-up.test.ts › ends a catch-up on silence before the marker, at the last event it took`.
+
+### `device/catch-up-ends-on-marker`
+
+When a catch-up's stream sends its live marker, a device MUST end the catch-up.
+
+**Tests:** `device/catch-up.test.ts › moves the cursor past the rows the stream withheld, and resumes from there`.
+
+### `device/marker-moves-cursor`
+
+When a live marker names a cursor past the last event a catch-up or a held stream took, a device MUST move its cursor to the marker's.
+
+**Reason:** the events between are ones the credential withheld (`events/stream-live-cursor`), and a cursor left before them would stop short of the head on every catch-up and age out on a quiet slice.
+
+**Tests:** `device/catch-up.test.ts › moves the cursor past the rows the stream withheld, and resumes from there`, `› moves a held stream's cursor past the rows it withheld`, `device/fidelity.test.ts › matches the marker that ends a replay whose rows were withheld`.
+
+### `device/marker-malformed`
+
+If a live marker names no position, then a device MUST expire the copy.
+
+**Tests:** `device/catch-up.test.ts › expires the copy when a live marker names no position`.
+
+### `device/catch-up-report`
+
+When a catch-up ends on its live marker, a device MUST report how many events it applied, how many it skipped, the cursor it reached and that it reached the log's head.
+
+**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› skips an event at the version it holds that was stamped before the row it holds`, `› reports reaching the head, and reports stopping short of it`, `› moves the cursor past the rows the stream withheld, and resumes from there`.
+
+### `device/cursor-zero`
+
+When a device hydrates an instance whose log is empty, a device MUST store the cursor `0`.
+
+**Tests:** `device/catch-up.test.ts › resumes from zero after hydrating an empty instance, and applies the first event`.
+
+### `device/cursor-zero-resumes`
+
+While its cursor is `0`, a device MUST resume a catch-up from it and apply the first event the instance writes.
+
+**Reason:** a cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and `0` is the log's beginning rather than the absence of a cursor.
+
+**Tests:** `device/catch-up.test.ts › resumes from zero after hydrating an empty instance, and applies the first event`, `device/fidelity.test.ts › matches the replay a cursor of zero gets against a log that begins at one`.
+
+## What a device never does locally
+
+Each rule here holds because the silent alternative is a working copy that disagrees with the server with nothing anywhere to say so.
+
+### `device/edit-sends-named`
+
+When a device sends an edit, a device MUST send each property the caller named with the value the caller gave it, and no property the caller did not name.
+
+**Reason:** two values for one field are the server's to reconcile; a device that combined them would have to be believed by every other device.
+
+**Tests:** `device/local-refusals.test.ts › refuses to merge two values for one field`.
+
+### `device/edit-takes-answer`
+
+When the server answers an edit, a device MUST hold the row the server answers it with.
+
+**Tests:** `device/local-refusals.test.ts › refuses to merge two values for one field`.
+
+### `device/version-local-create`
+
+A device MUST hold a row of its own create that the server has not answered at version `0`.
+
+**Reason:** the server's versions start at 1, so a row at 0 is one no server has answered for.
+
+**Tests:** `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
+
+### `device/version-waiting-edit`
+
+While an edit of a row waits, a device MUST show the row at the version it held before the edit.
+
+**Tests:** `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
+
+### `device/version-from-answer`
+
+When the server answers a write, a device MUST hold the row at the version the server answers.
+
+**Tests:** `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
+
+### `device/conflict-blocked`
+
+If the server refuses a write `409 version_conflict`, then a device MUST report the write `blocked` with the reason `conflict_unresolved`, keeping the server's envelope.
+
+**Tests:** `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`.
+
+### `device/conflict-unresolved`
+
+If the server refuses a write `409 version_conflict`, then a device MUST send nothing more for the write on a later drain until it is released.
+
+**Reason:** a conflict is the server's to resolve; a device that resolved it would have to be believed by every other device.
+
+**Tests:** `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`.
+
+### `device/conflict-version-kept`
+
+If the server refuses a write `409 version_conflict`, then a device MUST keep the row at the version it held.
+
+**Tests:** `device/local-refusals.test.ts › refuses to resolve a conflict it was refused`, `device/verdicts.test.ts › reports a conflict rather than resolving it`.
+
+### `device/create-tags-queued`
+
+When a create names tags, a device MUST queue each tag as a write of its own that waits on the create.
+
+**Tests:** `device/local-refusals.test.ts › refuses a local create whose tags and edges it cannot queue`, `device/queue.test.ts › queues an edge, a tag and an extension as writes of their own`.
+
+### `device/edit-undeclared-sent`
+
+When an edit names a property its type does not declare, a device MUST send that property.
+
+**Reason:** a device that sent only the fields it knew would answer as though it had not been asked for the rest.
+
+**Tests:** `device/local-refusals.test.ts › refuses an update carrying a field it cannot send`.
+
+### `device/filter-grammar-refused`
+
+If a local list or a local search names a filter that the server's listing grammar refuses, then a device MUST refuse it `validation`, carrying the server's `validation_error`, whether or not the search has words.
+
+**Reason:** a filter a device ignored would answer every row, which reads as a matched filter and is the hardest wrong answer to notice.
+
+**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses on a search with no words`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-limits-answered`
+
+A device MUST answer a filter of ten conditions, and one of 2048 UTF-16 code units.
+
+**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› counts a filter's length in UTF-16 code units, as the server does`.
+
+### `device/filter-length-units`
+
+If a filter is longer than 2048 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`, however few characters it holds.
+
+**Tests:** `device/local-refusals.test.ts › counts a filter's length in UTF-16 code units, as the server does`.
+
+### `device/filter-null-message`
+
+If a filter compares a field with `null` by an operator that takes a value, then a device MUST refuse it with the server's message, which names `not_exists`.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`.
+
+### `device/filter-backref`
+
+If a local list or a local search names a `backref` condition, then a device MUST refuse it `invalid`, carrying no server code.
+
+**Reason:** a copy holds the edges its own items draw and not an edge drawn to one of them from a row outside the slice, so it would miss rows such a condition selects.
+
+**Tests:** `device/local-refusals.test.ts › refuses a backref condition on a list and a search`.
+
+### `device/filter-hidden-edge-type`
+
+When a filter names `edge[<type>]` for an edge type the key may not read, a device MUST answer it from the edges the copy holds, those it queued and the server has not answered among them.
+
+**Reason:** a local list makes no read of the server to learn the key's edge permissions, so it cannot tell such a type from one nothing in its slice draws, where the server refuses the term (`edges/filter-term-hidden`).
+
+**Tests:** `device/fidelity.test.ts › answers from the copy an edge term the server refuses to a key that may not read its type`.
+
+### `device/no-age-expiry`
+
+A device MUST NOT let a row go because of its age.
+
+**Reason:** the event log has a retention and items do not, and a copy swept by age would drop rows the server holds while it reports the slice complete.
+
+**Tests:** `device/working-copy.test.ts › keeps an item however old it is`.
 
 ## Blobs
 
-28. A blob's bytes are fetched on demand and are not held by hydration. An item that references bytes is held with the reference and without them. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
-29. A thumbnail, where an item's type carries one, travels with the item rather than being fetched. A phone cannot hold a library's bytes and can hold its thumbnails. It is read from the row the copy holds, and an item the copy does not hold is refused as not held rather than answered as one that carries none. Its base64 is kept out of the local index on every path that writes a row, an applied event, a drain's answer, a local edit, a refused write's row read back, the row a refused create lands on and a waiting edit laid back over a row among them, and when the catalog learns the type's thumbnail only after the row is held, including after an image the catalog was read again for comes before it in the same item, and after its property was read again for in an earlier stream, before its type declared it. `device/working-copy.test.ts › holds the thumbnail an item carries`, `› keeps a thumbnail out of its index when its type arrives after the stream opened`, `› keeps a thumbnail out of its index when its type gains one after the stream opened`, `› keeps a thumbnail out of its index when it follows, in one item, an image already read again for`, `› keeps a thumbnail out of its index when its property was read again for before its type declared it`, `› keeps a thumbnail out of its index when a catch-up meets it after an image already read again for`, `› keeps a thumbnail out of its index when a catch-up applies it`, `› keeps a thumbnail out of its index when a drain's answer carries it`, `› keeps a thumbnail out of its index when a local edit writes it`, `› keeps a thumbnail out of its index when a refused write's row is read back`, `› keeps a thumbnail out of its index when a refused create lands on the row its key names`, `› keeps a thumbnail out of its index when a waiting edit is laid over a row an event brought`.
-30. A device with no bytes for a blob says so rather than reporting the item incomplete. The item is whole; the bytes are absent. `device/working-copy.test.ts › says the bytes are absent rather than the item`, `› says the bytes are absent when the link does not serve them`.
+### `device/hydrate-no-bytes`
+
+When a device hydrates, a device MUST NOT fetch blob bytes.
+
+**Tests:** `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
+
+### `device/blob-ref-held`
+
+A device MUST hold an item that names a blob with the blob's reference, whether or not it holds the bytes.
+
+**Tests:** `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
+
+### `device/thumbnail-from-row`
+
+When a device is asked for an item's thumbnail, a device MUST answer it from the row the copy holds.
+
+**Reason:** a phone cannot hold a library's bytes and can hold its thumbnails, which travel with the item (`items/thumbnail-inline`).
+
+**Tests:** `device/working-copy.test.ts › holds the thumbnail an item carries`.
+
+### `device/thumbnail-not-held`
+
+If a device is asked for the thumbnail of an item the copy does not hold, then a device MUST refuse the ask as not held rather than answer that the item carries none.
+
+**Tests:** `device/working-copy.test.ts › holds the thumbnail an item carries`.
+
+### `device/thumbnail-not-searched`
+
+A device MUST NOT match a local search against the base64 of an item's thumbnail, however the row reached the copy and whenever its type's catalog learned the thumbnail.
+
+**Tests:** `device/working-copy.test.ts › holds the thumbnail an item carries`, `› keeps a thumbnail out of its index when its type arrives after the stream opened`, `› keeps a thumbnail out of its index when its type gains one after the stream opened`, `› keeps a thumbnail out of its index when it follows, in one item, an image already read again for`, `› keeps a thumbnail out of its index when its property was read again for before its type declared it`, `› keeps a thumbnail out of its index when a catch-up meets it after an image already read again for`, `› keeps a thumbnail out of its index when a catch-up applies it`, `› keeps a thumbnail out of its index when a drain's answer carries it`, `› keeps a thumbnail out of its index when a local edit writes it`, `› keeps a thumbnail out of its index when a refused write's row is read back`, `› keeps a thumbnail out of its index when a refused create lands on the row its key names`, `› keeps a thumbnail out of its index when a waiting edit is laid over a row an event brought`.
+
+### `device/bytes-absent`
+
+If a device can get no bytes for a blob, from the server's own `404`, an unreachable server or a link that does not serve them, then a device MUST refuse the ask `bytes_absent`, naming the blob's hash.
+
+**Tests:** `device/working-copy.test.ts › says the bytes are absent rather than the item`, `› says the bytes are absent when the link does not serve them`, `device/contract.test.ts › reads a blob as absent only on the server's own 404, never on a proxy's`.
+
+### `device/bytes-absent-item-whole`
+
+While a device holds no bytes for a blob, a device MUST still answer the item that names the blob.
+
+**Reason:** the item is whole and only the bytes are absent.
+
+**Tests:** `device/working-copy.test.ts › says the bytes are absent rather than the item`.
 
 ## Local reads
 
-31. **A local list and a local search answer the active state when the caller names none**, which is the default the server's listing grammar gives (`items/bin-hidden`, `items/archived-hidden` and `search-and-filters/state-search-default`). A working copy holds every state its slice carries, because a row leaving the active state is a change a catch-up has to see; what the default decides is which of them a read answers. A device whose default differed from the server's would answer a question the server answers differently, with nothing to say which one the caller got. `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`.
+A local list and a local search read the copy alone. They take the server's listing grammar and answer it as the server does, so a question answers the same rows online and offline.
 
-32. **A local read by id answers every state but the bin**, which is the server's rule on the same door (`items/get-missing` and `items/archived-readable`). An archived row stays readable by id and a trashed one reads as absent. The default a list applies is about which rows a question with no subject returns; a read naming one row has a subject, and narrowing it further would hide a row the caller is holding the id of. `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
+### `device/list-default-active`
 
-33. **A local search never answers a row in the bin, under any state value.** A trashed row is removed from the full-text index on the write that trashes it rather than narrowed out of the query, which is the server's rule on its own index (`search-and-filters/search-bin`). So the widening reaches every state the index holds and the bin is not one of them, and `state=trashed` on this door matches nothing rather than matching the row. A device that indexed it would answer a search the server it copies answers nothing for, and would do it under every state value rather than one. `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`.
+When a local list names no state, a device MUST answer only rows in the active state.
 
-34. **A local list narrows on the item's own time with both bounds exclusive**, which is the one rule the whole API takes (`search-and-filters/own-time-exclusive`). The row sitting exactly on a bound is the row that tells an exclusive bound from an inclusive one, and a device that read either bound the other way would answer one query differently from the server it copies, with nothing in either answer to say which the caller got. `device/working-copy.test.ts › excludes a row sitting exactly on either bound`, `› takes each bound on its own`. Query bounds and `eq`, `neq`, `gt`, `gte`, `lt` and `lte` comparison literals for `occurred_at`, `created_at` and `updated_at` use the server’s UTC millisecond normalization, including reduced dates, zone-less UTC times, offsets and fractional truncation. Invalid or non-string comparison literals are refused with `validation_error`; `contains` and `starts_with` retain text semantics. Valid unsent timestamps use that same canonical spelling in the local projection without rewriting the queued request or its retry identity. `device/time-comparisons-live.test.ts › normalizes exclusive time bounds as the server does`, `› normalizes and validates time filters on %s`, `› compares an unsent projection canonically and keeps its queued request`, `› projects every accepted spelling to the server's exact instant`.
-35. **A cursor of `0` is the log's beginning, and a valid resume point.** A device that hydrates an instance whose log is empty takes `0` as its cursor (7), and its first catch-up applies the first event the instance ever writes rather than being told to hydrate again: a cursor is too old only when the event after it has been retired (`events/catchup-too-old`). `0` is not the absence of a cursor, because a store that has hydrated holds one, and the two are told apart by whether a hydration completed rather than by the number. `device/catch-up.test.ts › resumes from zero after hydrating an empty instance, and applies the first event`, `device/fidelity.test.ts › matches the replay a cursor of zero gets against a log that begins at one`.
+**Reason:** the server's listing gives the same default (`items/bin-hidden` and `items/archived-hidden`), and a device whose default differed would answer one question differently with nothing to say which answer the caller got.
 
-36. **A local search narrows by type and by tags exactly as a local list does**: a type with its subtree, by name and by declared parent, and every tag given required. A search is how a person finds a row in a slice of one type, and one that answered other types, or ignored a tag, would answer a different question from the list beside it with nothing to say so. **Both take the server's listing grammar, and answer it as the server does**: `filter` is the expression `GET /items` and `GET /search` take (`search-and-filters/filter-mixed-logic` and `edges/filter-edge`), over the system fields, a top-level property, `tags` and `edge[<type>]` naming the item at the other end, joined by `AND` or by `OR`, and required alongside every other narrowing given; `backref[<type>]` is refused (24). Each condition reads the copy as the server reads its own tables, down to the comparison: `contains` and `starts_with` are case-insensitive over ASCII, a numeric bound compares a property as a number, so text holding `10` is above `4` and text holding `abc` is not, `eq null` matches nothing, a number or a boolean is compared as the server's driver binds it, a REAL, which a text system column such as `source_id` reads with its affinity as text, so there a value `5.0` matches `eq 5` and `5` does not, and `1.0` matches `eq true`, while a property is compared without affinity, so text matches no number and no boolean whatever it spells and numeric properties use the same finite-double interpretation for numeric `eq`, `neq` and range bounds, without coercing other JSON kinds for equality, so a number property holding `5` matches `eq 5` and one holding `1` matches `eq true`, and a number inside an array or an object reads as the server's stored text spells it, `100000000000000000000` rather than `1e+20`. An edge condition answers from the edges the copy holds, one naming an edge type the key may not read included (24). `beneath` is the device's own and has no server counterpart: an item and every item it reaches along `parent-of` edges, parent to child at any depth, as far as the copy holds those edges, the item itself included, and a `references` edge makes no child. A `parent-of` cycle the copy holds ends the walk, each item on it answered once. A copy that answered one expression otherwise than the server would show one set of rows offline and another online for the same question, with nothing in either to say which is right. `device/working-copy.test.ts › narrows a local search by type and tags as a list does`, `› narrows a local list by a property, a tag and the grammar's logic`, `› narrows a local list by an edge from an item`, `› narrows a local list to an item and everything beneath it`, `› ends beneath on a parent-of cycle, answering each row once`, `› narrows a local search by the listing grammar and beneath, as a list does`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/numeric-filters-live.test.ts › matches numeric equality and range filters between local and server %s`.
+**Tests:** `device/working-copy.test.ts › answers the active state on a local list that names none`.
+
+### `device/search-default-active`
+
+When a local search names no state, a device MUST answer only rows in the active state.
+
+**Reason:** the server's search gives the same default (`search-and-filters/state-search-default`).
+
+**Tests:** `device/working-copy.test.ts › answers the active state on a local search that names none`.
+
+### `device/read-named-state`
+
+When a local list or a local search names a state, a device MUST answer the rows in that state.
+
+**Tests:** `device/working-copy.test.ts › answers the active state on a local list that names none`, `› answers the active state on a local search that names none`.
+
+### `device/get-archived`
+
+A device MUST answer a local read by id of an archived row.
+
+**Reason:** the server reads an archived row by id (`items/archived-readable`), and narrowing a read that names one row would hide a row the caller holds the id of.
+
+**Tests:** `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
+
+### `device/get-trashed`
+
+A device MUST answer a local read by id of a row in the bin as it answers a row the copy does not hold.
+
+**Reason:** the server answers a row in the bin as missing (`items/get-missing`).
+
+**Tests:** `device/working-copy.test.ts › reads an archived row by id and reports a trashed one as absent`.
+
+### `device/search-no-bin`
+
+A device MUST NOT answer a row in the bin to a local search, whatever state the search names and whenever the row went to the bin.
+
+**Reason:** the server keeps a trashed row out of its search index (`search-and-filters/search-bin`).
+
+**Tests:** `device/working-copy.test.ts › keeps a row in the bin out of the index, whatever state a search names`, `› stops finding a row once an event puts it in the bin`.
+
+### `device/list-bounds-exclusive`
+
+When a local list names `occurred_after` or `occurred_before`, a device MUST leave out a row whose own time is the bound.
+
+**Reason:** the server takes both bounds as exclusive (`search-and-filters/own-time-exclusive`), and the row on the bound is the one that tells the two readings apart.
+
+**Tests:** `device/working-copy.test.ts › excludes a row sitting exactly on either bound`.
+
+### `device/list-bound-alone`
+
+When a local list names one time bound, a device MUST narrow by that bound alone.
+
+**Tests:** `device/working-copy.test.ts › takes each bound on its own`.
+
+### `device/time-bound-server`
+
+When a local list names a time bound, a device MUST read it as the server reads it, as the same instant to the millisecond in UTC.
+
+**Tests:** `device/time-comparisons-live.test.ts › normalizes exclusive time bounds as the server does`.
+
+### `device/time-bound-invalid`
+
+If a local list names a time bound that is not a time the server reads, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Tests:** `device/time-comparisons-live.test.ts › normalizes exclusive time bounds as the server does`.
+
+### `device/time-filter-server`
+
+When a filter compares `occurred_at`, `created_at` or `updated_at` by `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, a device MUST read the literal as the server reads it, as the same instant to the millisecond in UTC.
+
+**Tests:** `device/time-comparisons-live.test.ts › normalizes and validates time filters on %s`.
+
+### `device/time-filter-invalid`
+
+If a filter compares a time field by `eq`, `neq`, `gt`, `gte`, `lt` or `lte` with a literal that is not text or not a time the server reads, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Tests:** `device/time-comparisons-live.test.ts › normalizes and validates time filters on %s`.
+
+### `device/time-filter-text`
+
+When a filter compares a time field by `contains` or `starts_with`, a device MUST compare it as text.
+
+**Tests:** `device/time-comparisons-live.test.ts › normalizes and validates time filters on %s`.
+
+### `device/time-unsent-shown`
+
+When a device shows a row of its own write that the server has not answered, a device MUST show each time the write gives at the instant the server would store, in the server's spelling.
+
+**Tests:** `device/time-comparisons-live.test.ts › compares an unsent projection canonically and keeps its queued request`, `› projects every accepted spelling to the server's exact instant`.
+
+### `device/time-unsent-sent-as-given`
+
+When a device queues a write that gives a time, a device MUST send the time as the caller spelled it, under the write's own idempotency key.
+
+**Tests:** `device/time-comparisons-live.test.ts › compares an unsent projection canonically and keeps its queued request`, `› projects every accepted spelling to the server's exact instant`.
+
+### `device/search-narrows-like-list`
+
+When a local search names a type or tags, a device MUST narrow it as a local list narrows: a type with its subtree, by name and by declared parent, and every tag given required.
+
+**Tests:** `device/working-copy.test.ts › narrows a local search by type and tags as a list does`.
+
+### `device/filter-as-server`
+
+When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-mixed-logic` and `edges/filter-edge`), a device MUST answer the rows the server answers from the same rows.
+
+**Reason:** a copy that answered one expression otherwise than the server would show one set of rows offline and another online for the same question.
+
+**Tests:** `device/working-copy.test.ts › narrows a local list by a property, a tag and the grammar's logic`, `› narrows a local list by an edge from an item`, `› narrows a local search by the listing grammar and beneath, as a list does`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/numeric-filters-live.test.ts › matches numeric equality and range filters between local and server %s`.
+
+### `device/filter-case-ascii`
+
+When a filter compares by `contains` or `starts_with`, a device MUST match without regard to ASCII case.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-numeric-bound`
+
+When a filter bounds a property by a number, a device MUST compare the property as a number, so text holding `10` is above `4` and text holding `abc` is not.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-system-number`
+
+When a filter compares a text system field such as `source_id` with a number or a boolean, a device MUST match the text the server matches, so `5.0` matches `eq 5` and `5` does not, and `1.0` matches `eq true`.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-property-kind`
+
+When a filter compares a property with a number or a boolean, a device MUST match no property that holds text, so a number property holding `5` matches `eq 5`, one holding `1` matches `eq true`, and text matches neither.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, `device/numeric-filters-live.test.ts › matches numeric equality and range filters between local and server %s`.
+
+### `device/filter-nested-number`
+
+When a filter compares the text of an array or an object property, a device MUST read a number inside it as the server's stored text spells it, so `100000000000000000000` rather than `1e+20`.
+
+**Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-edge-held`
+
+When a filter names an `edge[<type>]` condition, a device MUST answer it from the edges the copy holds.
+
+**Tests:** `device/working-copy.test.ts › narrows a local list by an edge from an item`, `device/fidelity.test.ts › answers from the copy an edge term the server refuses to a key that may not read its type`.
+
+### `device/beneath`
+
+When a local list or a local search names `beneath` an item, a device MUST answer that item and every item it reaches along `parent-of` edges from parent to child at any depth, as far as the copy holds those edges.
+
+**Reason:** `beneath` is the device's own and has no server counterpart.
+
+**Tests:** `device/working-copy.test.ts › narrows a local list to an item and everything beneath it`, `› narrows a local search by the listing grammar and beneath, as a list does`.
+
+### `device/beneath-references`
+
+When a local list names `beneath` an item, a device MUST NOT take a `references` edge as making a child.
+
+**Tests:** `device/working-copy.test.ts › narrows a local list to an item and everything beneath it`.
+
+### `device/beneath-cycle`
+
+When a `parent-of` cycle the copy holds lies beneath an item, a device MUST end the walk there and answer each item on it once.
+
+**Tests:** `device/working-copy.test.ts › ends beneath on a parent-of cycle, answering each row once`.
+
+## Edges a copy holds
+
+A copy holds the edges its items draw, and every edge of a type the slice holds whole. The replies in a thread point at the thread they are in and a file points at what it is attached to, so what points at the item on screen is a question an app asks of it.
+
+### `device/edges-to`
+
+When a caller reads the edges to an item, a device MUST answer each edge the copy holds whose target is that item, answered or still waiting in the queue, and no other edge.
+
+**Reason:** a copy that answered only one end would leave an app asking every item it holds for its edges.
+
+**Tests:** `device/working-copy.test.ts › answers the edges the copy holds to an item, the unanswered ones with them`.
+
+### `device/edges-whole-either-end`
+
+Where a slice holds an edge type whole, a device MUST answer an edge of that type from either end, whichever of its ends the copy holds.
+
+**Tests:** `device/working-copy.test.ts › reads a held-whole edge from either end`.
+
+### `device/edge-source-unheld`
+
+If a caller creates an edge from a row the copy does not hold, of a type the slice does not hold whole, then a device MUST refuse it `invalid`, queueing nothing.
+
+**Reason:** no event about the edge would reach the copy, so it would sit there as written for good.
+
+**Tests:** `device/local-refusals.test.ts › refuses a local edge from a row the copy does not hold`.
+
+### `device/edge-source-left-unheld`
+
+When a hydration leaves the source of an edge create still waiting outside the slice, a device MUST NOT hold the edge, unless the slice holds its type whole.
+
+**Reason:** nothing would keep such an edge current.
+
+**Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
+
+### `device/edge-source-left-queued`
+
+When a hydration leaves the source of an edge create still waiting outside the slice, a device MUST keep the create queued.
+
+**Reason:** the caller was told the write was queued, so it is sent.
+
+**Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
 
 ## Bytes, fetched and sent
 
-37. **Bytes a device has fetched are answered from beside the store the next time they are asked for, and only bytes that hash to their name are kept.** A device asks the server for a link to a blob's bytes (`blobs.md`), fetches them from the link exactly as given and with no credential, checks them against the hash they are named by, and keeps them beside the working copy, in a folder named for its file with `.blobs` after it. A device that fetched again on every read would spend a phone's data on a photo it already holds, and one that kept bytes under a name they do not hash to would answer a different file for that name from then on. **What is kept there is a cache**: bytes taken away from it are fetched again the next time they are asked for, as bytes never fetched are, since they are named by what they hold; a folder takes away the bytes it holds as a file (`folders.md` 37). `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`, `› keeps no bytes that do not hash to the name they were fetched under`, `device/folders.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
+### `device/blob-link-credential`
 
-38. **An upload is a queued write like any other.** Its bytes are copied into that folder under their hash when it is queued, an empty file refused because the server holds no empty blob, and the queue names them and never holds them; a drain sends them to the server and the write is answered with one of the six verdicts. Attaching a file to an item is three writes, each with its own verdict: the upload, a file item naming the bytes, which waits on the upload, and an `attached-to` edge from the file item to the item, which waits on the file item as any edge waits on its endpoints (`queue-and-verdicts/edge-depends-on-ends`). Bytes gone from beside the working copy before the drain are a write that can never be sent, and it is refused naming them rather than left waiting; bytes still there and not opened for now leave the write unanswered and uncounted, with the reason, for the next drain. `device/queue.test.ts › queues an upload and sends its bytes when it drains`, `› names an upload's bytes in the queue and never holds them`, `› attaches a file as an upload, a file item and an edge, each waiting on the one before`, `› refuses an upload whose bytes are no longer held`, `› leaves an upload whose held bytes cannot be opened unanswered, and says why`, `› refuses an attachment whose upload the server refuses, and what waits on it`, `› attaches under the title, type and tier it is given`, `› attaches only to an item the copy holds outside the bin`.
+When a device fetches bytes it does not hold, a device MUST ask the server for the blob's link with its credential.
 
-## The server it talks to
+**Tests:** `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`.
 
-39. **The binary holds every answer to the contract it was built for.** Each answer names its contract version in `X-Marfa-Contract` (`instance/contract-header`), and the binary compares it with the contract version of the document it was generated from. An answer that names another contract, or a success that names none, is refused with `contract_mismatch` and exit 1, and its body is not read: it may be shaped, and sized, in ways the binary cannot read. The contract is named by the answer, so a write refused this way was sent, and the refusal says it may have taken effect; a write whose answer is the only copy of what it mints, a key or a signing secret, reads the root first and is not sent to a server on another contract. An event stream is held on its opening headers. An answer that names its contract twice, differently, names none the binary speaks and is refused; the same contract named twice is one. A refusal that names none is handed on as the refusal it is, since a proxy in front of the server answers without one. There is no round trip to the root before a call. `status` reads the root and says which contract the server speaks beside the one the binary was built for, and asks for nothing past that description when they differ; it is the one command in `marfa operations` that reads a server on another contract, and every other command in that table refuses it, as do `keys bootstrap`, `items attach`, `items add` and `keys keep`, which reach the server outside it; `logout` revokes and forgets its token whatever it is answered. `whoami` describes the server as `status` does. A credential whose type permissions reach no type, the operator key among them (`keys-and-oauth.md` 1), is refused the counts `403 type_not_permitted`, and `status` still describes the server, says the counts need a working key and exits 0; any other refusal of the counts is handed on as the refusal it is. `keys bootstrap` reads the one-time secret from stdin when `--secret` is left out, so the secret need not be on the command line. The contract the root speaks is the one its answer's header names, whatever its body says, and a root whose header names none speaks none, so no mint is sent to it. `webhooks redeliver <id> <delivery_id>` sends one authenticated, bodyless POST to `/webhooks/{id}/deliveries/{delivery_id}/redeliver`, encoding each identifier as its own path segment; the server applies the current authority and retained-delivery rules in the `events/redeliver-*` rules. The working copy holds its answers the same way (42). The docs site is not a server, and `marfa docs` holds none of its answers to a contract (109). `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› reads an answer on its own contract, sending only the call`, `› refuses a success that names no contract`, `› refuses an answer that names its contract twice, differently`, `› hands on a refusal that names no contract, as a proxy's would`, `› still says which server this is, and that its contract is another`, `› refuses an event stream on another contract, and reads one on its own`, `› says in words that the server speaks another contract`, `› takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `› sends nothing to print the table`, `› refuses contract_mismatch from every command but status`, `› reads every door on its own contract, so the refusal above is the contract's`, `› describes the server to a key that reaches no type, and says the counts need a working key`, `› hands on any other refusal of the counts`, `› mints the operator key with a bootstrap secret read from stdin`, `› posts redelivery with encoded ids and no body`.
+### `device/blob-link-as-given`
 
-## Held open, and read from beside
+When a device follows a blob's link, a device MUST request the link exactly as the server gave it.
 
-40. **A held stream applies each event as it arrives, under the rules a catch-up applies it by, and says which.** Each event is applied and the cursor moved past it in one transaction (11 to 15), and the caller is told, while the stream is still held, of each event that changed the copy, what it was about, and the cursor it left. A stream that ends or drops is opened again from the stored cursor, so nothing between the two is lost and nothing is applied twice; one that ended early is asked for again after a wait that doubles up to thirty seconds, and a server busy or failing is asked again the same way, while an answer no retry changes ends the follow and names it. A server whose log no longer continues from the cursor ends it as it ends a catch-up (16), and the replay's marker moves its cursor past the events withheld from it as it moves a catch-up's (17). An event the catalog cannot answer for (15) is not applied: the stream is opened again at once from the stored cursor, which reads the catalog first, and the event is then taken by the catalog as it is. Each type or property costs at most one such reopen a stream, counting the streams those reopens chain together as one, and a stream that ends for any other reason forgets them, so the next one opens again for a property its type has since made its thumbnail. Structural changes such as registering a type expire the read view and require hydration (52). Within an unchanged view, a type the server will not describe, or an image under a property declared as text, costs one reopen a stream rather than one an event. Told to stop, it stops at once, even while a stream is still being asked for, and interrupted it ends as it does when its time is up, with its report. One whose reader has gone ends rather than going on applying changes nobody hears of. **It says what became of the server**: the first stream it cannot have for anything environmental, a refused or dropped connection, a timeout, a `429`, any `5xx` or a refusal naming no contract (42), tells the caller `server.unreachable` with why, naming no item and no edge, and the first stream it has after that tells `server.reachable`, each once however many attempts lie between them; a follow that has its stream at once says neither. **A follow whose caller was last told `server.unreachable` by an earlier follow counts it as told**: it does not tell it again, and tells `server.reachable` with the first stream it has. An app told nothing would show offline and online alike, and would have to drain on a timer to send what it queued once the server came back. A caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that had its stream at once would leave it believing the server still gone. **An event is only what carries data, under an id that is a number**: a frame naming an id and no data is no event, and a stream naming an event id that is not a number, or sending a line longer than 64 MiB, ends a catch-up or a follow with a refusal naming it, the cursor where it was, rather than a cursor no start can resume from. A device that learned of a change only when a caller asked would show an item open on a screen as it was when the person last asked. `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`, `› refuses an event id that is not a number, keeping the cursor it had`, `› applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`, `› applies an event on a held stream beneath a write it has not had answered`, `› applies an edge event on a held stream beneath an edge edit it has not had answered`, `› applies nothing on a held stream from outside its slice`, `› asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes`, `› holds an item whose type was registered after the stream opened, in the slice through its parent`, `› reads the catalog once for a type the server will not describe, not once for each event naming it`, `› reads the catalog once a stream for an image under a property declared as text, and holds it as text`, `› ends a follow at once when stopped while its stream is still being asked for`, `› prints its report when interrupted, as it does when its time is up`, `› ends a follow whose reader has gone, rather than going on untold`, `› ends a follow whose cursor the log has aged past, and forgets the cursor`, `› ends a follow whose server's log ends behind its cursor, and forgets the cursor`, `› hydrates again when another instance answers at the same address`, `device/working-copy.test.ts › keeps a thumbnail out of its index when it follows, in one item, an image already read again for`, `› keeps a thumbnail out of its index when its property was read again for before its type declared it`, core `catch_up::tests::a_follow_told_the_server_was_unreachable_says_once_it_is_reached`.
+**Tests:** `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`.
 
-41. **A store opened to read never claims the writer role, never writes, and is told when the writer saves.** The CLI reports `no_store` with exit 2 for an absent reading store, including queue and changes, while an invalid existing store retains its own classification. It refuses a path where no store has been made rather than making one, leaves the file as it found it even where it is the last to close after a writer that died, and a number the store moves on each save by another connection is how it learns to read again. It applies no schema, so it reads a store only once a writer of its schema has opened it. **A store another build made is refused by every open, writer and reader alike, before anything reads it**, with `wrong_schema` naming its path: one at another schema version, and, since the version does not move before the first public release (`instance.md`), one whose tables are not the shape this build makes them in, comments and spacing aside. A table this build adds is one a writer makes when it opens a store that lacks it, so such a store opens; a reader cannot make it, and refuses such a store as one to open once with this build's writer rather than as another build's. A table of another shape is named before a missing one. The refusal says how many writes the store holds that the server has not taken, waiting, blocked, refused or dead, counting what clearing answered writes would keep, or that it cannot read them, and that the build which made it can drain or discard them before a new store is hydrated; it never advises deleting the store, which would take writes no other build can send or show. The writer's claim is a lock named for the store's whole file name, so two stores in one directory sharing a stem, `notes.sqlite` and `notes.db`, each have a writer. Every core opening a store has to name the lock the same way: a core naming it otherwise would claim the writer role beside this one, so every client on a machine moves to a core together. A helper that opened the store as a second writer would, started first, take the writer role and lock the app out of its own store; one with no signal would have to read everything again to learn whether anything changed. `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `› refuses to read a store a writer of another schema version made`, `› refuses a store another build shaped, by name, with the writes it holds unsent`, `› opens a store made before a table this build adds, and adds it`, `› gives two stores sharing a stem a writer each`, `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
+### `device/blob-link-no-credential`
+
+When a device follows a blob's link, a device MUST NOT send its credential.
+
+**Tests:** `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`.
+
+### `device/blob-hash-checked`
+
+If bytes a device fetched do not hash to the name they were asked for under, then a device MUST refuse the ask `decoding`.
+
+**Tests:** `device/working-copy.test.ts › keeps no bytes that do not hash to the name they were fetched under`.
+
+### `device/blob-hash-not-kept`
+
+If bytes a device fetched do not hash to the name they were asked for under, then a device MUST NOT keep them.
+
+**Reason:** bytes kept under a name they do not hash to would answer a different file for that name from then on.
+
+**Tests:** `device/working-copy.test.ts › keeps no bytes that do not hash to the name they were fetched under`.
+
+### `device/blob-kept-beside`
+
+When a device has fetched bytes, a device MUST keep them beside the store, in a folder named for the store's file with `.blobs` after it.
+
+**Tests:** `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`.
+
+### `device/blob-answered-locally`
+
+When a device is asked again for bytes it keeps, a device MUST answer them without asking the server.
+
+**Reason:** a device that fetched again on every read would spend a phone's data on a photo it already holds.
+
+**Tests:** `device/working-copy.test.ts › answers a second ask for the same bytes from what it holds`.
+
+### `device/blob-refetched`
+
+When bytes a device kept have been taken away from beside the store, a device MUST fetch them again the next time they are asked for.
+
+**Tests:** `device/folders.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
+
+### `device/upload-copied`
+
+When a device queues an upload, a device MUST copy the file's bytes beside the store, named by their hash, so that a later change to the file does not change what is sent.
+
+**Tests:** `device/queue.test.ts › queues an upload and sends its bytes when it drains`, `› names an upload's bytes in the queue and never holds them`.
+
+### `device/upload-not-in-store`
+
+A device MUST NOT write an upload's bytes into the store.
+
+**Tests:** `device/queue.test.ts › names an upload's bytes in the queue and never holds them`.
+
+### `device/upload-empty`
+
+If a device is asked to queue an upload of an empty file, then a device MUST refuse it `invalid` and queue nothing.
+
+**Reason:** the server holds no empty blob (`blobs/upload-empty`).
+
+**Tests:** `device/queue.test.ts › queues an upload and sends its bytes when it drains`.
+
+### `device/upload-drained`
+
+When a drain reaches an upload, a device MUST send the bytes it holds for it to `POST /blobs`, under the upload's MIME type, with its credential.
+
+**Tests:** `device/queue.test.ts › queues an upload and sends its bytes when it drains`.
+
+### `device/upload-answer-hash`
+
+If the server's answer to an upload names other bytes, or none, then a device MUST leave the upload unanswered and count a refusal against it.
+
+**Tests:** `device/queue.test.ts › counts an upload whose answer names other bytes`.
+
+### `device/upload-bytes-gone`
+
+If the bytes of a queued upload are gone from beside the store when a drain reaches it, then a device MUST refuse the upload, naming the bytes, and send nothing for it.
+
+**Reason:** such a write can never be sent, and left waiting it would stay unanswered for good.
+
+**Tests:** `device/queue.test.ts › refuses an upload whose bytes are no longer held`.
+
+### `device/upload-bytes-unopened`
+
+If the bytes of a queued upload are beside the store but cannot be opened when a drain reaches it, then a device MUST leave the upload unanswered and uncounted for the next drain, saying why in the drain's report.
+
+**Tests:** `device/queue.test.ts › leaves an upload whose held bytes cannot be opened unanswered, and says why`.
+
+### `device/attach-three-writes`
+
+When a device attaches a file to an item, a device MUST queue an upload, a file item naming the bytes, and an `attached-to` edge from the file item to the item.
+
+**Tests:** `device/queue.test.ts › attaches a file as an upload, a file item and an edge, each waiting on the one before`.
+
+### `device/attach-item-waits`
+
+When a device attaches or adds a file, a device MUST make the file item wait on the upload.
+
+**Tests:** `device/queue.test.ts › attaches a file as an upload, a file item and an edge, each waiting on the one before`, `› adds a file as an upload and a file item, linked to nothing`.
+
+### `device/attach-edge-waits`
+
+When a device attaches a file, a device MUST make the `attached-to` edge wait on the file item.
+
+**Tests:** `device/queue.test.ts › attaches a file as an upload, a file item and an edge, each waiting on the one before`.
+
+### `device/attach-refused-with-upload`
+
+If the server refuses an attachment's upload, then a device MUST refuse the file item and the edge that wait on it.
+
+**Tests:** `device/queue.test.ts › refuses an attachment whose upload the server refuses, and what waits on it`.
+
+### `device/attach-given`
+
+When a device attaches a file under a title, a type or a tier, a device MUST give the file item that title, type and tier.
+
+**Tests:** `device/queue.test.ts › attaches under the title, type and tier it is given`.
+
+### `device/attach-held-only`
+
+If a device is asked to attach a file to an item the copy does not hold, or holds in the bin, then a device MUST refuse it `not_found` and queue nothing.
+
+**Tests:** `device/queue.test.ts › attaches only to an item the copy holds outside the bin`.
+
+## The server the command talks to
+
+The `marfa` command is built for one contract version, the version of the document it was generated from, and every answer names the contract it speaks in `X-Marfa-Contract` (`instance/contract-header`).
+
+### `device/command-contract-mismatch`
+
+If an answer names a contract other than the one the command was built for, then the command MUST refuse it `contract_mismatch` with exit 1.
+
+**Reason:** a body shaped for another contract may be shaped and sized in ways the command cannot read.
+
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`.
+
+### `device/command-mismatch-prints-nothing`
+
+When the command refuses an answer for its contract, the command MUST print nothing of the answer.
+
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`.
+
+### `device/command-unnamed-success`
+
+If a success names no contract, then the command MUST refuse it `contract_mismatch` with exit 1.
+
+**Tests:** `device/contract.test.ts › refuses a success that names no contract`.
+
+### `device/command-contract-twice`
+
+If an answer names its contract on two header lines that differ, then the command MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
+
+### `device/command-contract-repeated`
+
+When an answer names the command's own contract on two header lines, the command MUST read it as an answer on that contract.
+
+**Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
+
+### `device/command-write-sent`
+
+If the answer to a write the command sent names another contract, then the command MUST say in its refusal that the write was sent and may have taken effect.
+
+**Reason:** the contract is named by the answer, so the server acted on the write before the command could read that it speaks another contract.
+
+**Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`.
+
+### `device/command-unnamed-refusal`
+
+If a refusal names no contract, then the command MUST report it `unnamed_answer` with exit 3, naming its status.
+
+**Reason:** the server names its contract on every answer, so a refusal naming none is from something in front of it, such as a proxy.
+
+**Tests:** `device/contract.test.ts › hands on a refusal that names no contract, as a proxy's would`.
+
+### `device/command-redirect`
+
+If an answer to the command is a `3xx`, then the command MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
+
+**Tests:** `device/contract.test.ts › refuses a redirect without following it`.
+
+### `device/command-no-root-first`
+
+When the command sends a call other than a mint, `status` or `whoami`, the command MUST send that call alone, with no read of the server's root before it.
+
+**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`.
+
+### `device/command-mint-root-first`
+
+When the command sends a write whose answer is the only copy of what it mints, `keys create`, `keys bootstrap` or `webhooks create`, the command MUST first read the server's root.
+
+**Reason:** a mint refused for its contract has already minted a key or a secret nobody can read.
+
+**Tests:** `device/contract.test.ts › sends no mint to a server whose root names another contract, or none`.
+
+### `device/command-mint-not-sent`
+
+If the server's root names another contract, or none, then the command MUST NOT send a mint.
+
+**Tests:** `device/contract.test.ts › sends no mint to a server whose root names another contract, or none`.
+
+### `device/command-root-header`
+
+The command MUST take the contract the server speaks from the `X-Marfa-Contract` header of the root's answer, whatever the root's body says.
+
+**Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`.
+
+### `device/status-other-contract`
+
+When `status` reads a server on another contract, the command MUST report the contract the server speaks beside the one it was built for, and exit 0.
+
+**Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`, `› says in words that the server speaks another contract`, `› takes the served contract from the answer's header, whatever the root's body says`.
+
+### `device/status-other-contract-no-counts`
+
+When `status` reads a server on another contract, the command MUST NOT ask it for the item counts.
+
+**Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`.
+
+### `device/whoami-other-contract`
+
+When `whoami` reads a server on another contract, the command MUST report the contract the server speaks beside the one it was built for, and exit 0.
+
+**Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
+
+### `device/status-counts-not-permitted`
+
+If the server refuses `status` the item counts `403 type_not_permitted`, then the command MUST still describe the server, say the counts need a working key and exit 0.
+
+**Reason:** a credential whose type permissions reach no type, the operator key among them, is refused the counts (`keys-and-oauth.md` 1).
+
+**Tests:** `device/contract.test.ts › describes the server to a key that reaches no type, and says the counts need a working key`.
+
+### `device/status-counts-refused`
+
+If the server refuses `status` the item counts for any other reason, then the command MUST fail with that refusal.
+
+**Tests:** `device/contract.test.ts › hands on any other refusal of the counts`.
+
+### `device/operations-offline`
+
+The command MUST print its table of operations without sending a request.
+
+**Tests:** `device/contract.test.ts › sends nothing to print the table`.
+
+### `device/bootstrap-stdin`
+
+When `keys bootstrap` is not given `--secret`, the command MUST read the one-time secret from the first line of its standard input.
+
+**Reason:** a secret on the command line is left in the shell's history.
+
+**Tests:** `device/contract.test.ts › mints the operator key with a bootstrap secret read from stdin`.
+
+### `device/bootstrap-blank`
+
+If `keys bootstrap` reads a blank line for its secret, then the command MUST refuse it `invalid` and send nothing.
+
+**Tests:** `device/contract.test.ts › mints the operator key with a bootstrap secret read from stdin`.
+
+### `device/redeliver-request`
+
+When `webhooks redeliver <id> <delivery_id>` runs, the command MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.
+
+**Reason:** the server decides from its current authority and retained deliveries whether to send again (`events/redeliver-current`).
+
+**Tests:** `device/contract.test.ts › posts redelivery with encoded ids and no body`.
+
+### `device/credential-lock-unsafe`
+
+If the command's credential lock is not safe to use, then the command MUST refuse `invalid`, naming the credential lock, before it sends anything.
+
+**Tests:** `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`, `› refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing`, `› refuses a sign-in under an unsafe credential lock before asking for a code`.
+
+### `device/credential-lock-taken`
+
+While another process changes the credential kept for a server, as a refresh, `logout` or `keys forget` does, the command MUST keep no credential for that server through `login` or `keys keep` until that change ends.
+
+**Reason:** a credential written beside a refresh in another process would be overwritten by the refreshed one, or brought back after a logout.
+
+**Tests:** `device/credential-locks.test.ts › keeps a key only once another process has finished changing the kept credential`, `› keeps a sign-in's token only once another process has finished changing the kept credential`.
+
+### `device/credential-refresh-then-logout`
+
+If `logout` runs while another process refreshes the kept sign-in for the same server, then the command MUST revoke the refresh token that the refresh keeps.
+
+**Reason:** a revocation of the token the refresh replaced would leave the rotated one standing.
+
+**Tests:** `device/credential-locks.test.ts › revokes the token a refresh under way keeps, when a sign-out waits on it`.
+
+### `device/credential-logout-then-refresh`
+
+If a refresh of a kept sign-in starts while `logout` for the same server runs in another process, then the command MUST NOT refresh or keep again the sign-in that `logout` forgets.
+
+**Reason:** a refresh that read the credential before the logout ended would bring back a sign-in the person ended.
+
+**Tests:** `device/credential-locks.test.ts › brings back no sign-in a sign-out under way forgets, when a refresh waits on it`.
+
+### `device/command-logout-forgets`
+
+When `logout` signs out of a kept sign-in, the command MUST forget the kept token, whether or not the server takes its revocation.
+
+**Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
+
+### `device/command-logout-not-revoked`
+
+If `logout` signs out of a sign-in that kept no revocation endpoint, or whose revocation the server refuses or cannot be reached for, then the command MUST report `revoked: false`.
+
+**Reason:** a sign-out that claimed a revocation it never had would leave a person believing a token is dead while it stands until it expires.
+
+**Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
+
+### `device/command-keys-forget-offline`
+
+When `keys forget` runs, the command MUST forget the credential kept for the server without sending a request.
+
+**Reason:** a credential is often forgotten for a server that is gone.
+
+**Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
 
 ## The working copy's contract
 
-42. **A working copy holds every answer to the contract its core was built for,** which is the contract version of the document the core is built from. A hydration, a catch-up, a held stream, a drain and a blob's link each refuse an answer that names another contract, or a success that names none, with `contract_mismatch`, and apply nothing it carried: a copy that read a body shaped for another contract would hold rows it misread with nothing to say so. That holds for every answer each of them reads, the stream's head, the catalog and every page as much as the first, and for a refusal as much as a success, except a redirect. A `3xx` answer is never followed and is reported as a typed redirect before contract parsing, preserving its origin, status and optional destination. It ends the operation or drain pass without counting a refusal or changing the queued request or its idempotency key; an already recorded write verdict remains recorded when a subsequent read redirects. A redirected blob-link request stops a folder pull rather than reporting the file absent. This applies whether the redirect names the expected contract, another contract or none. An answer is refused on its headers, so a body that never ends does not hold the refusal back. The contract is named exactly: one that only begins with the core's is another, and an answer that names its contract twice, differently, names none the core speaks, as for the binary (39). The refusal names the server it asked, the contract the core speaks and the status, and the contract the answer named where it named one; a success naming none may not be from a Marfa server at all, and the refusal says so. A read refused this way says no write was sent. **A refusal that names none, whatever its status, is taken as from something in front of the server and is environmental** (`queue-and-verdicts/unnamed-refusal-environmental`), on every door the working copy reads or writes: it names the status and says that, if it repeats while the server otherwise answers, the server's refusals are losing the contract header on the way. It is never the server's word: a `401` naming none is not the credential refused, so nothing stops for it, and a `404` naming none is not a row gone, so a refused write reconciled against one leaves the copy's row where it is and a blob's bytes are absent only on the server's own. A hydration, a catch-up and a held stream try again as for any failure of the network, and a drain ends its pass with the writes uncounted. The binary's own commands hand such a refusal on as the refusal it is (39). A drain meeting an answer on another contract ends its pass there with the refusal, sending nothing after it, and gives that write no verdict; the writes it answered before are answered in the queue. The read a refused write is reconciled against (`queue-and-verdicts/refused-read-fails`) is held the same way: on another contract it ends the pass, the refusal the server gave stays recorded, and the copy keeps the row as the refused write left it, since nothing it could be put back from was read. So is the fresh read of the row a create landed on (`queue-and-verdicts/landed-read-retried`): another contract ends the pass while retaining the original server verdict and pending adoption. Later drains retry the owed certified read without resending the settled create. A write response itself on another contract cannot settle a verdict: that request remains queued and sent under its original idempotency key until the device can interpret the server's retained answer. `device/cli-outcomes.test.ts › preserves a redirected queued write without following %s`, `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› ends a held stream on another contract rather than asking again`, `› ends a drain on an answer from another contract, and sends the write again under its key`, `› ends the pass at the first answer on another contract, sending nothing after it`, `› keeps a row a 404 naming no contract says is gone, since a proxy's says nothing of the server's rows`, `› refuses a blob's link from a server on another contract`, `› refuses a success the working copy is given that names no contract`, `› hands the working copy a refusal that names no contract, as a proxy's would`, `› applies nothing from a page on another contract, after a head read and a catalog on its own`, `› refuses a catch-up whose catalog is on another contract, before opening its stream`, `› refuses a catalog on another contract on its headers, without waiting on its body`, `› refuses a write's answer on another contract on its headers, without waiting on its body`, `› refuses a blob's link on another contract on its headers, without waiting on its body`, `› refuses an event stream's refusal on another contract rather than reading its envelope`, `› says a read refused on another contract sent no write, naming the server and the status, with exit 1`, `› refuses a contract that only begins with the one it speaks`, `› refuses an answer the working copy is given that names its contract twice, differently`, `› reads a blob as absent only on the server's own 404, never on a proxy's`, `› ends the pass when the read a refusal is reconciled against answers on another contract`, `› ends the pass when the read of the row a create landed on answers on another contract`, `› takes a refusal naming no contract on any read as the network's, never as the server's word`.
+The contract version a device speaks is the one in the document its core is built from.
 
-## Edges, read locally
+### `device/contract-mismatch`
 
-43. **An edge is read from either end.** A local read answers the edges the copy holds from an item and, asked the other way, the edges it holds to one: those whose target it is, whether the server has answered them or they still wait in the queue, and never one that only starts there. The copy holds an edge from an item it holds, and every edge of a type the slice holds whole (1), so what points at an item is what points at it from the rows the copy holds, and along a type held whole from anywhere the key reads: such an edge is read from either end, whichever of its ends the copy holds. The replies in a thread point at the thread they are in and a file points at what it is attached to (38), so what points at the item on screen is the question an app asks of it, and a copy that answered only one end would leave it asking every item it holds for its edges. `device/working-copy.test.ts › answers the edges the copy holds to an item, the unanswered ones with them`, `› reads a held-whole edge from either end`.
-44. **A copy never holds an edge whose source it does not hold**, but one of a type its slice holds whole (1). A row of this device's own create that the server has not answered is a row it holds. A local create of any other edge from a row the copy does not hold is refused in the binary's `invalid` class, carrying no server code, and nothing is queued: no event about the edge would reach the copy (14), so it would sit there as written for good. A create still waiting whose source a hydration leaves outside the slice is not held again when the queue is laid over the refilled copy (`queue-and-verdicts/waiting-edge-outside-slice`), and it stays queued and is sent, because the caller was told it was. Its answer is not held either, unless a later write of this device's to the edge still waits, which is how an event about such an edge is applied (14). `device/local-refusals.test.ts › refuses a local edge from a row the copy does not hold`, `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
+If an answer that a hydration, a catch-up, a held stream, a drain or a blob's link reads names another contract, then a device MUST refuse it `contract_mismatch`.
+
+**Reason:** a copy that read a body shaped for another contract would hold rows it misread with nothing to say so.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› ends a held stream on another contract rather than asking again`, `› ends a drain on an answer from another contract, and sends the write again under its key`, `› refuses a blob's link from a server on another contract`, `› refuses a catch-up whose catalog is on another contract, before opening its stream`.
+
+### `device/contract-unnamed-success`
+
+If a success a device reads names no contract, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses a success the working copy is given that names no contract`.
+
+### `device/contract-refusal-held`
+
+If a refusal a device reads names another contract, then a device MUST refuse it `contract_mismatch` without reading its envelope.
+
+**Tests:** `device/contract.test.ts › refuses an event stream's refusal on another contract rather than reading its envelope`.
+
+### `device/contract-mismatch-applies-nothing`
+
+When a device refuses an answer `contract_mismatch`, a device MUST apply nothing the answer carried.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› applies nothing from a page on another contract, after a head read and a catalog on its own`.
+
+### `device/contract-catalog-first`
+
+If a catch-up's catalog answers on another contract, then a device MUST NOT open the catch-up's stream.
+
+**Tests:** `device/contract.test.ts › refuses a catch-up whose catalog is on another contract, before opening its stream`.
+
+### `device/contract-follow-ends`
+
+If a held stream's answer names another contract, then a device MUST end the stream rather than ask for it again.
+
+**Tests:** `device/contract.test.ts › ends a held stream on another contract rather than asking again`.
+
+### `device/contract-link-not-followed`
+
+If a blob's link answers on another contract, then a device MUST NOT follow a link.
+
+**Tests:** `device/contract.test.ts › refuses a blob's link from a server on another contract`.
+
+### `device/contract-headers`
+
+When an answer names another contract, a device MUST refuse it on its headers without waiting for its body.
+
+**Reason:** a body that never ends would otherwise hold the refusal back.
+
+**Tests:** `device/contract.test.ts › refuses a catalog on another contract on its headers, without waiting on its body`, `› refuses a write's answer on another contract on its headers, without waiting on its body`, `› refuses a blob's link on another contract on its headers, without waiting on its body`.
+
+### `device/contract-exact`
+
+If an answer names a contract that only begins with the one the device speaks, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses a contract that only begins with the one it speaks`.
+
+### `device/contract-twice`
+
+If an answer names its contract on two header lines that differ, then a device MUST refuse it `contract_mismatch`.
+
+**Tests:** `device/contract.test.ts › refuses an answer the working copy is given that names its contract twice, differently`.
+
+### `device/contract-refusal-names`
+
+When a device refuses an answer `contract_mismatch`, a device MUST name the server it asked, the contract it speaks, the answer's status, and the contract the answer named where it named one.
+
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› says a read refused on another contract sent no write, naming the server and the status, with exit 1`, `› refuses a success the working copy is given that names no contract`.
+
+### `device/contract-read-no-write`
+
+When a device refuses the answer to a read `contract_mismatch`, a device MUST NOT say that a write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a read refused on another contract sent no write, naming the server and the status, with exit 1`.
+
+### `device/contract-write-unsettled`
+
+If a write's answer names another contract, then a device MUST say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `› ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-write-resent`
+
+If a write's answer names another contract, then a device MUST leave the write with no verdict and send it again on a later drain under the same idempotency key.
+
+**Reason:** the answer was not read, so only the server's retained answer to the same key can settle the write.
+
+**Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`.
+
+### `device/contract-drain-ends`
+
+If a write's answer names another contract, then a device MUST end the drain's pass with nothing sent after that write.
+
+**Tests:** `device/contract.test.ts › ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-read-back`
+
+If the read a refused write is reconciled against answers on another contract, then a device MUST end the pass and keep the refusal the server gave.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read a refusal is reconciled against answers on another contract`.
+
+### `device/contract-landed-read`
+
+If the read of the row a create landed on answers on another contract, then a device MUST end the pass keeping the create's verdict.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read of the row a create landed on answers on another contract`.
+
+### `device/owed-read-no-resend`
+
+When a device reads again the row a create it holds a verdict for landed on, a device MUST NOT send the create again.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read of the row a create landed on answers on another contract`.
+
+### `device/redirect-not-followed`
+
+If an answer a hydration or a drain reads is a `3xx`, whatever contract it names, then a device MUST refuse it `redirect`, naming the server, the status and the destination where one was named, without following it.
+
+**Tests:** `device/contract.test.ts › refuses a redirect a hydration is answered with, naming %s contract, without following it`, `device/cli-outcomes.test.ts › preserves a redirected queued write without following %s`.
+
+### `device/redirect-queue-kept`
+
+If a drain's write is answered with a `3xx`, then a device MUST end the pass with the queue as it was, counting no refusal and keeping the write's request and idempotency key.
+
+**Tests:** `device/cli-outcomes.test.ts › preserves a redirected queued write without following %s`.
+
+### `device/unnamed-environmental`
+
+If a refusal names no contract, then a device MUST report it `unnamed_answer`, naming its status, whatever the status is.
+
+**Reason:** the server names its contract on every answer, so a refusal naming none is from something in front of it.
+
+**Tests:** `device/contract.test.ts › hands the working copy a refusal that names no contract, as a proxy's would`, `› takes a refusal naming no contract on any read as the network's, never as the server's word`.
+
+### `device/unnamed-not-server-word`
+
+If a refusal names no contract, then a device MUST NOT take it as the server's word, so a `401` stops nothing and a `404` says no row or bytes are gone.
+
+**Tests:** `device/contract.test.ts › takes a refusal naming no contract on any read as the network's, never as the server's word`, `› keeps a row a 404 naming no contract says is gone, since a proxy's says nothing of the server's rows`, `› reads a blob as absent only on the server's own 404, never on a proxy's`, `› takes a refusal that names no contract as the network's, ending the pass uncounted`.
+
+### `device/unnamed-drain-uncounted`
+
+If a drain meets a refusal that names no contract, then a device MUST end the pass with every write it had not answered still queued, given no verdict and counted against nothing.
+
+**Tests:** `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
+
+## Held open
+
+A held stream is a catch-up that does not end at the head. It takes each event by the rules a catch-up takes it by.
+
+### `device/follow-applies`
+
+While a device holds a stream open, a device MUST apply each event as it arrives, under the rules a catch-up applies it by.
+
+**Reason:** a device that learned of a change only when a caller asked would show an item open on a screen as it was when the person last asked.
+
+**Tests:** `device/catch-up.test.ts › applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`, `› applies an event on a held stream beneath a write it has not had answered`, `› applies an edge event on a held stream beneath an edge edit it has not had answered`, `› applies nothing on a held stream from outside its slice`, `› keeps a row that moves between its tiers on a held stream`.
+
+### `device/follow-tells`
+
+While a device holds a stream open, a device MUST tell its caller of each event that changed the copy, with the item or the edge it was about and the cursor it left, while the stream is still held.
+
+**Tests:** `device/catch-up.test.ts › applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`, `› applies nothing on a held stream from outside its slice`, `› names the edge a held stream's change was about`.
+
+### `device/follow-untold`
+
+While a device holds a stream open, a device MUST NOT tell its caller of an event that did not change the copy.
+
+**Tests:** `device/catch-up.test.ts › applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`.
+
+### `device/follow-reopens`
+
+If a held stream ends, drops or is called incomplete by the server, then a device MUST open it again from the cursor it holds.
+
+**Reason:** a stream opened again from the cursor loses nothing between the two and applies nothing twice.
+
+**Tests:** `device/catch-up.test.ts › applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`, `› opens a held stream again from its cursor when the server calls it incomplete`.
+
+### `device/follow-backoff`
+
+If every held stream ends at once, then a device MUST ask for the next after a wait that grows each time.
+
+**Tests:** `device/catch-up.test.ts › asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes`.
+
+### `device/follow-backoff-cap`
+
+While a device waits to ask for a held stream again, a device MUST NOT wait more than thirty seconds unless the server names a longer wait.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-server-failing`
+
+If the server answers a held stream with a failure that clears on its own, then a device MUST ask again after its wait.
+
+**Tests:** `device/catch-up.test.ts › asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes`, `› tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-ends-unretryable`
+
+If the server answers a held stream with a refusal no retry changes, then a device MUST end the stream with that refusal.
+
+**Tests:** `device/catch-up.test.ts › asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes`.
+
+### `device/follow-catalog-reopen`
+
+When a held stream meets an event the catalog cannot answer for, a device MUST open the stream again at once from its cursor, reading the catalogs first, rather than apply the event.
+
+**Tests:** `device/catch-up.test.ts › holds an item whose type was registered after the stream opened, in the slice through its parent`.
+
+### `device/follow-catalog-once`
+
+While held streams follow one another because of the catalog, a device MUST open them again at most once for each type or property an event names.
+
+**Reason:** a type the server will not describe, or an image under a property declared as text, would otherwise cost one stream for every event naming it.
+
+**Tests:** `device/catch-up.test.ts › reads the catalog once for a type the server will not describe, not once for each event naming it`, `› reads the catalog once a stream for an image under a property declared as text, and holds it as text`.
+
+### `device/follow-forgets`
+
+When a held stream ends for a reason other than the catalog, a device MUST read the catalogs again for a type or property the next stream's events name.
+
+**Reason:** a type may have made a property its thumbnail since.
+
+**Tests:** `device/working-copy.test.ts › keeps a thumbnail out of its index when its property was read again for before its type declared it`.
+
+### `device/follow-stop`
+
+When a held stream is told to stop, a device MUST end it at once, even while a stream is still being asked for.
+
+**Tests:** `device/catch-up.test.ts › ends a follow at once when stopped while its stream is still being asked for`.
+
+### `device/command-follow-interrupted`
+
+When `follow` is interrupted, the command MUST end it with its report, as when its time is up.
+
+**Tests:** `device/catch-up.test.ts › prints its report when interrupted, as it does when its time is up`.
+
+### `device/command-follow-reader-gone`
+
+When the reader of `follow`'s output has gone, the command MUST end the follow.
+
+**Tests:** `device/catch-up.test.ts › ends a follow whose reader has gone, rather than going on untold`.
+
+### `device/follow-unreachable`
+
+If a held stream cannot be had for a reason that clears on its own, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
+
+**Reason:** an app told nothing would show offline and online alike, and would have to drain on a timer to send what it queued once the server came back.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-reachable`
+
+When a held stream is had again after the device told `server.unreachable`, a device MUST tell its caller `server.reachable` once.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-at-once-silent`
+
+When a held stream is had at once, a device MUST tell its caller neither `server.unreachable` nor `server.reachable`.
+
+**Tests:** `device/catch-up.test.ts › applies an event on a held stream beneath a write it has not had answered`.
+
+### `device/follow-told-reachable`
+
+When a held stream is had at once, and its caller says it was last told `server.unreachable` by an earlier held stream, a device MUST tell the caller `server.reachable`.
+
+**Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-told-not-again`
+
+If a held stream cannot be had for a reason that clears on its own, and its caller says it was last told `server.unreachable` by an earlier held stream, then a device MUST NOT tell the caller `server.unreachable` again.
+
+**Tests:** waiting on #1890.
+
+### `device/event-id-number`
+
+If a catch-up's or a held stream's stream names an event id that is not a number, then a device MUST end it `decoding` and keep the cursor it had.
+
+**Reason:** a cursor no start can resume from would leave the copy stuck.
+
+**Tests:** `device/catch-up.test.ts › refuses an event id that is not a number, keeping the cursor it had`, `› ends a follow on an event id that is not a number, keeping its cursor`.
+
+### `device/event-no-data`
+
+When a catch-up's stream sends a frame that names an id and an event and carries no data, a device MUST NOT apply the id or the event the frame names, to that frame or to the frame after it.
+
+**Tests:** `device/catch-up.test.ts › takes a frame that names an id and carries no data as no event`.
+
+### `device/event-line-bound`
+
+If a catch-up's stream sends a line of more than 67,108,864 bytes (64 MiB), its line ending included, then a device MUST end the catch-up `decoding` and keep the cursor it had.
+
+**Reason:** no event the server sends comes near the bound, and holding a line without one would take memory without end.
+
+**Tests:** `device/catch-up.test.ts › refuses a line longer than 64 MiB, keeping the cursor it had`.
+
+## A store opened to read
+
+### `device/reader-not-writer`
+
+When a device opens a store to read, a device MUST NOT claim the writer role.
+
+**Reason:** a helper that opened the store as a second writer would, started first, lock the app out of its own store.
+
+**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`.
+
+### `device/reader-writes-nothing`
+
+When a device opens a store to read, a device MUST NOT change the store's file, even where it is the last to close after a writer that died.
+
+**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `device/read-view.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
+
+### `device/reader-told-of-saves`
+
+While a device holds a store open to read, a device MUST tell its caller each time another connection saves to the store.
+
+**Reason:** a reader with no signal would have to read everything again to learn whether anything changed.
+
+**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`.
+
+### `device/reader-absent`
+
+If a device is asked to open a store to read at a path where no store has been made, then a device MUST refuse and make no file there.
+
+**Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
+
+### `device/command-reader-no-store`
+
+If a command opens a store to read at a path where no store has been made, then the command MUST refuse it `no_store` with exit 2.
+
+**Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`, `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`.
+
+### `device/command-reader-not-a-store`
+
+If a command opens a store to read at a path that holds a file that is not a store, then the command MUST NOT refuse it `no_store`.
+
+**Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
+
+### `device/reader-missing-table`
+
+If a device opens to read a store that lacks a table this build adds, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`.
+
+### `device/added-table`
+
+When a device opens to write a store made before a table this build adds, a device MUST add the table and open the store.
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`.
+
+### `device/wrong-schema`
+
+If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path.
+
+**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's.
+
+**Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store another build shaped, by name, with the writes it holds unsent`.
+
+### `device/wrong-schema-says`
+
+When a device refuses a store `wrong_schema`, a device MUST say how many writes it holds that the server has not taken, waiting, blocked, refused or dead.
+
+**Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`, `› names a blocked write among the writes a store of another shape holds unsent`.
+
+### `device/wrong-schema-no-delete`
+
+When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting the store.
+
+**Reason:** only the build that made the store can send or show the writes it holds.
+
+**Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`.
+
+### `device/writer-per-file`
+
+A device MUST give each store file its own writer role, so two stores in one directory that share a stem each have a writer.
+
+**Reason:** every core opening a store has to claim the role the same way, or two cores would each claim it beside the other, so every client on a machine moves to a core together.
+
+**Tests:** `device/working-copy.test.ts › gives two stores sharing a stem a writer each`.
 
 ## Where a store is made
 
-45. **A store is made only by a hydration and by the state report.** Each makes the store at the path it is named if none is there, the report so that a caller can learn a hydration is owed before the first one (5). Every other command refuses a path where no store has been made with `no_store`, and leaves the path as it found it: a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain. A store opened to read never makes one either (41). `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
+### `device/command-makes-store`
 
-## A file on its own
+When `hydrate` or `status` names a path where no store has been made, the command MUST make a store there.
 
-46. **A file added on its own is two writes, each with its own verdict**: the upload, and a file item naming the bytes, which waits on the upload, and no edge. Its MIME type, title, type and tier have the defaults an attached file's have (38), and each tag it is given is a write of its own that waits on the file item (`queue-and-verdicts/create-tags-own-writes`). A photo or a document that belongs to no item is still a file a person keeps, and a device that could only attach it would link it to an item it has no relation to. Where no MIME type is given, the file's extension gives it, an EPUB and the Office formats among them: a file sent as bytes of no known kind is a file no reader opens as what it is. `device/queue.test.ts › adds a file as an upload and a file item, linked to nothing`, `› adds a file under the title, type, tier and tags it is given`.
+**Reason:** the state report is how a caller learns that a hydration is owed before the first one.
 
-## The type catalog
+**Tests:** `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
 
-47. **A working copy holds the server's item types and edge types, and answers for them offline.** Hydration (8), catch-up (15) and a held stream each time it opens (40) read both catalogs from the server and replace what the copy holds with them, and a read of either is answered from the copy alone, with no server named or reachable. An item type is read as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with the ones it inherits, each naming the type that declares it, a field declared again nearer the type taking the place of the one above it, and the display hints of the nearest type that declares any, taken whole, so a subtype naming only its body has no title field. A folder reads a type's title and body by the same rule, and so does a read that says what an item shows: its title and its body are the text under the properties those hints name, or under `title` and `body` where they name none (`folders.md` 7), so `core.event`'s body is its `description` and a subtype naming a body field of its own shows that one. **Each read uses one snapshot of the catalog**, including a folder's status reading item types and edge types together, so a refresh committed during a read is seen by a later read without mixing revisions. A replacement writes both catalogs and their version together, never commits a partial catalog, and reports a cleanup failure alongside the original error. An edge type is read as `GET /edge-types` lists it (`edges/types-list`, `edges/types-shipped-flag`, `edges/types-reverse-listed` and `edges/types-written-at-listed`): its label, cardinality, reverse name, the end whose file writes it, its endpoint constraints, its cascade, its properties and whether Marfa ships it. A type the instance registered is read like a shipped one, and a field's definition and an edge type's reverse name reach the caller as the server holds them. An app shows a row by its type's fields and an edge by its type's names, so a copy that could answer for them only with the server reachable could not show a row offline. `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `› matches the edge types a working copy holds and a folder reads its frontmatter lines by`, `device/folders.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`, core `catalog::tests::an_item_shows_the_title_and_body_its_types_hints_name`.
+### `device/command-no-store`
 
-48. **A copy answers for the types it holds, and says plainly of one it does not.** A copy that has never reached a server holds the item types and edge types Marfa ships and the types its app declares (57), and answers a read of either catalog from them, never with an empty list, which would read as an instance with no types at all. A type or edge type the catalog does not hold is refused `not_found`, naming it. `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `› refuses a type the copy's catalog does not hold, naming it`.
+If a `device` command other than `hydrate` and `status` names a path where no store has been made, then the command MUST refuse it `no_store` and leave the path as it found it.
 
-49. **A caller can learn that the catalog changed.** The copy keeps a catalog version, which the state report carries (5), absent until a server's catalog is first held, so a copy that has never reached a server reports none and its shipped and declared types are not a version: it moves each time a refresh changes either catalog and at no other time, so a caller compares it rather than reading both catalogs again after every save. A held stream that reads a changed catalog also tells its caller, as it tells of a changed row (40), with the event `catalog.changed`, naming no item, no edge, and the cursor it holds. `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`, `› tells a held stream's caller when it reads a changed catalog`.
+**Reason:** a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain.
+
+**Tests:** `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
 
 ## Who may read a store
 
-50. **A store, its journals, its writer's lock and the folder of bytes beside it are made readable by their owner alone.** A store holds what its key reads, and made with the process's defaults it would be readable by every account on the machine. `device/working-copy.test.ts › makes a store, its lock and its bytes readable by their owner alone`.
+### `device/owner-only`
 
-## CLI credentials across processes
+When a device makes a store, its journals, its writer lock or the folder of bytes beside it, a device MUST make each readable by its owner alone.
 
-51. **CLI processes of one operating-system user coordinate changes to the same stored credential.** Refresh, logout and `keys forget` use the same lock even when their runtime, temporary or home environment variables differ. A refresh reads the credential again while holding that lock, so it reuses a token another process already rotated and cannot restore a credential after an overlapping logout or forget finishes. Forgetting a stored credential requires no refresh or network access. Logout reports `revoked: false` when no revocation endpoint was saved, rather than claiming a request was sent. Unsafe lock paths are refused before stored credentials are read or changed. The CLI's Rust process tests in `core/marfa-cli/src/auth/process_tests.rs` exercise distinct child environments, both logout/refresh orders, offline forgetting and unsafe paths. `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`.
+**Reason:** a store holds what its key reads, and made with the process's defaults it would be readable by every account on the machine.
+
+**Tests:** `device/working-copy.test.ts › makes a store, its lock and its bytes readable by their owner alone`.
+
+## A file on its own
+
+### `device/add-file-writes`
+
+When a device adds a file on its own, a device MUST queue an upload and a file item naming the bytes.
+
+**Tests:** `device/queue.test.ts › adds a file as an upload and a file item, linked to nothing`.
+
+### `device/add-file-no-edge`
+
+When a device adds a file on its own, a device MUST queue no edge.
+
+**Reason:** a photo or a document that belongs to no item is still a file a person keeps, and linking it would relate it to an item it has nothing to do with.
+
+**Tests:** `device/queue.test.ts › adds a file as an upload and a file item, linked to nothing`.
+
+### `device/add-file-given`
+
+When a device adds a file under a title, a type, a tier or tags, a device MUST give the file item that title, type, tier and tags.
+
+**Tests:** `device/queue.test.ts › adds a file under the title, type, tier and tags it is given`.
+
+### `device/add-file-tags-wait`
+
+When a device adds a file with tags, a device MUST queue each tag as a write of its own that waits on the file item.
+
+**Tests:** `device/queue.test.ts › adds a file under the title, type, tier and tags it is given`.
+
+### `device/file-mime-default`
+
+Where a file is attached or added with no MIME type, a device MUST take the MIME type from the file's extension, whatever its case, an EPUB and the Office formats among them, and `application/octet-stream` for one it does not know.
+
+**Reason:** a file sent as bytes of no known kind is one no reader opens as what it is.
+
+**Tests:** `device/queue.test.ts › adds a file as an upload and a file item, linked to nothing`, `› attaches under the title, type and tier it is given`, `› types an added file by its extension, whatever its case, where it is told nothing`.
+
+### `device/file-type-default`
+
+Where a file is attached or added with no type, a device MUST give the file item `core.file.image`, `core.file.audio` or `core.file.video` for a MIME type of that kind, and `core.file` for any other.
+
+**Tests:** `device/queue.test.ts › types an added file by its extension, whatever its case, where it is told nothing`, `› adds a file as an upload and a file item, linked to nothing`.
+
+### `device/file-title-default`
+
+Where a file is added with no title, a device MUST give the file item the file's name as its title.
+
+**Tests:** `device/queue.test.ts › adds a file as an upload and a file item, linked to nothing`.
+
+## The type catalog
+
+### `device/catalog-replaced-catch-up`
+
+When a device catches up, a device MUST replace the item type and edge type catalogs it holds with the server's.
+
+**Tests:** `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
+
+### `device/catalog-replaced-follow`
+
+When a device opens a held stream, a device MUST replace the item type and edge type catalogs it holds with the server's.
+
+**Tests:** `device/catalog.test.ts › tells a held stream's caller when it reads a changed catalog`.
+
+### `device/catalog-offline`
+
+A device MUST answer a read of either catalog from its copy alone, with no server named or reachable.
+
+**Reason:** an app shows a row by its type's fields and an edge by its type's names, so a catalog it could read only online would leave it unable to show a row offline.
+
+**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`.
+
+### `device/catalog-type-read`
+
+A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with those it inherits, each naming the type that declares it and a field declared again nearer the type taking the place of the one above, and the display hints of the nearest type that declares any, taken whole.
+
+**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+
+### `device/catalog-edge-type-read`
+
+A device MUST answer an edge type as `GET /edge-types` lists it (`edges/types-list`, `edges/types-shipped-flag`, `edges/types-reverse-listed` and `edges/types-written-at-listed`): its label, cardinality, reverse name, the end whose file writes it, its endpoint constraints, its cascade, its properties and whether Marfa ships it.
+
+**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `› matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
+
+### `device/catalog-read-consistent`
+
+When a device reads the catalog while a refresh replaces it, a device MUST answer from one catalog, wholly before or wholly after the refresh.
+
+**Tests:** waiting on #1890.
+
+### `device/catalog-replace-whole`
+
+If a refresh of the catalog fails part way, then a device MUST keep the catalogs and the catalog version it held.
+
+**Tests:** `device/catalog.test.ts › keeps the catalogs and the version it held when a refresh fails after the item types`.
+
+### `device/catalog-shipped`
+
+While its copy has never reached a server, a device MUST answer a read of either catalog with the types and edge types Marfa ships and the types its app declares, never with an empty list.
+
+**Reason:** an empty list would read as an instance with no types at all.
+
+**Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `device/save-before-sync.test.ts › knows the types and edge types Marfa ships, and says so of one it has never been told of`, `› checks a write against the types the app declares, and holds an unknown one back`.
+
+### `device/catalog-unknown`
+
+If a device is asked for a type or an edge type its catalog does not hold, then a device MUST refuse `not_found`, naming it.
+
+**Tests:** `device/catalog.test.ts › refuses a type the copy's catalog does not hold, naming it`, `› replaces a server's catalog it holds with the one the next hydration reads`.
+
+### `device/catalog-version-absent`
+
+While its copy has never held a server's catalog, a device MUST report no catalog version.
+
+**Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`.
+
+### `device/catalog-version-moves`
+
+When a refresh changes either catalog, a device MUST move the catalog version it reports, and at no other time.
+
+**Reason:** a caller compares the version rather than reading both catalogs again after every save.
+
+**Tests:** `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`.
+
+### `device/catalog-changed-told`
+
+When a held stream reads a catalog that differs from the one the copy held, a device MUST tell its caller `catalog.changed`, naming no item and no edge, with the cursor the stream holds.
+
+**Tests:** `device/catalog.test.ts › tells a held stream's caller when it reads a changed catalog`.
 
 ## Certified read access
 
-52. **A working copy is complete only under a certified read view.** It uses the copy stream and conditional read protocol in `read-views.md`: the bootstrap captures one instance, head and opaque fence; every page and materializing read uses that fence; only an actual valid live marker after replay establishes completion. Missing, malformed or mismatched proof, required listing classification or page termination fails closed with `copy_expired` and reason `read_view_invalid`; a changed view expires with `read_view_changed`. Structural changes, retyping and changed read authority therefore cannot silently leave old rows readable as current. A stored copy lacking valid proof is unreadable immediately, including through a reader-only handle; only a writer persists expiry. Expiry removes the cursor and fence and advances a local generation. A late response cannot expire or materialize into a newer generation. `device/read-view.test.ts › expires on %s without losing unsent work`, `› refuses a certified page without explicit termination while retaining unsent work`, `device/fidelity.test.ts › matches copy marker tuples and conditional listing proofs`, `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`, `device/read-view-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`.
+A device keeps its copy under the read view the server certifies (`read-views.md`): it holds the instance, cursor and read view of the copy stream that hydrated it, and presents them back on every read that fills the copy.
 
-53. **Temporary inability to read does not revoke a previously certified offline copy.** Network failures, timeouts, rate limits, server failures and unnamed gateway responses preserve it, while preventing completion of a rebuild. Status and credential renewal are classified before proof is required: a deliberately uncertified environmental response is not invalid proof. An attributed permanent credential ending expires the copy with `credential_ended`; a failed renewal caused by the network remains environmental. `device/read-view.test.ts › keeps a certified offline copy after an uncertified %i`.
+### `device/resume-presents-view`
 
-54. **A write receipt settles that write, not present read access.** Before installing or deleting any baseline, restoring refused work or settling read-back debt, the copy obtains a fresh certified read and checks the captured local generation, declaration and relevant pins in the materialization transaction. A failed read cannot change the original verdict, request body, idempotency key or refusal count, and a retry of the owed read does not resend a settled write. Rebuilding retains unsent and recoverable blocked or dead work, original base/read values, dependencies and uploads, and overlays the current waiting work only after certification. Explicit item listing membership governs ordinary slice admission; direct authorization alone permits pins, and removing a pin does not turn a source-excluded row into listed data. Folder enumeration verifies omitted known edges directly before removal and holds the local copy lock across the final filesystem write, move or removal and its corresponding binding change. User-authored files survive lost read access. The core's receipt, pin, generation and folder race tests cover the transaction boundaries; `device/read-view-live.test.ts › expires on real %s and rebuilds without losing unsent work` verifies queue preservation through the real server. `device/read-view-live.test.ts › keeps real direct pins separate from source-filtered listing membership`.
+When a device resumes a copy stream, a device MUST send the cursor it holds and the read view its copy was hydrated under.
 
-## Search, read locally
+**Tests:** `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
 
-55. **A local search indexes, reads and ranks as the server's search does** (123 to 145): the same fields, the same stemming, a prefix on the last word alone, a quoted query as a phrase, the same excerpt, and the same order where the device holds the rows the server ranks, since BM25 is relative to the rows of the index it ranks in and a device holding a slice orders by that slice, and the index is made again for every held row when the copy takes a changed catalog. The index is a table of the store, so a store made before this index took the server's shape is refused `wrong_schema` naming `items_fts` like any store another build shaped (41), and its unsent writes are reported there for the build that made it to drain or discard before a new copy is hydrated. A hydration builds the new index from the rows the server sends. A query that finds a row online and loses it offline reads as a lost row. The index holds nothing a person made, but the store beside it holds writes the server has not taken, which is why an old store is refused and not made again in place: no build keeps a path from another build's store before the first public release. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`, `› excerpts a match as the server does, from the column that holds it`, `› escapes the row's text in an excerpt as the server does`, `› holds a changed type's searchable fields against rows it already holds`.
+### `device/live-marker-required`
+
+If a catch-up's stream ends before a live marker, then a device MUST NOT report the catch-up complete, even where the head the stream announced is the cursor it holds.
+
+**Tests:** `device/read-view.test.ts › requires the actual live marker even when the announced head is already held`.
+
+### `device/proof-invalid`
+
+If a certified answer carries a read view that is missing, malformed or not the copy's, or a listing classification that is missing or not a boolean, then a device MUST expire the copy, keeping its queue.
+
+**Tests:** `device/read-view.test.ts › expires on %s without losing unsent work`, `device/fidelity.test.ts › matches copy marker tuples and conditional listing proofs`.
+
+### `device/page-termination`
+
+If a certified page answers no `next_cursor` member, then a device MUST expire the copy, keeping its queue.
+
+**Reason:** a page that does not say it is the last cannot be told from a listing cut short.
+
+**Tests:** `device/read-view.test.ts › refuses a certified page without explicit termination while retaining unsent work`, `› reports a hydration that ended on an invalid page as expired, not in progress`.
+
+### `device/proof-invalid-reason`
+
+When a device expires its copy for a proof it cannot accept, a device MUST end the operation `copy_expired` with the reason `read_view_invalid`.
+
+**Tests:** `device/catch-up.test.ts › hydrates again when another instance answers at the same address`, `device/hydration.test.ts › expires the copy when a listing hands back a cursor it already read`.
+
+### `device/view-changed`
+
+If the server says the copy's read view has changed, then a device MUST end the operation `copy_expired` with the reason `read_view_changed`, expiring the copy and keeping its queue.
+
+**Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old rows readable as current.
+
+**Tests:** `device/read-view-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`.
+
+### `device/listed-membership`
+
+Where the server lists a row as not a member of the item listing, a device MUST NOT hold the row unless it is pinned.
+
+**Reason:** a pin is authorized by the direct read alone, and taking it off must not turn a row a source filter leaves out into listed data.
+
+**Tests:** `device/read-view-live.test.ts › keeps real direct pins separate from source-filtered listing membership`.
+
+### `device/uncertified-keeps-copy`
+
+If a read under the copy's read view meets a dropped connection, a rate limit, a server failure or a refusal naming no contract, then a device MUST keep the copy complete.
+
+**Reason:** a temporary inability to read does not revoke a copy already certified.
+
+**Tests:** `device/read-view.test.ts › keeps a certified offline copy after an uncertified %i`, `› keeps a certified offline copy after %s`.
+
+### `device/credential-ended`
+
+If a read under the copy's read view is refused `401` naming the contract and the credential cannot be renewed, then a device MUST expire the copy `copy_expired` with the reason `credential_ended`.
+
+**Tests:** `device/contract.test.ts › refuses an event stream's refusal on another contract rather than reading its envelope`.
+
+### `device/read-back-keeps-verdict`
+
+If the read that follows a write's answer fails, then a device MUST keep the verdict, the refusal count, the request and the idempotency key the write had.
+
+**Reason:** a write receipt settles that write, and the read only settles what the copy holds.
+
+**Tests:** `device/contract.test.ts › ends the pass when the read a refusal is reconciled against answers on another contract`, `› ends the pass when the read of the row a create landed on answers on another contract`.
 
 ## Saving before a first sync
 
-56. **A copy saves before it has reached a server, and joins one later.** A store made with no server named, and never hydrated, takes the writes a copy takes: each is checked against the types the copy holds (48, 57), shown to a local read at once at the tier `library` where the write names none, and queued under its own key. A read answers from what the copy holds, which is what its app saved, and the state report says `never` and names no slice (5). A hydration against a server keeps the queue (`queue-and-verdicts/rehydration-keeps-queue`) and the first drain sends it, and a write the server refuses is refused as any write is. A create that names no tier uses the copy's slice tier, `library` in a slice of both, or `library` before its first hydration, unless its natural key names a row the copy holds (`queue-and-verdicts/create-slice-tier` and `queue-and-verdicts/keyed-create-keeps-tier`). Otherwise the create sends its chosen tier explicitly, whatever the key's default is. A copy whose first hydration was interrupted holds a slice it has not finished, and refuses writes as well as reads until a hydration completes, as an interrupted re-hydration does (4). An app has a person's save in its hand whatever the network is doing, and a copy that refuses the save until a first sync has made the save depend on a network the person was not using. `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`, `device/working-copy.test.ts › answers a read before any hydration from what the copy holds`.
+### `device/save-before-sync`
 
-57. **A copy holds the types Marfa ships and the types its app declares, and checks a write against them.** The shipped types are the ones the document the copy was built from lists as shipped, read as a server's are (47). The app declares the others: an object naming an id of its own and its fields, each with a type, and a parent the copy knows. A declaration is refused `invalid` where its identifier breaks the server's grammar or uses a reserved root (`types/id-grammar`, `types/id-reserved-scope-root` and `types/id-reserved-namespace`), names a type Marfa ships, has a field with no known type, or names a parent the copy does not know. A write is held to the declared types as to a server's: a missing required field or a value of the wrong type is refused `validation`, and a type the copy was never told of `unknown_type`. **A hydration registers on the instance the declared types it does not hold, where the key may**, parents first, and reads the catalog again, so the slice may name them. It says which it registered, and which it could not with the server's code for the refusal; a write to a type left unregistered waits for the server's own verdict, which is a refusal. A copy that holds a server's catalog replaces the shipped and declared types with it, and keeps the declarations for the next hydration. **The declarations are the app's whole set**: declaring replaces every earlier one, so a type the app no longer declares is no longer held to, and no hydration registers it; a save already queued under it stays queued, and a server that lacks the type refuses it. A server that fails or asks to be tried later when a type is registered fails the hydration, which is tried again, rather than reporting the type as one the key may not register. An app that saves offline is held to the rules its types will be held to online, and a type the instance lacks does not strand what was saved. `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`, `› refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know`, `› holds the app's latest declarations alone`, `› knows the types and edge types Marfa ships, and says so of one it has never been told of`, `device/save-before-sync-live.test.ts › says which declared types the key could not register, and the server refuses the write that names one`. Core `a_declaration_refuses_app_names_without_exactly_three_segments`, `a_declaration_refuses_reserved_type_roots`, and `a_declaration_accepts_publisher_prefixes_depth_and_the_identifier_boundary` cover identifier grammar and atomic refusal.
+While its copy has never hydrated, a device MUST take a write, checked against the types the copy holds.
+
+**Reason:** an app has a person's save in its hand whatever the network is doing, and a copy that refused the save until a first sync would make it depend on a network the person was not using.
+
+**Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
+
+### `device/save-before-sync-queued`
+
+While its copy has never hydrated, a device MUST queue each write it takes.
+
+**Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
+
+### `device/save-before-sync-shown`
+
+While its copy has never hydrated, a device MUST show a write it takes to a local read at once.
+
+**Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/working-copy.test.ts › answers a read before any hydration from what the copy holds`.
+
+### `device/save-before-sync-library`
+
+While its copy has never hydrated, a device MUST hold a create that names no tier at the tier `library`.
+
+**Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
+
+### `device/save-before-sync-joins`
+
+When a copy that has never hydrated hydrates against a server, a device MUST keep its queue so the first drain sends it.
+
+**Tests:** `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
+
+### `device/create-slice-tier`
+
+When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds.
+
+**Reason:** a create sent with no tier would land at the key's default tier, which may not be where the copy showed it.
+
+**Tests:** `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a feed row by its natural key in a slice of both without moving it`.
+
+### `device/declared-checked`
+
+A device MUST refuse `validation` a write to a type its app declared that misses a required field or gives a field a value of the wrong type.
+
+**Reason:** an app that saves offline is held to the rules its types will be held to online.
+
+**Tests:** `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`.
+
+### `device/unknown-type-write`
+
+If a write names a type the copy was never told of, then a device MUST refuse it `unknown_type`.
+
+**Tests:** `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`, `› holds the app's latest declarations alone`.
+
+### `device/declaration-refused`
+
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that has a field with no known type, or that names a parent the copy does not know, then a device MUST refuse the declaration `invalid`.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know`.
+
+### `device/declaration-refused-whole`
+
+If a device refuses one type of a declaration, then a device MUST declare none of the declaration's types.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know`.
+
+### `device/declaration-replaces`
+
+When an app declares types, a device MUST replace every type the app declared before with them.
+
+**Reason:** the declarations are the app's whole set, so a type it no longer declares is no longer held to.
+
+**Tests:** `device/save-before-sync.test.ts › holds the app's latest declarations alone`, `› checks a write against the types the app declares, and holds an unknown one back`.
+
+### `device/declaration-dropped-queued`
+
+When an app stops declaring a type, a device MUST keep a write already queued under it.
+
+**Reason:** the caller was told the save was queued, and a server that lacks the type refuses it with its own verdict.
+
+**Tests:** `device/save-before-sync.test.ts › holds the app's latest declarations alone`.
+
+### `device/hydrate-registers`
+
+When a device hydrates, a device MUST register on the instance each type its app declared that the instance does not hold, where the key may.
+
+**Reason:** a slice can then name the type, and the server holds a write to it to the type's rules.
+
+**Tests:** `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
+
+### `device/hydrate-registers-parents`
+
+When a hydration registers declared types, a device MUST register each parent before its children.
+
+**Tests:** `device/save-before-sync.test.ts › registers a declared parent before its child, and fails a hydration whose registration meets a failing server`.
+
+### `device/hydrate-register-fails`
+
+If the server answers a registration with a failure that clears on its own, then a device MUST fail the hydration rather than report the type as one the key may not register.
+
+**Tests:** `device/save-before-sync.test.ts › registers a declared parent before its child, and fails a hydration whose registration meets a failing server`.
+
+### `device/hydrate-unregistered-said`
+
+When a hydration could not register a declared type, a device MUST report it with the server's code for the refusal.
+
+**Tests:** `device/save-before-sync-live.test.ts › says which declared types the key could not register, and the server refuses the write that names one`.
+
+### `device/unregistered-write-waits`
+
+Where a declared type is left unregistered, a device MUST keep a write to it queued for the server's own verdict.
+
+**Reason:** a type the instance lacks does not strand what was saved under it.
+
+**Tests:** `device/save-before-sync-live.test.ts › says which declared types the key could not register, and the server refuses the write that names one`.
 
 ## Stopping a long call
 
-58. **A hydration, a catch-up and a drain can be stopped, and each ends soon after.** The binary's stop is Ctrl-C, and a binding takes a stop of its own. A stopped call ends with `canceled`, the exit code of a call that did not finish, and leaves the store consistent. A stopped hydration leaves a copy that refuses reads, as one interrupted by a failure does (4), and a queue as it was. A stopped catch-up keeps the cursor of the last event it applied. A stopped drain sends no write after the stop: the write in flight is answered and recorded, and every write behind it stays queued and unsent for the next drain. A call that was not stopped ends as it always did, so the stop is the only thing that ended these. **A second Ctrl-C ends the process at once**, with status 130, for a call that has not reached a place to stop, such as one waiting past its first request on a server that never answers (106). `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`, `› ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
+### `device/stop-canceled`
 
-59. When a stop is raised before an in-flight network read returns, a hydration, a catch-up or a drain MUST end with `canceled` after settling any in-flight drain answer (58).
+When a stop is raised during a hydration, a catch-up or a drain, a device MUST end the call `canceled` soon after.
 
-**Reason:** A failed response or an ended stream must not replace an explicit stop with a network or replay failure. A stopped head read must not start another attempt. An attributed credential ending still expires the copy before the call reports cancellation (53).
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
 
-**Tests:** `device/stop.test.ts › reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`. Core `stop_tests::a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame`, `a_stopped_hydration_reports_canceled_after_a_failed_read`, `a_stopped_catch_up_reports_canceled_after_a_failed_read`, `a_stopped_drain_records_the_in_flight_answer_before_ending`, `a_stopped_read_still_expires_a_copy_when_the_credential_ended`.
+### `device/command-stopped-exit`
+
+When a hydration, a catch-up or a drain that the command stopped on Ctrl-C ends `canceled`, the command MUST exit with status 3.
+
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
+
+### `device/stop-hydration-replacing`
+
+When a hydration that has begun replacing the copy is stopped, a device MUST leave a copy that refuses reads until a hydration completes.
+
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`.
+
+### `device/stop-hydration-queue`
+
+When a hydration is stopped, a device MUST leave its queue as it was.
+
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`.
+
+### `device/stop-catch-up-cursor`
+
+When a catch-up is stopped, a device MUST keep the cursor of the last event it took.
+
+**Tests:** `device/stop.test.ts › ends it while it waits on a stream, keeping the cursor it had`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`.
+
+### `device/stop-drain-in-flight`
+
+When a drain is stopped while a write is in flight, a device MUST settle that write's answer as an unstopped drain would before the drain ends.
+
+**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+
+### `device/stop-drain-no-send`
+
+When a drain is stopped, a device MUST send no write after the stop.
+
+**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+
+### `device/stop-drain-rest-queued`
+
+When a drain is stopped, a device MUST leave every write it had not sent queued for the next drain.
+
+**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+
+### `device/command-second-ctrl-c`
+
+When the command receives a second Ctrl-C before the call has stopped, the command MUST end the process at once with status 130.
+
+**Tests:** `device/stop.test.ts › ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
+
+### `device/stop-before-read-returns`
+
+When a stop is raised before an in-flight read returns, a device MUST end the hydration or the catch-up `canceled`, even where the read then fails.
+
+**Reason:** a failed answer or an ended stream must not replace an explicit stop with a network or replay failure.
+
+**Tests:** `device/stop.test.ts › reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`.
+
+### `device/stop-no-retry`
+
+When a hydration's head read is stopped, a device MUST NOT read the head again.
+
+**Tests:** `device/stop.test.ts › reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`.
+
+### `device/stop-first-request`
+
+When a stop is raised while the first request of a hydration, a catch-up, a drain or a read of the server's item types or edge types still waits on the server, a device MUST end the call `canceled` at once.
+
+**Reason:** a server that cannot be reached can hold a request far longer than an app that closes a copy or cancels a sync can wait, and the request left behind is only ever a read: the head read, the catalog read, or the root a drain asks before it sends.
+
+**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`, `› ends a read of the server's catalog at once on Ctrl-C, while it still waits`.
+
+### `device/stop-first-request-unchanged`
+
+When a stop ends a hydration, a catch-up, a drain or a read of the server's item types or edge types while its first request still waits on the server, a device MUST leave the copy and the queue as they were.
+
+**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a catch-up at once on Ctrl-C, while its catalog read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`, `› ends a read of the server's catalog at once on Ctrl-C, while it still waits`.
 
 ## Names a write carries
 
-60. WHEN a write carries a tag that is empty, is blank as JavaScript's `trim` reads blank, or exceeds 128 UTF-16 code units, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything, on every door that adds a tag: a create, a tag add, a metadata merge or replace, a file added with tags, and a folder's sync of a document's tags in (`folders.md` 55).
+### `device/tag-bound`
 
-**Reason:** a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items/tag-text`) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
-**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
+**Reason:** a write the server refuses (`items/tag-text`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
-61. WHEN a create or an edit names a property with no characters, including one a folder's sync of a document carries (`folders.md` 55), a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything.
+**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
 
-**Reason:** the server refuses such a name on every door that writes properties (`items/property-name-empty`), and a device that took it would hold a row the server never will.
+### `device/tag-count`
 
-**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
+
+**Tests:** `device/name-bounds-live.test.ts › refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
+
+### `device/tag-bound-nothing-saved`
+
+When a device refuses a tag `validation`, a device MUST save and queue nothing of the write.
+
+**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`.
+
+### `device/tag-bound-taken`
+
+When a write adds a tag the server takes, a device MUST take it and queue it, a tag of 128 UTF-16 code units and a row of 100 tags included.
+
+**Tests:** `device/name-bounds-live.test.ts › takes a tag the server takes, queues it, and has it accepted when the queue drains`, `› refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`.
+
+### `device/property-name-empty`
+
+If a create, an edit or a folder's scan of a document (`folders.md` 55) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Reason:** the server refuses such a name on every write (`items/property-name-empty`), and a device that took it would hold a row the server never will.
+
+**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
+
+### `device/property-name-nothing-saved`
+
+When a device refuses a property name `validation`, a device MUST save and queue nothing of the write.
+
+**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`.
 
 ## Property order
 
-62. WHEN a device writes a row to its copy, the device MUST hold the row's properties in the order the server answers them where the server still holds the row at the version the copy holds when the write arrives (`items/property-order-create`, `items/property-order-merge` and `items/property-order-replace`), but for a create naming a natural key, whose answer may land on a row the server already holds (`queue-and-verdicts/landed-accepted-moves`).
+A device shows a row's properties in the order the server answers them, before the server has answered and after.
 
-**Reason:** an app shows an item as a document in its properties' order, and a copy that showed one order until the server answered and another after would move a person's fields under them as the queue drained. A write another device's reaches first is merged by the server (`versions.md`), in an order no device can know beforehand, and the answer then gives the copy the server's order. So a create of a new row holds the declared fields first, in the order the copy's catalog lists the type's fields, and the rest in the order written; a merging edit keeps each property where the row holds it and adds the rest after them; a whole edit based on the version the copy holds keeps the order it sends, laid back over a refilled copy or moved onto an answer ahead of it (`queue-and-verdicts/whole-moved-onto-answer`) as when it was made, and one said to be read earlier is held as a merge (`queue-and-verdicts/as-read-laid-whole`); and a property named by an array index comes first, in numeric order, as the server's JavaScript orders it.
+### `device/order-answered`
 
-**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`, `› shows an edit in the order the server answers it, before the answer and after`, `› keeps a whole edit's order through a hydration and onto an answer ahead of it`. Core `catalog::tests::a_create_is_held_in_the_order_the_server_answers_it`, `js::tests::an_object_holds_array_index_names_first_as_javascript_does`.
+When the server answers a write, a device MUST hold the row's properties in the order the answer gives them.
+
+**Reason:** an app shows an item as a document in its properties' order. A write that another device's write reaches first is merged by the server (`items/property-order-merge`), in an order no device can know beforehand, and a natural-key create can land on a row the server already holds, so the answer is what settles the order.
+
+**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`, `› shows an edit in the order the server answers it, before the answer and after`, `› keeps a whole edit's order through a hydration and onto an answer ahead of it`.
+
+### `device/order-create`
+
+While a device holds a create that the server has not answered, a device MUST hold the fields the type declares first, in the order a read of the type lists them with a parent's fields before its own and a field declared again in the place it first took, then every other property in the order written.
+
+**Reason:** the server answers a create in this order (`items/property-order-create`), so a copy that held another would move a person's fields under them as the queue drained.
+
+**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
+
+### `device/order-array-index`
+
+A device MUST hold a property whose name is an array index before every other property, in numeric order.
+
+**Reason:** the server is JavaScript, whose objects put such names first (`items/property-order-index`).
+
+**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
+
+### `device/order-merge`
+
+While a device holds an edit that merges properties at the version the copy holds, a device MUST keep each property where the row holds it and hold each property the edit adds after them, in the order sent.
+
+**Reason:** the server merges in this order (`items/property-order-merge`).
+
+**Tests:** `device/property-order-live.test.ts › shows an edit in the order the server answers it, before the answer and after`.
+
+### `device/order-replace`
+
+While a device holds an edit that replaces the properties at the version the copy holds, a device MUST hold them in the order the edit sends them.
+
+**Reason:** the server answers a whole edit in the order sent (`items/property-order-replace`).
+
+**Tests:** `device/property-order-live.test.ts › shows an edit in the order the server answers it, before the answer and after`, `› keeps a whole edit's order through a hydration and onto an answer ahead of it`.
+
+### `device/order-replace-kept`
+
+While an edit that replaces the properties waits to be sent, a device MUST keep the order it was made in through a hydration and when it is moved onto the answer to an earlier write to the row.
+
+**Tests:** `device/property-order-live.test.ts › keeps a whole edit's order through a hydration and onto an answer ahead of it`.
 
 ## Folders, read and written from a copy
 
-63. WHERE a slice names a `system.*` type, a working copy MUST hold that type's rows at either tier.
+A working copy reads a `system.folder` that its slice or a pin takes, answers a list or a search in it, and writes its settings through the folder operations.
 
-**Reason:** the server stamps a `system.folder` with the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows. A slice of every type, which only a folder's own hydration makes, still holds no `system.*` row, as a bare listing answers none (`items/system-types` and `folders.md` 2).
+### `device/folder-system-tier`
 
-**Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`. Core `folder_settings::tests::a_folder_named_by_type_is_held_at_either_tier_and_every_type_leaves_it_out`.
+Where a slice names a `system.*` type, a device MUST hold that type's rows at either tier.
 
-64. WHEN a caller reads a folder the copy holds, the device MUST answer its settings in any state, those that name a condition no folder follows (`folders.md` 2) included.
+**Reason:** the server gives a `system.folder` the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows.
 
-**Reason:** an app shows every folder a person made, a revoked one or one made elsewhere with a `backref` among them, by its title.
+**Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`.
 
-**Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`, `› refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
+### `device/folder-read`
 
-65. WHEN a caller lists or searches in a folder, a working copy MUST answer the items that folder's search holds by the one evaluation the folder's own pass holds its items by (`folders.md` 2): each type with its subtree, the tier, the states, `active` and `archived` where it names none, the `filter` and `beneath`, and never a `system.*` row.
+When a caller reads a folder the copy holds, a device MUST answer its state and its settings, whether the folder is active or revoked.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right.
+**Reason:** an app shows every folder a person made by its title, a revoked one among them.
 
-**Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's search holds`. Core `folder_settings::tests::a_list_in_a_folder_holds_what_the_folders_own_pass_holds`.
+**Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`, `› creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-66. IF the copy's slice does not take every item a folder's search can hold, a type or the tier outside it, or `beneath` without `parent-of` held whole (1), THEN the device MUST refuse a list or a search in that folder `invalid`, naming what the slice lacks, and MUST NOT answer the items it holds.
+### `device/folder-read-backref`
 
-**Reason:** answered from part of the folder, a list reads as the whole of it, which is the wrong answer hardest to notice (24).
+When a caller reads a folder the copy holds whose search carries a `backref` condition, a device MUST answer its settings.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`, `folder_settings::tests::a_copy_of_both_tiers_answers_a_folder_of_either_with_that_tier_alone`.
+**Reason:** the server takes such a folder (`items/folder-create`), and an app shows it by its title though no copy can answer its search.
 
-67. IF a folder is revoked, the row is not a `system.folder`, or its settings name a condition no folder follows (`folders.md` 2), THEN the device MUST refuse a list or a search in it `invalid`.
+**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
-**Reason:** a revoked folder has no settings to follow, and a condition the copy does not implement would otherwise be ignored (24).
+### `device/folder-list`
 
-**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`, `› refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
+When a caller lists or searches in a folder, a device MUST answer the items of the search's types and their subtypes, at the search's tier, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` row.
 
-68. IF the copy does not hold a folder, THEN the device MUST refuse a list or a search in it `not_found`, with the code `not_held`.
+**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders.md` 2).
+
+**Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's search holds`.
+
+### `device/folder-list-beneath`
+
+Where the copy holds `parent-of` whole, when a caller lists in a folder whose search names `beneath` an item, a device MUST answer the items that `beneath` holds, the named item among them.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+
+### `device/folder-unanswerable`
+
+If the copy's slice does not take a type or the tier that a folder's search can hold, or the search names `beneath` while the copy does not hold `parent-of` whole, then a device MUST refuse a list or a search in that folder `invalid`.
+
+**Reason:** answered from part of the folder, a list reads as the whole of it, which is the wrong answer hardest to notice.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+
+### `device/folder-unanswerable-named`
+
+If a device refuses a list in a folder because its slice cannot answer the folder's search, then a device MUST name in the refusal the type, the tier or `parent-of` that the slice lacks.
+
+**Reason:** the remedy is a hydration with what is named.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+
+### `device/folder-list-backref`
+
+If a folder's search carries a `backref` condition, then a device MUST refuse a list in that folder `invalid`, naming the condition.
+
+**Reason:** a copy holds the edges its items draw but not every edge drawn to them, so it would otherwise ignore the condition.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
+
+### `device/folder-list-revoked`
+
+If a folder is revoked, then a device MUST refuse a list or a search in it `invalid`, naming it revoked.
+
+**Reason:** a revoked folder has no settings to follow.
+
+**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
+
+### `device/folder-list-not-folder`
+
+If the row a list in a folder names is not a `system.folder`, then a device MUST refuse the list `invalid`, naming `system.folder`.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
+
+### `device/folder-not-held`
+
+If the copy does not hold a folder, then a device MUST refuse a list or a search in it `not_found` with the code `not_held`.
 
 **Reason:** the remedy is to hold the folder, by a pin or by naming `system.folder` in the slice, not to change the slice's types.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
+**Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`.
 
-69. WHEN a caller creates, changes or revokes a folder's settings through a working copy, the device MUST send the request to the folder door at once (`items/folder-create`, `items/folder-change` and `items/folder-revoke`), under an idempotency key, and MUST NOT queue it.
+### `device/folder-write-at-once`
 
-**Reason:** the folder door is the only door that writes a `system.folder` (`items/system-types`), and a drain sends to the item doors, so a folder write queued offline would wait on a door no drain reaches.
+When a caller creates, changes or revokes a folder through a working copy, a device MUST send the write to `POST /folders`, `PATCH /folders/{id}` or `POST /folders/{id}/revoke` before the call returns.
 
-**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`. Core `folder_settings::tests::a_folder_is_created_changed_and_revoked_through_the_folder_door_and_held_at_once`.
+**Reason:** the folder operations are the only ones that write a `system.folder` (`items/system-types`), and a drain sends to the item operations, so a folder write kept for later would wait on an operation no drain reaches.
 
-70. IF a folder write through a working copy cannot reach the server, THEN the device MUST fail the call and MUST leave nothing to send later.
+**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-**Reason:** a write kept for later would be sent by no drain (69), and a caller told nothing failed would believe the folder made.
+### `device/folder-write-unqueued`
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::settings_no_folder_could_follow_are_refused_before_anything_is_sent`.
+When a caller creates, changes or revokes a folder through a working copy, a device MUST NOT queue the write.
 
-71. IF a folder's settings sent through a working copy name a condition no folder follows, or defaults its search would not hold (`folders.md` 2 and 3), THEN the device MUST refuse them `invalid` before anything is sent, checking a change as the settings will stand where the copy holds the folder.
+**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-**Reason:** the door takes a `backref` condition, which no copy can answer (24), so a folder made with one could be followed by no folder on disk and listed in no copy.
+### `device/folder-write-offline`
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::settings_no_folder_could_follow_are_refused_before_anything_is_sent`.
+If a folder write through a working copy cannot reach the server, then a device MUST refuse it `network`, leaving nothing queued.
 
-72. WHEN the folder door accepts a write, and the copy's slice or a pin takes the row, the device MUST hold the row as a fresh certified read answers it (52) before the call returns.
+**Reason:** a caller told nothing failed would believe the folder made, and a write kept for later would be sent by no drain.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
+
+### `device/folder-write-backref`
+
+If folder settings sent through a working copy carry a `backref` condition, then a device MUST refuse them `invalid` before anything is sent.
+
+**Reason:** the server takes a `backref` condition, which no copy can answer, so a folder made with one could be followed by no folder on disk and listed in no copy.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
+
+### `device/folder-write-grammar`
+
+If folder settings sent through a working copy carry a `filter` the listing grammar refuses or a default tag the server refuses, then a device MUST refuse them `validation` before anything is sent.
+
+**Reason:** the server refuses such a filter (`items/folder-setting-invalid`), and a default tag the server refuses on an item would be refused on every new file the folder makes.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+
+### `device/folder-write-defaults`
+
+If folder settings sent through a working copy name a default type or a default tier that the folder's search does not hold, then a device MUST refuse them `invalid` before anything is sent.
+
+**Reason:** a new file made with such a default would fall outside its own folder (`folders.md` 3), and the server takes the settings.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+
+### `device/folder-change-as-stands`
+
+When a caller changes a folder the copy holds, a device MUST check the settings as they will stand after the change.
+
+**Reason:** a change to the defaults alone can be one the search they stand beside does not hold.
+
+**Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
+
+### `device/folder-write-held`
+
+When a folder operation accepts a write and the copy's slice or a pin takes the row, a device MUST hold the row as the server answers it before the call returns.
 
 **Reason:** an app that made a folder shows it at once.
 
-**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`. Core `folder_settings::tests::a_folder_is_created_changed_and_revoked_through_the_folder_door_and_held_at_once`, `an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
+**Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`.
 
-73. IF the read after an accepted folder write fails, or the settings it answers name a condition no folder follows, THEN the device MUST answer the write as accepted, leaving the row to the next catch-up.
+### `device/folder-write-accepted`
+
+When a folder operation accepts a write to a folder whose search carries a `backref` condition, a device MUST answer the write as accepted.
 
 **Reason:** the write has taken effect, and a caller told it failed would send it again.
 
-**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
+**Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`.
 
 ## A file's size
 
-74. WHEN a device takes in bytes for a file item, as it attaches a file, adds one or pushes a folder's file that is not a document (38, 46, `folders.md` 36), it MUST store their length as `size_bytes` on the file item it saves, and on the update that names new bytes, where the item's type is `core.file` or inherits from it.
+### `device/file-size`
 
-**Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs/file-size-set`). A type outside the file family does not declare the field, so it is not given one.
+When a device takes in bytes for a file item by attaching a file to an item or by adding one on its own, a device MUST store their length as `size_bytes` on the file item it saves, where the item's type is `core.file` or inherits from it.
 
-**Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`. Core `tests::a_file_taken_in_shows_the_length_of_its_bytes_before_any_server_answers`.
+**Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs/file-size-set`).
+
+**Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`.
 
 ## Purging
 
-75. IF the copy does not hold a row and the caller names no version for it, THEN a device MUST refuse to purge it `not_found` with the code `not_held`, sending nothing.
+A purge goes from a device to `POST /items/{id}/purge` at once, at the version the person was shown: the copy's, or the one a read of the bin answered, which the caller names.
 
-**Reason:** a purge names the version the person was shown (79): the copy's, or the one a read of the bin answered (83), which the caller names. A row the copy does not hold, named with no version, is one nobody can say the person was shown.
+### `device/purge-not-held`
+
+If the copy does not hold a row and the caller names no version for it, then a device MUST refuse to purge it `not_found` with the code `not_held`, sending nothing.
+
+**Reason:** a row the copy does not hold, named with no version, is one nobody can say the person was shown.
 
 **Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`.
 
-76. IF the row the copy shows is not in the bin, THEN a device MUST refuse to purge it `validation` with the code `invalid_transition`, sending nothing.
+### `device/purge-not-in-bin`
 
-**Reason:** the copy shows the row with this device's waiting writes laid over it (`queue-and-verdicts/waiting-over-answer`), so a restore it queued shows the row restored while the server still holds it in the bin. Restoring does not move the version, so the server's version check would let the purge destroy what the person brought back.
+If the row the copy shows is not in the bin, then a device MUST refuse to purge it `validation` with the code `invalid_transition`, sending nothing.
+
+**Reason:** the copy shows a row with this device's waiting writes laid over it, so a restore it queued shows the row restored while the server still holds it in the bin. Restoring does not move the version, so the server's version check would let the purge destroy what the person brought back.
 
 **Tests:** `device/purge.test.ts › refuses a row the copy shows restored, sending nothing and keeping the restore`, `device/purge-live.test.ts › refuses a purge of a row not in the bin, keeping it`.
 
-77. IF a write to the row has no answer yet, or is blocked or dead, THEN a device MUST refuse to purge it `invalid`, sending nothing.
+### `device/purge-waiting-write`
 
-**Reason:** the write would reach a row that is gone, sent after the purge or answered beside it, and a write that carried a person's content would be lost to a purge they may not have meant it for. A blocked or dead write waits until it is released, withdrawn or discarded.
+If a write to a row has no answer yet, or is blocked or dead, then a device MUST refuse to purge the row `invalid`, sending nothing.
 
-**Tests:** `device/purge.test.ts › refuses a row a write to which still waits, sending nothing`.
+**Reason:** the write would reach a row that is gone, and a write that carried a person's content would be lost to a purge they may not have meant it for. A blocked or dead write waits until it is released, withdrawn or discarded.
 
-78. WHERE the copy names the instance it was hydrated from, a device MUST confirm that instance at the copy's origin before it sends a purge, and another instance there MUST expire the copy (16), sending nothing.
+**Tests:** `device/purge.test.ts › refuses a row a write to which still waits, sending nothing`, `› refuses a row a blocked write names, sending nothing`.
 
-**Reason:** a purge cannot be taken back, so it is held to the rule a drain is held to (2): nothing is sent while the instance is unconfirmed, and a copy facing another instance is one that cannot be kept current.
+### `device/purge-other-instance`
+
+Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin, then a device MUST refuse a purge `copy_expired`, sending nothing.
+
+**Reason:** a purge cannot be taken back, so nothing is sent while the instance is unconfirmed, as a drain sends nothing.
 
 **Tests:** `device/purge.test.ts › sends nothing to another instance at the same address, and expires the copy`.
 
-79. WHEN a device purges a row, the device MUST send `POST /items/{id}/purge` at once, naming the version the caller names or else the version the copy holds (`items/purge-version`), and MUST NOT queue it.
+### `device/purge-other-instance-expires`
 
-**Reason:** a purge held in a queue would destroy a row long after the person who asked had stopped looking. The version is the one the person was shown, and trashing does not move it, so a row another device restored and edited since is refused `409 version_conflict` rather than destroyed.
+Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin when a purge is asked for, then a device MUST expire the copy.
 
-**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`, which sends a purge at the version held as its witness, `device/bin-live.test.ts › purges a row read from the bin at the version it was read at`, `device/purge-live.test.ts › purges a row in the bin at once, queueing nothing`, `› refuses a purge of a row that moved since the copy read it, keeping it`.
+**Reason:** a copy facing another instance is one that cannot be kept current.
 
-80. IF the server refuses a purge, or the purge cannot be sent, THEN a device MUST leave the copy's rows and its queue as they were.
+**Tests:** `device/purge.test.ts › sends nothing to another instance at the same address, and expires the copy`.
 
-**Reason:** the caller is told what was met, the network's error or the server's refusal, and a copy that looked as though it had purged would disagree with the server for good.
+### `device/purge-at-once`
 
-**Tests:** `device/local-refusals.test.ts › queues no purge, and keeps the row, when the purge cannot be sent`, `device/purge-live.test.ts › refuses a purge the key may not make, keeping the row`, `› refuses a purge of a row that moved since the copy read it, keeping it`.
+When a device purges a row, a device MUST send `POST /items/{id}/purge` before the call returns.
 
-81. WHEN the server accepts a purge, a device MUST take the row, the edges at both its ends and its pin out of the copy, as an `item.purged` event takes them (14).
+**Reason:** a purge held for later would destroy a row long after the person who asked had stopped looking.
 
-**Reason:** the acceptance is the server's word that the row is gone. The `item.purged` event that follows finds nothing to take and changes nothing.
+**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`, `device/purge-live.test.ts › purges a row in the bin at once, queueing nothing`.
 
-**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, and for the edges, which a copy shows at neither end of a row in the bin, `device/catch-up.test.ts › drops the edges at both ends of a purged row`, whose removal the acceptance shares.
+### `device/purge-unqueued`
 
-82. IF a purge is sent and no answer comes, THEN a device MUST keep the row and refuse the purge with the network's error.
+When a device purges a row, a device MUST NOT queue the purge.
 
-**Reason:** the server may have purged the row and the answer been lost. The outcome is unknown, so the copy keeps what it was last told, and the `item.purged` event takes the row out where the server did purge it (14).
+**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`, `device/purge-live.test.ts › purges a row in the bin at once, queueing nothing`.
+
+### `device/purge-version-held`
+
+When a caller purges a row the copy holds and names no version, a device MUST send the version the copy holds.
+
+**Reason:** trashing does not move the version, so a row another device restored and edited since is refused (`items/purge-version`) rather than destroyed.
+
+**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`, `device/purge-live.test.ts › refuses a purge of a row that moved since the copy read it, keeping it`.
+
+### `device/purge-version-named`
+
+When a caller names a version for a purge, a device MUST send that version, whether or not the copy holds the row.
+
+**Reason:** a row read from the bin is not held, and the version the read answered is the one the person was shown.
+
+**Tests:** `device/purge.test.ts › sends the version the caller names over the one the copy holds`, `device/bin-live.test.ts › purges a row read from the bin at the version it was read at`.
+
+### `device/purge-refused-kept`
+
+If the server refuses a purge, then a device MUST leave the copy's rows and its queue as they were.
+
+**Reason:** a copy that looked as though it had purged would disagree with the server for good.
+
+**Tests:** `device/purge-live.test.ts › refuses a purge the key may not make, keeping the row`, `› refuses a purge of a row that moved since the copy read it, keeping it`.
+
+### `device/purge-unsent-kept`
+
+If a purge cannot be sent, then a device MUST refuse it `network` and leave the copy's rows and its queue as they were.
+
+**Tests:** `device/local-refusals.test.ts › queues no purge, and keeps the row, when the purge cannot be sent`.
+
+### `device/purge-accepted`
+
+When the server accepts a purge, a device MUST take the row, the edges at both its ends and its pin out of the copy.
+
+**Reason:** the acceptance is the server's word that the row is gone.
+
+**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, `› takes the edges at both ends of a purged row out of the copy`, `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`.
+
+### `device/purge-event-after`
+
+When the `item.purged` event of a purge the copy has taken out reaches the copy, a device MUST change nothing.
+
+**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`.
+
+### `device/purge-unanswered`
+
+If a purge is sent and no answer comes, then a device MUST keep the row and refuse the purge `network`.
+
+**Reason:** the server may have purged the row and the answer been lost. The outcome is unknown, so the copy keeps what it was last told, and the `item.purged` event takes the row out where the server did purge it.
 
 **Tests:** `device/purge.test.ts › keeps the row when a purge that was sent is never answered`.
 
 ## The bin
 
-83. WHEN a caller reads the bin, a device MUST read it from the server as `GET /items?state=trashed`, a page at a time, and MUST NOT hold what it reads in the copy.
+### `device/bin-read`
 
-**Reason:** a local read answers no row in the bin, by id (32) or in a search (33), and a copy holds a row in the bin only while its slice or a pin takes it, so the bin a person is shown is the server's. Held in the copy, a page would enter rows no event keeps current. The server answers no time a row went to the bin, so a row's `updated_at` stands for it: trashing moves it, and so does any later write to the row in the bin.
+When a caller reads the bin, a device MUST answer the server's bin, a page at a time.
+
+**Reason:** a local read answers no row in the bin, and a copy holds a row in the bin only while its slice or a pin takes it, so the bin a person is shown is the server's `GET /items?state=trashed`. The server answers no time a row went to the bin, so a row's `updated_at` stands for it.
 
 **Tests:** `device/bin-live.test.ts › reads the server's bin a page at a time, holding nothing`.
 
-84. IF the bin cannot be read, THEN a device MUST refuse with what it met, and MUST NOT answer from the copy.
+### `device/bin-unheld`
+
+When a caller reads the bin, a device MUST NOT hold what it reads in the copy.
+
+**Reason:** a page held in the copy would enter rows no event keeps current.
+
+**Tests:** `device/bin-live.test.ts › reads the server's bin a page at a time, holding nothing`.
+
+### `device/bin-offline`
+
+If the server cannot be reached when a caller reads the bin, then a device MUST refuse `network`.
 
 **Reason:** a bin answered from the copy offline would read as the whole bin while missing every row outside the slice.
 
 **Tests:** `device/purge.test.ts › refuses to read the bin while the server cannot be reached`.
 
-85. IF a caller pins a row the server holds in the bin and the key may read, THEN a device MUST refuse `not_found` with the code `trashed`, pinning nothing.
+### `device/pin-trashed`
 
-**Reason:** a read by id answers a row in the bin `404` as it answers one that is gone (`items/get-missing`), so the device asks the bin which it is, and the caller can offer to restore the row rather than report it lost. A row of a type the key may not read answers as a missing one in the bin too (`keys-and-oauth.md` 20), so it is refused `not_found` as one.
+If a caller pins a row the server holds in the bin, then a device MUST refuse `not_found` with the code `trashed`, pinning nothing.
 
-**Tests:** `device/bin-live.test.ts › refuses to pin a row in the bin, saying so`.
+**Reason:** a read by id answers a row in the bin as one that is gone (`items/get-missing`), so the device asks the bin which it is, and the caller can offer to restore the row rather than report it lost.
+
+**Tests:** `device/bin-live.test.ts › refuses to pin a row in the bin, saying so`, `› keeps a row it holds in the bin when a pin of it is refused`.
+
+### `device/pin-trashed-held`
+
+If a pin of a row is refused because the server holds the row in the bin, then a device MUST keep the row where the copy holds it.
+
+**Reason:** a slice holds its rows in the bin as in any other state, and a refused pin is not news that the row is gone.
+
+**Tests:** `device/bin-live.test.ts › keeps a row it holds in the bin when a pin of it is refused`.
+
+### `device/pin-trashed-unread`
+
+If a caller pins a row the server holds in the bin, of a type the key may not read, then a device MUST refuse it `not_found` without the code `trashed`.
+
+**Reason:** the server answers a row of a type the key may not read as a missing one, in the bin too (`keys-and-oauth.md` 20), so the copy tells the key nothing more of it.
+
+**Tests:** `device/bin-live.test.ts › refuses a pin of a row in the bin of a type the key may not read as one that is gone`.
 
 ## A slice of both tiers
 
-86. WHERE a slice's tier is `all`, a hydration MUST hold the rows of both tiers of every type the slice declares, asking the item listing for `tier=all` (`search-and-filters/tier-both`).
+### `device/tier-all-hydrate`
 
-**Reason:** an app that shows an inbox, the feed, beside a person's record, the library, needs both in one copy. Held as two copies of one tier each, an item triaged offline, an edit that moves it from the feed to the library, leaves the feed's copy at once and cannot enter the library's until a catch-up reads it from the server, so the person sees it vanish from both while the app is offline. The event stream carries both tiers already (14), so the listing is the one read that names a tier.
+Where a slice's tier is `all`, a device MUST hold the rows of both tiers that a hydration reads.
 
-**Tests:** `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`, `device/slice-tiers-live.test.ts › hydrates both tiers, keeps a triage made offline through a restart and its drain, and sees a move made elsewhere`. Core `model::tests::a_slice_of_both_tiers_takes_either_and_a_row_of_none_is_taken_by_no_slice`.
+**Reason:** an app that shows an inbox, the feed, beside a person's record, the library, needs both in one copy. Held as two copies of one tier each, an item triaged offline leaves the feed's copy at once and cannot enter the library's until a catch-up reads it from the server.
 
-87. WHERE a slice's tier is `all`, a device MUST keep a row whose tier moves from one to the other, and show it at its new tier, whether a local edit, a drain's answer, a catch-up or a held stream moves it.
+**Tests:** `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`, `device/slice-tiers-live.test.ts › hydrates both tiers, keeps a triage made offline through a restart and its drain, and sees a move made elsewhere`.
 
-**Reason:** a move of tier inside the slice is not a row leaving it (14), so the copy keeps the row, its edges and its tags; a slice of one tier still lets such a row go.
+### `device/tier-all-listing`
 
-**Tests:** `device/catch-up.test.ts › keeps a row that moves between its tiers on a catch-up`, `› keeps a row that moves between its tiers on a held stream`, `device/slice-tiers-live.test.ts › hydrates both tiers, keeps a triage made offline through a restart and its drain, and sees a move made elsewhere`. Core `catch_up::tests::a_move_between_the_tiers_of_a_slice_of_both_keeps_the_row`.
+Where a slice's tier is `all`, when a device hydrates, a device MUST ask `GET /items` for `tier=all` (`search-and-filters/tier-both`).
+
+**Reason:** the event stream carries both tiers already, so the listing is the one read that names a tier.
+
+**Tests:** `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`.
+
+### `device/tier-all-move`
+
+Where a slice's tier is `all`, when a local edit, a drain's answer, a catch-up or a held stream moves a row from one tier to the other, a device MUST keep the row and show it at its new tier.
+
+**Reason:** a move of tier inside the slice is not a row leaving it.
+
+**Tests:** `device/catch-up.test.ts › keeps a row that moves between its tiers on a catch-up`, `› keeps a row that moves between its tiers on a held stream`, `device/slice-tiers-live.test.ts › hydrates both tiers, keeps a triage made offline through a restart and its drain, and sees a move made elsewhere`.
 
 ## Links and embeds in a body
 
-A body is read here by the rule a folder reads a Markdown file's body by (`folders.md` 12): what a link and an embed are, which text is code or a comment, and how a name is compared (`folders.md` 11 and 27). These statements say what differs for a body written through a working copy, which has no directory and no file record.
+A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folders.md` 11 and 12). These rules say what a working copy does, which has no directory and no file record.
 
-88. WHEN a create or an edit through a working copy changes an item's body, the device MUST read the body before and after the write and queue the edges the change names, unless the write is a folder's own sync of a file, which the folder reads itself (`folders.md` 11 and 31).
+### `device/body-edges`
 
-**Reason:** an app on a binding or the command line has no folder, so without this a link it saves names nothing, and every app would need its own copy of the rule. The body is the property `folders.md` 7 names: the type's `body_field`, or `body` for a type naming none, so `core.event`'s is its `description`. A create reads its body against none. An edit that leaves the body as it was, whatever else it changes, queues no edge write, and one that moves the item to another type reads each body in its own type's property, so a body a retype only moves makes no change. An edit based on a version earlier than the one the copy holds (`queue-and-verdicts/as-read-sent-on-read`) is read once it is answered, against the row it lands, since the copy cannot tell what the server will make of such an edit's body; its edges go at the next drain. A folder's sync is left to the folder, which keeps its own record of what each file showed.
+When a create or an edit through a working copy changes an item's body, a device MUST queue the edges that the links and embeds of the change name.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› queues no edge write for an edit that leaves the body as it was`. Core `body::rule::tests::an_edit_that_leaves_the_body_queues_no_edge_write`, `a_retype_reads_the_body_where_the_new_type_keeps_it`, `a_folder_reads_its_own_bodies`, `an_edit_based_on_an_earlier_version_is_read_once_it_is_answered`.
+**Reason:** an app on a binding or the command line has no folder, so without this a link it saves names nothing, and every app would need its own copy of the rule.
 
-89. WHEN a body carries a link, the device MUST resolve its name as `folders.md` 11 and 12 resolve one, against the rows the copy holds and the server's lookup, and queue a `references` edge from the item to the one item it names.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
 
-**Reason:** a working copy holds a slice and its pins, so it cannot tell alone that a title names one item: a name resolves offline only where it names an item the item already has a `references` edge to, or is an id the copy holds, and otherwise waits for the server's lookup (95). A name answers to an item's id, its title, or the path or file name of its file in a folder, which the copy reads from the item's `in-folder` edges. An alias or a heading, `[[name|shown]]` or `[[name#part]]`, names what comes before it, and the whole text is held to the lookup as `folders.md` 11 holds it, but for a name that already names an edge's item, whose whole text is held only to the item's other edges, and an id, which names its item whatever follows it. A link to an item this device created that the server has not taken resolves against the copy's row, and its edge waits on that create (`queue-and-verdicts/edge-depends-on-ends`). A link naming its own item, a heading-only link and a link in code or a comment make no edge.
+### `device/body-field`
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reads an alias and a heading as the name before them, and a link in code as text`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`, `a_link_in_code_or_a_comment_or_to_itself_is_no_edge`.
+A device MUST read an item's body from the property `folders.md` 7 names: the type's `body_field`, or `body` for a type that names none.
 
-90. WHEN a body carries an embed of a file, of any kind, the device MUST resolve it to one file item and queue that file item's `attached-to` edge to the item.
+**Reason:** `core.event` keeps its body in `description`, so a link there is a link.
 
-**Reason:** the embed is how the body says which file it shows, so an app can find the file item and show or play it (97), and a photo, a recording and a PDF are embedded alike. A working copy has no files on disk, so an embed is read against file items: first the ones attached to the item, then every file item the copy holds, then the server's lookup by title (95). An embed by name, `![[name]]`, names the file item whose title, or whose file name in a folder, is the embed's file name; one by path, `![](path)`, names the attachment placed at that path read from where the item is placed in a folder, and otherwise is read by its file name as an embed by name is. An embed is of a file as `folders.md` 12 says: where a file item answers to it, or where its extension names a MIME type, and never where it names a document; an embed of a note is text.
+**Tests:** `device/body-edges-live.test.ts › makes no edge for a link to the item itself or in a comment, and reads an event's description as its body`.
 
-**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_embed_of_a_note_is_text_and_one_of_an_unknown_file_waits`, `a_path_reads_from_where_the_host_is_placed_and_else_by_its_name`.
+### `device/body-unchanged`
 
-91. WHEN a body's change names an edge, the device MUST queue it as a write of its own that waits on the write that changed the body and on the creates of its ends.
+When an edit through a working copy leaves the item's body as it was, a device MUST NOT queue an edge write for it.
 
-**Reason:** each edge is its own write with its own verdict (`queue-and-verdicts/sidecars-own-writes`), so a refused edge leaves the body saved, and the body's write is refused alone where the server refuses it. Waiting on the body's write means an edge never lands for a body the server refused, since what waits on a refused write is refused with it (`queue-and-verdicts/dependency-refused`), and waiting on its ends' creates is what lets a link name an item created earlier in the same queue (`queue-and-verdicts/edge-depends-on-ends`). A body's edge the server refuses stays in the queue as any refused write does (`queue-and-verdicts/clear-keeps-content`), but for those 93 and 94 take out, and its link or embed reads as refused with the server's reason (97). An item the server alone holds is pinned before its edge is queued, as a folder pins the other end of a line (`folders.md` 11): a link's target, so the copy can say offline what the link names, and an embedded file item, since a copy holds no edge from a row it does not hold (44). The pin is let go once no `references` edge reaches the item and no `attached-to` edge leaves it, whoever made the edge, unless somebody pinned it again meanwhile.
+**Tests:** `device/body-edges-live.test.ts › queues no edge write for an edit that leaves the body as it was`.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reports a refused edge write against its link, and keeps the body`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`.
+### `device/body-link`
 
-92. WHEN a body's change names an edge of a type and ends the copy holds already, the device MUST NOT queue another.
+When a body carries a link that names one item, a device MUST queue a `references` edge from the item to the item it names.
 
-**Reason:** one triple is one edge (`edges/create-duplicate`), so a body naming an item twice, or naming an item a folder or another device linked already, makes none, and the server would refuse a second create as a duplicate.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reads an alias and a heading as the name before them, and a link in code as text`.
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`.
+### `device/body-link-by-id`
 
-93. WHEN the server refuses a body's edge create because the edge exists, the device MUST take that create out of the queue.
+When a body carries a link by the id of an item the copy holds, a device MUST queue the link's `references` edge as the write is saved.
 
-**Reason:** two writers that make the same edge before either hears of the other, two devices or a device and a folder, each send a create, and the second is refused as a duplicate. The edge it asked for stands, so keeping the refusal until somebody discards it (`queue-and-verdicts/clear-keeps-content`) would report as failed a link that works, as a folder's duplicate placement would (`queue-and-verdicts/folder-gives-way`). The copy takes the server's edge from the event log.
+**Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
+
+### `device/body-link-by-title`
+
+If a body's link names no item by an id the copy holds and no item the item already has a `references` edge to, then a device MUST NOT queue its edge until the server's lookup has answered.
+
+**Reason:** a working copy holds a slice and its pins, so it cannot tell alone that a title names one item.
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`.
+
+### `device/body-link-forms`
+
+When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`.
+
+**Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`.
+
+### `device/body-link-text`
+
+When a body carries a heading-only link, or a link in inline code, a code block or a comment, a device MUST NOT make an edge of it.
+
+**Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`, `› makes no edge for a link to the item itself or in a comment, and reads an event's description as its body`.
+
+### `device/body-link-self`
+
+When a body carries a link that names its own item, by id or by title, a device MUST NOT make an edge of it.
+
+**Tests:** `device/body-edges-live.test.ts › makes no edge for a link to the item itself or in a comment, and reads an event's description as its body`.
+
+### `device/body-link-queued-create`
+
+When a body carries a link to an item whose create waits in the queue, a device MUST send the link's edge after that create.
+
+**Reason:** this is what lets a link name an item created earlier in the same queue (`queue-and-verdicts.md` 4).
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`.
+
+### `device/body-embed`
+
+When a body carries an embed of a file, by `![[name]]` or `![](path)`, a device MUST queue an `attached-to` edge from the one file item it names to the item.
+
+**Reason:** the embed is how the body says which file it shows, so an app can find the file item and show or play it, and a photo, a recording and a PDF are embedded alike.
+
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+
+### `device/body-embed-note`
+
+When a body carries an embed of a note, a device MUST read it as text and make no edge of it.
+
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+
+### `device/body-edge-own-write`
+
+When a body's change names an edge, a device MUST queue the edge as a write of its own, with its own verdict.
+
+**Reason:** a refused edge then leaves the body saved, and the body's write is refused alone where the server refuses it (`queue-and-verdicts.md` 33).
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reports a refused edge write against its link, and keeps the body`.
+
+### `device/body-pin`
+
+When a body's link names an item only the server holds, a device MUST pin that item before it queues the edge.
+
+**Reason:** a copy holds no edge to a row it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folders.md` 11).
+
+**Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
+
+### `device/body-pin-release`
+
+When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go.
+
+**Reason:** the pin was made for the edge alone.
+
+**Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
+
+### `device/body-edge-held`
+
+When a body names an edge of a type and ends the copy holds already, a device MUST NOT queue another.
+
+**Reason:** one triple is one edge (`edges/create-duplicate`), so a body naming an item twice, or naming an item a folder, an attach or another device linked already, makes none.
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› embeds an attached file by the text the attach answers, with no second edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
+
+### `device/body-edge-refused`
+
+If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded.
+
+**Reason:** a refused write is kept as any refused write is (`queue-and-verdicts.md` 47), so the person can see it.
+
+**Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
+
+### `device/body-edge-duplicate`
+
+When the server refuses a body's edge create because the edge exists, a device MUST take that create out of the queue.
+
+**Reason:** two writers that make the same edge before either hears of the other each send a create, and the second is refused as a duplicate. The edge it asked for stands, so keeping the refusal would report as failed a link that works. The copy takes the server's edge from the event log.
 
 **Tests:** `device/body-edges-live.test.ts › settles an edge two copies both made as one, and leaves no refusal`.
 
-94. WHEN the write a body's edges were made from is answered conflicted on the body, the device MUST take those edge writes out of the queue unsent.
+### `device/body-edge-lost`
 
-**Reason:** the server kept another body on the item and wrote this one to a conflicted copy (`queue-and-verdicts/success-conflicted`), so the edges this body asked for are not the item's: a link taken out of the losing body would delete an edge the kept body names, and one only the losing body names would link the item to something its body does not show. The edges the kept body names were made by the writer whose body it is. Each such write is refused, its edge read back as the server holds it, and taken out, since it carried nothing a person wrote that the conflicted copy does not keep.
+When the write a body's edges were made from is answered `conflicted` on the body, a device MUST take those edge writes out of the queue unsent.
+
+**Reason:** the server kept another body on the item and wrote this one to a conflicted copy (`queue-and-verdicts.md` 11), so the edges this body asked for are not the item's: a link taken out of the losing body would delete an edge the kept body names.
 
 **Tests:** `device/body-edges-live.test.ts › sends no edge write whose body lost to another device's, and keeps the edge the kept body names`.
 
-95. WHEN a link or an embed in a body written through a working copy names no item the copy can resolve, the device MUST save the body as typed, record the name against the item, and try it again at each drain, catch-up and hydration until it names one item or the body no longer carries it.
+### `device/body-name-saved`
 
-**Reason:** an app has a person's save in its hand whatever the network is doing (56), so a name waits rather than refusing the save or being dropped. A name the server has not been asked about is `pending`, and a drain that reaches the server asks it before it sends anything, so the edge goes in the same pass, after the writes it waits on. One the server answered naming nothing is `missing` and one naming more than one item `ambiguous`; each is asked again only once the copy holds a different number of items the name names, counted at the next drain, catch-up or hydration after the copy's rows change, by a catch-up, a held stream or a write here, and keeps what the server said of it while later writes leave it in the body, so a body full of links to notes not written yet costs no lookup, and no request at all, at every drain or save. A lookup the server refuses, and a pin of the item it names that fails, leave the name to be asked again at the next drain; an edge the server refuses (91) is not asked again until the name is typed anew. A pass that is stopped ends between names (58), and one that cannot read the copy or the server leaves every name as it was for the next. The name stops waiting once it resolves, once a later write takes it out of the body, once the body no longer carries it whoever changed it, and once the item is gone from the copy. **Limit:** a name the server answered as naming nothing, whose item the copy does not hold when it appears, a type outside the slice say, waits until the body is written again.
+When a link or an embed in a body names no item the copy can resolve, a device MUST save the body as typed.
 
-**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› resolves a waiting name at the next hydration`, `› reports an ambiguous name and makes no edge`, `› waits offline, and resolves and sends at the drain after reconnecting`. Core `body::rule::tests::a_link_by_title_waits_for_the_server_and_says_so`.
+**Reason:** an app has a person's save in its hand whatever the network is doing, so a name waits rather than refusing the save or being dropped.
 
-96. WHEN a write takes a link or an embed out of a body, the device MUST queue the delete of the edge the body before it named through it, and of no other edge.
+**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`.
 
-**Reason:** taking a link out removes its edge as in a folder (`folders.md` 31). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body; a link that names nothing therefore holds no removal back, which a folder needs because it compares against what its file showed at an earlier scan. The device records the item each link and embed resolved to while its edge stands, so a link to an item renamed since still names it, reads as naming it (97), and takes its edge when it is taken out. Only the edge the link or embed named goes: an edge of another type between the same items, an attachment no embed shows, and a `references` edge no body named all stay, since a body makes only `references` and `attached-to`.
+### `device/body-name-drain`
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`. Core `body::rule::tests::taking_a_link_out_deletes_its_edge_and_no_other`, `an_attached_file_embeds_by_the_text_the_attach_answers`, `a_renamed_item_s_link_still_takes_its_edge_when_taken_out`.
+When a drain reaches the server, a device MUST resolve the pending names of the bodies it holds and send their edges in that drain.
 
-97. WHEN a caller reads an item's links and embeds, the device MUST answer each link and each embed of a file in its body, as typed, with the item it names or the reason it names none: `pending`, `missing`, `ambiguous` or `refused` with the reason, from the copy alone.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› waits offline, and resolves and sends at the drain after reconnecting`.
 
-**Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess, offline as well. An embed answers with the file item that holds the bytes, which the app reads and fetches as any blob (37). A name answers as the edges say: one the device has not recorded and that no edge resolves, in a body another device wrote say, is `pending`, since this device has not asked the server about it. The command line reads them with `device items links`.
+### `device/body-name-arrives`
 
-**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`. Core `body::rule::tests::an_embed_of_a_note_is_text_and_one_of_an_unknown_file_waits`.
+When an item that a waiting name names reaches the copy by a catch-up or a hydration, a device MUST make the name's edge by the next drain.
 
-98. WHEN a file is attached to an item (38), the device MUST answer the text that embeds it in that item's body, `![[title]]`, where its title names it alone among the item's attachments.
+**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› resolves a waiting name at the next hydration`.
 
-**Reason:** an app attaches a photo and writes its embed into the body, and saving that body must read back as the edge the attach made, not a second edge or a second file item. Where the title is shared or cannot be written in an embed, the attach answers no embed text. A caller asks later for the embed text of any file attached to an item, refused where the file is not attached, since an embed is read against the item's attachments first and only those can be told apart offline, or where no embed can name it alone; the command line asks with `device items embed`.
+### `device/body-name-pending`
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_attached_file_embeds_by_the_text_the_attach_answers`, `an_embed_text_names_its_file_alone_or_is_refused`.
+While a device has not asked the server about a name in a body, a device MUST answer the name `pending` when a caller reads the item's links and embeds.
 
-99. WHEN a file is attached to an item under no title its caller gave, the device MUST title it with the first of its name, `name 2.ext`, `name 3.ext` that no other attachment of the item answers to.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› waits offline, and resolves and sends at the drain after reconnecting`.
 
-**Reason:** two attachments of one item under one name would make an embed of either name both, which is the usual case for pasted images, all called `image.png`. A title the caller chose is theirs and is kept.
+### `device/body-name-missing`
 
-**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_attached_file_embeds_by_the_text_the_attach_answers`.
+When the server's lookup names no item for a name in a body, a device MUST answer the name `missing` and make no edge.
+
+**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› resolves a waiting name at the next hydration`.
+
+### `device/body-name-ambiguous`
+
+When the server's lookup names more than one item for a name in a body, a device MUST answer the name `ambiguous` and make no edge.
+
+**Tests:** `device/body-edges-live.test.ts › reports an ambiguous name and makes no edge`.
+
+### `device/body-name-refused`
+
+If the server refuses a body's edge write, then a device MUST answer the link `refused`.
+
+**Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
+
+### `device/body-links-read`
+
+When a caller reads an item's links and embeds, a device MUST answer each link and each embed of a file in its body, in the order of the body, with its text as typed, the name it reads and the item it names or the reason it names none.
+
+**Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess. The command reads them with `device items links`.
+
+**Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
+
+### `device/body-links-offline`
+
+When a caller reads an item's links and embeds, a device MUST answer from the copy alone.
+
+**Tests:** `device/body-edges-live.test.ts › waits offline, and resolves and sends at the drain after reconnecting`.
+
+### `device/body-link-removed`
+
+When a write takes a link or an embed out of a body, a device MUST queue the delete of the edge the body named through it.
+
+**Reason:** taking a link out removes its edge as in a folder (`folders.md` 31). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
+
+### `device/body-link-removed-only`
+
+When a write takes a link out of a body, a device MUST NOT delete an edge of another type between the same items, or a `references` edge no body named.
+
+**Reason:** a body makes only `references` and `attached-to`, so any other edge was made by somebody else.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`.
+
+### `device/body-edge-waits`
+
+When a body's change names an edge, a device MUST queue the edge's write to wait on the write that changed the body.
+
+**Reason:** what waits on a refused write is refused with it (`queue-and-verdicts.md` 16), so an edge never lands for a body the server refused.
+
+**Tests:** `device/body-edges-live.test.ts › queues a body's edge to wait on the write that changed the body`.
+
+### `device/body-retype`
+
+When an edit moves an item to another type, a device MUST read the body before the edit from the old type's body property and the body after it from the new type's.
+
+**Reason:** a body that a retype only moves makes no change to the item's edges.
+
+**Tests:** `device/body-edges-live.test.ts › reads a retyped item's body in the property its new type keeps it in`.
+
+### `device/body-older-version`
+
+When an edit based on a version older than the one the copy holds changes an item's body, a device MUST read the body's edges from the row the server answers the edit with, once it answers.
+
+**Reason:** the server merges such an edit (`queue-and-verdicts.md` 43), and the copy cannot tell what the merge makes of the body until it is answered.
+
+**Tests:** `device/body-edges-live.test.ts › reads an edit based on an older version once the server answers it, and sends its edges at the next drain`.
+
+### `device/body-link-renamed`
+
+While the edge a body's link made stands, a device MUST answer the link with the item it named, even after that item is renamed.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+
+### `device/body-link-renamed-removed`
+
+When a write takes out of a body a link to an item renamed since its edge was made, a device MUST queue the delete of that edge.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+
+### `device/body-name-dropped`
+
+If a body no longer carries a name that waits, whoever changed the body, then a device MUST NOT make the name's edge when an item it names arrives.
+
+**Tests:** `device/body-edges-live.test.ts › stops waiting on a name once another writer takes it out of the body`.
+
+### `device/embed-attached-first`
+
+When an embed's name answers to a file attached to the item and to other file items, a device MUST resolve the embed to the attached file.
+
+**Reason:** an embed is read against the item's attachments first, so an attach's embed text names the file it attached whatever else shares its name.
+
+**Tests:** `device/body-edges-live.test.ts › reads an embed as the file attached to the item before other file items of that name`.
+
+### `device/attach-embed`
+
+When a device attaches a file to an item under a title that names it alone among the item's attachments, a device MUST answer the attach with the text that embeds it, `![[title]]`.
+
+**Reason:** an app attaches a photo and writes its embed into the body, and saving that body reads back as the edge the attach made, not a second edge or a second file item.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+
+### `device/embed-text`
+
+When a caller asks for the text that embeds a file attached to an item, a device MUST answer `![[title]]` where the file's title names it alone among the item's attachments.
+
+**Reason:** an app can write the embed of a file attached earlier. The command asks with `device items embed`.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+
+### `device/embed-text-not-file`
+
+If the item named for an embed text is not a file item, then a device MUST refuse `invalid`.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+
+### `device/embed-text-not-attached`
+
+If the file named for an embed text is not attached to the item named, then a device MUST refuse `invalid`.
+
+**Reason:** an embed is read against the item's attachments first, and only those can be told apart offline.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+
+### `device/attach-title`
+
+When a file is attached to an item under no title its caller gave, a device MUST title the file item with the first of its name, `name 2.ext`, `name 3.ext` that no other attachment of the item answers to.
+
+**Reason:** two attachments of one item under one name would make an embed of either name both, which is the usual case for pasted images, all called `image.png`.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
+
+### `device/attach-title-given`
+
+When a file is attached to an item under a title its caller gives, a device MUST title the file item with that title.
+
+**Tests:** `device/body-edges-live.test.ts › keeps a title its caller gives, and answers no embed text where that title is shared`.
+
+### `device/attach-embed-shared`
+
+If a file is attached to an item under a title another of the item's attachments answers to, then a device MUST answer the attach with no embed text.
+
+**Reason:** an embed of a shared title would name both attachments.
+
+**Tests:** `device/body-edges-live.test.ts › keeps a title its caller gives, and answers no embed text where that title is shared`.
 
 ## Ids a caller names
 
-100. WHEN a caller creates an item or an edge through a working copy under an id of its own, the device MUST refuse an id that is not a lowercase UUIDv7, `validation` with the code `invalid_id`, before it saves or queues anything.
+### `device/id-format`
 
-**Reason:** the server refuses such an id `400 invalid_id` on `POST /items` and `POST /edges`, and refuses a read by it the same way (`items/create-id-format` and `items/get-malformed-id`). A copy that queued one would show a row that can never reach the server, and could not read the row back to put itself right when the create was refused (`queue-and-verdicts/refused-read-again`).
+When a caller creates an item through a working copy under an id of its own, a device MUST refuse an id that is not a lowercase UUIDv7 `validation` with the code `invalid_id`, before it saves or queues anything.
 
-**Tests:** `device/local-refusals.test.ts › refuses a create or an edge naming an id the server refuses, before it saves or queues anything`. Core `validation::tests::an_id_is_taken_as_the_server_takes_one`, `refusal_tests::a_create_or_an_edge_naming_an_id_the_server_refuses_is_refused_before_it_is_queued`.
+**Reason:** the server refuses such an id (`items/create-id-format` and `items/get-malformed-id`). A copy that queued one would show a row that can never reach the server, and could not read the row back to put itself right when the create was refused.
 
-101. WHEN the server answers a read-back by id `400 invalid_id`, the device MUST take the answer as the server holding no such row.
+**Tests:** `device/local-refusals.test.ts › refuses a create or an edge naming an id the server refuses, before it saves or queues anything`.
 
-**Reason:** an id the server could never have given a row names no row, as plainly as a `404` says so, and a refused create under it is then put back and can be discarded (`queue-and-verdicts/refused-row-absent` and `queue-and-verdicts/discard-refused`). Read as a failure, the read-back would stay owed, the row the create showed would stay in the copy, and a discard of the create would be refused while the read-back waited. A store an earlier build made can hold such a create.
+### `device/edge-id-format`
 
-**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`. Core `refusal_tests::a_create_refused_for_its_id_is_put_back_and_can_be_discarded`.
+When a caller creates an edge through a working copy under an id of its own, a device MUST refuse an id that is not a lowercase UUIDv7 `validation` with the code `invalid_id`, before it saves or queues anything.
+
+**Reason:** the server refuses such an id on `POST /edges` as on `POST /items`.
+
+**Tests:** `device/local-refusals.test.ts › refuses a create or an edge naming an id the server refuses, before it saves or queues anything`.
+
+### `device/read-back-invalid-id`
+
+When the server answers a read-back by id `400 invalid_id`, a device MUST take the answer as the server holding no such row.
+
+**Reason:** an id the server could never have given a row names no row, as plainly as a `404` says so. Read as a failure, the read-back would stay owed, the row the create showed would stay in the copy, and a discard of the create would be refused while the read-back waited.
+
+**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`.
 
 ## Before a first hydration
 
-102. WHEN a caller drains a working copy that does not hold the read view of a completed hydration, the device MUST refuse the drain before anything is read or sent and leave the queue as it was: `hydration_incomplete` where a hydration is in progress or was interrupted, `no_cursor` where none has otherwise completed, and `copy_expired` where the cursor of a completed one has gone.
+### `device/drain-no-cursor`
 
-**Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts/success-read-again` and `queue-and-verdicts/refused-read-again`), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain with the rest of the queue unsent. The refusal comes before the server is asked, so it is the same offline. A copy saves before it has reached a server (56), and its first drain follows its first hydration.
+If a caller drains a working copy that has never completed a hydration, then a device MUST refuse the drain `no_cursor`, sending nothing and leaving the queue as it was.
 
-**Tests:** `device/save-before-sync-live.test.ts › refuses a drain before its first hydration, sending nothing and keeping the queue`. Core `refusal_tests::a_drain_on_a_copy_without_its_read_view_sends_nothing`.
+**Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts.md` 12), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain.
 
-103. WHERE a working copy names a server, the device MUST read the server's item types and edge types on request, before any hydration, each resolved as a read of the copy's own catalog resolves it (47), and MUST leave the copy's catalog, its catalog version and its declarations as they were.
+**Tests:** `device/save-before-sync-live.test.ts › refuses a drain before its first hydration, sending nothing and keeping the queue`.
 
-**Reason:** a slice of every type the key reads names each namespace under `.*`, since a bare `*` is refused (6), and an app learns the namespaces from the catalog. Before a first hydration the copy holds only the types Marfa ships and the ones its app declares (57). The server's catalog is read rather than held, because holding it would replace the declared types the copy checks offline saves against.
+### `device/drain-incomplete`
+
+If a caller drains a working copy whose hydration is in progress or was interrupted, then a device MUST refuse the drain `hydration_incomplete`, sending nothing and leaving the queue as it was.
+
+**Tests:** `device/working-copy.test.ts › refuses a local write after an interrupted hydration`.
+
+### `device/drain-expired`
+
+If a caller drains a working copy whose cursor has aged out, then a device MUST refuse the drain `copy_expired`, sending nothing.
+
+**Tests:** `device/working-copy.test.ts › reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report`.
+
+### `device/catalog-served`
+
+Where a working copy names a server, when a caller reads the server's item types or edge types, a device MUST answer the types the server lists, before a first hydration as after it.
+
+**Reason:** a slice of every type the key reads names each namespace under `.*`, and an app learns the namespaces from the catalog before it hydrates.
 
 **Tests:** `device/save-before-sync-live.test.ts › reads the server's catalog before its first hydration, leaving the copy's own as it was`.
 
-104. WHERE a working copy names no server, the device MUST refuse a read of the server's catalog (103) `no_server`.
+### `device/catalog-served-unheld`
 
-**Reason:** the read has nothing to ask, and an answer from the copy's own catalog would pass the shipped and declared types off as the server's.
+When a device reads the server's item types or edge types, a device MUST leave the copy's own catalog, its catalog version and its declared types as they were.
 
-**Tests:** `device/save-before-sync.test.ts › refuses a read of the server's catalog with no_server, answering no types from its own`. Core `refusal_tests::a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog`.
+**Reason:** holding the server's catalog would replace the declared types the copy checks saves against while it is offline.
+
+**Tests:** `device/save-before-sync-live.test.ts › reads the server's catalog before its first hydration, leaving the copy's own as it was`.
+
+### `device/catalog-no-server`
+
+Where a working copy names no server, if a caller reads the server's item types or edge types, then a device MUST refuse `no_server`.
+
+**Reason:** an answer from the copy's own catalog would pass the shipped and declared types off as the server's.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a read of the server's catalog with no_server, answering no types from its own`.
 
 ## Type names in a local read
 
-105. WHEN a local list or search names a `type` outside the server's type pattern grammar (`types/id-grammar` and `types/id-reserved-scope-root`), the device MUST refuse it `validation` with the code `validation_error`, as the server refuses a malformed `type` filter.
+### `device/type-grammar`
 
-**Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online. A local read holds the rest of the listing grammar to the server's in the same way (36).
+If a local list or search names a `type` outside the server's type grammar (`types/id-grammar` and `types/id-reserved-scope-root`), then a device MUST refuse it `validation` with the code `validation_error`.
 
-**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`. Core `refusal_tests::a_type_name_is_held_to_the_servers_grammar_before_anything_is_read`.
+**Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online.
 
-## Stopping a call that waits on its server
-
-106. WHEN a stop is raised while the first request of a hydration, a catch-up, a drain or a read of the server's catalog (103) still waits on the server, including while it is still connecting, the device MUST end the call with `canceled` at once and leave the copy and the queue as they were.
-
-**Reason:** a server that cannot be reached can hold a connection attempt for 10 seconds and a request for far longer, and an app that closes a copy or cancels a sync would wait that long for nothing (58). The request left behind is only ever a read: the head read, the catalog read, or the root a drain asks before it sends (2). A write already sent is settled before the call ends (59). A credential renewal the read started is finished before the call ends, and none starts after it: a refresh token is spent once the server answers it, so a process that ended before keeping the new one would be signed out.
-
-**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`. Core `stop_tests::a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server`, `stop_tests::a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after`.
+**Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type outside the server's grammar`.
 
 ## The docs site
 
-107. WHEN `marfa docs` reads the documentation, the command MUST send each request to the docs site, which is the address in `MARFA_DOCS_URL` where that is set to more than white space and `https://docs.marfa.so` otherwise, whatever `MARFA_API_URL` holds: a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
+`marfa docs` reads the public docs site, `https://docs.marfa.so` unless `MARFA_DOCS_URL` names another. The docs site is not a Marfa instance: the command needs no server, working copy or key to read it.
 
-**Reason:** the docs site is not a Marfa instance. The command needs no server, store or key, so an agent can read the docs before it has any of them.
+### `device/docs-site`
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`, `commands::docs::tests::the_topics_are_read_from_their_own_address`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
+When `marfa docs` sends a request, the command MUST send it to the address in `MARFA_DOCS_URL` where that holds more than white space, whatever `MARFA_API_URL` holds.
 
-108. WHEN `marfa docs` sends a request to the docs site, the command MUST send no credential, whatever `MARFA_API_KEY` holds.
+**Reason:** an agent can read the docs before it has a server, a working copy or a key.
+
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
+
+### `device/docs-paths`
+
+When `marfa docs` reads the docs site, the command MUST read a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
+
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
+
+### `device/docs-no-credential`
+
+When `marfa docs` sends a request to the docs site, the command MUST send no credential, whatever `MARFA_API_KEY` holds.
 
 **Reason:** the docs site has no keys, so a credential sent to it would reach a host that never asked for one.
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`.
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
 
-109. WHEN the docs site answers `marfa docs`, the command MUST read the answer whether or not it names a contract.
+### `device/docs-no-contract`
 
-**Reason:** the docs site names no contract, so the check the command holds a server's answers to (39) would refuse every page.
+When the docs site answers `marfa docs` naming no contract, the command MUST read the answer.
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_page_is_read_without_checking_a_contract`.
+**Reason:** the docs site names no contract, so the check the command holds a server's answers to would refuse every page.
 
-110. IF the docs site answers `404` for the page `marfa docs` is given, THEN the command MUST exit 1 with `docs_page_not_found`, naming the path.
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
+
+### `device/docs-page-missing`
+
+If the docs site answers `404` for the page `marfa docs` is given, then the command MUST exit 1 with `docs_page_not_found`, naming the path.
 
 **Reason:** a retry does not change a missing page. The message points to `marfa docs search`, where an agent that guessed a path can find the page it meant.
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_missing_page_is_named_and_refused`.
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`, `› names the page a docs site does not hold, and the site that answers with a fault`.
 
-111. IF the docs site cannot be reached, or answers with a server fault or a status the command does not read, THEN the command MUST exit 3 with `docs_unreachable`, naming the site's address.
+### `device/docs-unreachable`
 
-**Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything (`queue-and-verdicts/environmental-uncounted`).
+If the docs site cannot be reached, or answers with a server fault or a status the command does not read, then the command MUST exit 3 with `docs_unreachable`, naming the site's address.
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_site_that_is_not_listening_is_unreachable`, `commands::docs::tests::a_site_that_answers_with_a_server_fault_or_nothing_useful_is_unreachable`.
+**Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything.
 
-112. WHEN `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`, `› names the page a docs site does not hold, and the site that answers with a fault`.
 
-**Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`. Core `commands::docs::tests::every_way_to_name_a_page_is_one_path`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
+### `device/docs-page-names`
 
-113. IF the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+When `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
 
-**Reason:** an answer the command cannot read is not a refusal and not a lost connection, and printing part of it would pass a proxy's or a catch-all page's words off as the docs.
+**Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`.
 
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it`. Core `commands::docs::tests::an_answer_that_is_not_the_json_expected_is_a_decoding_error`, `tests/docs.rs::an_answer_that_is_not_the_json_expected_leaves_by_three`.
+### `device/docs-json-refused`
 
-114. IF the docs site answers a page `marfa docs` asked for as `text/html`, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+If the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
 
-**Reason:** a site's catch-all page must never be printed as the page asked for.
+**Reason:** an answer the command cannot read is not a refusal and not a lost connection, and printing it would pass a proxy's or a catch-all page's words off as the docs.
 
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page served as HTML, printing none of it`. Core `commands::docs::tests::an_answer_that_is_not_the_json_expected_is_a_decoding_error`, `tests/docs.rs::a_page_served_as_html_is_never_printed`.
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it`.
 
-115. IF the body of a success from the docs site is larger than 10 MiB (10,485,760 bytes), THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+### `device/docs-html`
+
+If the docs site answers a page `marfa docs` asked for as `text/html`, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
+
+**Reason:** a site's catch-all page is never the page asked for.
+
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page served as HTML, printing none of it`.
+
+### `device/docs-too-large`
+
+If the body of a success the docs site answers `marfa docs` with is larger than 10 MiB, which is 10,485,760 bytes, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
 
 **Reason:** a page or the list of pages is far smaller, so a body that large is not what the command asked for, and a retry does not change it. It is not `docs_unreachable`, which says the site may answer next time.
 
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs answer larger than the command reads`. Core `commands::docs::tests::a_body_larger_than_the_command_reads_is_a_decoding_error_whatever_the_status_says_after`.
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs answer larger than the command reads`.
 
-116. IF the body of a success from the docs site is not UTF-8, THEN the command MUST exit 3 with `decoding` and print nothing of the body.
+### `device/docs-not-utf8`
 
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page that is not UTF-8`. Core `commands::docs::tests::a_body_that_is_not_utf8_is_a_decoding_error_but_a_refusal_is_still_a_refusal`.
+If the body of a success the docs site answers `marfa docs` with is not UTF-8, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
 
-117. IF the docs site answers more than five redirects in a row to one request of `marfa docs`, THEN the command MUST exit 3 with `docs_unreachable`.
+**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page that is not UTF-8`.
+
+### `device/docs-redirect-followed`
+
+When the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the command MUST follow it.
+
+**Reason:** the docs site may move a page, and the command sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (`device/redirect-not-followed`).
+
+**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`.
+
+### `device/docs-redirect-loop`
+
+If the docs site answers more than five redirects in a row to one request of `marfa docs`, then the command MUST exit 3 with `docs_unreachable`.
 
 **Reason:** more than five redirects in a row is a loop, which is the site failing.
 
-**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`, `commands::docs::tests::a_sixth_redirect_in_a_row_is_the_site_failing`.
+**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`.
 
-118. WHERE `--json` is given, WHEN `marfa docs` reads a page, the command MUST report in `url` the address it asked for, whether or not a redirect led it to another.
+### `device/docs-json-url`
 
-**Tests:** `device/contract.test.ts › reports the address a docs page was asked for, not the one a redirect led to`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`.
+Where `--json` is given, when `marfa docs` reads a page, the command MUST report in `url` the address it asked for, whether or not a redirect led it to another.
 
-119. IF `--url` or `--key` is given to `marfa docs`, THEN the command MUST exit 2 with `usage` and send no request.
+**Tests:** `device/contract.test.ts › reports the address a docs page was asked for, not the one a redirect led to`.
+
+### `device/docs-url-key`
+
+If `--url` or `--key` is given to `marfa docs`, then the command MUST exit 2 with `usage` and send no request.
 
 **Reason:** both name a Marfa server and a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
 
-**Tests:** `device/contract.test.ts › refuses --url and --key on docs with usage, sending nothing`. Core `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+**Tests:** `device/contract.test.ts › refuses --url and --key on docs with usage, sending nothing`.
 
-120. IF the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, THEN the command MUST exit 1 with `invalid` and send no request.
+### `device/docs-path-refused`
+
+If the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, then the command MUST exit 1 with `invalid` and send no request.
 
 **Reason:** a path outside that set could leave the docs site's pages or carry another request in its name.
 
-**Tests:** `device/contract.test.ts › refuses a docs page path it does not accept with invalid, sending nothing`. Core `commands::docs::tests::a_name_that_is_not_a_path_is_refused_before_anything_is_sent`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+**Tests:** `device/contract.test.ts › refuses a docs page path it does not accept with invalid, sending nothing`.
 
-121. IF `MARFA_DOCS_URL` is set to more than white space, and is not an `http` or `https` address with a host and no query or fragment, THEN the command MUST exit 1 with `invalid` and send no request.
+### `device/docs-site-refused`
 
-**Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`. Core `commands::docs::tests::the_address_must_be_http_or_https`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` address with a host and no query or fragment, then the command MUST exit 1 with `invalid` and send no request.
 
-122. WHEN the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the command MUST follow it.
+**Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`.
 
-**Reason:** the docs site may move a page, and the command sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (42).
+## Search, matched as the server matches
 
-**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`.
+A local search matches, ranks and excerpts as the server's search does, so a query answers the same rows online and offline. The server's halves are the `search-and-filters` rules of the same names.
 
-## How a local search matches
+### `device/search-stem`
 
-123. A device MUST reduce every word of the indexed text and of a query to its stem, so that `run` followed by another word matches `running` and `runs` and not `runner`. A device that matched whole words only would lose a row the server finds (`search-and-filters/search-stem`). `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+A device MUST reduce every word of the indexed text and of a query to its stem, so that `run` followed by another word matches `running` and `runs` and not `runner`.
 
-124. WHEN a query is not wholly inside double quotes, a device MUST match only the rows in which every whitespace-separated word of it matches, in any order and in any column. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Reason:** a device that matched whole words only would lose a row that the server finds (`search-and-filters/search-stem`).
 
-125. WHEN a query is not wholly inside double quotes, a device MUST match its last word as the start of a word. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-126. WHEN a query is not wholly inside double quotes, a device MUST match every word of it but the last as a whole stem. A prefix on every word would match `marshland` for `marsh landscape`, which the server does not. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+### `device/search-all-words`
 
-127. WHEN a query begins and ends with a double quote and holds at least one character between them, a device MUST match the text between them as a phrase, with its words adjacent and in order. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+When a query is not wholly inside double quotes, a device MUST match only the rows in which every whitespace-separated word of it matches, in any order and in any column.
 
-128. WHEN a query is a phrase, a device MUST match the last word of the phrase as a whole stem and not as a prefix. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-129. WHEN a double quote in a query is not the first and the last character of a phrase, a device MUST read it as text. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+### `device/search-last-prefix`
 
-130. WHEN a query has whitespace or byte-order marks around it, a device MUST ignore them. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+When a query is not wholly inside double quotes, a device MUST match its last word as the start of a word.
 
-131. A device MUST read an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word of a query as words to match, and never as search syntax. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-132. WHEN a query holds only spaces, a device MUST match nothing. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+### `device/search-earlier-whole`
 
-133. WHILE a row is not in the bin, a device MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+When a query is not wholly inside double quotes, a device MUST match every word of it but the last as a whole stem.
 
-134. WHEN a query is a phrase, a device MUST match it against the string properties of a row beyond the four core ones joined in the order of their names, and against its tags joined in byte order. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Reason:** a prefix on every word would match `marshland` for `marsh landscape`, which the server does not.
 
-135. A device MUST NOT match a property that its type declares as a string with `searchable: false`, so the properties a person marked private stay unmatched. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-136. A device MUST NOT match a property that the row's type does not declare. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+### `device/search-phrase`
 
-137. A device MUST match each row it holds by what the types of its current catalog mark searchable, so a changed catalog that the device takes changes what its rows match. What a row gives the index is decided when it is written, so without this a row would keep answering by the fields its type had. `device/search-live.test.ts › holds a changed type's searchable fields against rows it already holds`.
+When a query begins and ends with a double quote and holds at least one character between them, a device MUST match the text between them as a phrase, with its words adjacent and in order.
 
-138. A device MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores by that slice, and its order equals the server's only where the rows they hold are the same. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-139. A device MUST order hits of equal rank by item identifier, ascending. `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+### `device/search-phrase-whole`
 
-140. WHEN a hit's text matches the query, a device MUST write an excerpt of at most 32 words. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+When a query is a phrase, a device MUST match the last word of the phrase as a whole stem and not as a prefix.
 
-141. A device MUST draw the excerpt of a hit from the column that matches it best. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-142. A device MUST wrap each matched word of an excerpt in `<mark>` and `</mark>`. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+### `device/search-quote-text`
 
-143. WHEN an excerpt cuts the text, a device MUST write `...` where it is cut. `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+When a double quote in a query is not the first and the last character of a phrase, a device MUST read it as text.
 
-144. A device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`. An app shows the excerpt as HTML, and a row's text is never markup for that app to render. `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
-145. A device MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</mark>`, each pair opened before it closes. `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
+### `device/search-trim`
+
+When a query has whitespace or byte-order marks around it, a device MUST ignore them.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/search-syntax-text`
+
+A device MUST read an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word of a query as words to match, and never as search syntax.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/search-no-word`
+
+When a query holds only spaces, a device MUST match nothing.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-fields`
+
+While a row is not in the bin, a device MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-order`
+
+When a query is a phrase, a device MUST read the string properties of a row beyond the four core ones in the order of their names, and its tags in byte order.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-unsearchable`
+
+A device MUST NOT match a property that its type declares as a string with `searchable: false`.
+
+**Reason:** the properties a person marked private stay unmatched.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-undeclared`
+
+A device MUST NOT match a property that the row's type does not declare.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/index-type-change`
+
+A device MUST match each row it holds by what the types of its current catalog mark searchable, so a changed catalog that the device takes changes what its rows match.
+
+**Reason:** what a row contributes to the index is decided when it is written, so without this a row would keep answering by the fields its type had.
+
+**Tests:** `device/search-live.test.ts › holds a changed type's searchable fields against rows it already holds`.
+
+### `device/rank-bm25`
+
+A device MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first.
+
+**Reason:** BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores by that slice: its order equals the server's only where the rows they hold are the same.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/rank-ties`
+
+A device MUST order hits of equal rank by item identifier, ascending.
+
+**Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+### `device/excerpt-words`
+
+When a hit's text matches the query, a device MUST write an excerpt of at most 32 words.
+
+**Tests:** `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+### `device/excerpt-column`
+
+A device MUST draw the excerpt of a hit from the column that matches it best.
+
+**Tests:** `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+### `device/excerpt-mark`
+
+A device MUST wrap each matched word of an excerpt in `<mark>` and `</mark>`.
+
+**Tests:** `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+### `device/excerpt-cut`
+
+When an excerpt cuts the text, a device MUST write `...` where it is cut.
+
+**Tests:** `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+### `device/excerpt-escaped`
+
+A device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`.
+
+**Reason:** an app shows the excerpt as HTML, and a row's text is never markup for that app to render.
+
+**Tests:** `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
+
+### `device/excerpt-markup`
+
+A device MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</mark>`, each pair opened before it closes.
+
+**Tests:** `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
 
 ## What the real server cannot be made to produce
 
-The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.
+The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.
 
-- **Invalid copy proof.** The real server does not deliberately omit or forge its certificate, listing classification or completion marker; scripted responses exercise fail-closed decoding.
+- **Invalid copy proof.** The real server does not omit or forge its certificate, listing classification or completion marker, so scripted answers exercise fail-closed decoding.
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
-- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions/auto-resolved`), so the refusal a device has to classify (`queue-and-verdicts/conflict-blocks`) is one the real server does not give for a write it can resolve. A write carrying only `edges` and a stale version is refused rather than resolved, because there is nothing to merge, but that is not a write that asked for resolution.
+- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions/auto-resolved`), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give for a write it can resolve. A write carrying only `edges` and a stale version is refused rather than resolved, because there is nothing to merge, but that is not a write that asked for resolution.
 - **An answer on another contract, or a success naming none.** The run's server names the contract the binary was built for on every answer, and nothing over the wire asks it for another.
-- **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the row (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process, because a device fixture cannot arrange one.
-- **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key doors' allowance (`README.md`). The real server does answer one, and `keys-and-oauth.md` 33 asserts it against a server booted with the limiter on; a device fixture drives the run's server and cannot ask for a second.
-- **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (13). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
-- **A placement path with a leading separator.** The edge door refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders.md` 30).
-- **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts/refusal-parts` and `queue-and-verdicts/refusal-in-bin`), and the fixtures script the shapes the server will answer.
+- **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the row (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
+- **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth.md` 33 asserts it against a server booted with the limiter on.
+- **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (`device/server-row-order`). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
+- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders.md` 30).
+- **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts.md` 48), and the fixtures script the shapes the server will answer.
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. The frame's shape is held by the server's own test, which retires a row directly.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).
-
-- **A create queued under an id the server cannot hold.** The device refuses such an id before it queues it (100), so only a store an earlier build made carries one. A core test scripts the refusal and the read-back that follow it (101).
-- **An ordinary unkeyed create refused `ancestor_unavailable`.** The current server produces this refusal for conditional natural-key creates, whose device receipt is terminal. The scripted ordinary-create refusal exercises the generic classifier and withdrawal of dependent work without claiming that the server emits that combination. `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› clears with the answered rows those only a withdrawn write was keeping, but for one carrying content`.
+- **A create queued under an id the server cannot hold.** A device refuses such an id before it queues it (`device/id-format`), so only a store an earlier build made carries one. `device/verdicts.test.ts` scripts the refusal and the read-back that follow it (`device/read-back-invalid-id`).
+- **An ordinary unkeyed create refused `ancestor_unavailable`.** The server gives this refusal to a conditional natural-key create, whose receipt is terminal. The scripted refusal of an ordinary create exercises the generic classifier and the withdrawal of the writes held for it, without claiming that the server gives that combination: `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› clears with the answered rows those only a withdrawn write was keeping, but for one carrying content`.

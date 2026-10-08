@@ -150,6 +150,26 @@ describe("a device refuses a filter outside the listing grammar", () => {
     }
   });
 
+  it("counts a filter's length in UTF-16 code units, as the server does", async () => {
+    harness = await hydrated("filter-units");
+    const { device } = harness;
+    const room = 2048 - 'properties.title eq ""'.length;
+    // Each of these characters is two UTF-16 code units and one code point.
+    const within = await device.list({
+      filter: `properties.title eq "${"\u{1F600}".repeat(room / 2)}"`,
+    });
+    expect(
+      within.ok,
+      `2048 code units were refused: ${JSON.stringify(within)}`,
+    ).toBe(true);
+    expectRefusedAsTheServerDoes(
+      await device.list({
+        filter: `properties.title eq "${"\u{1F600}".repeat(room / 2 + 1)}"`,
+      }),
+      "2050 code units in fewer than 2048 characters",
+    );
+  });
+
   it("refuses a search filter the grammar refuses, as the server does", async () => {
     harness = await hydrated("search-filter");
     const { device } = harness;
@@ -315,6 +335,10 @@ describe("a device refuses a write only the server may make", () => {
       expect(searched.ok ? "answered" : searched.refusal.code, type).toBe(
         "validation",
       );
+      for (const outcome of [listed, searched]) {
+        if (!outcome.ok)
+          expect(outcome.refusal.raw).toContain("validation_error");
+      }
     }
     // The same calls answer a type and a namespace the grammar takes.
     for (const type of ["core.note", "core.*"]) {
@@ -614,6 +638,10 @@ describe("a device refuses to decide what the server decides", () => {
       sent.properties.body,
       "the device sent something other than the value it was handed, so it combined its own field with the one the copy held",
     ).toBe("my line");
+    expect(
+      Object.keys(sent.properties),
+      "the device sent a property the caller did not name, from the row it held",
+    ).toEqual(["body"]);
 
     const read = await harness.device.get(HELD.id);
     expect(read.ok).toBe(true);

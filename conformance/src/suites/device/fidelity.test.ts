@@ -1818,7 +1818,7 @@ describe("the scripted answers match the server's", () => {
       }
     ).data;
     expect((listed.data as { next_cursor: unknown }).next_cursor).toBeNull();
-    // Every field the device reads (`device.md` 47), the description apart:
+    // Every field the device reads (`device/catalog-type-read`), the description apart:
     // it is prose the device passes through and nothing here asserts.
     const read = (row: Record<string, unknown> | WireEdgeType | undefined) => ({
       label: row?.label,
@@ -2223,7 +2223,7 @@ describe("the scripted answers match the server's", () => {
         // protocol's: `core.entity.person` carries twenty fields here and
         // would carry a different twenty elsewhere. A device reads a type
         // for its parent, its title and body fields and the names it declares
-        // (`device.md` 15, `folders.md` 7), so mirroring the schema would be
+        // (`device/catch-up-catalog-first`, `folders.md` 7), so mirroring the schema would be
         // this file holding a copy of a seed that changes without it.
         absent: [
           "row.fields",
@@ -2494,8 +2494,7 @@ describe("the scripted answers match the server's", () => {
   });
 
   it("matches the replay a cursor of zero gets against a log that begins at one", async (context) => {
-    // Every device that hydrated an empty instance holds `0` (`device.md`
-    // 35), so the scripted `replay` a cursor of zero is answered with has
+    // Every device that hydrated an empty instance holds `0` (`device/cursor-zero`), so the scripted `replay` a cursor of zero is answered with has
     // to be the real server's answer: the head, then the events, and no
     // terminal frame. The run's server has written since its first event,
     // so the replay is read until a row this case wrote arrives.
@@ -2556,7 +2555,7 @@ describe("the scripted answers match the server's", () => {
 
   it("matches the frame a cursor past the log's head gets", async (context) => {
     // What a device holds after its server is restored behind it
-    // (`device.md` 16). Far enough past the head that no other file's
+    // (`device/expire-log-behind`). Far enough past the head that no other file's
     // writes reach it while this one runs.
     const requested = "9000000000000000000";
     const frames = await withStream(
@@ -2633,8 +2632,7 @@ describe("the scripted answers match the server's", () => {
 });
 
 /**
- * The listing grammar a device answers from its copy (`device.md` 24 and
- * 36), held against the server that defines it. A device hydrates a slice of
+ * The listing grammar a device answers from its copy (`device/filter-grammar-refused` and `device/filter-as-server`), held against the server that defines it. A device hydrates a slice of
  * one type the run registers, so the server's answer and the device's are
  * about the same four rows and no others, and each expression is asked of
  * both.
@@ -2979,6 +2977,17 @@ describe("a local read answers the listing grammar as the server does", () => {
     ).toEqual([linked, target].sort());
     const to = await device.list({ filter: `edge[references] eq "${target}"` });
     expect(to.ok ? to.value : to).toEqual([]);
+
+    // An edge of that type this device queued is held as any queued write
+    // is, so the term answers it.
+    const queued = await device.createEdge({
+      source: target,
+      target: linked,
+      type: "references",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const own = await device.list({ filter: "edge[references] exists" });
+    expect(own.ok ? own.value.map((item) => item.id) : own).toEqual([target]);
   });
 
   it("answers an edge term naming a target the key cannot read as the server does", async () => {

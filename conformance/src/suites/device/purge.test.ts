@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { SCRIPTED_INSTANCE, answers } from "../../device/marfa-answers.js";
+import {
+  SCRIPTED_INSTANCE,
+  answers,
+  refusal,
+} from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
 import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
 import { scriptHydration, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
 
 /**
- * A purge through a working copy against a scripted server (`device.md` 75
- * to 82): the refusals the copy makes before sending anything, the instance
- * it confirms first, and a purge whose answer never comes.
+ * A purge through a working copy against a scripted server (the device
+ * chapter's section "Purging"): the refusals the copy makes before sending
+ * anything, the instance it confirms first, and a purge whose answer never
+ * comes.
  */
 
 let harness: Harness | undefined;
@@ -67,6 +72,16 @@ async function queued(device: DeviceUnderTest): Promise<string[]> {
 }
 
 const accepted: Answer = { kind: "json", status: 200, body: { ok: true } };
+
+describe("the version a purge names", () => {
+  it("sends the version the caller names over the one the copy holds", async () => {
+    harness = await holding("purge-named-version");
+    harness.server.answer("POST", `/items/${TRASHED}/purge`, accepted);
+    const purged = await harness.device.purgeItem(TRASHED, 9);
+    expect(purged.ok, JSON.stringify(purged)).toBe(true);
+    expect(purges(harness)).toEqual([`/items/${TRASHED}/purge?version=9`]);
+  });
+});
 
 describe("a device sends a purge only for a row it holds in the bin", () => {
   it("refuses a row the copy does not hold, sending nothing", async () => {
@@ -133,6 +148,37 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
     }
     expect(purges(harness)).toEqual([]);
     expect(await queued(harness.device)).toEqual([deleted.value.id]);
+  });
+});
+
+describe("a device purges no row a blocked write still names", () => {
+  it("refuses a row a blocked write names, sending nothing", async () => {
+    harness = await holding("purge-blocked");
+    const deleted = await harness.device.deleteItem(ACTIVE);
+    expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+    if (!deleted.ok) return;
+    harness.server.answer(
+      "DELETE",
+      `/items/${ACTIVE}`,
+      refusal(422, "idempotency_key_reused", "The key was spent"),
+    );
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await harness.device.queue();
+    // The witness: the write is blocked, not waiting to be sent, and the
+    // copy still shows the row in the bin.
+    expect(queue.ok && queue.value.map((row) => [row.id, row.verdict])).toEqual(
+      [[deleted.value.id, "blocked"]],
+    );
+    expect(await trashed(harness.device)).toContain(ACTIVE);
+
+    const refused = await harness.device.purgeItem(ACTIVE);
+    expect(refused.ok, "a purge went out over a blocked write").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("invalid");
+      expect(refused.refusal.raw).toContain("waiting");
+    }
+    expect(purges(harness)).toEqual([]);
   });
 });
 

@@ -3072,6 +3072,15 @@ pub fn add_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(),
     Ok(())
 }
 
+pub fn tag_count(conn: &Connection, item_id: &str) -> Result<usize, CoreError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tags WHERE item_id = ?1",
+        [item_id],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(count).unwrap_or(usize::MAX))
+}
+
 pub fn remove_tag(conn: &Connection, item_id: &str, tag: &str) -> Result<(), CoreError> {
     conn.execute(
         "DELETE FROM tags WHERE item_id = ?1 AND tag = ?2",

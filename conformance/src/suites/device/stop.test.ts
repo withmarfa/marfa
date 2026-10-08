@@ -12,7 +12,9 @@ import {
   copyHeadRead,
   itemsPage,
   copyStreamCursor,
+  edgeTypeCatalog,
   refusal,
+  typeCatalog,
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
@@ -502,6 +504,72 @@ describe("stopping a call whose first request is not answered", () => {
     );
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("never");
+  });
+
+  it("ends a catch-up at once on Ctrl-C, while its catalog read still waits", async () => {
+    harness = await startHarness("stop-unanswered-catch-up");
+    const { server, device } = harness;
+    let stalled = false;
+    scriptHydration(server, {
+      head: "10",
+      edgeTypes: () => (stalled ? { kind: "stall" } : edgeTypeCatalog()),
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const before = await device.status();
+    expect(before.ok && before.value.event_cursor).toBe("10");
+    const asked = (path: string) =>
+      server.requests.filter((request) => request.pathname === path).length;
+    const hydrationAsked = asked("/edge-types");
+    const streams = asked("/events");
+    stalled = true;
+    const call = device.hold(["catch-up"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(asked("/edge-types"), call.stderr).toBe(hydrationAsked + 1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      call.interrupt();
+      await vi.waitFor(
+        () => {
+          expect(
+            call.exitCode(),
+            "catch-up went on waiting on its catalog read after one Ctrl-C",
+          ).not.toBeNull();
+        },
+        { timeout: 2_000, interval: 25 },
+      );
+      expect(call.exitCode(), call.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(call.stderr).error.code).toBe("canceled");
+    } finally {
+      await call.stop();
+    }
+    expect(asked("/events"), "the stopped catch-up opened its stream").toBe(
+      streams,
+    );
+    const after = await device.status();
+    expect(after.ok && after.value.event_cursor).toBe("10");
+  });
+
+  it("ends a read of the server's catalog at once on Ctrl-C, while it still waits", async () => {
+    const reads: Array<[string[], string]> = [
+      [["types", "served"], "/types"],
+      [["edge-types", "served"], "/edge-types"],
+    ];
+    for (const [command, path] of reads) {
+      harness = await startHarness(`stop-unanswered-${String(command[0])}`);
+      const { server, device } = harness;
+      // The catalog is read item types first, so the edge types wait only
+      // once the item types are answered.
+      if (path === "/edge-types") server.answer("GET", "/types", typeCatalog());
+      expect((await device.status()).ok).toBe(true);
+      await stoppedWhileAsking(server, device, command, path);
+      const status = await device.status();
+      expect(status.ok && status.value.catalog_version).toBeNull();
+      await harness.stop();
+      harness = undefined;
+    }
   });
 
   it("ends a drain at once on Ctrl-C, while it still asks which instance the server is", async () => {
