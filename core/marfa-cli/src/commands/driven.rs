@@ -528,7 +528,7 @@ impl Document {
 const MISSED: &[&str] = &[
     // `login`: found by discovery and sent in a browser flow.
     "registerOAuthClient",
-    // `owner create`: asks for the password on a terminal first.
+    // `setup claim`: uses a hidden prompt or structured stdin, driven by device conformance.
     "createOwner",
 ];
 

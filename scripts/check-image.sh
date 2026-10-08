@@ -92,6 +92,8 @@ const cli = (args, body) => {
   return JSON.parse(result.stdout);
 };
 assert.equal(cli(['setup','status']).claimed, false);
+assert.match(cli(['setup','code']).code, /^[A-Z2-7-]+$/);
+assert.match(cli(['setup','open','--no-browser']).url, /\/setup#handoff=.+/);
 const email='owner@example.com';
 const oldPassword='initial-container-password';
 const newPassword='replacement-container-password';

@@ -1428,7 +1428,7 @@ When the command sends a call other than a mint, `status` or `whoami`, the comma
 
 ### `device/command-mint-root-first`
 
-When the command sends a write whose answer is the only copy of what it mints, `keys create`, `keys bootstrap` or `webhooks create`, the command MUST first read the server's root.
+When the command sends a write whose answer is the only copy of what it mints, `keys create` or `webhooks create`, the command MUST first read the server's root.
 
 **Reason:** a mint refused for its contract has already minted a key or a secret nobody can read.
 
@@ -1468,7 +1468,7 @@ When `whoami` reads a server on another contract, the command MUST report the co
 
 If the server refuses `status` the item counts `403 type_not_permitted`, then the command MUST still describe the server, say the counts need a working key and exit 0.
 
-**Reason:** a credential whose type permissions reach no type, the operator key among them, is refused the counts (`keys-and-oauth.md` 1).
+**Reason:** a credential whose type permissions reach no type is refused the counts (`keys-and-oauth.md` 1).
 
 **Tests:** `device/contract.test.ts › describes the server to a key that reaches no type, and says the counts need a working key`.
 
@@ -1484,19 +1484,31 @@ The command MUST print its table of operations without sending a request.
 
 **Tests:** `device/contract.test.ts › sends nothing to print the table`.
 
-### `device/bootstrap-stdin`
+### `device/claim-stdin`
 
-When `keys bootstrap` is not given `--secret`, the command MUST read the one-time secret from the first line of its standard input.
+When `setup claim --stdin` runs, the command MUST read the email, password and setup code from a JSON object on standard input.
 
-**Reason:** a secret on the command line is left in the shell's history.
+**Reason:** passwords and setup codes must not be left in shell history or process arguments.
 
-**Tests:** `device/contract.test.ts › mints the operator key with a bootstrap secret read from stdin`.
+**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
 
-### `device/bootstrap-blank`
+### `device/claim-invalid-stdin`
 
-If `keys bootstrap` reads a blank line for its secret, then the command MUST refuse it `invalid` and send nothing.
+If `setup claim --stdin` reads blank or malformed JSON, then the command MUST refuse it `invalid` and MUST NOT send a claim.
 
-**Tests:** `device/contract.test.ts › mints the operator key with a bootstrap secret read from stdin`.
+**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
+
+### `device/local-socket-exclusive`
+
+When `--socket PATH` is supplied, the command MUST reject ordinary URL or credential selection.
+
+**Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
+
+### `device/local-socket-no-fallback`
+
+If the selected private socket cannot be reached safely, then the command MUST fail without falling back to HTTP or stored credentials.
+
+**Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
 
 ### `device/redeliver-request`
 

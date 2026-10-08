@@ -2101,7 +2101,7 @@ describe("the scripted answers match the server's", () => {
       { status: current.status, body: current.data },
       answers.currentKey("fixture-key", { "*": "write" }),
       {
-        shape: ["id", "is_operator", "edge_permissions"],
+        shape: ["id", "permissions", "edge_permissions"],
         // Grants differ by key, so each map is compared by its kind above,
         // and its entries are not.
         absent: [
