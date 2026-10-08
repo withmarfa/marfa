@@ -57,7 +57,6 @@ RUN printf '{"sha":"%s","deployed_at":"%s"}\n' "$VERSION_SHA" "$(date -u +%Y-%m-
   && mkdir -p /data \
   && chown -R node:node /app /data
 USER node
-VOLUME /data
 EXPOSE 8600
 # `/health` answers 200 with a status of ok or degraded and 503 when a
 # component is down; slim carries no curl, so the probe is Node's own fetch.
