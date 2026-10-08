@@ -280,7 +280,7 @@ If the server's root answers a failure that clears on its own when a folder's se
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #1890.
 
 ### `device/proof-lost`
 
@@ -1598,7 +1598,7 @@ If every held stream ends at once, then a device MUST ask for the next after a w
 
 While a device waits to ask for a held stream again, a device MUST NOT wait more than thirty seconds unless the server names a longer wait.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #1890.
 
 ### `device/follow-server-failing`
 
@@ -1671,6 +1671,20 @@ When a held stream is had again after the device told `server.unreachable`, a de
 When a held stream is had at once, a device MUST tell its caller neither `server.unreachable` nor `server.reachable`.
 
 **Tests:** `device/catch-up.test.ts › applies an event on a held stream beneath a write it has not had answered`.
+
+### `device/follow-told-reachable`
+
+When a held stream is had at once, and its caller says it was last told `server.unreachable` by an earlier held stream, a device MUST tell the caller `server.reachable`.
+
+**Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-told-not-again`
+
+If a held stream cannot be had for a reason that clears on its own, and its caller says it was last told `server.unreachable` by an earlier held stream, then a device MUST NOT tell the caller `server.unreachable` again.
+
+**Tests:** waiting on #1890.
 
 ### `device/event-id-number`
 
@@ -1892,7 +1906,7 @@ A device MUST answer an edge type as `GET /edge-types` lists it (`edges/types-li
 
 When a device reads the catalog while a refresh replaces it, a device MUST answer from one catalog, wholly before or wholly after the refresh.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #1890.
 
 ### `device/catalog-replace-whole`
 
