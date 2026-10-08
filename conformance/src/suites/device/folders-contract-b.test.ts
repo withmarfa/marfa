@@ -1108,9 +1108,8 @@ it.each(["ignore", "dot directory"])(
   },
 );
 
-it.runIf(process.platform === "darwin")(
-  "leaves file and item executable values alone on an exFAT volume",
-  async () => {
+describe.runIf(process.platform === "darwin")("exFAT permissions", () => {
+  it("leaves file and item executable values alone on an exFAT volume", async () => {
     harness = await fileHarness("contract-b-exfat");
     expect((await harness.folder.pull()).ok).toBe(true);
     const scratch = mkdtempSync(join(tmpdir(), "marfa-exfat-"));
@@ -1170,5 +1169,5 @@ it.runIf(process.platform === "darwin")(
       if (attached) await execute("hdiutil", ["detach", mount]);
       rmSync(scratch, { recursive: true, force: true });
     }
-  },
-);
+  });
+});

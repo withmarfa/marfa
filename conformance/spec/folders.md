@@ -3692,13 +3692,13 @@ When a bound file’s executable permission changes after the folder scan read i
 
 Where a volume does not preserve executable permissions or the folder cannot establish that it does, a device MUST leave executable permissions unchanged on the item.
 
-**Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`.
+**Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`, `device/folders-contract-b.test.ts › leaves file and item executable values alone on an exFAT volume`.
 
 ### `folders/permission-probe-failed-file-preserved`
 
 Where a volume does not preserve executable permissions or the folder cannot establish that it does, a device MUST leave executable permissions unchanged on the file.
 
-**Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`.
+**Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`, `device/folders-contract-b.test.ts › leaves file and item executable values alone on an exFAT volume`.
 
 ### `folders/permission-write-refused`
 
