@@ -1753,6 +1753,68 @@ describe("a refused write's content is kept", () => {
     if (discarded.ok) expect(discarded.value).toBe(true);
     expect(await queueOf(harness.device)).toEqual([]);
   });
+
+  it("keeps a refused write a write still waiting depends on through a discard", async () => {
+    harness = await hydratedHarness("queue-discard-waited", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    const unrelated = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    if (!created.ok || !unrelated.ok) throw new Error("not queued");
+    const tagged = await device.addTag(created.value.item_id ?? "", "waiting");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    if (!tagged.ok) return;
+    // The create is refused and read back; the pass then ends at the edit,
+    // before it comes to the tag that waits on the create.
+    const edited = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "edited", body: "held" },
+    });
+    let reachable = false;
+    scriptWrites(server, {
+      create: [answers.validation("validation_error", "The create is invalid")],
+      read: [
+        (request) =>
+          request.pathname === `/items/${HELD.id}`
+            ? answers.updated(edited)
+            : refusal(404, "item_not_found", "Item not found"),
+      ],
+      update: [() => (reachable ? answers.updated(edited) : answers.dropped())],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const queue = await queueOf(device);
+    const of = (id: string) => queue.find((row) => row.id === id);
+    expect(of(created.value.id)?.verdict).toBe("refused");
+    expect(
+      of(tagged.value.id)?.verdict,
+      "the tag was settled in the pass, so nothing here waits on the refused create",
+    ).toBeNull();
+    const kept = await device.discard(created.value.id);
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (kept.ok)
+      expect(
+        kept.value,
+        "a discard took a refused write a write still waiting depends on, which would then wait on nothing",
+      ).toBe(false);
+    expect(
+      (await queueOf(device)).find((row) => row.id === created.value.id),
+    ).toBeDefined();
+    // The witness: once the tag is refused for it, the create goes.
+    reachable = true;
+    expect((await device.drain()).ok).toBe(true);
+    const settled = await queueOf(device);
+    expect(settled.find((row) => row.id === tagged.value.id)?.verdict).toBe(
+      "refused",
+    );
+    const discarded = await device.discard(created.value.id);
+    expect(discarded.ok && discarded.value).toBe(true);
+  });
 });
 
 /** The kinds a queue holds (`queue-and-verdicts/kinds-closed`). */
@@ -4530,6 +4592,10 @@ describe("an upload is a queued write", () => {
       [fileItem?.verdict, link?.verdict],
       "what waits on an upload that can never be sent was left waiting rather than refused in the same drain",
     ).toEqual(["refused", "refused"]);
+    expect(
+      drained.value.unsent,
+      "the upload refused for its bytes, and what waited on it, were not counted as settled without being sent",
+    ).toBe(3);
     // The witness: an upload whose bytes are held goes out in the same
     // drain, so the refusal is the missing bytes and not the door.
     expect(present?.verdict).toBe("accepted");
@@ -4572,6 +4638,10 @@ describe("an upload is a queued write", () => {
       expect(drained.value.verdicts[0]?.reason).toContain(
         "could not be opened",
       );
+      expect(
+        drained.value.undelivered,
+        "an upload whose bytes could not be opened for now was not counted as undelivered",
+      ).toBe(1);
       expect(
         drained.value.verdicts[0]?.refusals,
         "bytes that could not be opened for now were counted as a refusal the server gave",
