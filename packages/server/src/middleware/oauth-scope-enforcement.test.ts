@@ -11,18 +11,22 @@
  * plane — they exercise the four route families end-to-end with narrow
  * scopes and assert the correct accept/reject shape per scope kind.
  */
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setRuntimeNamespaceRoots } from "../auth/oauth-provider.js";
 import type { TestContext } from "../test-utils.js";
+import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 
 let ctx: TestContext;
 
 beforeEach(async () => {
+  // Boot re-enumerates registered runtime namespaces before constructing auth.
+  setRuntimeNamespaceRoots(["demo", "demo.web_gallery"]);
   ctx = await createTestContext();
 });
 
 afterEach(async () => {
   await ctx.cleanup();
+  setRuntimeNamespaceRoots([]);
 });
 
 interface MintedToken {
@@ -31,15 +35,12 @@ interface MintedToken {
 }
 
 /**
- * Setup uses `seedOauthBearer` which writes into the
- * @better-auth/oauth-provider plugin's `auth_oauth_*` tables. Bearer
- * middleware resolves the resulting tokens identically; the scope
- * projection under test is unchanged.
+ * Every app is registered and approved through the production PKCE flow.
  */
 async function mintOAuthToken(opts: {
   scopes: string[];
 }): Promise<MintedToken> {
-  const { token, grantId } = await seedOauthBearer(ctx.storage, opts.scopes, {
+  const { token, grantId } = await seedOauthBearer(ctx, opts.scopes, {
     clientName: "Scope Enforcement Test App",
   });
   return { rawToken: token, grantId };
@@ -330,7 +331,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
     it("accepts type registration with metadata.types:write", async () => {
       const { rawToken } = await mintOAuthToken({
-        scopes: ["metadata.types:write", "demo.t045_accepted:write"],
+        scopes: ["metadata.types:write", "demo.*:write"],
       });
       const res = await request(ctx.app, "POST", "/types", {
         key: rawToken,
@@ -362,9 +363,23 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         })
       ).json()) as { item: { id: string } };
 
-      const { rawToken } = await mintOAuthToken({
-        scopes: ["nonsense", "::write", "DELETE EVERYTHING"],
-      });
+      const { rawToken } = await mintOAuthToken({ scopes: ["core.note:read"] });
+      // Deliberately corrupt an otherwise genuine grant and token to verify
+      // the resolver remains closed when persisted scopes are malformed.
+      const raw = ctx.storage as unknown as {
+        __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+      };
+      const scopes = JSON.stringify([
+        "nonsense",
+        "::write",
+        "DELETE EVERYTHING",
+      ]);
+      await raw.__sqliteRun("UPDATE auth_oauth_access_token SET scopes = ?", [
+        scopes,
+      ]);
+      await raw.__sqliteRun("UPDATE auth_oauth_consent SET scopes = ?", [
+        scopes,
+      ]);
       // Every scope was dropped, so `type_permissions` is empty and the
       // token reaches no type. A listing answering `200` with an empty body
       // would read as "there is nothing here" to a token that is in fact
@@ -467,7 +482,7 @@ describe("edge-type registration is scope-gated (metadata.edge_types:write)", ()
 
   it("accepts POST /edge-types with metadata.edge_types:write", async () => {
     const { rawToken } = await mintOAuthToken({
-      scopes: ["metadata.edge_types:write", "edge.user.blocks:write"],
+      scopes: ["metadata.edge_types:write", "edge.user.*:write"],
     });
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: rawToken,

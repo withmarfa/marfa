@@ -188,7 +188,7 @@ export async function closeTestContexts(
 export async function seedOauthBearer(
   ctx: TestContext,
   scopes: string[],
-  opts: { clientName?: string; authUserId?: string } = {},
+  opts: { clientName?: string; authUserId?: string; clientId?: string } = {},
 ): Promise<{
   token: string;
   grantId: string;
@@ -209,20 +209,22 @@ export async function seedOauthBearer(
       );
     return (await response.json()) as Record<string, unknown>;
   }
-  const registered = await checked(
-    await request(ctx.app, "POST", "/auth/oauth2/register", {
-      headers: { origin },
-      body: {
-        client_name: opts.clientName ?? "Test App",
-        application_type: "native",
-        grant_types: ["authorization_code", "refresh_token"],
-        token_endpoint_auth_method: "none",
-        redirect_uris: ["http://localhost:5173/callback"],
-        response_types: ["code"],
-      },
-    }),
-    201,
-  );
+  const registered = opts.clientId
+    ? { client_id: opts.clientId }
+    : await checked(
+        await request(ctx.app, "POST", "/auth/oauth2/register", {
+          headers: { origin },
+          body: {
+            client_name: opts.clientName ?? "Test App",
+            application_type: "native",
+            grant_types: ["authorization_code", "refresh_token"],
+            token_endpoint_auth_method: "none",
+            redirect_uris: ["http://localhost:5173/callback"],
+            response_types: ["code"],
+          },
+        }),
+        201,
+      );
   const clientId = registered.client_id as string;
   const redirectUri = "http://localhost:5173/callback";
   const verifier = randomBytes(32).toString("base64url");
@@ -230,6 +232,7 @@ export async function seedOauthBearer(
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
+    prompt: "consent",
     scope: scopes.join(" "),
     state: randomBytes(16).toString("hex"),
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),

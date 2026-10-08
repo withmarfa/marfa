@@ -1,13 +1,8 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { generateId, PERMISSIONS } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { itemWrites } from "../storage/item-writes.js";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { PERMISSIONS, generateId } from "@withmarfa/shared";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 
 let ctx: TestContext;
 
@@ -781,23 +776,22 @@ describe("null on an optional property is treated as unset", () => {
   });
 });
 
-describe("POST /items — the operator gate", () => {
+describe("POST /items: platform-managed records", () => {
   it("rejects a working credential writing system.* even with explicit type_permissions", async () => {
-    // Only operator credentials may write `system.*`, and the
-    // fence stands ahead of the type map: naming the literal does not open
-    // it. Reads are unrestricted.
-    const workingKey = "marfa_k1_test_working_bound";
-    await ctx.storage.keys.create(
-      {
-        label: "working-not-operator",
-        source: "working-not-operator",
-        permissions: [...PERMISSIONS],
-        type_permissions: { "system.connection": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(workingKey, TEST_API_KEY_SALT),
-    );
+    // Only platform operations write system records. A key naming the
+    // literal type and every permission still cannot create one directly.
+    let workingKey = "marfa_k1_test_working_bound";
+    workingKey = await mintWorkingKey(ctx, {
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "working-system-map",
+      source: "working-system-map",
+      permissions: [...PERMISSIONS],
+      type_permissions: { "system.connection": "write" },
+      default_tier: "library",
+    });
 
     const res = await request(ctx.app, "POST", "/items", {
       key: workingKey,
@@ -816,26 +810,24 @@ describe("POST /items — the operator gate", () => {
     const body = (await res.json()) as {
       error: { code: string; message: string };
     };
-    expect(body.error.message).toMatch(/operator key/i);
+    expect(body.error.message).toMatch(/platform-managed/i);
     expect(body.error.message).toMatch(/system/);
   });
 
   it("does not gate reads to system.* (a working credential lists its own system.connection rows)", async () => {
-    // Reads to reserved-namespace items are unrestricted (filtered by
-    // the caller's type map); only writes need
-    // is_operator.
-    const readerKey = "marfa_k1_test_reader";
-    await ctx.storage.keys.create(
-      {
-        label: "reader-only",
-        source: "reader-only",
-        permissions: [...PERMISSIONS],
-        type_permissions: { "system.connection": "read" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(readerKey, TEST_API_KEY_SALT),
-    );
+    // The caller's type map governs reads of platform-managed items.
+    let readerKey = "marfa_k1_test_reader";
+    readerKey = await mintWorkingKey(ctx, {
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      label: "reader-only",
+      source: "reader-only",
+      permissions: [...PERMISSIONS],
+      type_permissions: { "system.connection": "read" },
+      default_tier: "library",
+    });
     const res = await request(ctx.app, "GET", "/items?type=system.connection", {
       key: readerKey,
     });

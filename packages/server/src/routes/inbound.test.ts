@@ -1,19 +1,19 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { trace } from "@opentelemetry/api";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import * as errorNotifier from "../middleware/error-notifier.js";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS } from "../config.js";
+import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
+import * as errorNotifier from "../middleware/error-notifier.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   mintWorkingKey,
   request,
   seedOauthBearer,
 } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
-import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
-import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 
 interface Endpoint {
   id: string;
@@ -130,7 +130,7 @@ describe("inbound webhook endpoints", () => {
       ctx.app,
       "POST",
       `/connectors/${connector.id}/endpoints`,
-      { key: ctx.operatorKey, body: {} },
+      { key: ctx.managementKey, body: {} },
     );
     expect(byOperator.status).toBe(201);
 
@@ -155,7 +155,7 @@ describe("inbound webhook endpoints", () => {
       { key: other, body: {} },
     );
     expect(refused.status).toBe(403);
-    const { token } = await seedOauthBearer(ctx.storage, ["items:read"]);
+    const { token } = await seedOauthBearer(ctx, ["core.note:read"]);
     const session = await request(
       ctx.app,
       "POST",
@@ -215,7 +215,7 @@ describe("inbound webhook endpoints", () => {
       ctx.app,
       "DELETE",
       `/connectors/${connector.id}/endpoints/${made.id}`,
-      { key: ctx.operatorKey },
+      { key: ctx.managementKey },
     );
     expect(res.status).toBe(200);
     const retired = (await res.json()) as Endpoint;
@@ -529,7 +529,7 @@ describe("reading and handling deliveries", () => {
       id: string;
     };
     const other = await mintWorkingKey(ctx);
-    for (const key of [other, ctx.operatorKey]) {
+    for (const key of [other, ctx.managementKey]) {
       for (const [method, path, body] of [
         ["GET", `/connectors/${connector.id}/deliveries`, undefined],
         ["GET", `/connectors/${connector.id}/deliveries/${id}/body`, undefined],
@@ -1964,7 +1964,7 @@ describe("a body field the operation does not declare", () => {
     expect(listed.data).toEqual([]);
 
     const made = await request(ctx.app, "POST", path, {
-      key: ctx.operatorKey,
+      key: ctx.managementKey,
       body: { label: "kept", _client: "ignored" },
     });
     expect(made.status).toBe(201);
