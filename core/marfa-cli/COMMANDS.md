@@ -92,6 +92,36 @@ Output:
           Print the answer as JSON, and a refusal as one JSON object on stderr
 ```
 
+## metrics
+
+### marfa metrics
+
+```text
+Instance-wide counters and process uptime. Needs `instance.read`
+
+Usage: marfa metrics [OPTIONS]
+
+Options:
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
+
+      --socket <PATH>
+          Use private local process authority through this Unix socket, without a keychain
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr
+```
+
 ## whoami
 
 ### marfa whoami

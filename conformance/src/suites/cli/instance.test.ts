@@ -11,6 +11,7 @@ import { gunzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   cleanup,
+  requireApiKey,
   trackItem,
   trackKey,
   trackWebhook,
@@ -96,6 +97,22 @@ interface Status {
 }
 
 describe("the instance from the terminal", () => {
+  it("reads instance metrics with instance.read and refuses a content-only key", async () => {
+    const metrics = await c.operator.json<{
+      items: { total: number };
+      keys: { total: number };
+      uptime_seconds: number;
+      cached_at: string;
+    }>(["metrics"]);
+    expect(metrics.items.total).toBeGreaterThanOrEqual(0);
+    expect(metrics.keys.total).toBeGreaterThan(0);
+    expect(metrics.uptime_seconds).toBeGreaterThanOrEqual(0);
+    expect(Number.isNaN(Date.parse(metrics.cached_at))).toBe(false);
+    const refused = await c.cli.refused(["metrics"]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+    expect(refused.envelope.error.server?.code).toBe("forbidden");
+  });
+
   it("reports the instance it is pointed at, with and without a credential", async () => {
     const root = (await fetch(`${c.apiUrl}/`).then((r) => r.json())) as {
       instance_id: string;
@@ -240,26 +257,28 @@ describe("the instance from the terminal", () => {
   });
 
   it("empties one key permission map at a time and retains every other family", async () => {
-    const minted = await c.operator.json<{ id: string }>([
-      "keys",
-      "create",
-      "--label",
-      "selective-clear",
-      "--source",
-      unique("cli-selective-clear"),
-      "--permission",
-      "audit.read",
-      "--type-permission",
-      "core.note=write",
-      "--extension-permission",
-      "app.cursor=read",
-      "--edge-permission",
-      "references=read",
-      "--metadata-permission",
-      "types=read",
-      "--profile-permission",
-      "email=read",
-    ]);
+    const minted = await c.cli
+      .as(requireApiKey())
+      .json<{ id: string }>([
+        "keys",
+        "create",
+        "--label",
+        "selective-clear",
+        "--source",
+        unique("cli-selective-clear"),
+        "--permission",
+        "audit.read",
+        "--type-permission",
+        "core.note=write",
+        "--extension-permission",
+        "app.cursor=read",
+        "--edge-permission",
+        "references=read",
+        "--metadata-permission",
+        "types=read",
+        "--profile-permission",
+        "email=read",
+      ]);
     trackKey(c.ctx, minted.id);
 
     const families = [
@@ -301,23 +320,16 @@ describe("the instance from the terminal", () => {
 
   it("mints a key claiming a source, and a create under it names that source until the claim is taken away", async () => {
     const claimed = unique("cli-claimed");
-    // The operator mints it: a working key may grant only what it claims.
-    const minted = await c.operator.json<{
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const minted = await c.cli.viaSocket(socket!).json<{
       id: string;
       key: string;
       sources: string[];
-    }>([
-      "keys",
-      "create",
-      "--label",
-      "claimer",
-      "--source",
-      unique("cli-claimer"),
-      "--type-permission",
-      "core.note=write",
-      "--claim",
-      claimed,
-    ]);
+    }>(["keys", "create", "--label", "claimer", "--source", unique("cli-claimer"), "--type-permission", "core.note=write", "--claim", claimed]);
     trackKey(c.ctx, minted.id);
     expect(minted.sources).toEqual([claimed]);
 

@@ -20,8 +20,8 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::{
     audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
-    housekeeping, items, keys, login, logout, metadata, operations, owner, restore, search, status,
-    types, webhooks, whoami,
+    housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, restore,
+    search, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, Exit, exit_codes_help};
@@ -66,6 +66,8 @@ struct Cli {
 enum Command {
     /// What the instance says about itself, and item counts where the credential reaches them.
     Status,
+    /// Instance-wide counters and process uptime. Needs `instance.read`.
+    Metrics,
     /// Which server, instance and credential a bare command would use.
     Whoami,
     /// Sign in to a server as the owner: a code, approved in the browser.
@@ -326,6 +328,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Device(args) => return device::run(args, &named, cli.json),
         Command::Folders { command } => folders::run(command, &named, cli.json),
         Command::Status => status::run(&remote()?, &out),
+        Command::Metrics => metrics::run(&remote()?, &out),
         Command::Whoami => whoami::run(&remote()?, &out),
         Command::Items { command } => items::run(command, &remote()?, &out),
         Command::Edges { command } => edges::run(command, &remote()?, &out),

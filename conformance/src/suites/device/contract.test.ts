@@ -531,6 +531,7 @@ const HASH = `sha256:${"a".repeat(64)}`;
 const WHEN = "2026-01-01T00:00:00Z";
 const LATER = "2026-01-02T00:00:00Z";
 const invocations: Record<string, () => string[]> = {
+  metrics: () => [],
   "items create": () => ["--type", "core.note"],
   "items list": () => [],
   "items stats": () => [],
