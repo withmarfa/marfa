@@ -23,8 +23,21 @@ Claim and recovery commands run inside the deployed server through Railway SSH. 
 
 1. Install the [Railway CLI](https://docs.railway.com/cli#installing-the-cli) and sign in with `railway login`.
 2. In the Railway dashboard, right-click the Marfa server and select **Copy SSH Command**. Run that command in your terminal. Register an SSH key if Railway prompts you to do so.
-3. Run Marfa's local claim command inside the container. **Pending: insert the verified browser and terminal claim commands and socket path.**
-4. For browser setup, open the link the command gives you and finish creating your owner account. For setup entirely in the terminal, use the command's terminal flow.
+3. For browser setup, run the following inside the container and open the link it prints:
+
+   ```sh
+   marfa --socket "$MARFA_CONTROL_SOCKET" setup open --no-browser
+   ```
+
+4. Create your owner account in that browser window.
+
+To set up entirely in the terminal, replace step 3 with:
+
+```sh
+marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --email you@example.com --name "Your name"
+```
+
+Enter your email and name in the command. The password uses a hidden prompt. **Pending: verify these commands in the deployed container.**
 
 The browser handoff carries a single-use ticket in the URL fragment. Do not put a setup code in a URL or share the handoff link. The claim command must connect to the running server's local socket; `railway run` and `railway shell` run on your own machine and cannot reach it. See [Railway SSH](https://docs.railway.com/cli/ssh).
 
@@ -43,10 +56,17 @@ To recover a lost data volume, use the same container revision, backup bucket, a
 ## Recover a forgotten password
 
 1. Connect to the running Marfa server using its copied Railway SSH command.
-2. Run Marfa's local password recovery command. **Pending: insert the verified command and interactive prompts.**
-3. Sign in with the new password.
+2. Run the following inside the container:
 
-The recovery flow uses the same protected socket as claim. Keep the data volume and instance secrets in place throughout recovery.
+   ```sh
+   marfa --socket "$MARFA_CONTROL_SOCKET" owner recover
+   ```
+
+3. Enter the new password at the hidden prompt, then sign in with it.
+
+**Pending: verify recovery, ended browser sessions, and preserved app access on Railway.**
+
+Recovery ends existing browser sessions and preserves app access. It uses the same protected socket as claim. Keep the data volume and instance secrets in place throughout recovery.
 
 ## Update the server
 
