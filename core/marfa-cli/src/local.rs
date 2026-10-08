@@ -122,6 +122,30 @@ struct LocalTransport {
     stream: UnixStream,
     buffers: LazyBuffers,
 }
+impl LocalTransport {
+    fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
+        let result = self.stream.set_read_timeout(timeout);
+        #[cfg(target_os = "macos")]
+        if result
+            .as_ref()
+            .is_err_and(|error| error.raw_os_error() == Some(libc::EINVAL))
+        {
+            use std::os::fd::AsRawFd;
+            let mut poll = libc::pollfd {
+                fd: self.stream.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // macOS rejects socket timeout changes after the peer closes, even
+            // when its response is still buffered. A hung-up socket cannot wait.
+            if unsafe { libc::poll(&mut poll, 1, 0) } == 1 && poll.revents & libc::POLLHUP != 0 {
+                return Ok(());
+            }
+        }
+        result
+    }
+}
+
 impl Transport for LocalTransport {
     fn buffers(&mut self) -> &mut dyn Buffers {
         &mut self.buffers
@@ -133,8 +157,7 @@ impl Transport for LocalTransport {
         Ok(())
     }
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        self.stream
-            .set_read_timeout(timeout.not_zero().map(|t| *t))?;
+        self.set_read_timeout(timeout.not_zero().map(|t| *t))?;
         let amount = self.stream.read(self.buffers.input_append_buf())?;
         self.buffers.input_appended(amount);
         Ok(amount > 0)
@@ -179,6 +202,83 @@ mod tests {
         assert_eq!(result["claimed"], false);
         serving.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn input_timeout() -> NextTimeout {
+        NextTimeout {
+            after: std::time::Duration::from_millis(20).into(),
+            reason: ureq::Timeout::RecvResponse,
+        }
+    }
+
+    #[test]
+    fn local_transport_drains_a_complete_response_after_the_peer_closes() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let body = "x".repeat(4096);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        peer.write_all(response.as_bytes()).unwrap();
+        drop(peer);
+        let mut transport = LocalTransport {
+            stream,
+            buffers: LazyBuffers::new(1024, 1024),
+        };
+        let mut received = Vec::new();
+        while transport.await_input(input_timeout()).unwrap() {
+            let input = transport.buffers.input();
+            let amount = input.len();
+            received.extend_from_slice(input);
+            transport.buffers.input_consume(amount);
+        }
+        assert_eq!(received, response.as_bytes());
+        assert!(transport.buffers.input().is_empty());
+    }
+
+    #[test]
+    fn local_transport_reports_eof_when_the_peer_closes_without_a_response() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let mut transport = LocalTransport {
+            stream,
+            buffers: LazyBuffers::new(1024, 1024),
+        };
+        assert!(!transport.await_input(input_timeout()).unwrap());
+        assert!(transport.buffers.input().is_empty());
+    }
+
+    #[test]
+    fn local_transport_still_times_out_while_an_open_peer_is_silent() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let mut transport = LocalTransport {
+            stream,
+            buffers: LazyBuffers::new(1024, 1024),
+        };
+        let error = transport.await_input(input_timeout()).unwrap_err();
+        assert!(
+            matches!(error, ureq::Error::Io(ref io) if matches!(io.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "{error}"
+        );
+        assert!(transport.buffers.input().is_empty());
+    }
+
+    #[test]
+    fn local_transport_preserves_invalid_timeout_errors_after_the_peer_closes() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let transport = LocalTransport {
+            stream,
+            buffers: LazyBuffers::new(1024, 1024),
+        };
+        assert_eq!(
+            transport
+                .set_read_timeout(Some(std::time::Duration::ZERO))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
     }
 
     #[test]
