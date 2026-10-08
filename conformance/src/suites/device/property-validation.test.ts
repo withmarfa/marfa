@@ -188,8 +188,10 @@ describe("a working copy checks the fields its catalog holds", () => {
   });
 
   it("judges current merge, replace, retype and version zero while leaving stale results to the server", async () => {
-    const { device } = await hydrated();
+    const { device, server } = await hydrated();
     const before = await device.get(ROW);
+    const queuedBefore = await device.queue();
+    const calls = server.requests.length;
     invalid(
       await device.update(ROW, { version: 3, properties: {}, replace: true }),
       "title",
@@ -207,6 +209,10 @@ describe("a working copy checks the fields its catalog holds", () => {
       "url",
     );
     expect(await device.get(ROW)).toEqual(before);
+    expect(await device.queue(), "a refused update changed the queue").toEqual(
+      queuedBefore,
+    );
+    expect(server.requests.length).toBe(calls);
     expect(
       (await device.update(ROW, { version: 3, properties: { read: null } })).ok,
     ).toBe(true);

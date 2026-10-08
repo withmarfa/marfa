@@ -3472,6 +3472,14 @@ describe("an answer the device applies keeps what it has not had answered", () =
       queued.map((row) => [row.verdict, row.reason]).at(-1),
       "the queue keeps a different reason than the drain reported",
     ).toEqual(["refused", "trashed"]);
+    expect(
+      server.requests.some(
+        (request) =>
+          request.method === "GET" &&
+          request.pathname === `/items/${onto.value.item_id ?? ""}`,
+      ),
+      "the row was let go without the read that finds the server holds no such row",
+    ).toBe(true);
     const held = await device.get(onto.value.item_id ?? "");
     expect(
       held.ok,
@@ -7847,6 +7855,31 @@ describe("a create the slice does not hold", () => {
     stream = copyReplay("12", [copyItemEvent("12", "item.created", theirs)]);
     expect((await device.catchUp()).ok).toBe(true);
     expect((await device.get(other)).ok).toBe(false);
+  });
+
+  it("pins a create of a type the slice does not take when it is queued", async () => {
+    harness = await feedSlice("queue-create-outside-type");
+    const { device } = harness;
+    const created = await device.create({
+      type: "core.event",
+      tier: "feed",
+      properties: { title: "another type" },
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "a create of a type outside the slice was not pinned, so its own event would let it go",
+    ).toContain(created.value.item_id);
+    // The witness: a create the slice takes is not pinned.
+    const inside = await device.create({
+      type: "core.note",
+      tier: "feed",
+      properties: { title: "inside", body: "inside" },
+    });
+    if (!inside.ok) throw new Error(JSON.stringify(inside));
+    const after = await device.status();
+    expect(after.ok && after.value.pinned).not.toContain(inside.value.item_id);
   });
 
   /** Answers every create under the id it names, or one it mints, and every
