@@ -45,7 +45,6 @@ function mapRow(row: typeof apiKeys.$inferSelect): StoredApiKey {
     source: row.source,
     sources: safeJsonParse<string[]>(row.sources, [], "key sources"),
     default_tier: row.default_tier as Tier,
-    is_operator: row.is_operator,
     // Narrowed to the literals this build knows, because the column is text
     // and a stored value outside the set is not a permission — it grants
     // nothing, and echoing it back would put a value off the route's own
@@ -122,7 +121,6 @@ export class SqliteKeyStore implements KeyStore {
       source: input.source,
       sources: JSON.stringify(input.sources ?? []),
       default_tier: input.default_tier ?? "library",
-      is_operator: input.is_operator ?? false,
       permissions: JSON.stringify(input.permissions ?? []),
       oauth_client_id: input.oauth_client_id ?? null,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
@@ -156,7 +154,6 @@ export class SqliteKeyStore implements KeyStore {
       source: row.source,
       sources: input.sources ?? [],
       default_tier: row.default_tier,
-      is_operator: row.is_operator,
       permissions: input.permissions ?? [],
       oauth_client_id: input.oauth_client_id,
       type_permissions: input.type_permissions ?? {},

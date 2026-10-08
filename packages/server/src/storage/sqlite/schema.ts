@@ -314,27 +314,8 @@ export const apiKeys = sqliteTable(
      */
     sources: text("sources").notNull().default("[]"),
     default_tier: text("default_tier").notNull().default("library"),
-    is_operator: integer("is_operator", { mode: "boolean" })
-      .notNull()
-      .default(false),
-    /**
-     * The permissions this credential holds, as a JSON array of the
-     * literals themselves.
-     *
-     * A list rather than a map, because a permission has no read/write
-     * axis: it is held or it is not. The same shape a grant carries, so one
-     * `hasPermission` answers for a key and for a sign-in.
-     *
-     * `[]` is the honest default and the right value for an operator key:
-     * running the instance is fenced outside the permission model rather than
-     * expressed inside it.
-     */
+
     permissions: text("permissions").notNull().default("[]"),
-    /**
-     * **The wildcard default is legal only on a working key.** An operator
-     * row holds nothing on any axis, which `api_keys_operator_holds_nothing`
-     * below refuses in bytes, so an operator insert writes `{}` explicitly.
-     */
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),
@@ -360,7 +341,7 @@ export const apiKeys = sqliteTable(
      */
     profile_permissions: text("profile_permissions").notNull().default("{}"),
     /**
-     * The registered client that minted this key, when a signed-in app did.
+     * The app origin, inherited through every descendant key.
      * A key minted through a grant belongs to the app that asked for it, so
      * the keys page groups it there and revoking the app offers to revoke it.
      */
@@ -377,29 +358,6 @@ export const apiKeys = sqliteTable(
     uniqueIndex("idx_api_keys_source_unrevoked")
       .on(table.source)
       .where(sql`revoked_at IS NULL`),
-    // **The model's one sentence about the instance tier.** The database is
-    // what refuses. Declared here so the table definition states the shape
-    // it writes into: without it a reader of this file meets the rule for
-    // the first time as a driver error naming a constraint nothing in the
-    // source mentions.
-    //
-    // Running the instance is not a permission, so the tier that runs it
-    // holds none. Compared as bytes rather than semantically, because SQLite
-    // cannot ask an object's size inside a CHECK and the store writes these
-    // columns through `JSON.stringify`, so `{}` and `[]` are the exact bytes
-    // an empty map and an empty list take. Compared against `1` rather than
-    // against the column, because SQLite holds the boolean as an integer.
-    check(
-      "api_keys_operator_holds_nothing",
-      sql`${table.is_operator} <> 1 OR (
-        ${table.type_permissions} = '{}' AND
-        ${table.edge_permissions} = '{}' AND
-        ${table.metadata_permissions} = '{}' AND
-        ${table.extension_permissions} = '{}' AND
-        ${table.profile_permissions} = '{}' AND
-        ${table.permissions} = '[]' AND
-        ${table.sources} = '[]')`,
-    ),
   ],
 );
 

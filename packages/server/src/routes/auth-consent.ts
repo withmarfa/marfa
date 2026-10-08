@@ -1,3 +1,7 @@
+import {
+  requireDirectAuthority,
+  requireRecentOwnerAuthentication,
+} from "../middleware/auth.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry } from "../storage/interface.js";
 /**
@@ -396,6 +400,26 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             return { skipped: false, priorScopes };
           }
 
+          if (accept) {
+            const prior =
+              (await deps.storage.oauthProvider?.getPriorConsent(
+                clientId,
+                session.user.id,
+              )) ?? [];
+            if (
+              formScopes.some(
+                (scope) =>
+                  [
+                    "instance.read",
+                    "instance.maintain",
+                    "connectors.manage",
+                    "blobs.manage",
+                    "keys.manage",
+                  ].includes(scope) && !prior.includes(scope),
+              )
+            )
+              requireRecentOwnerAuthentication(c);
+          }
           const proxyResp = await proxyConsentDecision(
             auth,
             c.req.url,
@@ -682,6 +706,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.redirect(`/auth/authorize?${bounce.toString()}`, 302);
     }
 
+    requireDirectAuthority(c);
     const scopeStr = formScopes.join(" ");
     const auth = deps.auth;
 

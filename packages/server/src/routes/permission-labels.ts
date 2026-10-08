@@ -23,6 +23,13 @@ import { isPermission } from "@withmarfa/shared";
  * noun reads as the latter.
  */
 export const PERMISSION_LABELS: Record<Permission, string> = {
+  "keys.manage": "See, narrow and revoke any API key",
+  "blobs.manage": "Read all files and manage their stored copies",
+  "connectors.manage":
+    "Manage all connectors and their incoming data endpoints",
+  "instance.maintain":
+    "Run maintenance that can permanently delete eligible data",
+  "instance.read": "Read server health, storage and maintenance reports",
   "webhooks.manage": "Set up webhooks that send your data elsewhere",
   "schema.write": "Replace and remove definitions of the types it can write",
   "config.manage": "Read and change the server configuration",
@@ -42,6 +49,13 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
  * entries where the comma is load-bearing.
  */
 export const PERMISSION_SHORT: Record<Permission, string> = {
+  "keys.manage": "see, narrow and revoke any API key",
+  "blobs.manage": "read all files and manage their stored copies",
+  "connectors.manage":
+    "manage all connectors and their incoming data endpoints",
+  "instance.maintain":
+    "run maintenance that can permanently delete eligible data",
+  "instance.read": "read server health, storage and maintenance reports",
   "webhooks.manage": "set up webhooks that send your data elsewhere",
   "schema.write": "replace and remove definitions of the types it can write",
   "config.manage": "read and change the server configuration",

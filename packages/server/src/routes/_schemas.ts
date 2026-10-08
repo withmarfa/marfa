@@ -764,11 +764,9 @@ export const KEY_FIELD_TEXT = {
   permissions:
     "The permissions the key holds, such as `audit.read`. Empty if it holds none.",
   oauth_client_id:
-    "The `client_id` of the app whose sign-in token created this key. Absent on every other key.",
+    "The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin.",
   default_tier:
     "The tier an item this key creates goes to when the write names none.",
-  is_operator:
-    "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items.",
   type_permissions:
     "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers.",
   extension_permissions:
@@ -812,7 +810,6 @@ export const KeyResponseSchema = z
       .optional()
       .describe(KEY_FIELD_TEXT.oauth_client_id),
     default_tier: TierEnum.describe(KEY_FIELD_TEXT.default_tier),
-    is_operator: z.boolean().describe(KEY_FIELD_TEXT.is_operator),
     type_permissions: z
       .record(z.string(), TypePermissionLevelEnum)
       .describe(KEY_FIELD_TEXT.type_permissions),

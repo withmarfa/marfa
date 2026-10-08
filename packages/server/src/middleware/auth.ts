@@ -2,6 +2,10 @@ import {
   rememberReplayRequirement,
   rememberItemSubject,
 } from "./replay-requirements.js";
+import {
+  rememberAuthorityPermission,
+  rememberRecentAuthentication,
+} from "../auth/request-authority.js";
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context, MiddlewareHandler } from "hono";
@@ -34,30 +38,9 @@ import type { ReadViewAuthority } from "../storage/read-view.js";
 export interface AppEnv extends Record<string, unknown> {
   Variables: {
     apiKey: ApiKey | undefined;
-    isBootstrap: boolean;
+    authority: DirectAuthority | undefined;
     authType: "api_key" | "oauth" | undefined;
-    /**
-     * The OAuth grant behind this request, as granted. Set only for an
-     * OAuth bearer; `undefined` for an API key, for an anonymous request,
-     * and for bootstrap.
-     *
-     * **The scopes are here because they reach no permission map.** The
-     * four projections beside them translate a token's scopes into
-     * `type_permissions`, `edge_permissions`, `metadata_permissions` and
-     * `profile_permissions`
-     * and drop every literal they do not recognize — deliberately, since a
-     * permission names authority over an administrative surface rather
-     * than over a resource, and admitting one into a projection would put
-     * it on the data plane where a wildcard could reach it. So the granted
-     * set has to travel beside the projections rather than through them,
-     * and `requirePermission` is the only thing that reads it.
-     *
-     * `clientId` and `authUserId` are here for a second reason: an audit
-     * row for an action an app took needs to name the grant it was taken
-     * through, and the synthetic key carries them only baked into a
-     * composite `label` / `source` string. Parsing that string back apart
-     * would make the row's meaning depend on a display format.
-     */
+
     oauthGrant:
       | {
           scopes: readonly string[];
@@ -91,6 +74,54 @@ export interface AppEnv extends Record<string, unknown> {
      */
     clientIp: string | null;
   };
+}
+
+export type DirectAuthority =
+  | Readonly<{ kind: "local_process" }>
+  | Readonly<{
+      kind: "owner";
+      userId: string;
+      sessionId: string;
+      authenticatedAt: number;
+    }>;
+
+export function isDirectAuthority(c: Context<AppEnv>): boolean {
+  return c.get("authority") !== undefined;
+}
+
+export function requireDirectAuthority(c: Context<AppEnv>): void {
+  if (!isDirectAuthority(c)) {
+    if (!c.get("apiKey"))
+      throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "The owner or a local command must perform this operation",
+    );
+  }
+}
+
+export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
+  requireDirectAuthority(c);
+  const authority = c.get("authority")!;
+  if (
+    authority.kind === "owner" &&
+    (Date.now() - authority.authenticatedAt > 300_000 ||
+      authority.authenticatedAt > Date.now())
+  ) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Sign in again to perform this operation",
+    );
+  }
+  rememberRecentAuthentication();
+}
+
+/** An attribution handle, not a stored key or a transferable credential. */
+export function authorityId(c: Context<AppEnv>): string {
+  const authority = c.get("authority");
+  if (authority?.kind === "local_process") return "local:process";
+  if (authority?.kind === "owner") return `owner:${authority.sessionId}`;
+  return requireAuth(c).id;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +321,7 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
  */
 export function credentialHandle(c: Context<AppEnv>): string {
   const apiKey = c.get("apiKey");
+  if (isDirectAuthority(c)) return authorityId(c);
   if (apiKey === undefined) return "";
   return c.get("authType") === "oauth" ? apiKey.source : apiKey.id;
 }
@@ -326,10 +358,6 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
     // a claim could come from.
     sources: [],
     default_tier: "library",
-    // **An operator key is never derivable from a sign-in.** Running the
-    // instance sits outside the permission model, so no consent screen can
-    // offer it and no grant can reach it.
-    is_operator: false,
     // The permissions the door reads come from the grant beside this
     // principal rather than from here, because a grant is the live answer
     // and a projection would be a copy of it taken at request time.
@@ -361,22 +389,7 @@ export function authMiddleware(storage: Storage, salt: string) {
   const lastUsedCache = new Map<string, number>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
-    // Bootstrap detection: POST /keys on an instance that has never
-    // had a key. The gate is a persistent `settings.bootstrapped`
-    // sentinel, NOT a live `keys.count() === 0` check — revoking every
-    // key must not re-open bootstrap (would let an unauthenticated
-    // caller mint the operator key and take over the instance).
-    if (c.req.method === "POST" && c.req.path === "/keys") {
-      const bootstrapped = await storage.settings.get("bootstrapped");
-      if (bootstrapped !== "true") {
-        c.set("apiKey", undefined);
-        c.set("isBootstrap", true);
-        c.set("authType", undefined);
-        return next();
-      }
-    }
-
-    c.set("isBootstrap", false);
+    c.set("authority", undefined);
     c.set("boundCredential", undefined);
 
     const authHeader = c.req.header("Authorization");
@@ -519,39 +532,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   return apiKey;
 }
 
-/**
- * Operator gate. Guards the surfaces whose authority is instance-wide:
- * key minting, instance metrics, archive restore, blob reconciliation.
- *
- * **Running the instance is not a permission**, which is why this reads a
- * field on the row rather than a member of the permission set. The operator
- * key is fenced outside the model deliberately: it is never offered on a
- * consent screen, never derivable from a sign-in, and never needed by an app.
- * A surface that belongs inside the permission model wants
- * `requirePermission` instead.
- */
-export function checkOperatorKey(apiKey: ApiKey | undefined): ApiKey {
-  const key = checkAuth(apiKey);
-  if (!key.is_operator) {
-    throw new MarfaError(ErrorCode.FORBIDDEN, "Operator key required");
-  }
-  return key;
-}
-
-/**
- * Whether this credential may write a row in a reserved namespace.
- *
- * The predicate form of the fence `checkTypeAccess` applies, extracted
- * because a second door needs to ask the same question without throwing:
- * `POST /items/bulk-actions` narrows a match set rather than refusing a
- * row, so it has to *ask* what this decides rather than be told by an
- * exception. Restating it there would have been a second copy of the one
- * rule that decides who reaches the platform's own rows.
- *
- * The operator key passes outright; nothing else writes `system.*`.
- */
-export function mayWriteReserved(key: ApiKey, type: string): boolean {
-  if (key.is_operator) return true;
+export function mayWriteReserved(_key: ApiKey, type: string): boolean {
   return classifyNamespace(type) !== "system";
 }
 
@@ -597,33 +578,10 @@ export function checkTypeAccess(
 ): void {
   const key = checkAuth(apiKey);
 
-  // Operator gate. Writes to `system.*` require `is_operator: true`, which is
-  // the instance tier and nothing a working credential can hold. It is a
-  // fence rather than a route: the operator key's own maps are empty, so in
-  // practice the platform's own machinery writes these rows through the
-  // storage layer rather than through a credential at all.
-  //
-  // **The message says no credential rather than naming the operator key.**
-  // The operator key is the only credential this fence admits, and the
-  // permission resolution below then refuses it too:
-  // `api_keys_operator_holds_nothing` makes an operator key's
-  // `type_permissions` empty by database constraint, so the map resolves
-  // `none`. Naming a door and refusing everyone who walks through it would
-  // send readers looking for a credential to mint.
-  //
-  // `core.*` writes are NOT gated here — core types are user-facing
-  // (core.note, core.task, core.bookmark) and ordinary credentials write them
-  // routinely. Registering a new one is a different matter: `routes/types.ts`
-  // refuses a reserved root to every credential, the operator key included,
-  // because the shipped vocabulary is a property of the build.
-  //
-  // Only writes are gated. A read of `system.*` is bounded by the caller's
-  // own type permissions like any other read, so there is nothing left for
-  // this check to add on that side.
   if (level === "write" && !mayWriteReserved(key, type)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
-      `Reserved namespace: no credential writes system.* items. The operator key is the only one this fence admits and it holds no type permissions, so the platform writes these rows through the storage layer instead.`,
+      `Reserved namespace: platform-managed operations write system.* items; credentials cannot write them directly.`,
     );
   }
 
@@ -808,22 +766,6 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
   return checkAuth(c.get("apiKey"));
 }
 
-/**
- * What a door asks of every caller whatever the request says, held ahead of
- * the request's validation as the credential check is (see
- * {@link requireDeclaredCredential}).
- *
- * **A caller that may not use a door is told so before anything about its
- * request.** Checked inside a handler, the operator key or a door's own
- * permission is reached only after the router has validated the path, the
- * query and the body, so a key that may not use the door learns what shape
- * the door wants, and which of its inputs are wrong, before it is told it
- * may not use it at all. Hung off a route as its `middleware`, the check
- * runs after the credential check and before the validators.
- *
- * Every rule is recorded against the middleware that holds it, so the door
- * census reads which doors carry one from the app's own route table.
- */
 const standingRules = new WeakMap<object, string>();
 
 /** The standing rule a route handler holds, if it is one of these. */
@@ -831,33 +773,24 @@ export function standingRuleOf(handler: unknown): string | undefined {
   return typeof handler === "function" ? standingRules.get(handler) : undefined;
 }
 
-/**
- * A standing rule named `name`, checked by `check`, which throws to refuse.
- * The first `POST /keys`, which presents the bootstrap secret instead of a
- * credential, is admitted as the credential check admits it.
- */
 export function standingRule(
   name: string,
   check: (c: Context<AppEnv>) => void,
 ): MiddlewareHandler<AppEnv> {
   const rule = createMiddleware<AppEnv>(async (c, next) => {
-    if (!c.get("isBootstrap")) check(c);
+    check(c);
     await next();
   });
   standingRules.set(rule, name);
   return rule;
 }
 
-/** Only the operator key opens the door; a working key is refused `403`. */
-export const operatorOnly = standingRule("operator key", (c) => {
-  checkOperatorKey(c.get("apiKey"));
-});
+/** Owner-session or private local transport, never an app permission. */
+export const directAuthorityOnly = standingRule(
+  "owner or local command",
+  requireDirectAuthority,
+);
 
-/**
- * The data plane refuses a credential whose type map reaches no type at all,
- * whatever the request names (`keys-and-oauth.md` 1). The operator key
- * reaches none, so it is refused here too.
- */
 export const readsSomeType = standingRule("reads some type", (c) => {
   getTypeFilter(c);
 });
@@ -873,42 +806,16 @@ export const keysOnly = standingRule("a key, not a signed-in app", (c) => {
   }
 });
 
-/** The door takes `permission` of every caller, and with `operatorToo` the
- *  operator key opens it as well. */
+/** Explicit permission or the directly authenticated owner/local process. */
 export function standingPermission(
   permission: Permission,
-  opts: { operatorToo?: boolean } = {},
 ): MiddlewareHandler<AppEnv> {
-  const operatorToo = opts.operatorToo === true;
-  return standingRule(
-    operatorToo ? `${permission} or operator key` : permission,
-    (c) => {
-      if (operatorToo && checkAuth(c.get("apiKey")).is_operator) return;
-      requirePermission(c, permission);
-    },
-  );
+  return standingRule(permission, (c) => requirePermission(c, permission));
 }
 
-/**
- * The credential check as a route's own middleware, hung off every route
- * whose `security` declares one by `createOpenAPIRouter`.
- *
- * **A door that asks for a credential must answer the missing one first.**
- * A refusal inside a handler is reached only after the router has validated
- * the request and after the handler has read its row, so what a bare request
- * is told depends on what else is wrong with it — and a `404` for a row that
- * is not there tells a caller holding nothing which ids exist. This runs
- * ahead of the validators and ahead of the handler, so one bare request gets
- * one answer.
- *
- * Bootstrap is the one credential-less caller a declared door admits: the
- * first `POST /keys` on an instance that has never held a key presents the
- * one-time secret from the boot log instead, and `authMiddleware` marks the
- * request rather than resolving a credential for it.
- */
 export const requireDeclaredCredential = createMiddleware<AppEnv>(
   async (c, next) => {
-    if (!c.get("isBootstrap")) checkAuth(c.get("apiKey"));
+    if (!isDirectAuthority(c)) checkAuth(c.get("apiKey"));
     await next();
   },
 );
@@ -1180,14 +1087,6 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  // The same shape as `requireEdgePermission`, and for the same reason: a
-  // credential's map is the whole of what it may reach, whether it was minted
-  // as a key or projected from a grant. Namespace
-  // rules are the route's, not this gate's: reserved roots (`core.*`,
-  // `system.*`, `marfa.*`) are refused at registration for every
-  // credential, operator included. A `publisher.*` namespace binds to
-  // nobody: user accounts carry no handle and no door compares one, so it
-  // registers on the grammar alone.
   if (
     metadataPermissionCovers(apiKey.metadata_permissions, subresource, level)
   ) {
@@ -1201,43 +1100,12 @@ export function requireMetadataPermission(
   );
 }
 
-/**
- * Authority over one administrative surface, asked of the credential's own
- * permission set. A key carries its permissions on its row and a
- * sign-in carries them on its grant; nothing here reads what kind of
- * credential arrived, and nothing admits a caller that was never handed the
- * permission.
- *
- * **A bootstrap caller is refused here, and its protection is the route's
- * rather than this function's.** Bootstrap presents no credential at all:
- * `apiKey` is undefined and `authType` unset, so `checkAuth` throws before the
- * OAuth question is reached. That is the right answer for a helper that cannot
- * see the sentinel; {@link standingRule} is what admits bootstrap on the mint
- * path, and a call on that path from anywhere else has to sit behind the same
- * test. Do not weaken this to admit the shape; put the call in the right
- * place.
- *
- * **This is the whole of the check on the surface, not a second half.**
- * Nothing admits a caller to an administrative door on what kind of
- * credential it is, so a door that should ask this and does not stands open
- * to any authenticated caller. A door asking it of every caller asks it
- * through {@link standingPermission}; `routes/permission-door-census.test.ts`
- * holds those doors and the few that ask it inside a handler.
- *
- * **A missing carrier fails closed.** An OAuth request that reached a gate
- * with no `oauthGrant` set is a defect in the bearer middleware, and the safe
- * reading of "I cannot tell what was granted" is "nothing was".
- *
- * The refusal names the literal that would satisfy it, in the message and in
- * `details`. A generic 403 on an administrative surface leaves the reader
- * nothing to act on, and a client cannot narrow toward a scope nobody told it
- * about.
- */
 export function requirePermission(
   c: Context<AppEnv>,
   permission: Permission,
 ): void {
   if (holdsPermission(c, permission)) {
+    rememberAuthorityPermission(permission);
     rememberReplayRequirement({ kind: "permission", permission });
     return;
   }
@@ -1264,6 +1132,7 @@ export function holdsPermission(
   c: Context<AppEnv>,
   permission: Permission,
 ): boolean {
+  if (isDirectAuthority(c)) return true;
   const key = checkAuth(c.get("apiKey"));
   const held =
     c.get("authType") === "oauth"

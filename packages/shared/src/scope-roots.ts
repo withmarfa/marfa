@@ -27,7 +27,7 @@ export const NAMESPACE_TIER_ROOTS = [
  * One root per verb-less permission, because a permission is named for
  * what it permits and there is no noun for the whole to name them after.
  *
- * **Seven words leave the publisher namespace by being here**, since
+ * **These words leave the publisher namespace by being here**, since
  * reserving a root refuses every registration under it. That cost is
  * the reservation working rather than a side effect of it: `items.purge`
  * could otherwise be registered as a type, putting an identifier and a
@@ -41,6 +41,9 @@ export const PERMISSION_FAMILY_ROOTS = [
   "config",
   "audit",
   "grants",
+  "instance",
+  "connectors",
+  "blobs",
 ] as const;
 
 /**

@@ -1,3 +1,4 @@
+import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
   EXPOSED_RESPONSE_HEADERS,
@@ -17,7 +18,7 @@ import {
   invalidReadViewRequest,
 } from "./middleware/read-view.js";
 import { deriveKey, SECRET_INFO } from "./crypto/derive-key.js";
-import { authMiddleware } from "./middleware/auth.js";
+import { authMiddleware, hashApiKey } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
@@ -89,7 +90,7 @@ import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import { healthRoutes, operatorCaller } from "./routes/health.js";
+import { healthRoutes, instanceReadCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
 import {
   refuseUndeclaredKeysOf,
@@ -121,6 +122,7 @@ export function createApp(
    * it, and the server's boot is what calls that.
    */
   instanceId: string,
+  options: { localAuthority?: boolean } = {},
 ) {
   // The empty string is the one wrong value the type cannot refuse, and it
   // is what a caller reaching for a field that is not there hands over. An
@@ -128,6 +130,33 @@ export function createApp(
   // 200 on three doors — loud here beats quiet everywhere.
   if (instanceId === "") {
     throw new Error("createApp: instanceId is empty; resolve it first");
+  }
+
+  // Better Auth setup. Instance is created up front so it can be passed
+  // into authRoutes (the OAuth consent screen consumes its cookie-based
+  // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
+  // is registered AFTER the explicit /auth routes so explicit handlers
+  // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
+  //
+  // The better-auth handle is one optional field on the Storage interface
+  // (`BetterAuthStorageAdapter`), so a Storage that wires no better-auth
+  // simply skips the auth mount.
+  let auth: MarfaAuth | undefined;
+  if (storage.betterAuthDb) {
+    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
+      Boolean,
+    );
+    auth = createMarfaAuth({
+      db: storage.betterAuthDb,
+      baseURL: config.authBaseUrl,
+      secret: config.authSecret,
+      trustedOrigins,
+      // storage + salt are needed by the @better-auth/oauth-provider plugin
+      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
+      // grants into system.connection).
+      storage,
+      apiKeySalt: config.apiKeySalt,
+    });
   }
 
   const app = new OpenAPIHono<AppEnv>();
@@ -394,7 +423,40 @@ export function createApp(
         sqlitePath: config.sqlitePath,
         blobPath: config.blobPath,
       }),
-      operatorCaller(storage, config.apiKeySalt),
+      async (c) => {
+        if (options.localAuthority) return true;
+        const authorization = c.req.header("authorization");
+        try {
+          if (authorization !== undefined) {
+            if (authorization.startsWith("Bearer marfa_at_")) {
+              const token = await storage.oauthProvider?.validateAccessToken(
+                hashApiKey(
+                  authorization.slice("Bearer marfa_at_".length),
+                  config.apiKeySalt,
+                ),
+              );
+              return (
+                token?.userId !== null &&
+                token?.scopes.includes("instance.read") === true
+              );
+            }
+            return await instanceReadCaller(
+              storage,
+              config.apiKeySalt,
+            )(authorization);
+          }
+          const session = await auth?.getSession(c.req.raw.headers, {
+            readOnly: true,
+          });
+          return (
+            session !== null &&
+            session !== undefined &&
+            (await storage.owner?.find())?.id === session.user.id
+          );
+        } catch {
+          return false;
+        }
+      },
     ),
   );
 
@@ -425,6 +487,15 @@ export function createApp(
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
+  app.use(
+    "*",
+    directAuthorityMiddleware(
+      storage,
+      auth,
+      config.authBaseUrl,
+      options.localAuthority,
+    ),
+  );
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
   // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects every door
@@ -433,7 +504,7 @@ export function createApp(
   // flows through AppConfig: the rate-limit middleware reads its settings
   // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
-  if (config.rateLimitEnabled) {
+  if (config.rateLimitEnabled && !options.localAuthority) {
     app.use(
       "*",
       rateLimitMiddleware({
@@ -521,33 +592,6 @@ export function createApp(
     const [method, path] = door.split(" ");
     if (method === undefined || path === undefined) continue;
     app.on(method, path, originGuard);
-  }
-
-  // Better Auth setup. Instance is created up front so it can be passed
-  // into authRoutes (the OAuth consent screen consumes its cookie-based
-  // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
-  // is registered AFTER the explicit /auth routes so explicit handlers
-  // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
-  //
-  // The better-auth handle is one optional field on the Storage interface
-  // (`BetterAuthStorageAdapter`), so a Storage that wires no better-auth
-  // simply skips the auth mount.
-  let auth: MarfaAuth | undefined;
-  if (storage.betterAuthDb) {
-    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
-      Boolean,
-    );
-    auth = createMarfaAuth({
-      db: storage.betterAuthDb,
-      baseURL: config.authBaseUrl,
-      secret: config.authSecret,
-      trustedOrigins,
-      // storage + salt are needed by the @better-auth/oauth-provider plugin
-      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
-      // grants into system.connection).
-      storage,
-      apiKeySalt: config.apiKeySalt,
-    });
   }
 
   // Discovery (RFC 8414 + OIDC Discovery). The discovery doc points RPs at the
