@@ -505,10 +505,9 @@ export async function cleanup(ctx: TestContext): Promise<void> {
 
 /**
  * Remove every connector registration a tracked key made, through the
- * operator. Called by `cleanup`, and by a file whose fixtures register, so
+ * management client. Called by `cleanup`, and by a file whose fixtures register, so
  * one failed fixture does not hand the next a registration it did not make.
- * Without the operator key nothing can remove another key's registration,
- * and nothing is attempted.
+ * Cleanup needs connectors.manage and is skipped without its credential.
  */
 export async function removeTrackedRegistrations(
   ctx: TestContext,
@@ -532,7 +531,7 @@ export async function removeTrackedRegistrations(
 }
 
 /**
- * The operator key's client, for the operator-only maintenance routes.
+ * An ordinary key with the explicit management permissions.
  * Required by the fixtures that call it; a missing variable is a failure,
  * not a skip.
  */

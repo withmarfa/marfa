@@ -18970,7 +18970,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it. */
+            /** @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19127,7 +19127,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it. */
+            /** @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19774,6 +19774,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description This operation requires direct owner or local authority. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
             /** @description The owner is unavailable. */
@@ -21314,7 +21329,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it. */
+            /** @description - `forbidden`: you don't hold `audit.read`. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -694,7 +694,7 @@ export class MarfaClient {
     }
   }
 
-  /** Restore an archive. The operator key only. */
+  /** Restore an archive with recent owner authentication. */
   async restoreArchive(
     archive: ArrayBuffer | Uint8Array,
   ): Promise<ApiResponse<RestoreArchiveResponse>> {
@@ -1358,13 +1358,14 @@ export class MarfaClient {
     );
   }
 
-  /** `GET /owner`: the operator key only. */
+  /** `GET /owner`: direct owner or local authority. */
   async getOwner(): Promise<ApiResponse<Owner>> {
     return this.request<Owner>("/owner");
   }
 
-  /** `POST /owner`: the operator key only. */
+  /** `POST /owner`: one-time machine-issued claim proof. */
   async createOwner(body: {
+    code?: string;
     email: string;
     password: string;
     name?: string;
@@ -1372,7 +1373,7 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `GET /platform-types/drift`: the operator key only. */
+  /** `GET /platform-types/drift`: requires instance.read. */
   async listPlatformTypeDrift(): Promise<
     ApiResponse<
       PaginatedResult<{
@@ -1387,7 +1388,7 @@ export class MarfaClient {
   }
 
   /**
-   * `DELETE /platform-types/{id}`: the operator key only.
+   * `DELETE /platform-types/{id}`: requires instance.maintain.
    *
    * Encoded because the identifier is the last segment: a `?` or a `#`
    * in one would otherwise end the path early and the door would answer a

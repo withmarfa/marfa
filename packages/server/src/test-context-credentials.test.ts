@@ -1,12 +1,12 @@
-import { describe,expect,it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { getClaimStatus } from "./auth/instance-claim.js";
 import { hashApiKey } from "./middleware/auth.js";
 import {
-createTestContext,
-mintWorkingKey,
-seedOauthBearer,
-TEST_API_KEY_SALT,
-TEST_MANAGEMENT_PERMISSIONS,
+  createTestContext,
+  mintWorkingKey,
+  seedOauthBearer,
+  TEST_API_KEY_SALT,
+  TEST_MANAGEMENT_PERMISSIONS,
 } from "./test-utils.js";
 
 // A normal fixture must produce the same claim and audit records as a real setup.

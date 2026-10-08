@@ -209,7 +209,6 @@ export interface ApiKeyRequest {
    *  creator's whole set. */
   permissions?: readonly string[];
   default_tier?: "library" | "feed";
-  /** Only an operator key can mint another, and it holds no permissions. */
   /** The sources the key may name on a write besides its own; omitted
    *  claims none when a permission or a map is named, and takes the
    *  creator's when none is. */

@@ -396,7 +396,7 @@ describe("key management", () => {
 
     for (const [who, tag, minter] of [
       ["a working key", "working", client],
-      ["the operator key", "operator", getOwnerClient()],
+      ["the signed-in owner", "owner", getOwnerClient()],
     ] as const) {
       const minted = await minter.createKey({
         label: `${label}-${tag}`,

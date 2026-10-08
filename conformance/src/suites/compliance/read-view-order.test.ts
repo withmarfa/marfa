@@ -1,3 +1,4 @@
+import { TEST_OWNER } from "../../utils/target.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
@@ -33,7 +34,7 @@ const CHANGED = {
 
 let server: FreshServer;
 let client: MarfaClient;
-let operator: MarfaClient;
+let management: MarfaClient;
 let nowhere: string;
 let ctx: TestContext;
 
@@ -43,7 +44,7 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  operator = new MarfaClient({
+  management = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.managementKey,
   });
@@ -58,9 +59,9 @@ beforeAll(async () => {
     trackedWebhooks: [],
     trackedTypes: [],
     client,
-    provisioningClient: operator,
+    provisioningClient: management,
   };
-  const minted = await operator.createKey({
+  const minted = await management.createKey({
     label: "read-view-order-nowhere",
     source: `${ctx.source}-nowhere-${ctx.runId}`,
     permissions: [],
@@ -657,10 +658,7 @@ describe("a conditional item page that names no include", () => {
 });
 
 describe("the read view of an approved app", () => {
-  const OWNER = {
-    email: "view-order@example.com",
-    password: "correct horse battery",
-  };
+  const OWNER = TEST_OWNER;
   const CALLBACK = "http://127.0.0.1:9/callback";
   const SCOPE = "core.note:read offline_access";
   let origin = "";
@@ -673,7 +671,6 @@ describe("the read view of an approved app", () => {
 
   async function signIn(): Promise<void> {
     if (cookie !== "") return;
-    expect((await operator.createOwner(OWNER)).status).toBe(201);
     const discovery = await fetch(
       `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
     );

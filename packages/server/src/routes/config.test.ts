@@ -1,12 +1,12 @@
-import { afterAll,beforeAll,describe,expect,it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Housekeeping } from "../housekeeping/scheduler.js";
 import {
-readInstanceConfig,
-writeInstanceConfig,
+  readInstanceConfig,
+  writeInstanceConfig,
 } from "../storage/instance-config.js";
 import type { Storage } from "../storage/interface.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext,request } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 
 // ----- The shared context: the door's defaults when nothing is set -----
 let ctx: TestContext;

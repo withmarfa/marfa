@@ -259,9 +259,12 @@ describe("frames the subscriber would never receive", () => {
     const cursor = await latestEventId();
 
     const { storage, open } = gatedEventLog(ctx.storage);
-    const res = await eventsAppWithKey(ctx, storage).request("/events?edges=none", {
-      headers: { "Last-Event-ID": String(cursor) },
-    });
+    const res = await eventsAppWithKey(ctx, storage).request(
+      "/events?edges=none",
+      {
+        headers: { "Last-Event-ID": String(cursor) },
+      },
+    );
     expect(res.status).toBe(200);
     await settle();
 

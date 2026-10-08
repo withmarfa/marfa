@@ -414,8 +414,7 @@ export function createApp(
     });
   });
   // Ahead of the credential and the limiter, as the probe of a container
-  // must be. It looks the operator key up for itself, because that key is
-  // the one caller told what a failing component said.
+  // must be. Detailed diagnostics check instance.read independently.
   app.route(
     "/health",
     healthRoutes(
