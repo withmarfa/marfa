@@ -427,7 +427,7 @@ impl Core {
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
-    /// it has its first stream (`device/follow-applies`).
+    /// it has its first stream (`device/follow-told-reachable`).
     pub fn follow(
         &self,
         stop: &AtomicBool,

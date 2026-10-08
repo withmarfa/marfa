@@ -1794,6 +1794,9 @@ pub(crate) enum ReadBack {
         /// The copy's stamp before the read, so a row the read did not find
         /// is forgotten only where nothing has written it since.
         before: Option<store::Stamp>,
+        /// A read by id answers a row in the bin as one that is gone, and the
+        /// slice may hold such a row.
+        binned: bool,
     },
     Edge {
         context: read_view::Context,
@@ -1835,17 +1838,26 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
             before,
         });
     }
-    let held = match http.item(&owed.id) {
-        Ok(found) => found,
-        Err(CoreError::Forbidden { .. }) => None,
-        Err(error) if names_no_row(&error) => None,
+    let (held, unread) = match http.item(&owed.id) {
+        Ok(found) => (found, false),
+        Err(CoreError::Forbidden { .. }) => (None, true),
+        Err(error) if names_no_row(&error) => (None, false),
         Err(error) => return Err(context.failed(core, error)?),
+    };
+    let binned = match held {
+        Some(_) => false,
+        None if unread => false,
+        None => match http.trashed_item(&owed.id) {
+            Ok(found) => found.is_some(),
+            Err(error) => return Err(context.failed(core, error)?),
+        },
     };
     Ok(ReadBack::Item {
         context,
         id: owed.id.clone(),
         held: held.map(Box::new),
         before,
+        binned,
     })
 }
 
@@ -1954,10 +1966,11 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
             id,
             held: None,
             before,
+            binned,
             ..
         } => {
             let now = store::stamp(conn, Subject::Item, id)?;
-            if now.is_none() || now == *before {
+            if !binned && (now.is_none() || now == *before) {
                 store::forget_item(conn, id)?;
             }
         }

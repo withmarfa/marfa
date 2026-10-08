@@ -171,6 +171,37 @@ it("refuses a pin of a row in the bin of a type the key may not read as one that
   expect(value(await copy.status()).pinned).not.toContain(unread.data.item.id);
 });
 
+it("keeps a row it holds in the bin when a drain reads it back", async () => {
+  const created = await client.createItem({
+    type: "core.note",
+    source: ctx.source,
+    tier: "library",
+    properties: { title: "edited, then binned elsewhere", body: "b" },
+  });
+  expect(created.ok, JSON.stringify(created.error)).toBe(true);
+  const id = created.data.item.id;
+  trackItem(ctx, id);
+  const copy = await device("drain-read-back", "library");
+  const held = value(await copy.get(id));
+  value(
+    await copy.update(id, {
+      version: held.version,
+      properties: { body: "edited here" },
+    }),
+  );
+  expect((await client.deleteItem(id)).ok).toBe(true);
+  value(await copy.catchUp());
+  // The witness: the copy holds the row in the bin before the drain.
+  expect(
+    value(await copy.list({ state: "trashed" })).map((row) => row.id),
+  ).toContain(id);
+  value(await copy.drain());
+  expect(
+    value(await copy.list({ state: "trashed" })).map((row) => row.id),
+    "the drain's read-back let go of a row the slice holds in the bin",
+  ).toContain(id);
+});
+
 it("keeps a row it holds in the bin when a pin of it is refused", async () => {
   const trashed = await trashedNote("held in the bin");
   const copy = await device("pin-held", "library");
@@ -201,25 +232,15 @@ it("keeps a row it holds in the bin when a pin of it is refused", async () => {
 
 it("restores a row read from the bin that the copy does not hold", async () => {
   const copy = await device("restore", "library");
-  const made = value(
-    await copy.create({
-      type: "core.note",
-      properties: { title: "trashed here, restored here", body: "b" },
-    }),
-  );
-  const id = made.item_id ?? "";
-  trackItem(ctx, id);
-  value(await copy.drain());
-  value(await copy.deleteItem(id));
-  value(await copy.drain());
-  value(await copy.forget());
+  // Made and trashed elsewhere after the copy's hydration, and not caught
+  // up, so the copy does not hold it.
+  const id = (await trashedNote("trashed elsewhere, restored here")).id;
   // The witness: the row is in the bin on the server and not in the copy.
   expect((await findInBin(copy, [id])).found.has(id)).toBe(true);
-  // A local read by id answers no row in the bin, held or not (`device/get-trashed`).
   const held = value(await copy.list({ state: "trashed" }));
   expect(
     held.map((row) => row.id),
-    "the copy held the row after its delete was answered",
+    "the copy held a row it never read",
   ).not.toContain(id);
 
   const restored = value(await copy.restoreItem(id));
