@@ -77,6 +77,66 @@ inBrowser("trusted management pages", () => {
     } finally {
       await context.close();
       await server.close();
+      await ctx.housekeeping.stop();
+      await ctx.cleanup();
+    }
+  });
+  it("shows the maintenance error when a completed HTTP request reports a failed run", async () => {
+    if (!browser) throw new Error("Browser unavailable");
+    const { origin, port } = await reserveOrigin();
+    const ctx = await createTestContext({ authBaseUrl: origin });
+    let shouldFail = false;
+    ctx.housekeeping.register({
+      name: "browser-maintenance",
+      intervalMs: 3_600_000,
+      firstRunDelayMs: 3_600_000,
+      run: () =>
+        shouldFail
+          ? Promise.reject(new Error("The maintenance sweep could not finish."))
+          : Promise.resolve({ checked: 1 }),
+    });
+    await ctx.housekeeping.start();
+    const server = listen(ctx.app, port);
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    page.on("dialog", (dialog) => {
+      void dialog.accept();
+    });
+    try {
+      const signedIn = await context.request.post(
+        `${origin}/auth/sign-in/email`,
+        {
+          headers: { origin },
+          data: { email: ctx.owner.email, password: ctx.owner.password },
+        },
+      );
+      expect(signedIn.status()).toBe(200);
+      await page.goto(`${origin}/auth/owner/manage`);
+      const button = page
+        .locator("#jobs li")
+        .filter({ hasText: "browser-maintenance" })
+        .getByRole("button", { name: "Run maintenance" });
+      await button.click();
+      await expect.poll(() => page.textContent("#status")).toBe("Done.");
+      shouldFail = true;
+      const response = page.waitForResponse((res) =>
+        res.url().endsWith("/housekeeping/browser-maintenance/run"),
+      );
+      await button.click();
+      const failedRun = await response;
+      expect(failedRun.status()).toBe(200);
+      expect(await failedRun.json()).toMatchObject({
+        outcome: "error",
+        error: "The maintenance sweep could not finish.",
+      });
+      await expect
+        .poll(() => page.textContent("#status"))
+        .toBe("The maintenance sweep could not finish.");
+      expect(await button.isEnabled()).toBe(true);
+    } finally {
+      await context.close();
+      await server.close();
+      await ctx.housekeeping.stop();
       await ctx.cleanup();
     }
   });

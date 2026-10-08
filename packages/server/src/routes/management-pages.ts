@@ -71,7 +71,7 @@ async function refresh() {
     action(li, 'Run maintenance', async () => {
       if (!confirm('Run this maintenance job? It may permanently remove eligible data.')) return;
       const result = await request('/housekeeping/' + encodeURIComponent(row.name) + '/run', {method:'POST'});
-      if (result.outcome === 'failed') throw new Error(result.error || 'Maintenance failed.');
+      if (result.outcome === 'error') throw new Error(result.error || 'Maintenance failed.');
     });
   });
   rows('keys', keys.data, (li, row) => { li.textContent = row.label + ' (' + row.source + ')';
