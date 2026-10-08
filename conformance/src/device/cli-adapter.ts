@@ -93,7 +93,7 @@ export interface CliDeviceOptions {
   reader?: boolean;
   /**
    * The folder registry the binary reads, standing in for one machine's
-   * (`folders.md` 41); the run's own where unnamed.
+   * (`folders/registry-lists-folders`); the run's own where unnamed.
    */
   registry?: string;
   /**
@@ -915,52 +915,51 @@ export interface ScanReport {
   missing: number;
   deleted: number;
   /** The paths of those, each found in no folder on the machine
-   *  (`folders.md` 43). */
+   *  (`folders/missing-file-trashed`). */
   trashed: string[];
   /** Journaled files held, since the other folders could not all be read
-   *  (`folders.md` 43). */
+   *  (`folders/uncertain-move-deferred`). */
   unsure: Array<{ path: string; reason: string }>;
   /** Why the registry could not be read, where it could not. */
   registry: string | null;
   /** Journaled files found in another folder on the machine, so nothing was
-   *  trashed (`folders.md` 43). */
+   *  trashed (`folders/moved-file-count`). */
   moved_away: number;
   skipped: number;
   /** Files that are not documents a watch left for a later pass, still
-   *  changing (`folders.md` 51). */
+   *  changing (`folders/binary-waits-for-settle`). */
   settling: string[];
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 38). Counted in `created` too. */
+   *  or moved (`folders/lost-row-edit-retried`). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 38). */
+   *  sent (`folders/lost-row-unchanged-held`). */
   lost: number;
-  /** Files this scan read and holds rather than sends (`folders.md` 9, 10,
-   *  11). */
+  /** Files this scan read and holds rather than sends (`folders/refused-edit-report`, `folders/encoding-flag` and `folders/edge-line-invalid-report`). */
   flagged: FlaggedFile[];
   /** Embeds in the files this scan read that name no file it sends
-   *  (`folders.md` 12), each flagged `embed`. */
+   *  (`folders/embed-outside`, `folders/embed-unreadable-target` and `folders/embed-ambiguous-target`), each flagged `embed`. */
   embeds: FlaggedFile[];
   /** Bound files the walk did not reach, held rather than journaled
-   *  (`folders.md` 25, 26). */
+   *  (`folders/excluded-binding-kept` and `folders/unreadable-bindings`). */
   unreached: number;
   /** Directories the walk did not enter, each flagged `package` or
-   *  `unreadable` (`folders.md` 26), or `gone` where one went away while
-   *  the walk read it (`folders.md` 22). */
+   *  `unreadable` (`folders/package-scan` and `folders/unreadable-directory`), or `gone` where one went away while
+   *  the walk read it (`folders/walk-directory-gone`). */
   directories: FlaggedFile[];
-  /** Files the built-in secrets list refuses (`folders.md` 25). */
+  /** Files the built-in secrets list refuses (`folders/secrets-reported`). */
   secrets: string[];
   /** Deletes of files gone from the disk that wait, a large removal
-   *  (`folders.md` 46). */
+   *  (`folders/disk-removal-paused`). */
   paused: number;
-  /** Texts near the server's limit, each flagged `size` (`folders.md` 47). */
+  /** Texts near the server's limit, each flagged `size` (`folders/size-warning`). */
   warnings: FlaggedFile[];
   /** Why the scan read nothing, where the folder's directory is gone
-   *  (`folders.md` 22). */
+   *  (`folders/root-gone-scan-report`). */
   root_gone: string | null;
 }
 
-/** Where every file stands (`folders.md` 48). */
+/** Where every file stands (`folders/status-files`). */
 export interface StatusReport {
   files: Array<{
     path: string;
@@ -973,20 +972,20 @@ export interface StatusReport {
     warning?: string;
   }>;
   paused: { disk: number; pull: number };
-  /** Present while the first sync waits to be confirmed (`folders.md` 54). */
+  /** Present while the first sync waits to be confirmed (`folders/first-sync-status`). */
   first_sync?: { plan: { write: number; send: number; beside: number } | null };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
- *  lines that change nothing (`folders.md` 11), `embed` for an embed read
- *  as nothing (`folders.md` 12), `encoding` for a document that is not
- *  UTF-8 (`folders.md` 10), and `name` for a name another file holds in
- *  another case or form (`folders.md` 27). A directory the walk did not
- *  enter is `package` or `unreadable` (`folders.md` 26), or `gone`
- *  (`folders.md` 22). A pull names an item whose file it did not write as
+ *  lines that change nothing (`folders/edge-line-invalid-report`), `embed` for an embed read
+ *  as nothing (`folders/embed-outside`, `folders/embed-unreadable-target` and `folders/embed-ambiguous-target`), `encoding` for a document that is not
+ *  UTF-8 (`folders/encoding-flag`), and `name` for a name another file holds in
+ *  another case or form (`folders/name-comparison`). A directory the walk did not
+ *  enter is `package` or `unreadable` (`folders/package-scan` and `folders/unreadable-directory`), or `gone`
+ *  (`folders/walk-directory-gone`). A pull names an item whose file it did not write as
  *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in
- *  (`folders.md` 60), and one it could not let go to another folder as
- *  `retained` (`folders.md` 44). */
+ *  (`folders/pull-flagged-items`), and one it could not let go to another folder as
+ *  `retained` (`folders/retained-source-reported`). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -1006,8 +1005,8 @@ export interface FlaggedFile {
     | "absent"
     | "retained";
   reason: string;
-  /** The item whose file a pull did not write (`folders.md` 60), or could
-   *  not let go to another folder (`folders.md` 44). */
+  /** The item whose file a pull did not write (`folders/pull-flagged-items`), or could
+   *  not let go to another folder (`folders/retained-source-reported`). */
   item?: string;
 }
 
@@ -1019,64 +1018,64 @@ export interface PullReport {
   skipped: number;
   unwritten: number;
   /** Files the person deleted, written back because their item changed
-   *  elsewhere inside the grace (`folders.md` 21). */
+   *  elsewhere inside the grace (`folders/delete-remote-revives`). */
   revived: number;
   /** Items whose placement another item holds, written at a free path
-   *  beside it (`folders.md` 19). */
+   *  beside it (`folders/placement-collision-number`). */
   beside: number;
   /** Placements written: an `in-folder` edge made, or its path moved to
-   *  where the file is (`folders.md` 19). */
+   *  where the file is (`folders/placement-create` and `folders/placement-rename-only`). */
   placed: number;
   /** Items whose placement would make them another kind of file, left
-   *  unwritten (`folders.md` 19). */
+   *  unwritten (`folders/placement-unsuited`). */
   unsuited: number;
   /** Placements the server refused, not sent again until the key or the
-   *  settings change, or the item's placement moves on (`folders.md` 19). */
+   *  settings change, or the item's placement moves on (`folders/placement-refusal-no-repeat`). */
   unplaced: number;
   outside: number;
   /** Files of items trashed, purged or out of the search's states, taken
-   *  away (`folders.md` 35). */
+   *  away (`folders/departed-file-removed` and `folders/purged-file-remove`). */
   removed: number;
-  /** Of `removed`, the files of items purged (`folders.md` 35). */
+  /** Of `removed`, the files of items purged (`folders/purged-file-count`). */
   purged: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
   /** Files whose item the search no longer matches otherwise, left where
-   *  they are (`folders.md` 35). */
+   *  they are (`folders/unmatched-file-kept`). */
   unmatched: number;
   /** Files left in place whose items left elsewhere in a large removal
-   *  (`folders.md` 46). */
+   *  (`folders/pull-removal-paused`). */
   paused: number;
   /** Files another folder on the machine let go of, taken in here
-   *  (`folders.md` 44). */
+   *  (`folders/take-in-file`). */
   taken: number;
   /** Items whose file was moved to another folder on the machine that has
-   *  not taken it yet, so none is written here (`folders.md` 43). */
+   *  not taken it yet, so none is written here (`folders/moved-awaiting-peer`). */
   elsewhere: number;
   /** Files of items another folder on the machine holds with a file of its
-   *  own, taken away with nothing trashed (`folders.md` 44). */
+   *  own, taken away with nothing trashed (`folders/let-go-existing-peer`). */
   let_go: number;
   /** Placements deleted because their file left the folder for good
-   *  (`folders.md` 88). */
+   *  (`folders/placement-end-count`). */
   ended: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 37). */
+  /** File items whose bytes could not be had, so no file was written (`folders/blob-absent`). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
   settings: SettingsFileReport;
   /** Files left as the person wrote them, their bytes not taken. */
   flagged: FlaggedFile[];
   /** Properties a type the folder holds declares under a name no file can
-   *  carry as a property (`folders.md` 7). */
+   *  carry as a property (`folders/uncarried-report`). */
   uncarried: Array<{ type: string; property: string }>;
   /** Embeds whose file this pull did not write where they say
-   *  (`folders.md` 12), each flagged `embed`. */
+   *  (`folders/embed-outside`, `folders/embed-unreadable-target` and `folders/embed-ambiguous-target`), each flagged `embed`. */
   embeds: FlaggedFile[];
   /** Why the pull wrote nothing, where the folder's directory is gone
-   *  (`folders.md` 22). */
+   *  (`folders/root-gone-pull-report`). */
   root_gone: string | null;
 }
 
-/** What became of the folder's settings file (`folders.md` 1). */
+/** What became of the folder's settings file (`folders/settings-file`). */
 export interface SettingsFileReport {
   /** An edit of the file went through the folder door and landed. */
   sent: boolean;
@@ -1084,7 +1083,7 @@ export interface SettingsFileReport {
   written: boolean;
   /** Why the file's edit is not in force, where it is not. */
   flagged: string | null;
-  /** Why the file could not be written, where it could not (`folders.md` 20). */
+  /** Why the file could not be written, where it could not (`folders/write-settings-failure`). */
   unwritten: string | null;
 }
 
@@ -1095,11 +1094,11 @@ export interface PushReport {
   settings: SettingsFileReport;
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
-   *  the version the copy holds (`folders.md` 23). */
+   *  the version the copy holds (`folders/version-ancestor-missing`). */
   drain: DrainReport & {
     rebased: number;
     /** Placements another machine made first, withdrawn for the server's
-     *  (`folders.md` 19). */
+     *  (`folders/placement-give-way-count`). */
     gave_way: number;
   };
   /** A catch-up from the copy's cursor, a hydration where the log had aged
@@ -1128,7 +1127,7 @@ export class CliFolder {
       binary: string;
       url: string;
       key: string;
-      /** The registry of the machine this folder is on (`folders.md` 41). */
+      /** The registry of the machine this folder is on (`folders/registry-lists-folders`). */
       registry?: string;
       /** A home whose own registry the binary finds, in place of either. */
       home?: string;
@@ -1281,7 +1280,7 @@ export class CliFolder {
   }
 }
 
-/** What a folder's first sync will do, or that it is confirmed (`folders.md` 54). */
+/** What a folder's first sync will do, or that it is confirmed (`folders/first-sync-plan`). */
 export interface FirstSyncJson {
   waiting: boolean;
   write: number | null;
@@ -1297,7 +1296,7 @@ export interface AddedFolder {
   first_sync: FirstSyncJson;
 }
 
-/** A folder a machine's registry lists (`folders.md` 41). */
+/** A folder a machine's registry lists (`folders/registry-lists-folders`). */
 export interface RegisteredFolder {
   dir: string;
   folder: string;

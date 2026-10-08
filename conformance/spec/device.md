@@ -536,7 +536,7 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a folder whose search names no type hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders.md` 2), and report the slice's types as `*`.
+When a folder whose search names no type hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
 
 **Tests:** `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
 
@@ -2398,7 +2398,7 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
@@ -2406,7 +2406,7 @@ If a create, a tag add, a metadata merge or replace, a file added with tags, or 
 
 ### `device/tag-count`
 
-If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders.md` 55) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) names more than 100 tags, or would leave the row the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
 
@@ -2426,7 +2426,7 @@ When a write adds a tag the server takes, a device MUST take it and queue it, a 
 
 ### `device/property-name-empty`
 
-If a create, an edit or a folder's scan of a document (`folders.md` 55) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, an edit or a folder's scan of a document (`folders/document-name-refusal`) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server refuses such a name on every write (`items/property-name-empty`), and a device that took it would hold a row the server never will.
 
@@ -2520,7 +2520,7 @@ When a caller reads a folder the copy holds whose search carries a `backref` con
 
 When a caller lists or searches in a folder, a device MUST answer the items of the search's types and their subtypes, at the search's tier, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` row.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders.md` 2).
+**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders/search-match`).
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's search holds`.
 
@@ -2618,7 +2618,7 @@ If folder settings sent through a working copy carry a `filter` the listing gram
 
 If folder settings sent through a working copy name a default type or a default tier that the folder's search does not hold, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** a new file made with such a default would fall outside its own folder (`folders.md` 3), and the server takes the settings.
+**Reason:** a new file made with such a default would fall outside its own folder (`folders/default-search-refusal`), and the server takes the settings.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its search would not hold, before anything is sent`.
 
@@ -2844,7 +2844,7 @@ Where a slice's tier is `all`, when a local edit, a drain's answer, a catch-up o
 
 ## Links and embeds in a body
 
-A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folders.md` 11 and 12). These rules say what a working copy does, which has no directory and no file record.
+A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folders/body-reference` and `folders/embed-edge`). These rules say what a working copy does, which has no directory and no file record.
 
 ### `device/body-edges`
 
@@ -2856,7 +2856,7 @@ When a create or an edit through a working copy changes an item's body, a device
 
 ### `device/body-field`
 
-A device MUST read an item's body from the property `folders.md` 7 names: the type's `body_field`, or `body` for a type that names none.
+A device MUST read an item's body from the property `folders/body-property` names: the type's `body_field`, or `body` for a type that names none.
 
 **Reason:** `core.event` keeps its body in `description`, so a link there is a link.
 
@@ -2940,7 +2940,7 @@ When a body's change names an edge, a device MUST queue the edge as a write of i
 
 When a body's link names an item only the server holds, a device MUST pin that item before it queues the edge.
 
-**Reason:** a copy holds no edge to a row it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folders.md` 11).
+**Reason:** a copy holds no edge to a row it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folders/edge-pin-held`).
 
 **Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
 
@@ -3046,7 +3046,7 @@ When a caller reads an item's links and embeds, a device MUST answer from the co
 
 When a write takes a link or an embed out of a body, a device MUST queue the delete of the edge the body named through it.
 
-**Reason:** taking a link out removes its edge as in a folder (`folders.md` 31). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
+**Reason:** taking a link out removes its edge as in a folder (`folders/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
 
 **Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
 
@@ -3539,7 +3539,7 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the row (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
 - **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth.md` 33 asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (`device/server-row-order`). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
-- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders.md` 30).
+- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders/placement-root-relative`).
 - **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts/refusal-in-bin` and `queue-and-verdicts/refusal-parts`), and the fixtures script the shapes the server will answer.
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. The frame's shape is held by the server's own test, which retires a row directly.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).

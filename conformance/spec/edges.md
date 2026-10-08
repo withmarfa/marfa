@@ -936,7 +936,7 @@ If `POST /edges` names a `parent-of` edge that closes a cycle only through an ed
 
 When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `source`, no `reverse_name` and a `path` in its `property_schema`.
 
-**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders.md` 11).
+**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders/placement-path`).
 
 **Tests:** `compliance/edge-types.test.ts › ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1152,7 +1152,7 @@ When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `
 
 When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of` and `source` on `attached-to` and `references`.
 
-**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders.md` 11).
+**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders/edge-writing-end`).
 
 **Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`.
 

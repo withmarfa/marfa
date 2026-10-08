@@ -163,7 +163,7 @@ describe("type registration and listing", () => {
   });
 
   it("declares executable on core.file, which every file type inherits", async () => {
-    // A folder keeps a file's executable permission there (`folders.md` 50).
+    // A folder keeps a file's executable permission there (`folders/executable-created`).
     for (const id of ["core.file", "core.file.image"]) {
       const r = await client.getType(id);
       expect(r.ok, `GET /types/${id}`).toBe(true);

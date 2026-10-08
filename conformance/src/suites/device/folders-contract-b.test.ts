@@ -19,7 +19,7 @@ import { promisify } from "node:util";
 import { CliFolder } from "../../device/cli-adapter.js";
 import { keychainEnv } from "../../utils/keychain.js";
 const execute = promisify(execFile);
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   copyItemEvent,
   refusal,
@@ -774,9 +774,8 @@ async function fault<T>(name: string, action: () => Promise<T>): Promise<T> {
   }
 }
 
-it.skipIf(process.platform !== "darwin")(
-  "refuses a new downloaded file when quarantine marking fails and retries it",
-  async () => {
+describe.runIf(process.platform === "darwin")("quarantine failures", () => {
+  it("refuses a new downloaded file when quarantine marking fails and retries it", async () => {
     harness = await fileHarness("contract-b-quarantine-fails");
     const failed = await fault("quarantine-fails", () =>
       harness!.folder.pull(),
@@ -791,12 +790,9 @@ it.skipIf(process.platform !== "darwin")(
     expect(readFileSync(join(harness.dir, "file.bin"), "utf8")).toBe(
       "file bytes",
     );
-  },
-);
+  });
 
-it.skipIf(process.platform !== "darwin")(
-  "keeps an existing file nonexecutable when quarantine marking fails",
-  async () => {
+  it("keeps an existing file nonexecutable when quarantine marking fails", async () => {
     harness = await fileHarness("contract-b-quarantine-existing");
     expect((await harness.folder.pull()).ok).toBe(true);
     expect((await harness.folder.scan()).ok).toBe(true);
@@ -807,8 +803,8 @@ it.skipIf(process.platform !== "darwin")(
     expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0);
     expect((await harness.folder.pull()).ok).toBe(true);
     expect(statSync(join(harness.dir, "file.bin")).mode & 0o111).toBe(0o111);
-  },
-);
+  });
+});
 
 it("keeps a file's permissions when a permission change is refused and continues pulling", async () => {
   harness = await fileHarness("contract-b-permission-fails");

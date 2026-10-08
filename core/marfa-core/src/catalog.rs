@@ -677,13 +677,13 @@ impl Catalog {
     }
 
     /// The property an item of the type is titled by: its hints' title field,
-    /// or `title` where they name none (`folders.md` 7).
+    /// or `title` where they name none (`folders/title-property`).
     pub fn title_property(&self, type_id: &str) -> &str {
         self.title_field(type_id).unwrap_or(TITLE_PROPERTY)
     }
 
     /// The property an item of the type keeps its text in: its hints' body
-    /// field, or `body` where they name none (`folders.md` 7).
+    /// field, or `body` where they name none (`folders/body-property`).
     pub fn body_property(&self, type_id: &str) -> &str {
         self.body_field(type_id).unwrap_or(BODY_PROPERTY)
     }
