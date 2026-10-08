@@ -657,8 +657,10 @@ const refusedOnly: Record<string, () => string[]> = {
 const NOT_DRIVEN: Record<string, string> = {
   status: "describes a server on another contract; held by its own case",
   whoami: "describes a server on another contract; held by its own case",
-  logout: "revokes and forgets the token, printing nothing it was answered",
-  "keys forget": "forgets a kept credential, sending nothing",
+  logout:
+    "revokes and forgets a kept sign-in, which needs a keychain of its own; held by its own case in credential-locks.test.ts",
+  "keys forget":
+    "forgets a kept credential, sending nothing, which needs a keychain of its own; held by its own case in credential-locks.test.ts",
   operations: "prints the table, sending nothing; held by its own case",
   "docs search":
     "reads the docs site, which is not a server; held by its own case",
