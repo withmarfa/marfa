@@ -3,7 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
-  getManagementClient,
+  getOwnerClient,
   trackEdge,
   trackItem,
   trackKey,
@@ -628,7 +628,7 @@ describe("outbound webhooks", () => {
     trackWebhook(ctx, created.data.id, client);
 
     const restoredId = uuidv7();
-    const restored = await getManagementClient().restoreArchive(
+    const restored = await getOwnerClient().restoreArchive(
       itemsArchive([
         {
           id: restoredId,

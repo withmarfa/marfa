@@ -10,7 +10,7 @@ import type {
 } from "../../client/types.js";
 import {
   createTestContext,
-  getManagementClient,
+  getOwnerClient,
   trackKey,
   trackItem,
   cleanup,
@@ -249,8 +249,8 @@ describe("strict_mode lever", () => {
       },
     });
     const planted = uuidv7();
-    const operator = getManagementClient();
-    const refused = await operator.restoreArchive(
+    const owner = getOwnerClient();
+    const refused = await owner.restoreArchive(
       itemsArchive([
         {
           id: planted,
@@ -274,7 +274,7 @@ describe("strict_mode lever", () => {
     // The witness. The same archive without the property restores, so what
     // was refused is the property and not the archive, the type or the door.
     const fine = uuidv7();
-    const restored = await operator.restoreArchive(
+    const restored = await owner.restoreArchive(
       itemsArchive([
         {
           id: fine,
@@ -576,7 +576,7 @@ describe("strict_mode lever", () => {
     // be a second rule wearing the first one's name.
     await setConfig({});
     const id = uuidv7();
-    const restored = await getManagementClient().restoreArchive(
+    const restored = await getOwnerClient().restoreArchive(
       itemsArchive([
         {
           id,
@@ -728,7 +728,7 @@ describe("source_allowlist lever", () => {
         source_allowlist: { types: ["core.note"], sources: [own] },
       },
     });
-    const minted = await getManagementClient().createKey({
+    const minted = await getOwnerClient().createKey({
       label: "allowlist-bulk",
       source: own,
       sources: [claimed],

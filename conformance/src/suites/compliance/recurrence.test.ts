@@ -7,7 +7,7 @@ import {
   trackItem,
   trackKey,
   cleanup,
-  getManagementClient,
+  getOwnerClient,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
 
@@ -1157,15 +1157,15 @@ describe("what a write may store", () => {
           },
         },
       ]);
-    const operator = getManagementClient();
-    const refused = await operator.restoreArchive(
+    const owner = getOwnerClient();
+    const refused = await owner.restoreArchive(
       archived(["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"]),
     );
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_properties");
     expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
     // The witness: the same archive with an ordinary rule restores.
-    const taken = await operator.restoreArchive(
+    const taken = await owner.restoreArchive(
       archived(["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28"]),
     );
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);

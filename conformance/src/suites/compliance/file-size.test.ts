@@ -6,6 +6,7 @@ import {
   createTestContext,
   cleanup,
   getManagementClient,
+  getOwnerClient,
   trackItem,
   trackKey,
   trackType,
@@ -249,7 +250,7 @@ describe("a file item carries the size of the bytes it names", () => {
       { name: "edges.ndjson", body: "" },
       { name: "types.ndjson", body: "" },
     ]);
-    const restored = await getManagementClient().restoreArchive(archive);
+    const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, lentId);
     trackItem(ctx, unlentId);
