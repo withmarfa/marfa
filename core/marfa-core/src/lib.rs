@@ -934,7 +934,7 @@ impl Core {
     /// A row the copy does not hold, such as one read from the bin, is
     /// restored by id: queued, shown nowhere until the server answers, and
     /// held once the answer's read or its `item.restored` event brings it
-    /// where the slice takes it (`queue-and-verdicts.md` 56 to 58).
+    /// where the slice takes it (`queue-and-verdicts/restore-by-id`, `queue-and-verdicts/restore-not-entered` and `queue-and-verdicts/restore-once`).
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;

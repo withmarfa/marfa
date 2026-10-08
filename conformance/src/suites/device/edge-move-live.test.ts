@@ -18,7 +18,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A move of an edge's end made through a working copy, against a real
- * server (`queue-and-verdicts.md` 60 to 62): one write, sent when the copy
+ * server (`queue-and-verdicts/edge-move-one-update`, `queue-and-verdicts/edge-move-shown` and `queue-and-verdicts/edge-move-waits-new-end`): one write, sent when the copy
  * comes back online, refused as a whole, and held for the create of the row
  * it moves to. Every call to the device is a process of its own, so each
  * step reads the queue and the copy a restart left.

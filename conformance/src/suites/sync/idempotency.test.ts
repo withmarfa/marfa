@@ -942,7 +942,7 @@ describe("a create that resolves an existing row", () => {
     expect(refused.error?.error.code).toBe("ancestor_unavailable");
     // Named by the row, because the create named only the key: a device
     // that read nothing has to learn which row is there before it can hold
-    // it rather than a second copy of it (`queue-and-verdicts.md` 39).
+    // it rather than a second copy of it (`queue-and-verdicts/landed-refused`).
     const envelope = refused.error as unknown as AncestorUnavailableResponse;
     expect(
       envelope.current.id,

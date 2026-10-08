@@ -197,7 +197,7 @@ export enum ErrorCode {
    * about the request.
    *
    * `503` and not `409`. A conforming device retries a `5xx` without
-   * counting it against the write (`queue-and-verdicts.md` 17), while a
+   * counting it against the write (`queue-and-verdicts/environmental-uncounted`), while a
    * `409` blocks that write outright (22, 23). Contention is the case
    * the retry exists for, so a `409` would make every device give up on
    * a write that would have landed on the next try.
@@ -213,7 +213,7 @@ export enum ErrorCode {
    * a retry a moment later cannot help; only someone freeing space can.
    * It is still a `5xx`, so a conforming device keeps the write queued and
    * tries again rather than dropping it as refused
-   * (`queue-and-verdicts.md` 17).
+   * (`queue-and-verdicts/environmental-uncounted`).
    */
   INSUFFICIENT_STORAGE = "insufficient_storage",
   /**
