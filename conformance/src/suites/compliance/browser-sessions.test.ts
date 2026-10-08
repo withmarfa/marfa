@@ -1,8 +1,9 @@
+import { controlRequest } from "../../utils/control-request.js";
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -14,7 +15,7 @@ import {
  * not the browser that approved it, so every door that ends a browser leaves
  * the app's access, refresh and consent as they were. A person has to be
  * signed in, and an instance has one owner, so this file boots a server of
- * its own and creates the owner there.
+ * its own and claims its owner through the production local command.
  *
  * Two apps are connected once, at the start, and every door then ends a fresh
  * browser session: one holds a refresh token and one holds access alone. The
@@ -23,10 +24,6 @@ import {
 let server: FreshServer | undefined;
 let origin: string;
 
-const OWNER = {
-  email: "browsers@example.com",
-  password: "correct horse battery",
-};
 const CALLBACK = "http://127.0.0.1:9/callback";
 const SCOPE = "core.note:read";
 
@@ -55,11 +52,6 @@ beforeAll(async () => {
     MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
     PORT: String(port),
   });
-  const operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  });
-  expect((await operator.createOwner(OWNER)).status).toBe(201);
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );
@@ -310,15 +302,6 @@ async function expectAppsConnected(cookie: string): Promise<void> {
   expect(again.silent).toBe(true);
 }
 
-/** The cookie a password change answers its own browser with. */
-function replacement(response: Response): string {
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(cookie, "the password change set no session cookie").toBeTruthy();
-  return cookie!;
-}
-
 describe("a browser session ending", () => {
   it("through browser sign-out leaves every app connected", async () => {
     const browser = live;
@@ -408,7 +391,7 @@ describe("a browser session ending", () => {
     });
     expect(res.status).toBe(200);
     password = next;
-    live = replacement(res);
+    expect(await browserLive(live)).toBe(true);
     expect(await browserLive(ended)).toBe(false);
 
     await expectAppsConnected(live);
@@ -429,6 +412,21 @@ describe("a browser session ending", () => {
       "invalid_request",
     );
     live = await signIn();
+  });
+
+  it("local recovery revokes browser sessions and keeps apps connected", async () => {
+    const ended = live;
+    await connectApps(ended);
+    const recovered = await controlRequest(
+      server!.controlSocket,
+      "/_control/owner/recover",
+      { method: "POST", body: { password: OWNER.password } },
+    );
+    expect(recovered.status).toBe(200);
+    password = OWNER.password;
+    expect(await browserLive(ended)).toBe(false);
+    live = await signIn();
+    await expectAppsConnected(live);
   });
 
   it("leaves every app connected across a restart of the server", async () => {

@@ -1,5 +1,5 @@
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import type { ErrorResponse } from "../../client/types.js";
 import {
   bootFreshServer,
@@ -22,7 +22,6 @@ let server: FreshServer | undefined;
 let origin: string;
 
 const CLIENT_HEADER = "x-conformance-client";
-const OWNER = { email: "owner@example.com", password: "correct horse battery" };
 const FOREIGN = "https://foreign.example";
 
 /** The doors a browser posts a form to. */
@@ -37,11 +36,6 @@ beforeAll(async () => {
   server = await bootFreshServer("sign-in-surface", {
     TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
-  const operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.operatorKey,
-  });
-  expect((await operator.createOwner(OWNER)).status).toBe(201);
   // The origin the surface trusts is its own, which discovery names as the
   // issuer.
   const discovery = await fetch(
