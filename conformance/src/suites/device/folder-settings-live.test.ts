@@ -296,7 +296,10 @@ describe("a copy writes a folder's settings through the folder door", () => {
   it("refuses settings the server would refuse, or defaults its search would not hold, before anything is sent", async () => {
     const title = `Refused ${ctx.runId}`;
     for (const [settings, code] of [
-      [{ title, search: { types: [typeId], filter: "title eq" } }, "validation"],
+      [
+        { title, search: { types: [typeId], filter: "title eq" } },
+        "validation",
+      ],
       [
         { title, search: { types: [typeId] }, defaults: { tags: [""] } },
         "validation",
@@ -320,9 +323,7 @@ describe("a copy writes a folder's settings through the folder door", () => {
       filter: `properties.title eq "${title}"`,
     });
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
-    expect(listed.data.data, "a refused folder reached the server").toEqual(
-      [],
-    );
+    expect(listed.data.data, "a refused folder reached the server").toEqual([]);
 
     // A change is held to the settings it leaves: alone, a default type
     // is held by a search of every type, and the shelf searches one other.

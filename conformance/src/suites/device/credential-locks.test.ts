@@ -129,10 +129,14 @@ async function withUnsafeLock(
   writeFileSync(lock, "", { flag: "wx", mode: 0o644 });
   chmodSync(lock, 0o644);
   try {
-    const child = execFile(requireBinary(), ["--json", "--url", origin, ...args], {
-      env: { ...env, HOME: environment },
-      timeout: 30_000,
-    });
+    const child = execFile(
+      requireBinary(),
+      ["--json", "--url", origin, ...args],
+      {
+        env: { ...env, HOME: environment },
+        timeout: 30_000,
+      },
+    );
     child.stdin?.end(input ?? "");
     let stdout = "";
     let stderr = "";

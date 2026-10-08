@@ -4069,11 +4069,7 @@ describe("an upload is a queued write", () => {
         [attached.value.upload, attached.value.item, attached.value.edge].map(
           (row) => row.kind,
         ),
-    ).toEqual([
-      "upload_blob",
-      "create_item",
-      "create_edge",
-    ]);
+    ).toEqual(["upload_blob", "create_item", "create_edge"]);
   });
 
   it("adds a file under the title, type, tier and tags it is given", async () => {

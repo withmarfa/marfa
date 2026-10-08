@@ -651,9 +651,9 @@ describe("what a hydration asks for", () => {
       `a wildcard naming no type the catalog holds was refused: ${JSON.stringify(nothing)}`,
     ).toBe(true);
     const status = await device.status();
-    expect(status.ok && [status.value.hydration, status.value.slice_types]).toEqual(
-      ["complete", ["acme.*"]],
-    );
+    expect(
+      status.ok && [status.value.hydration, status.value.slice_types],
+    ).toEqual(["complete", ["acme.*"]]);
   });
 
   it("hydrates a type whose descendant alone the key reads, by name or by declared parent", async () => {
@@ -699,7 +699,11 @@ describe("how a hydration completes", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
-    server.copyAnswer("GET", "/items", itemsPage([{ item: wireItem({ id: "before" }) }]));
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "before" }) }]),
+    );
     const hydrated = await device.hydrate(["core.note"], "library");
     expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
     expect(
@@ -725,11 +729,16 @@ describe("how a hydration completes", () => {
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
-    server.copyAnswer("GET", "/items", itemsPage([{ item: wireItem({ id: "n1" }) }]));
-    const hydrated = await device.hydrate(["core.note"], "library");
-    expect(hydrated.ok, "a replay with no live marker completed a hydration").toBe(
-      false,
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "n1" }) }]),
     );
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(
+      hydrated.ok,
+      "a replay with no live marker completed a hydration",
+    ).toBe(false);
     if (!hydrated.ok) expect(hydrated.refusal.code).toBe("stream_incomplete");
     const status = await device.status();
     expect(status.ok && status.value.hydration).not.toBe("complete");
@@ -750,7 +759,9 @@ describe("how a hydration completes", () => {
       itemsPage([{ item: wireItem({ id: "b" }) }], { nextCursor: "p2" }),
     );
     const hydrated = await device.hydrate(["core.note"], "library");
-    expect(hydrated.ok, "a listing that loops was walked to an end").toBe(false);
+    expect(hydrated.ok, "a listing that loops was walked to an end").toBe(
+      false,
+    );
     if (!hydrated.ok) {
       expect(hydrated.refusal.code).toBe("copy_expired");
       expect(hydrated.refusal.raw).toContain("read_view_invalid");

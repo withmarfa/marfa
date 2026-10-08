@@ -3705,7 +3705,9 @@ describe("a pin, and the rows it holds", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "gone" } }, { item: { id: "stays" } }] },
+      rows: {
+        "core.note": [{ item: { id: "gone" } }, { item: { id: "stays" } }],
+      },
     });
     server.copyAnswer("GET", "/items/gone", answers.itemNotFound("gone"));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -3736,18 +3738,19 @@ describe("a pin, and the rows it holds", () => {
     if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
     expect(server.requests, "the pin asked the server").toEqual([]);
     const status = await device.status();
-    expect(
-      status.ok && [status.value.hydration, status.value.pinned],
-    ).toEqual(["never", []]);
+    expect(status.ok && [status.value.hydration, status.value.pinned]).toEqual([
+      "never",
+      [],
+    ]);
   });
 
   const bound = (version: number, title: string) =>
-      wireItem({
-        id: "bound",
-        type: "core.bookmark",
-        version,
-        properties: { title },
-      });
+    wireItem({
+      id: "bound",
+      type: "core.bookmark",
+      version,
+      properties: { title },
+    });
   const keptForAWrite = async (label: string, events?: Answer) => {
     harness = await startHarness(label);
     const { server, device } = harness;
@@ -3776,7 +3779,9 @@ describe("a pin, and the rows it holds", () => {
   it("lets an unpinned row kept for a waiting write go at the next catch-up that touches it, keeping the write", async () => {
     const { device, write } = await keptForAWrite(
       "unpin-kept-catch-up",
-      copyReplay("11", [copyItemEvent("11", "item.updated", bound(2, "theirs"))]),
+      copyReplay("11", [
+        copyItemEvent("11", "item.updated", bound(2, "theirs")),
+      ]),
     );
     const caught = await device.catchUp();
     expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
@@ -3850,7 +3855,9 @@ describe("what a catch-up takes from the stream", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "excluded" } }, { item: { id: "stays" } }] },
+      rows: {
+        "core.note": [{ item: { id: "excluded" } }, { item: { id: "stays" } }],
+      },
     });
     server.copyAnswer(
       "GET",
@@ -4070,7 +4077,13 @@ describe("a read older than the row held", () => {
       head: "10",
       rows: {
         "core.note": [
-          { item: { id: "held", version: 3, properties: { title: "newer", body: "b" } } },
+          {
+            item: {
+              id: "held",
+              version: 3,
+              properties: { title: "newer", body: "b" },
+            },
+          },
         ],
       },
     });

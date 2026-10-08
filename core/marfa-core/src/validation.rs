@@ -37,7 +37,10 @@ pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
         })
         .collect();
     if tags.len() > MAX_TAGS_PER_ITEM {
-        errors.insert(0, format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item"));
+        errors.insert(
+            0,
+            format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item"),
+        );
     }
     refuse(errors)
 }

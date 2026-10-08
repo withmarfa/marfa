@@ -223,9 +223,8 @@ describe("certified read views", () => {
     expect(written.ok).toBe(false);
     if (!written.ok) expect(written.refusal.code).toBe("hydration_incomplete");
     const state = await h.device.status();
-    expect(state.ok && [state.value.hydration, state.value.event_cursor ?? null]).toEqual([
-      "expired",
-      null,
-    ]);
+    expect(
+      state.ok && [state.value.hydration, state.value.event_cursor ?? null],
+    ).toEqual(["expired", null]);
   });
 });
