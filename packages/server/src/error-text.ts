@@ -146,7 +146,7 @@ function codesOf(value: object): FailureCodes {
  * an aggregate's branches, with the first codes found. A chain too deep or too
  * wide to read whole counts as one, since what was not read could be.
  */
-function databaseFailureIn(error: unknown): FailureCodes | undefined {
+export function databaseFailureCodes(error: unknown): FailureCodes | undefined {
   const walk: { found?: FailureCodes; nodes: number; complete: boolean } = {
     nodes: 0,
     complete: true,
@@ -198,7 +198,7 @@ function framesOf(error: unknown): string {
 export function reportableError(error: unknown): unknown {
   try {
     if (error instanceof DatabaseFailure) return error;
-    const codes = databaseFailureIn(error);
+    const codes = databaseFailureCodes(error);
     return codes === undefined
       ? error
       : new DatabaseFailure(codes, framesOf(error));
@@ -206,6 +206,15 @@ export function reportableError(error: unknown): unknown {
     return new DatabaseFailure({}, "");
   }
 }
+
+/**
+ * A failed query's text, up to the first line that is a stack frame (`at name
+ * (file:1:2)`, `at file:1:2`, `at name (<anonymous>)` or `at name (native)`)
+ * or the end. A line of a bound value that only starts with `    at ` is part
+ * of the value.
+ */
+const FAILED_QUERY =
+  /Failed query: [^]*?(?=\n {4}at [^\n]*(?::\d+:\d+\)?|\((?:<anonymous>|native)\))(?:\n|$)|$)/g;
 
 /**
  * Takes the text of a failed query out of a string, from its statement to its
@@ -218,7 +227,7 @@ export function reportableError(error: unknown): unknown {
  */
 export function withoutFailedQueries(text: string): string {
   if (!text.includes(STATEMENT_PREFIX)) return text;
-  return text.replace(/Failed query: [^]*?(?=\n {4}at |$)/g, FIXED_MESSAGE);
+  return text.replace(FAILED_QUERY, FIXED_MESSAGE);
 }
 
 /**

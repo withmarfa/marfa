@@ -224,6 +224,30 @@ describe("withoutFailedQueries", () => {
       ),
     ).toBe(`Error: ${FIXED}\n    at one (a.ts:1:1)\n    at two (b.ts:2:2)`);
   });
+
+  it("keeps going through a bound value's own lines, including one that begins like a stack frame", () => {
+    const frames = "\n    at one (a.ts:1:1)\n    at file:///b.ts:2:2";
+    const value = `first line\n    at the end of a sentence\nlast-line-${VALUE}`;
+    const message = `Failed query: ${STATEMENT}\nparams: a,${value}`;
+    expect(withoutFailedQueries(message)).toBe(FIXED);
+    expect(withoutFailedQueries(`Error: ${message}${frames}`)).toBe(
+      `Error: ${FIXED}${frames}`,
+    );
+  });
+
+  it("ends at each spelling of a genuine frame", () => {
+    for (const frame of [
+      "    at name (file.ts:1:1)",
+      "    at async name (file:///a/b.ts:10:20)",
+      "    at file:///a/b.ts:3:4",
+      "    at Array.map (<anonymous>)",
+      "    at process.processTicksAndRejections (node:internal/x:1:2)",
+      "    at native (native)",
+    ])
+      expect(withoutFailedQueries(`Failed query: ${STATEMENT}\n${frame}`)).toBe(
+        `${FIXED}\n${frame}`,
+      );
+  });
 });
 
 describe("the log line", () => {
