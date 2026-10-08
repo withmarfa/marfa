@@ -179,6 +179,17 @@ describe("owner and setup routes", () => {
     const headers = new Headers({ cookie });
     await requireOwnerSession(storage, auth, headers, { recent: true });
     await storage.__sqliteRun(
+      "UPDATE auth_session SET created_at = created_at + 60",
+      [],
+    );
+    await expect(
+      requireOwnerSession(storage, auth, headers, { recent: true }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    await storage.__sqliteRun(
+      "UPDATE auth_session SET created_at = created_at - 60",
+      [],
+    );
+    await storage.__sqliteRun(
       "UPDATE auth_session SET created_at = created_at - 301",
       [],
     );
@@ -227,6 +238,17 @@ describe("owner and setup routes", () => {
         ).status,
       ).toBe(403);
     }
+    await storage.__sqliteRun(
+      "UPDATE auth_session SET created_at = created_at + 60",
+      [],
+    );
+    await expect(
+      requireOwnerSession(storage, auth, headers, { recent: true }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    await storage.__sqliteRun(
+      "UPDATE auth_session SET created_at = created_at - 60",
+      [],
+    );
     await storage.__sqliteRun(
       "UPDATE auth_session SET created_at = created_at - 301",
       [],

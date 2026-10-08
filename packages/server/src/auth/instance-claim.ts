@@ -317,6 +317,7 @@ export async function requireOwnerSession(
   if (
     options.recent &&
     (!Number.isFinite(authenticatedAt) ||
+      authenticatedAt > Date.now() ||
       Date.now() - authenticatedAt > 5 * 60_000)
   )
     throw new MarfaError(
