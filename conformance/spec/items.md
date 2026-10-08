@@ -480,7 +480,7 @@ If a key whose type map reaches no type sends `POST /items/bulk-get`, then the s
 
 **Reason:** an empty answer would say the ids named nothing, rather than that the key may see nothing.
 
-**Tests:** `compliance/key-management.test.ts › the operator key is refused the data plane, reading as well as writing`.
+**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`.
 
 ### `items/bulk-get-cap`
 

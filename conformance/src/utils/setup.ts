@@ -1,3 +1,4 @@
+import { TEST_OWNER } from "./target.js";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../client/api.js";
 import type { TestContext, TrackedResource } from "../client/types.js";
@@ -552,7 +553,11 @@ export function getOwnerClient(): MarfaClient {
         "`pnpm marfa:up` writes it to its env file.",
     );
   }
-  return new MarfaClient({ baseUrl: requireApiUrl(), ownerCookie: key });
+  return new MarfaClient({
+    baseUrl: requireApiUrl(),
+    ownerCookie: key,
+    ownerCredentials: TEST_OWNER,
+  });
 }
 
 /**

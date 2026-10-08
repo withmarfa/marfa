@@ -54,6 +54,7 @@ export interface MarfaClientOptions {
   baseUrl: string;
   apiKey?: string;
   ownerCookie?: string;
+  ownerCredentials?: { email: string; password: string };
 }
 
 export interface CreateItemInput {
@@ -139,11 +140,61 @@ export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
   private ownerCookie: string | undefined;
+  private ownerCredentials: MarfaClientOptions["ownerCredentials"];
+  private ownerAuthenticatedAt = 0;
+  private ownerAuthentication: Promise<void> | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey ?? "";
     this.ownerCookie = options.ownerCookie;
+    this.ownerCredentials = options.ownerCredentials;
+  }
+
+  /** Long-running fixtures reauthenticate through the real sign-in operation. */
+  private async ensureRecentOwner(): Promise<void> {
+    if (
+      !this.ownerCredentials ||
+      !this.ownerCookie ||
+      Date.now() - this.ownerAuthenticatedAt < 240_000
+    )
+      return;
+    if (this.ownerAuthentication) return this.ownerAuthentication;
+    this.ownerAuthentication = (async () => {
+      const current = await fetch(`${this.baseUrl}/auth/get-session`, {
+        headers: this.authHeaders(),
+      });
+      if (!current.ok)
+        throw new Error(`Owner session lookup answered ${current.status}`);
+      const session = (await current.json()) as {
+        session?: { createdAt: string };
+      } | null;
+      this.ownerAuthenticatedAt =
+        Date.parse(session?.session?.createdAt ?? "") || 0;
+      if (Date.now() - this.ownerAuthenticatedAt < 240_000) return;
+      const response = await fetch(`${this.baseUrl}/auth/sign-in/email`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: new URL(this.baseUrl).origin,
+        },
+        body: JSON.stringify(this.ownerCredentials),
+      });
+      if (!response.ok)
+        throw new Error(`Owner reauthentication answered ${response.status}`);
+      const cookie = response.headers
+        .getSetCookie()
+        .find((value) => value.startsWith("marfa.auth.session_token="))
+        ?.split(";")[0];
+      if (!cookie) throw new Error("Owner reauthentication set no cookie");
+      this.ownerCookie = cookie;
+      this.ownerAuthenticatedAt = Date.now();
+    })();
+    try {
+      await this.ownerAuthentication;
+    } finally {
+      this.ownerAuthentication = undefined;
+    }
   }
 
   private authHeaders(): Record<string, string> {
@@ -1439,6 +1490,12 @@ export class MarfaClient {
     path: string,
     options: FetchOptions = {},
   ): Promise<ApiResponse<T>> {
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(
+        String(options.method ?? "GET").toUpperCase(),
+      )
+    )
+      await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       ...this.authHeaders(),
@@ -1595,6 +1652,7 @@ export class MarfaClient {
     body: ArrayBuffer | Uint8Array,
     contentType: string,
   ): Promise<ApiResponse<T>> {
+    await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {

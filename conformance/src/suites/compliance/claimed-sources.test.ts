@@ -1300,7 +1300,7 @@ describe("a key's claims", () => {
     expect(write.error?.error.details?.source).toBe(claimed);
   });
 
-  it("refuses a reserved prefix, even to the operator key", async () => {
+  it("refuses a reserved prefix, even to the owner", async () => {
     for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
       const refused = await operator.createKey({
         label: "reserved",

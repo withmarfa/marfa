@@ -220,7 +220,7 @@ If a credential whose type map reaches no type sends `GET /edges`, `GET /edges/{
 
 **Reason:** a credential that reaches no type is not one with nothing to see, and an empty `200` would say the wrong one of the two (`keys-and-oauth.md` 1).
 
-**Tests:** `compliance/key-management.test.ts › the operator key is refused the data plane, reading as well as writing`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single row, whatever the id names`.
+**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single row, whatever the id names`.
 
 ### `edges/list-bin`
 
