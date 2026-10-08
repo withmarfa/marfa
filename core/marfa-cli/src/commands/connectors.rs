@@ -29,7 +29,7 @@ pub enum ConnectorsCommand {
         /// The connector id.
         id: String,
     },
-    /// Remove a registration. The connector's own key, or the operator key.
+    /// Remove a registration. The connector's own key, or `connectors.manage`.
     Delete {
         /// The connector id.
         id: String,
@@ -107,7 +107,7 @@ pub enum StateCommand {
         body: BodySource,
     },
     /// Remove the state document and every agreement. The connector's own
-    /// key, or the operator key.
+    /// key, or `connectors.manage`.
     Delete {
         /// The connector id.
         id: String,
@@ -150,7 +150,7 @@ pub enum AgreementsCommand {
 #[derive(Debug, Subcommand)]
 pub enum EndpointsCommand {
     /// Make an endpoint. Its address is shown in full this once. The
-    /// connector's own key, or the operator key.
+    /// connector's own key, or `connectors.manage`.
     Create {
         /// The connector id.
         id: String,

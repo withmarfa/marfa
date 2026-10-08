@@ -6,6 +6,7 @@ mod device;
 mod door;
 mod error;
 mod folders;
+mod local;
 mod output;
 #[cfg(test)]
 mod reference;
@@ -49,6 +50,10 @@ struct Cli {
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
 
+    /// Use private local process authority through this Unix socket, without a keychain.
+    #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key"], help_heading = "Server")]
+    socket: Option<std::path::PathBuf>,
+
     /// Print the answer as JSON, and a refusal as one JSON object on stderr.
     #[arg(long, global = true, help_heading = "Output")]
     json: bool,
@@ -67,6 +72,11 @@ enum Command {
     Login(login::LoginArgs),
     /// Sign out of a server: the token is revoked and forgotten.
     Logout,
+    /// Claim a new instance, obtain a setup code, or open a browser handoff.
+    Setup {
+        #[command(subcommand)]
+        command: owner::SetupCommand,
+    },
     /// The owner: the one account behind the sign-in surface.
     Owner {
         #[command(subcommand)]
@@ -122,7 +132,7 @@ enum Command {
     },
     /// Export the instance's data.
     Export(export::ExportArgs),
-    /// Restore an archive. Operator key only.
+    /// Restore an archive with direct owner or local authority.
     ///
     /// Preserves item and edge IDs, created_at and updated_at dates, current
     /// versions, tags, extensions, and the item's earlier versions carried in
@@ -147,13 +157,13 @@ enum Command {
     Audit(audit::AuditArgs),
     /// The event stream, one frame per line.
     Events(events::EventsArgs),
-    /// The housekeeping jobs the server runs on itself. Operator key only.
+    /// The housekeeping jobs the server runs on itself. Explicit management permission required.
     Housekeeping {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,
     },
     /// Processes that write on a key's behalf: registered, heard from, and
-    /// reporting their runs. A key registers itself; the operator key sees
+    /// reporting their runs. A key registers itself; `connectors.manage` sees
     /// every registration and may remove one.
     Connectors {
         #[command(subcommand)]
@@ -238,19 +248,65 @@ fn usage(
 
 fn run(cli: Cli) -> Result<Exit, CliError> {
     let out = Printer { json: cli.json };
+    if cli.socket.is_some()
+        && ["MARFA_API_URL", "MARFA_API_KEY"]
+            .iter()
+            .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
+    {
+        return Err(CliError::Usage(
+            "--socket cannot be combined with MARFA_API_URL or MARFA_API_KEY; unset them first"
+                .into(),
+        ));
+    }
+    if cli.socket.is_some()
+        && matches!(
+            cli.command,
+            Command::Login(_)
+                | Command::Logout
+                | Command::Device(_)
+                | Command::Folders { .. }
+                | Command::Docs(_)
+        )
+    {
+        return Err(CliError::Usage(
+            "this command does not support --socket".into(),
+        ));
+    }
     let named = Named {
         url: cli.url,
         key: cli.key,
     };
+    if cli.socket.is_some()
+        && matches!(
+            cli.command,
+            Command::Keys {
+                command: keys::KeysCommand::Keep | keys::KeysCommand::Forget
+            }
+        )
+    {
+        return Err(CliError::Usage(
+            "keychain commands cannot use --socket".into(),
+        ));
+    }
     // Lazy: login, logout, device, folders, operations and docs must run
     // without a resolved credential.
-    let remote = || Remote::resolve(&named);
+    let remote = || match &cli.socket {
+        Some(path) => Remote::local(path),
+        None => Remote::resolve(&named),
+    };
     match cli.command {
         Command::Operations => operations::run(&out),
         Command::Docs(args) => docs::run(args, &named, &out),
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
+        Command::Setup { command } => {
+            let setup_remote = match &cli.socket {
+                Some(path) => Remote::local(path)?,
+                None => Remote::public_at(&Remote::url_named(&named)?)?,
+            };
+            owner::setup(command, &setup_remote, &out)
+        }
         Command::Device(args) => return device::run(args, &named, cli.json),
         Command::Folders { command } => folders::run(command, &named, cli.json),
         Command::Status => status::run(&remote()?, &out),
@@ -286,6 +342,38 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn socket_authority_cannot_be_combined_with_network_credentials() {
+        for flags in [["--url", "https://example.com"], ["--key", "secret"]] {
+            assert!(
+                Cli::try_parse_from([
+                    "marfa",
+                    "--socket",
+                    "/private/control.sock",
+                    flags[0],
+                    flags[1],
+                    "owner",
+                    "show"
+                ])
+                .is_err()
+            );
+        }
+        assert!(
+            Cli::try_parse_from([
+                "marfa",
+                "--socket",
+                "/private/control.sock",
+                "owner",
+                "recover",
+                "--password",
+                "secret"
+            ])
+            .is_err()
+        );
+        assert!(Cli::try_parse_from(["marfa", "keys", "bootstrap"]).is_err());
+        assert!(Cli::try_parse_from(["marfa", "keys", "create", "--operator"]).is_err());
+    }
 
     #[test]
     fn the_command_tree_is_well_formed() {

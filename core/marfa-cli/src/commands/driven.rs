@@ -185,13 +185,6 @@ fn skipped(words: &[String]) -> bool {
 
 /// What a command is given beyond what the parser requires, because it
 /// would otherwise read it from a terminal.
-fn always(words: &[String]) -> Vec<(String, Option<String>)> {
-    if words == ["keys", "bootstrap"] {
-        return vec![("--secret <VALUE>".into(), None)];
-    }
-    Vec::new()
-}
-
 /// A command line the parser takes, for `words` with `extra` given beyond what
 /// it requires: each argument the parser says is missing or refuses given the
 /// first value it takes.
@@ -203,7 +196,6 @@ fn command_line(
 ) -> Result<Vec<String>, String> {
     let mut given: Vec<(String, usize, Option<String>)> = extra
         .iter()
-        .chain(always(words).iter())
         .map(|(spelling, chosen)| (spelling.clone(), 0, chosen.clone()))
         .collect();
     let line = |given: &[(String, usize, Option<String>)]| -> Vec<String> {

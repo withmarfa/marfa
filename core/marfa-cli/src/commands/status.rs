@@ -25,7 +25,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.root()?;
     let health = remote.health()?;
     let held = speaks_this_contract(&instance);
-    // The operator key reaches no type, so its counts are refused; the
+    // A key may reach no type, so its counts are refused; the
     // description still stands.
     let mut stats_refused = None;
     let stats = match (remote.credential(), held) {
@@ -82,9 +82,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             }
             (None, Some(source)) if stats_refused.is_some() => {
                 lines.push(format!("credential from {}", source.as_str()));
-                lines.push(
-                    "items need a working key: this credential's type permissions reach no type; the operator key mints one with `marfa keys create`".into(),
-                );
+                lines.push("this credential's type permissions reach no type".into());
             }
             _ => lines.push("no credential".into()),
         }

@@ -41,6 +41,7 @@ pub struct Remote {
     origin: String,
     credential: Option<CredentialSource>,
     held: Arc<Held>,
+    local: bool,
 }
 
 /// How long a command waits for a server to answer, and to send an answer
@@ -278,11 +279,27 @@ impl Remote {
             origin,
             credential,
             held: Held::of(bearer, kept),
+            local: false,
         };
         if let Some(renew) = renewal(&remote) {
             remote.http.renew_with(renew);
         }
         Ok(remote)
+    }
+
+    pub fn local(path: &std::path::Path) -> Result<Remote, CliError> {
+        Ok(Remote {
+            http: crate::local::http(path)?,
+            url: "http://127.0.0.1".into(),
+            origin: format!("unix:{}", path.display()),
+            credential: None,
+            held: Held::of(None, None),
+            local: true,
+        })
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.local
     }
 
     pub fn url_named(named: &Named) -> Result<String, CliError> {
@@ -325,8 +342,7 @@ impl Remote {
         Remote::keeping(url, origin, None, None, None)
     }
 
-    /// A key named outright, as a door that checks one wants it: a bootstrap
-    /// secret, a key about to be kept, a token sent to its userinfo endpoint.
+    /// A key named outright, or a token sent to its userinfo endpoint.
     pub fn keyed(url: &str, key: &str) -> Result<Remote, CliError> {
         let origin = marfa_core::http::origin_of(url)?;
         Remote::keeping(url, origin, None, Some(key.to_string()), None)
@@ -341,6 +357,7 @@ impl Remote {
             origin,
             credential: None,
             held: Held::of(bearer.map(str::to_string), None),
+            local: false,
         }
     }
 
@@ -402,7 +419,7 @@ impl Remote {
     }
 
     fn send_once(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
-        if request.credential && self.bearer().is_none() {
+        if request.credential && !self.local && self.bearer().is_none() {
             return Err(CliError::NoCredential {
                 origin: self.origin.clone(),
             });
@@ -454,7 +471,7 @@ impl Remote {
                     params: &params,
                     headers: &headers,
                     body,
-                    credential: request.credential,
+                    credential: request.credential && !self.local,
                     stream: request.stream,
                 },
                 held,

@@ -82,6 +82,36 @@ grep -q "\"version\":\"$sha\"" <<<"$body" || fail "the root document does not re
 until_true "the image's own health check passing" 60 \
   bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $fresh)\" = healthy ]"
 echo "booted, reports $sha, healthy"
+# Exercise the actual packaged command and the production claim/recovery services.
+docker exec -i "$fresh" node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+const cli = (args, body) => {
+  const result = spawnSync('marfa', ['--socket', '/data/control/marfa.sock', '--json', ...args], {encoding:'utf8', input: body && JSON.stringify(body)});
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+};
+assert.equal(cli(['setup','status']).claimed, false);
+const email='owner@example.com';
+const oldPassword='initial-container-password';
+const newPassword='replacement-container-password';
+cli(['setup','claim','--stdin'], {email,password:oldPassword});
+assert.equal(cli(['setup','status']).claimed,true);
+const key = cli(['keys','create','--label','container-check','--source','container-check','--permission','instance.read','--no-claims']);
+assert.ok(key.key);
+const signIn = password => fetch('http://localhost:8600/auth/sign-in/email',{method:'POST',headers:{'Content-Type':'application/json','Origin':'http://localhost:8600'},body:JSON.stringify({email,password})});
+assert.equal((await signIn(oldPassword)).status,200);
+cli(['owner','recover','--stdin'],{password:newPassword});
+assert.notEqual((await signIn(oldPassword)).status,200);
+assert.equal((await signIn(newPassword)).status,200);
+const ordinary=await fetch('http://localhost:8600/keys/current',{headers:{Authorization:`Bearer ${key.key}`}});
+assert.equal(ordinary.status,200);
+const forged=await fetch('http://localhost:8600/_control/owner/recover',{method:'POST',headers:{'Content-Type':'application/json','X-Marfa-Local-Authority':'true'},body:JSON.stringify({password:'forged-container-password'})});
+assert.notEqual(forged.status,200);
+assert.equal((await signIn(newPassword)).status,200);
+console.log('Packaged CLI claimed and recovered the owner; ordinary key still works; public authority forgery refused.');
+JS
+
 stop_and_check "$fresh"
 
 echo "== a volume holding a database another build wrote"

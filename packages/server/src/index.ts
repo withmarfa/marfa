@@ -1,8 +1,6 @@
 import { serve } from "@hono/node-server";
-import {
-  ensureBootstrapSecret,
-  isBootstrapped,
-} from "./auth/bootstrap-secret.js";
+import { getClaimStatus, issueSetupCode } from "./auth/instance-claim.js";
+import { startControlSocket } from "./control/socket.js";
 import { bootConfig, setActivePermissionBundles } from "./config.js";
 import {
   buildDefaultPermissionBundles,
@@ -84,7 +82,7 @@ async function main() {
   setBulkJobEnqueueListener(() => {
     bulkActionWorker.wake();
   });
-  await bulkActionWorker.start();
+  if (!config.controlOnly) await bulkActionWorker.start();
 
   // Admit the runtime custom-namespace roots into the OAuth scope
   // allowlist, before the auth instance is built. Admission only — nothing
@@ -106,49 +104,64 @@ async function main() {
   setActivePermissionBundles(bundles);
   config.permissionBundles = bundles;
 
-  // **The bootstrap window, announced.** An instance that has never minted a
-  // credential accepts one unauthenticated `POST /keys`, and the secret below
-  // is what binds that call to whoever is running the instance rather than to
-  // whoever reaches the port first. Printed at every boot until it is used, so
-  // a restart does not strand an operator who has already copied it.
-  //
-  // Nothing is printed on an instance that already holds a credential, which
-  // is every deployment past its first minute.
-  if (!(await isBootstrapped(storage))) {
-    const secret = await ensureBootstrapSecret(storage);
-    // **Kept out of the telemetry mirror.** The redactor rewrites attributes
-    // and leaves the message body alone, on the reasoning that a body is
-    // Marfa-controlled and therefore safe. This body is a credential, so
-    // exporting it would put the key to the instance in whatever sink
-    // receives logs — turning "can read the boot log" into "can read the
-    // observability stack", which is not the claim this secret is meant to
-    // stand for.
-    log(
-      "warn",
-      `This instance holds no credential yet. Mint the first one with ` +
-        `\`marfa --url <url> keys bootstrap\` and write this bootstrap ` +
-        `secret on its stdin: ${secret}. ` +
-        `This secret works once and is not shown again after that mint. ` +
-        `Nobody can sign in until the instance also has an owner: create ` +
-        `one with \`marfa owner create\`, using the operator key.`,
-      undefined,
-      { localOnly: true },
-    );
-  }
-
   // **Minted at first boot**, so an instance holds its name before it has
   // answered anything and before the socket is listening. The root route is
   // handed the value rather than reading it, which is what keeps that one
   // door answerable on an instance whose database has since gone.
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const app = createApp(storage, blobs, housekeeping, config, instanceId);
-  await housekeeping.start();
-  await housekeeping.runNow("webhook-schedule");
-  log("info", "Housekeeping started", { names: housekeeping.names() });
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    log("info", `Marfa server listening on port ${String(info.port)}`);
+  const localApp = createApp(storage, blobs, housekeeping, config, instanceId, {
+    localAuthority: true,
   });
+  if (!config.controlSocket)
+    throw new Error("Private control socket path is missing");
+  const control = await startControlSocket(
+    config.controlSocket,
+    localApp.fetch,
+  );
+  log("info", "Private control socket listening", {
+    path: config.controlSocket,
+  });
+  if (!(await getClaimStatus(storage)).claimed) {
+    const { code } = await issueSetupCode(storage);
+    log(
+      "warn",
+      `Claim this Marfa at /setup with setup code: ${code}`,
+      undefined,
+      { localOnly: true },
+    );
+  }
+
+  let server: Parameters<typeof shutdownInOrder>[0]["server"] = control;
+  if (!config.controlOnly) {
+    const app = createApp(storage, blobs, housekeeping, config, instanceId);
+    await housekeeping.start();
+    await housekeeping.runNow("webhook-schedule");
+    const publicServer = serve(
+      { fetch: app.fetch, port: config.port },
+      (info) => {
+        log("info", `Marfa server listening on port ${String(info.port)}`);
+      },
+    );
+    publicServer.once("error", (error) => {
+      log(
+        "error",
+        "Public listener failed; private control remains available",
+        { error: formatErrorSummary(error) },
+      );
+    });
+    // Drain both listeners before storage is closed.
+    server = {
+      close(callback) {
+        publicServer.close(() => control.close(callback));
+      },
+      closeIdleConnections() {
+        if ("closeIdleConnections" in publicServer)
+          publicServer.closeIdleConnections();
+        control.closeIdleConnections();
+      },
+    };
+  }
 
   let shuttingDown = false;
   const shutdown = (): void => {

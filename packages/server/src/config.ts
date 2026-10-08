@@ -82,6 +82,8 @@ export interface AppConfig {
   isProduction?: boolean;
   port: number;
   sqlitePath: string;
+  controlSocket?: string;
+  controlOnly?: boolean;
   /** The disk store: where every upload lands. Always present. */
   blobPath: string;
   /** Maximum request body size in bytes for the JSON write surface. Bodies
@@ -887,6 +889,16 @@ const settingsShape = {
     () => "./data/marfa.db",
     "The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.",
   ),
+  MARFA_CONTROL_SOCKET: setting(
+    text,
+    () => "",
+    "Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700. Linux requires getfacl.",
+  ),
+  MARFA_CONTROL_ONLY: setting(
+    flag,
+    () => false,
+    "Start only the private control listener, without public HTTP or background jobs, for local recovery.",
+  ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
     "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
@@ -1596,6 +1608,10 @@ export function loadConfig(
     isProduction: s.NODE_ENV === "production",
     port: s.PORT,
     sqlitePath: s.SQLITE_PATH,
+    controlSocket:
+      s.MARFA_CONTROL_SOCKET ||
+      resolve(dirname(s.SQLITE_PATH), "control", "marfa.sock"),
+    controlOnly: s.MARFA_CONTROL_ONLY,
     blobPath: s.BLOB_PATH,
     maxRequestBytes: s.MARFA_MAX_REQUEST_BYTES,
     maxBulkRequestBytes: s.MARFA_MAX_BULK_REQUEST_BYTES,

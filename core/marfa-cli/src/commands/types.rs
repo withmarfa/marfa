@@ -34,9 +34,9 @@ pub enum TypesCommand {
         #[arg(long)]
         force: bool,
     },
-    /// Shipped types this instance carries that the build no longer does. Operator only.
+    /// Shipped types this instance carries that the build no longer does. Requires `instance.read`.
     Drift,
-    /// Remove one shipped type the build no longer carries. Operator only.
+    /// Remove one shipped type the build no longer carries. Requires `instance.maintain`.
     Prune {
         /// The type id.
         id: String,

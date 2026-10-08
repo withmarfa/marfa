@@ -283,7 +283,6 @@ impl Http {
         recv_response: Duration,
         recv_body: Duration,
     ) -> Result<Http, CoreError> {
-        let base = base_of(url)?;
         // The platform trust store, as the binary's own client uses, so a
         // server behind a CA the machine trusts is reachable from both.
         let tls = ureq::tls::TlsConfig::builder()
@@ -298,6 +297,12 @@ impl Http {
             .timeout_recv_body(Some(recv_body))
             .build()
             .into();
+        Self::with_agent(url, key, agent)
+    }
+
+    /// Uses a caller-supplied transport, retaining the contract and response checks.
+    pub fn with_agent(url: &str, key: &str, agent: Agent) -> Result<Http, CoreError> {
+        let base = base_of(url)?;
         Ok(Http {
             agent,
             base,

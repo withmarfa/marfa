@@ -38,6 +38,22 @@ A copy saves before it has reached a server. `device types declare` takes the ty
 
 Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
 
+## Claim and recover locally
+
+Run the command as the server's operating-system account, using the absolute path in `MARFA_CONTROL_SOCKET`:
+
+```sh
+marfa --socket /run/marfa/control.sock setup open
+marfa --socket /run/marfa/control.sock setup claim --email owner@example.com
+marfa --socket /run/marfa/control.sock owner recover
+```
+
+`setup open` issues a five-minute, single-use handoff and opens the browser. Use `--no-browser` to print the link. `setup claim` and `owner recover` ask for a hidden password. For automation, add `--stdin` and send a JSON object containing `email` and `password` for claim, or `password` for recovery. For a remote terminal claim, use `--url https://marfa.example setup claim`; its JSON input also needs `code`. Secrets are never command-line options. Recovery ends browser sessions and keeps ordinary keys, apps and passkeys.
+
+`--socket` cannot be combined with `--url`, `--key`, `MARFA_API_URL` or `MARFA_API_KEY`. It uses no keychain and never falls back to HTTP. Linux requires `getfacl` from the `acl` package. The socket directory must be owned by the server account with mode `0700`, without access ACLs or symbolic links. The socket is `0600`. A live collision is refused. After a crash, first stop the old process, then remove its stale socket before starting again. Distinct processes need distinct socket paths.
+
+Set `MARFA_CONTROL_ONLY=true` to run only the private listener when public HTTP cannot start. In the service container, `marfa-entrypoint control-only` starts that mode against the configured database; stop an existing listener or choose a distinct private socket path first.
+
 ## Build and check
 
 ```sh
@@ -51,7 +67,7 @@ Then the same three in `bindings/swift`. Every test binary runs under `scripts/t
 
 `marfa-cli/COMMANDS.md` is the reference for every command, written from the clap command tree. A test fails when it differs from the binary's help; after changing a command or its help text, regenerate it with `MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin marfa reference` and commit it.
 
-`scripts/server-up.sh` exports `MARFA_TEST_KEY` for ordinary working requests and `MARFA_TEST_OPERATOR_KEY` for operator-only inspection. A boot also creates an owner, with the throwaway email and password in `scripts/test-owner.example.env`, and exports them as `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`. With `MARFA_SERVER_KEEP`, both keys and the owner are kept and returned on restart. A kept directory without its operator key is refused; use a fresh directory. `scripts/server-keys.test.sh` checks both roles and the owner's sign-in against the server on first boot and after restart.
+`scripts/server-up.sh` claims a fresh instance through its private socket and mints an ordinary working key with explicit permissions. It exports `MARFA_TEST_KEY`, `MARFA_TEST_SOCKET`, and the throwaway owner credentials from `scripts/test-owner.example.env` as `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`. With `MARFA_SERVER_KEEP`, the key and owner survive restart. Incomplete kept credentials are refused. `scripts/server-keys.test.sh` exercises both boots and the owner's sign-in. Linux requires the `acl` package so the server can check socket ACLs.
 
 ### Which jobs run
 

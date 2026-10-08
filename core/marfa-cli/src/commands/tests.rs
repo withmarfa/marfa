@@ -458,14 +458,6 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
             "profile_permissions": {},
         })
     );
-    let operator = keys::create_request(&keys::KeyCreateArgs {
-        label: "second".into(),
-        source: "operator-2".into(),
-        operator: true,
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(body(&operator)["is_operator"], true);
     let claiming = keys::create_request(&keys::KeyCreateArgs {
         label: "folder".into(),
         source: "laptop-2".into(),
@@ -527,7 +519,6 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
         })
     );
     assert_eq!(keys::revoke_request("k").method, Method::Delete);
-    assert_eq!(keys::bootstrap_request().path(), "/keys");
 }
 
 #[test]
@@ -1191,41 +1182,6 @@ mod dispatch {
         assert_eq!(item["properties"]["blob_ref"], "sha256:h");
         assert_eq!(item["properties"]["title"], "novel.epub");
         assert_eq!(item["tags"], json!(["reading"]));
-    }
-
-    #[test]
-    fn bootstrap_sends_the_secret_as_the_bearer_and_nowhere_else() {
-        let door = Door::open(vec![
-            Answer::json(
-                "200 OK",
-                &format!(
-                    r#"{{"name":"marfa","contract":{}}}"#,
-                    marfa_core::contract::CONTRACT_VERSION
-                ),
-            ),
-            Answer::json(
-                "201 Created",
-                r#"{"key":"marfa_k1_new","id":"k","label":"operator"}"#,
-            ),
-        ]);
-        keys::run(
-            keys::KeysCommand::Bootstrap {
-                secret: Some("the-secret".into()),
-            },
-            &remote_at(&door),
-            &QUIET,
-        )
-        .unwrap();
-        let received = door.received();
-        assert_eq!(received.len(), 2);
-        assert_eq!(received[0].path(), "/");
-        assert_eq!(received[0].header("authorization"), None);
-        assert_eq!(received[1].path(), "/keys");
-        assert_eq!(
-            received[1].header("authorization"),
-            Some("Bearer the-secret")
-        );
-        assert!(!received[1].body.contains("the-secret"));
     }
 }
 

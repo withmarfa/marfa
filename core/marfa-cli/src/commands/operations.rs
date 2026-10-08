@@ -117,7 +117,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("revokeFolder", "folders revoke"),
     reached("registerOAuthClient", "login"),
     reached("getOwner", "owner show"),
-    reached("createOwner", "owner create"),
+    reached("createOwner", "setup claim"),
 ];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {

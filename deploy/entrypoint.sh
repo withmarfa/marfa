@@ -19,6 +19,12 @@
 # container with the server's status, and a supervisor may start it again.
 set -eu
 
+# Recovery uses the same production control router when public HTTP is unavailable.
+if [ "${1:-}" = control-only ]; then
+  export MARFA_CONTROL_ONLY=true
+  exec node --import ./dist/instrumentation.js dist/index.js
+fi
+
 : "${SQLITE_PATH:=/data/marfa.db}"
 : "${BLOB_PATH:=/data/blobs}"
 # The sidecar's file needs a word where the server takes a default: path
