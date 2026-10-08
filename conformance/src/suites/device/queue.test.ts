@@ -514,6 +514,52 @@ describe("a write is answered once", () => {
 });
 
 describe("a write waits for what it depends on", () => {
+  it("names in follows the write ahead that was refused, and none that was accepted", async () => {
+    harness = await hydratedHarness("queue-follows-verdicts", { rows: held() });
+    const { device, server } = harness;
+    const atFour = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "first", body: "held" },
+    });
+    let refusing = false;
+    scriptWrites(server, {
+      update: [
+        () =>
+          refusing
+            ? answers.validation("validation_error", "The edit is invalid")
+            : answers.updated(atFour),
+      ],
+      read: [answers.updated(atFour)],
+    });
+    const first = await device.update(HELD.id, {
+      properties: { title: "first" },
+      version: HELD.version,
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    expect((await device.drain()).ok).toBe(true);
+    const second = await device.update(HELD.id, {
+      properties: { title: "second" },
+      version: HELD.version + 1,
+    });
+    if (!second.ok) throw new Error(JSON.stringify(second));
+    expect(
+      second.value.follows,
+      "a write followed one the server had already taken, which holds nothing",
+    ).toBeNull();
+    refusing = true;
+    expect((await device.drain()).ok).toBe(true);
+    const third = await device.update(HELD.id, {
+      properties: { title: "third" },
+      version: HELD.version + 1,
+    });
+    if (!third.ok) throw new Error(JSON.stringify(third));
+    expect(
+      third.value.follows,
+      "a write did not follow the refused one ahead of it, which a release could send again",
+    ).toBe(second.value.id);
+  });
+
   it("holds a write whose create has not been answered", async () => {
     harness = await hydratedHarness("queue-depends", { rows: held() });
     const created = await harness.device.create({
@@ -4424,6 +4470,10 @@ describe("an upload is a queued write", () => {
       drained.value.verdicts[0]?.verdict,
       `the upload was not answered: ${JSON.stringify(drained.value)}`,
     ).toBe("accepted");
+    expect(
+      drained.value.verdicts[0]?.refusals,
+      "the hash an upload's door answers was read as an answer the device cannot read",
+    ).toBe(0);
     const sent = server.requests.find(
       (request) => request.method === "POST" && request.pathname === "/blobs",
     );

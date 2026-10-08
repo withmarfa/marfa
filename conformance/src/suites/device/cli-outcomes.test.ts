@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { Cli } from "../cli/harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
@@ -183,6 +183,55 @@ describe("CLI outcomes preserve the result", () => {
     expect(
       report.verdicts.map((write: { verdict: string | null }) => write.verdict),
     ).toEqual(["accepted", null]);
+  });
+
+  it("exits 3 for a pass the server could not finish that left nothing undelivered", async () => {
+    const h = await prepared();
+    const edited = wireItem({
+      id,
+      version: 4,
+      properties: { title: "edit", body: "held" },
+    });
+    scriptWrites(h.server, {
+      update: [answers.updated(edited)],
+      read: [{ kind: "drop" }],
+    });
+    const result = await h.cli.run([
+      "--json",
+      "device",
+      "--db",
+      h.device.store,
+      "drain",
+    ]);
+    expect(result.code, JSON.stringify(result)).toBe(3);
+    const report = JSON.parse(result.stdout);
+    expect([report.answered, report.undelivered]).toEqual([1, 0]);
+    expect(report.unavailable).toBeTruthy();
+  });
+
+  it("exits 3 for a write left undelivered by a pass the server finished", async () => {
+    harness = await hydratedHarness("cli-outcomes-undelivered", { rows: {} });
+    const cli = new Cli(requireBinary(), harness.server.url, KEY);
+    const path = `${harness.device.store}.locked`;
+    writeFileSync(path, "held and locked for now\n");
+    const queued = await harness.device.putBlob(path, "text/plain");
+    if (!queued.ok) throw new Error(JSON.stringify(queued));
+    const heldAt = `${harness.device.store}.blobs/${(queued.value.blob ?? "").slice("sha256:".length)}`;
+    chmodSync(heldAt, 0o000);
+    try {
+      const result = await cli.run([
+        "--json",
+        "device",
+        "--db",
+        harness.device.store,
+        "drain",
+      ]);
+      expect(result.code, JSON.stringify(result)).toBe(3);
+      const report = JSON.parse(result.stdout);
+      expect([report.undelivered, report.unavailable]).toEqual([1, null]);
+    } finally {
+      chmodSync(heldAt, 0o644);
+    }
   });
 
   it("reports completed refusals separately and keeps exit zero", async () => {
