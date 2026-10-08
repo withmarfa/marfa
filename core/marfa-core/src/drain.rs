@@ -859,6 +859,9 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         }
         for (other, verdict, reason) in &settled.also {
             answers.insert(other.id.clone(), Some(*verdict));
+            if *verdict == Verdict::Blocked {
+                waiting.insert(other.id.clone());
+            }
             report.unsent += 1;
             report.verdicts.push(verdict_of(
                 other,
