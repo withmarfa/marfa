@@ -612,13 +612,13 @@ When an event stream logs a warning because a database statement failed while it
 
 ### `errors/report-response-began`
 
-When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST NOT carry any value the statement was bound to in its log.
+When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
 **Tests:** waiting on #1444.
 
 ### `errors/report-background`
 
-When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST NOT carry any value the statement was bound to in its log.
+When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
 **Tests:** waiting on #1444.
 
