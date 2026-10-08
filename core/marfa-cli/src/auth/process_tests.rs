@@ -517,18 +517,10 @@ fn resolution_checks_the_lock_before_reading_even_a_fresh_credential() {
             .as_nanos()
     );
     let fixture = Fixture::new(&origin);
-    drop(credential_lock_file(&origin).unwrap());
-    let path = user_home()
-        .unwrap()
-        .join(".marfa-credential-locks")
+    let path = fixture
+        .folder
+        .join("store.locks")
         .join(format!("{}.lock", fingerprint(&origin)));
-    struct RestoreMode(PathBuf);
-    impl Drop for RestoreMode {
-        fn drop(&mut self) {
-            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o600));
-        }
-    }
-    let _restore = RestoreMode(path.clone());
     fixture.spawn("seed-fresh", "fresh").finish();
     fixture.spawn("resolve", "safe-fresh").finish();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -544,6 +536,80 @@ fn resolution_checks_the_lock_before_reading_even_a_fresh_credential() {
     fixture.spawn("seed-fresh", "replace-fresh").finish();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     fixture.spawn("resolve-unsafe", "unsafe-fresh").finish();
+}
+
+#[test]
+fn a_run_under_a_store_of_its_own_locks_beside_it_and_never_in_the_home() {
+    let origin = format!(
+        "https://beside-{}-{}.invalid",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let fixture = Fixture::new(&origin);
+    let home = user_home()
+        .unwrap()
+        .join(".marfa-credential-locks")
+        .join(format!("{}.lock", fingerprint(&origin)));
+    let mut beside =
+        fd_lock::RwLock::new(lock_file_in(&fixture.folder.join("store.locks"), &origin).unwrap());
+    let held = beside.write().unwrap();
+    let mut forget = fixture.spawn("forget", "waiting");
+    sleep(Duration::from_millis(400));
+    let finished_early = forget.0.as_mut().unwrap().try_wait().unwrap().is_some();
+    drop(held);
+    forget.finish();
+    // The witness: the command took the lock that sits beside its store.
+    assert!(
+        !finished_early,
+        "keys forget did not wait on the lock beside its store"
+    );
+    assert!(
+        !home.exists(),
+        "a run under a store of its own took a lock in the home directory"
+    );
+    fixture.spawn("absent", "read").finish();
+}
+
+#[test]
+fn every_name_for_a_store_finds_one_lock_directory() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new("http://127.0.0.1:9");
+    let home = fixture.folder.join("home");
+    let keychains = home.join("Library/Keychains");
+    std::fs::create_dir_all(&keychains).unwrap();
+    let home_locks = home.join(".marfa-credential-locks");
+    let locks = |name: &std::path::Path| lock_directory_for(&resolved(name).unwrap(), &home);
+    let keychain = fixture.folder.join("named.keychain-db");
+    std::fs::write(&keychain, "").unwrap();
+    let link = fixture.folder.join("link.keychain-db");
+    symlink(&keychain, &link).unwrap();
+    let canonical = std::fs::canonicalize(&fixture.folder).unwrap();
+    let beside = canonical.join("named.keychain-db.locks");
+    assert_eq!(locks(&keychain), beside);
+    assert_eq!(locks(&link), beside);
+    assert_eq!(
+        locks(&fixture.folder.join("missing.keychain-db")),
+        canonical.join("missing.keychain-db.locks")
+    );
+    assert!(matches!(
+        resolved(&fixture.folder.join("gone").join("run.keychain-db")),
+        Err(CliError::NoKeychain(message)) if message.contains("credential locks")
+    ));
+    let own = keychains.join("login.keychain-db");
+    std::fs::write(&own, "").unwrap();
+    let elsewhere = fixture.folder.join("own.keychain-db");
+    symlink(&own, &elsewhere).unwrap();
+    assert_eq!(locks(&own), home_locks);
+    assert_eq!(locks(&elsewhere), home_locks);
+    // The witness for this run's own store: its locks are beside it, not in
+    // the home directory.
+    let run = credential_lock_directory().unwrap();
+    assert_ne!(run, user_home().unwrap().join(".marfa-credential-locks"));
+    let store = resolved(credentials::location().unwrap()).unwrap();
+    assert_eq!(run.parent(), store.parent());
 }
 
 #[test]
