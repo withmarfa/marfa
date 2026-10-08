@@ -310,10 +310,10 @@ const RATE_LIMIT_HEADERS = [
 ];
 
 /**
- * Operations `app.ts` mounts ahead of the rate limiter. The limiter never
- * sees them, so they answer no `429` and carry none of its headers.
+ * Operations that bypass the general request limiter carry none of its
+ * headers. Claim declares its own durable code-guessing limit separately.
  */
-const AHEAD_OF_THE_LIMITER = new Set(["get /"]);
+const AHEAD_OF_THE_LIMITER = new Set(["get /", "post /owner"]);
 
 /**
  * Statuses answered ahead of the rate limiter and the idempotency claim: the

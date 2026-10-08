@@ -15,6 +15,10 @@ interface CacheEntry {
 }
 let metricsCache: CacheEntry | undefined;
 
+const MetricCountSchema = z
+  .object({ total: z.number() })
+  .openapi("MetricCount");
+
 const MetricsResponseSchema = z.object({
   items: z.object({
     total: z.number(),
@@ -28,12 +32,8 @@ const MetricsResponseSchema = z.object({
     core: z.number(),
     registered: z.number(),
   }),
-  keys: z.object({
-    total: z.number(),
-  }),
-  webhooks: z.object({
-    total: z.number(),
-  }),
+  keys: MetricCountSchema,
+  webhooks: MetricCountSchema,
   uptime_seconds: z.number(),
   cached_at: z.string(),
 });
