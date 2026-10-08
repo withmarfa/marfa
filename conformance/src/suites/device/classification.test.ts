@@ -442,6 +442,28 @@ describe("an environmental failure retries and is never counted", () => {
       "a write that waited out an outage was not taken when the server returned, so the outage cost the write",
     ).toBe("accepted");
   });
+
+  it("passes on at most 300 seconds of the wait a write was asked for", async () => {
+    harness = await hydratedHarness("class-retry-after-cap", { rows: held() });
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [
+          {
+            kind: "json",
+            status: 429,
+            body: { error: { code: "rate_limited" } },
+            headers: { "Retry-After": "86400" },
+          },
+        ],
+      },
+      1,
+    );
+    expect(
+      reports[0]?.retry_after_seconds,
+      "the device passed on a wait of a day, so a caller that honours it is parked by one answer",
+    ).toBe(300);
+  });
 });
 
 describe("a failure of the environment past the network itself", () => {

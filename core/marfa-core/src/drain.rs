@@ -919,7 +919,7 @@ fn store_fault(row: &QueuedWrite) -> Option<CoreError> {
 /// The longest wait of the pass, not the last: a caller waits once for the
 /// whole pass.
 fn waited(report: &mut DrainReport, wait: Option<u64>) {
-    if let Some(wait) = wait {
+    if let Some(wait) = wait.map(|wait| wait.min(crate::error::RETRY_AFTER_MOST.as_secs())) {
         report.retry_after_seconds = Some(
             report
                 .retry_after_seconds
