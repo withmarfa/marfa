@@ -242,9 +242,13 @@ describe("owner and setup routes", () => {
       "UPDATE auth_session SET created_at = created_at + 60",
       [],
     );
-    await expect(
-      requireOwnerSession(storage, auth, headers, { recent: true }),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    expect(
+      (
+        await app.request(`${origin}/auth/list-sessions`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(401);
     await storage.__sqliteRun(
       "UPDATE auth_session SET created_at = created_at - 60",
       [],
