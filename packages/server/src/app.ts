@@ -1,3 +1,4 @@
+import { requireSecureOwnerTransport } from "./auth/owner-browser.js";
 import { controlRoutes } from "./control/routes.js";
 import { setupRoutes } from "./routes/setup.js";
 import { ownerPages } from "./routes/owner-pages.js";
@@ -447,6 +448,7 @@ export function createApp(
               config.apiKeySalt,
             )(authorization);
           }
+          if (auth) requireSecureOwnerTransport(auth);
           const session = await auth?.getSession(c.req.raw.headers, {
             readOnly: true,
           });

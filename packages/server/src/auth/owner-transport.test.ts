@@ -1,4 +1,7 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { createApp } from "../app.js";
+import { createTestContext } from "../test-utils.js";
+import { ensureInstanceId } from "../storage/instance-id.js";
 import { createClaimTestApp } from "./claim-test-app.js";
 import { claimOwner } from "./instance-claim.js";
 import { createMarfaAuth } from "./instance.js";
@@ -113,6 +116,41 @@ it.each([
         .status,
     ).toBe(200);
   } finally {
+    await ctx.cleanup();
+  }
+});
+
+it("redacts owner health diagnostics on an insecure configured origin", async () => {
+  const ctx = await createTestContext();
+  const failure = "private blob path unavailable";
+  const probe = vi
+    .spyOn(ctx.blobs.disk, "has")
+    .mockRejectedValue(new Error(failure));
+  try {
+    const secure = await ctx.ownerRequest("/health");
+    expect(secure.status).toBe(503);
+    expect(await secure.json()).toMatchObject({
+      components: { blob_storage: { error: failure } },
+    });
+    const insecure = createApp(
+      ctx.storage,
+      ctx.blobs,
+      ctx.housekeeping,
+      { ...ctx.config, authBaseUrl: "http://marfa.example.com" },
+      await ensureInstanceId(ctx.storage.settings),
+    );
+    await insecure.auth?.ready;
+    const health = await insecure.request("http://marfa.example.com/health", {
+      headers: { cookie: ctx.owner.cookie },
+    });
+    expect(health.status).toBe(503);
+    const body: unknown = await health.json();
+    expect(body).toMatchObject({
+      components: { blob_storage: { status: "down" } },
+    });
+    expect(body).not.toHaveProperty("components.blob_storage.error");
+  } finally {
+    probe.mockRestore();
     await ctx.cleanup();
   }
 });
