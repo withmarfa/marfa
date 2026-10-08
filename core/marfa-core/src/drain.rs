@@ -799,7 +799,11 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         }
 
         let class = refine(row, &payload, &answer, classify(&answer));
-        let settled = match settle(core, row, &answer, class, shape) {
+        let taken = match store_fault(row) {
+            Some(error) => Err(error),
+            None => settle(core, row, &answer, class, shape),
+        };
+        let settled = match taken {
             Ok(settled) => settled,
             Err(
                 error @ (CoreError::Redirected { .. }
@@ -893,6 +897,17 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;
     Ok(report)
+}
+
+/// A store that fails, or is full, as the answer to the write named is taken.
+fn store_fault(row: &QueuedWrite) -> Option<CoreError> {
+    if crate::fault::named("store-fails-at-answer").as_deref() == Some(row.id.as_str()) {
+        return Some(CoreError::Store("disk I/O error".into()));
+    }
+    if crate::fault::named("store-full-at-answer").as_deref() == Some(row.id.as_str()) {
+        return Some(CoreError::StorageFull("database or disk is full".into()));
+    }
+    None
 }
 
 /// The longest wait of the pass, not the last: a caller waits once for the

@@ -85,7 +85,7 @@ impl Source {
     }
 
     fn fault(&self, name: &str) -> bool {
-        super::fault::named(name).is_some_and(|name| {
+        crate::fault::named(name).is_some_and(|name| {
             self.path
                 .file_name()
                 .is_some_and(|file| file.to_string_lossy() == name)

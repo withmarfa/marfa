@@ -3,7 +3,6 @@ pub mod edge_types;
 mod elsewhere;
 mod embeds;
 mod executable;
-mod fault;
 pub mod fields;
 mod first;
 pub mod identity;
@@ -790,7 +789,7 @@ impl Walked {
 /// A directory it cannot read is reported and passed over, so one does not
 /// stop the scan of every other.
 fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
-    if let Some(gone) = fault::named("vanish-while-walking")
+    if let Some(gone) = crate::fault::named("vanish-while-walking")
         && identity::relative(root, dir).is_ok_and(|relative| relative == gone)
     {
         let _ = std::fs::rename(dir, root.join(format!("{gone}.vanished")));
@@ -3293,7 +3292,7 @@ impl Folder {
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
     ) -> Result<PlacementWrite> {
-        if let Some(how) = fault::named("copy-changes-during-pull") {
+        if let Some(how) = crate::fault::named("copy-changes-during-pull") {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if match how.as_str() {
@@ -3576,7 +3575,7 @@ impl Folder {
         // filesystem refuses, or a write that fails part way, leaves the old
         // file, and every other, as it was.
         let conn = self.core.conn()?;
-        if fault::named("purge-during-pull").as_deref() == Some(item.id.as_str()) {
+        if crate::fault::named("purge-during-pull").as_deref() == Some(item.id.as_str()) {
             crate::store::purge_item(&conn, &item.id)?;
         }
         refuse_unless_held(&conn, &item.id)?;
@@ -3593,7 +3592,7 @@ impl Folder {
             },
         )?;
         drop(conn);
-        if fault::named("move-folder-before-write").is_some() {
+        if crate::fault::named("move-folder-before-write").is_some() {
             let _ = std::fs::rename(
                 &self.root,
                 self.root.with_file_name(format!(
@@ -3741,7 +3740,7 @@ impl Folder {
             landing::crash_if_asked(&path);
             landing::appear_if_asked(&path, "create-before-move")?;
             source.check()?;
-            let renamed = if fault::named("cross-volume-move").is_some() {
+            let renamed = if crate::fault::named("cross-volume-move").is_some() {
                 Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
             } else {
                 landing::rename_new(from, &path)
@@ -4166,7 +4165,7 @@ impl Folder {
             fields::keep_equivalent(&mut front, &typed.front, edge_types);
         }
         Ok(Rendered {
-            text: if fault::named("render-frontmatter").as_deref() == Some(path) {
+            text: if crate::fault::named("render-frontmatter").as_deref() == Some(path) {
                 Err(CoreError::Invalid(
                     "cannot preserve this frontmatter: injected rendering failure".into(),
                 ))

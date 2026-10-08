@@ -6,6 +6,7 @@ mod catch_up;
 pub mod contract;
 mod drain;
 mod error;
+mod fault;
 mod filter;
 pub mod folder;
 mod folder_settings;

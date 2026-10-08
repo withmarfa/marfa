@@ -618,6 +618,118 @@ describe("the class that is neither retries and is counted", () => {
     ).toBe("accepted");
   });
 
+  /**
+   * The store failing, or filling, between an answer and its verdict cannot
+   * be timed from outside, so a debug build injects it (`fault.rs` in the
+   * core) for the write the fault names.
+   */
+  async function storeFaulted(label: string, fault: string) {
+    harness = await hydratedHarness(label, { rows: held() });
+    const { server, device } = harness;
+    const edit = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    const next = await device.create({
+      type: "core.note",
+      properties: { title: "next", body: "held" },
+    });
+    if (!edit.ok || !next.ok) throw new Error("the writes were not queued");
+    const createdRows = new Map<string, Record<string, unknown>>();
+    const edited = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "edited", body: "held" },
+    });
+    scriptWrites(server, {
+      update: [answers.updated(edited)],
+      read: [
+        (request) => {
+          const id = request.pathname.split("/").at(-1) ?? "";
+          return {
+            kind: "json",
+            status: 200,
+            body: withMetadata(createdRows.get(id) ?? edited),
+          };
+        },
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          const row = wireItem({ id: sent.id });
+          createdRows.set(sent.id, row);
+          return answers.created(row);
+        },
+      ],
+    });
+    process.env.MARFA_TEST_FAULT = `${fault}=${edit.value.id}`;
+    try {
+      return {
+        server,
+        device,
+        edit: edit.value.id,
+        next: next.value.id,
+        drained: await device.drain(),
+      };
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+  }
+
+  it("counts a write whose answer the store failed to record, and goes on to the next", async () => {
+    const { device, edit, next, drained } = await storeFaulted(
+      "class-store-fails",
+      "store-fails-at-answer",
+    );
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    const of = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [of(edit)?.verdict, of(edit)?.refusals],
+      "a write whose answer the store could not record was not counted, so it is retried forever",
+    ).toEqual([null, 1]);
+    expect(of(edit)?.reason).toContain("could not take the answer");
+    expect(
+      of(next)?.verdict,
+      "the write behind one the store could not record was not sent",
+    ).toBe("accepted");
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    expect(queue.value.find((row) => row.id === edit)?.refusals).toBe(1);
+  });
+
+  it("ends the drain storage_full when the store fills as it takes an answer, counting nothing", async () => {
+    const { server, device, edit, drained } = await storeFaulted(
+      "class-store-full",
+      "store-full-at-answer",
+    );
+    expect(drained.ok, JSON.stringify(drained)).toBe(false);
+    if (drained.ok) return;
+    expect(drained.refusal.code).toBe("storage_full");
+    expect(
+      server.requests.filter((request) => request.method === "POST"),
+      "a write behind the one a full store could not record was sent",
+    ).toEqual([]);
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    const row = queue.value.find((entry) => entry.id === edit);
+    expect(
+      [row?.verdict, row?.refusals],
+      "a full store spent the write's count, or gave it a verdict, though nothing was recorded",
+    ).toEqual([null, 0]);
+    // The witness: with room again, the same write goes under its key.
+    const again = await device.drain();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(again.value.verdicts.map((entry) => entry.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+  });
+
   it("retries an answer it cannot read, and counts it", async () => {
     harness = await hydratedHarness("class-unreadable", { rows: held() });
     const reports = await drainAgainst(
