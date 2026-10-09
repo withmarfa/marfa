@@ -109,7 +109,8 @@ pub struct PermissionMapArgs {
     /// An edge type and its level, `references=write`, repeatable.
     #[arg(long = "edge-permission", value_name = "TYPE=LEVEL")]
     pub edge_permissions: Vec<String>,
-    /// A registration it may make, `types=write` or `edge_types=write`, repeatable.
+    /// A kind of registration and its level, `types=write` or
+    /// `edge_types=write`, repeatable.
     #[arg(long = "metadata-permission", value_name = "NAME=LEVEL")]
     pub metadata_permissions: Vec<String>,
     /// A profile field and its level, `email=read`, repeatable.

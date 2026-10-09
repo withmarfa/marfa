@@ -280,7 +280,7 @@ describe("TrashPurger — the instance config override", () => {
     expect(await rowExists(itemId)).toBe(false);
   });
 
-  it("treats trash_retention_days = 0 in the config as disabled", async () => {
+  it("keeps everything in the trash when trash_retention_days is 0 in the config", async () => {
     await writeInstanceConfig(ctx.storage.settings, {
       trash_retention_days: 0,
     });
@@ -334,7 +334,7 @@ describe("runSweepAtRetention — audit and event-log retention", () => {
     expect(total).toBe(1);
   });
 
-  it("skips the sweep when the effective retention is 0 (disabled)", async () => {
+  it("skips the sweep when the effective retention is 0, keeping everything", async () => {
     await writeInstanceConfig(ctx.storage.settings, {
       event_log_retention_hours: 0,
     });

@@ -586,8 +586,8 @@ export interface InstanceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Retention overrides for the cleanup jobs. Each falls back to the
-   * instance env default when unset. Values must be non-negative; `0`
-   * disables the job. Negative values are rejected at write.
+   * instance's setting when unset, and `0` keeps everything, as the setting
+   * does.
    */
   audit_retention_days?: number;
   event_log_retention_hours?: number;
