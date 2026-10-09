@@ -64,13 +64,25 @@ An extension namespace is gated twice: by the type map on the item's type, as ev
 
 ### `keys-and-oauth/extension-unreadable-type`
 
-When an extension operation names an item whose type the key may not read, the server MUST answer exactly as for an item no row holds, `404 item_not_found`, and change nothing.
+When an extension operation names an item whose type the key may not read, the server MUST answer exactly as for an item no row holds, `404 item_not_found`.
+
+**Tests:** `compliance/extensions.test.ts › answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it`.
+
+### `keys-and-oauth/extension-unreadable-unchanged`
+
+When an extension operation names an item whose type the key may not read, the server MUST leave the item's extensions as they were.
 
 **Tests:** `compliance/extensions.test.ts › answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it`.
 
 ### `keys-and-oauth/extension-read-only-type`
 
-If a key that may read an item's type and not write it replaces or deletes one of the item's extension namespaces, then the server MUST answer `403 type_not_permitted` and change nothing.
+If a key that may read an item's type and not write it replaces or deletes one of the item's extension namespaces, then the server MUST answer `403 type_not_permitted`.
+
+**Tests:** `compliance/extensions.test.ts › refuses a replace and a delete to a key that may read the item's type and not write it`.
+
+### `keys-and-oauth/extension-read-only-unchanged`
+
+If a key that may read an item's type and not write it replaces or deletes one of the item's extension namespaces, then the server MUST leave the namespace as it was.
 
 **Tests:** `compliance/extensions.test.ts › refuses a replace and a delete to a key that may read the item's type and not write it`.
 
@@ -194,7 +206,13 @@ If a `PATCH /keys/{id}` body names `source`, then the server MUST answer `400 va
 
 ### `keys-and-oauth/update-ceiling`
 
-If a working key's update gives a key a permission, or a type, edge, metadata or profile map entry, that the caller does not hold, then the server MUST answer `403 forbidden` with `details.required_scope` naming it and leave the key as it was.
+If a working key's update gives a key a permission, or a type, edge, metadata or profile map entry, that the caller does not hold, then the server MUST answer `403 forbidden` with `details.required_scope` naming it.
+
+**Tests:** `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
+
+### `keys-and-oauth/update-ceiling-unchanged`
+
+If a working key's update gives a key a permission, or a type, edge, metadata or profile map entry, that the caller does not hold, then the server MUST leave the key as it was.
 
 **Tests:** `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
 
@@ -306,7 +324,13 @@ When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`
 
 ### `keys-and-oauth/expired-unknown`
 
-When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST answer `404 api_key_not_found` and leave the key as it was, whoever the caller is.
+When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST answer `404 api_key_not_found`, whoever the caller is.
+
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
+
+### `keys-and-oauth/expired-unchanged`
+
+When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST leave the key as it was, whoever the caller is.
 
 **Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
 
@@ -410,9 +434,15 @@ Where a key does not carry a lever, the server MUST hold that key's writes to th
 
 ### `keys-and-oauth/levers-permission`
 
-If a caller holding neither `config.manage` nor direct owner or local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `config.manage` and store nothing.
+If a caller holding neither `config.manage` nor direct owner or local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `config.manage`.
 
 **Reason:** A key's levers can be looser than the instance's, so setting them is a change to how the instance is enforced, which only a caller that may change the instance's own levers makes.
+
+**Tests:** `compliance/schema-enforcement.test.ts › refuses a mint or an update naming levers to a caller without config.manage`, `› an app holding config.manage sets a key's levers looser than the instance's, and one without it is refused`.
+
+### `keys-and-oauth/levers-permission-unchanged`
+
+If a caller holding neither `config.manage` nor direct owner or local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST create no key and change none.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses a mint or an update naming levers to a caller without config.manage`, `› an app holding config.manage sets a key's levers looser than the instance's, and one without it is refused`.
 
@@ -430,7 +460,13 @@ When an update names `enforcement_override`, the server MUST replace the key's l
 
 ### `keys-and-oauth/levers-missing-field`
 
-If a lever in a mint or an update lacks `types` or `sources`, then the server MUST answer `400 missing_required_field` with `details.field` naming it in full, such as `enforcement_override.source_filter.types`, and store nothing.
+If a lever in a mint or an update lacks `types` or `sources`, then the server MUST answer `400 missing_required_field` with `details.field` naming it in full, such as `enforcement_override.source_filter.types`.
+
+**Tests:** `compliance/schema-enforcement.test.ts › names the field a lever lacks, on the mint and on the update`.
+
+### `keys-and-oauth/levers-missing-unchanged`
+
+If a lever in a mint or an update lacks `types` or `sources`, then the server MUST create no key and change none.
 
 **Tests:** `compliance/schema-enforcement.test.ts › names the field a lever lacks, on the mint and on the update`.
 
@@ -458,7 +494,13 @@ When a mint or an update names a claim more than once, the server MUST hold it o
 
 ### `keys-and-oauth/claims-bounds`
 
-If a mint or an update names more than 1,000 claims, then the server MUST answer `400 validation_error` and store nothing.
+If a mint or an update names more than 1,000 claims, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming more than 1,000 sources`.
+
+### `keys-and-oauth/claims-bounds-unchanged`
+
+If a mint or an update names more than 1,000 claims, then the server MUST create no key and change none.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming more than 1,000 sources`.
 
@@ -510,9 +552,15 @@ The server MUST compare a key's own `source` with another key's claims exactly, 
 
 ### `keys-and-oauth/claims-narrowed`
 
-If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST answer `403 forbidden` with `details.source` and write nothing.
+If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST answer `403 forbidden` with `details.source`.
 
 **Reason:** A claim is not unique, so two separately enrolled devices can share natural keys (`items/natural-key-upsert`), and narrowing one takes effect at its next write. A row already under the source stays editable by `items/source-fixed`.
+
+**Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable`.
+
+### `keys-and-oauth/claims-narrowed-unwritten`
+
+If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST write nothing.
 
 **Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable`.
 
@@ -832,7 +880,7 @@ When an app exchanges a code at `POST /auth/oauth2/token` with the verifier that
 
 ### `keys-and-oauth/code-grant-revoked`
 
-If an app exchanges a code after the grant it was issued under was revoked, then the server MUST answer `400 invalid_grant` and issue no token.
+If an app exchanges a code after the grant it was issued under was revoked, then the server MUST answer `400 invalid_grant`.
 
 **Reason:** With `offline_access` a code yields a refresh token that rotates without end, so a code that outlived its grant would turn a revocation back into a standing grant.
 
@@ -846,7 +894,7 @@ If an app exchanges a code a second time, then the server MUST answer `400 inval
 
 ### `keys-and-oauth/code-verifier`
 
-If an app exchanges a code with a verifier that does not match its challenge, then the server MUST answer `400 invalid_grant` and issue no token.
+If an app exchanges a code with a verifier that does not match its challenge, then the server MUST answer `400 invalid_grant`.
 
 **Reason:** RFC 7636 asks for `invalid_grant`, and a `401` is the answer RFC 6749 keeps for a client that failed to authenticate.
 
@@ -854,7 +902,7 @@ If an app exchanges a code with a verifier that does not match its challenge, th
 
 ### `keys-and-oauth/code-verifier-missing`
 
-If an app exchanges a code issued with a challenge and sends no verifier, then the server MUST answer `400 invalid_request` and issue no token, whether or not the app authenticates with a secret.
+If an app exchanges a code issued with a challenge and sends no verifier, then the server MUST answer `400 invalid_request`, whether or not the app authenticates with a secret.
 
 **Tests:** `compliance/oauth-authorize.test.ts › refuses a code issued with a challenge and exchanged with no verifier 400 invalid_request, whether or not the app sends a secret`.
 
@@ -928,7 +976,7 @@ When a token request names this server's origin as `resource`, with or without a
 
 ### `keys-and-oauth/resource-other-server`
 
-If a token request names as `resource` anything other than this server's origin, then the server MUST answer `400 invalid_target` and issue no token.
+If a token request names as `resource` anything other than this server's origin, then the server MUST answer `400 invalid_target`.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused invalid_target when it names another server`.
 
@@ -1198,7 +1246,13 @@ If one address has made ten password sign-in attempts at an account in fifteen m
 
 ### `keys-and-oauth/sign-in-form-limit`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `error=too_many_attempts` and set no session cookie.
+If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `error=too_many_attempts`.
+
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
+
+### `keys-and-oauth/sign-in-form-limit-cookie`
+
+If the sign-in form's attempt is refused by a sign-in limit, then the server MUST set no session cookie.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
 
@@ -1400,23 +1454,41 @@ When the server restarts with the same secret and address, the server MUST keep 
 
 ### `keys-and-oauth/sign-out-lookup-fault`
 
-If `POST /auth/sign-out` cannot look its session up, then the server MUST answer `500` and clear no cookie.
+If `POST /auth/sign-out` cannot look its session up, then the server MUST answer `500`.
 
 **Reason:** A success would claim a session ended that the database could not end. A retry once the fault clears signs out.
 
 **Tests:** `compliance/credential-faults.test.ts › that cannot look its session up answers 500 and clears no cookie, and a retry signs out`.
 
+### `keys-and-oauth/sign-out-lookup-cookie`
+
+If `POST /auth/sign-out` cannot look its session up, then the server MUST clear no cookie.
+
+**Tests:** `compliance/credential-faults.test.ts › that cannot look its session up answers 500 and clears no cookie, and a retry signs out`.
+
 ### `keys-and-oauth/sign-out-delete-fault`
 
-If `POST /auth/sign-out` cannot delete its session, then the server MUST answer `500` and clear no cookie.
+If `POST /auth/sign-out` cannot delete its session, then the server MUST answer `500`.
+
+**Tests:** `compliance/credential-faults.test.ts › that cannot delete its session answers 500 and clears no cookie, and a retry signs out`.
+
+### `keys-and-oauth/sign-out-delete-cookie`
+
+If `POST /auth/sign-out` cannot delete its session, then the server MUST clear no cookie.
 
 **Tests:** `compliance/credential-faults.test.ts › that cannot delete its session answers 500 and clears no cookie, and a retry signs out`.
 
 ### `keys-and-oauth/sign-out-audit-fault`
 
-If the audit record of a browser session's end cannot be committed, then the server MUST answer `500` and leave the session signed in.
+If the audit record of a browser session's end cannot be committed, then the server MUST leave the session signed in.
 
 **Reason:** A session that ended with nothing to account for it cannot take effect, and one the person was told had ended has to have.
+
+**Tests:** `compliance/credential-faults.test.ts › whose end cannot be audited answers 500 and leaves the session signed in, and a retry signs out`.
+
+### `keys-and-oauth/sign-out-audit-answer`
+
+If the audit record of a browser session's end cannot be committed, then the server MUST answer `500`.
 
 **Tests:** `compliance/credential-faults.test.ts › whose end cannot be audited answers 500 and leaves the session signed in, and a retry signs out`.
 
@@ -1472,6 +1544,20 @@ When a change to the owner's profile answers `200`, the server MUST already hold
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when a profile change answers`.
 
+### `keys-and-oauth/audit-device-approval`
+
+When a person's approval of a device code answers, the server MUST already hold the audit record of the grant it made, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a device approval answers`.
+
+### `keys-and-oauth/audit-grant-retired`
+
+When the inactivity retirement retires a grant, the server MUST already hold the audit record of the retirement, readable at `GET /audit`, as the run answers.
+
+**Reason:** A grant unused for the instance's window, a year unless it says otherwise, is ended as a person's own revocation ends it.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when the inactivity retirement retires a grant`.
+
 ### `keys-and-oauth/audit-failed-sign-in`
 
 When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
@@ -1498,15 +1584,27 @@ When an authorization a standing consent covers answers with a code, the server 
 
 ### `keys-and-oauth/audit-rollback`
 
-If the audit record of a change to a key cannot be committed, then the server MUST answer `500` and leave the key as it was.
+If the audit record of a change to a key cannot be committed, then the server MUST leave the key as it was.
 
 **Reason:** A change nobody can account for is undisclosed authority, so the change and its record are kept or lost together.
 
 **Tests:** `compliance/credential-faults.test.ts › refuses a key change whose audit record cannot be committed, and leaves the key as it was`.
 
+### `keys-and-oauth/audit-rollback-answer`
+
+If the audit record of a change to a key cannot be committed, then the server MUST answer `500`.
+
+**Tests:** `compliance/credential-faults.test.ts › refuses a key change whose audit record cannot be committed, and leaves the key as it was`.
+
 ### `keys-and-oauth/audit-rollback-consent`
 
-If the audit record of a consent cannot be committed, then the server MUST answer `500`, record no grant and leave no standing consent.
+If the audit record of a consent cannot be committed, then the server MUST make no grant, so no consent stands.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed grants nothing and publishes no event`.
+
+### `keys-and-oauth/audit-rollback-consent-answer`
+
+If the audit record of a consent cannot be committed, then the server MUST answer `500`.
 
 **Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed grants nothing and publishes no event`.
 
@@ -1518,9 +1616,21 @@ If the audit record of a consent cannot be committed, then the server MUST publi
 
 ### `keys-and-oauth/audit-rollback-withdrawal`
 
-If the audit record of a grant's withdrawal cannot be committed, then the server MUST answer `500` and leave the grant and its tokens standing.
+If the audit record of a grant's withdrawal cannot be committed, then the server MUST leave the grant and its tokens standing.
 
-**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed answers 500 and leaves the grant and its tokens`.
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event`.
+
+### `keys-and-oauth/audit-rollback-withdrawal-answer`
+
+If the audit record of a grant's withdrawal cannot be committed, then the server MUST answer `500`.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event`.
+
+### `keys-and-oauth/audit-rollback-withdrawal-event`
+
+If the audit record of a grant's withdrawal cannot be committed, then the server MUST publish no event for the withdrawal.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event`.
 
 ### `keys-and-oauth/audit-unknown-outcome`
 
