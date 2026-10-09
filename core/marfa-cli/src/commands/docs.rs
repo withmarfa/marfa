@@ -33,8 +33,8 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 /// Reads the docs site at https://docs.marfa.so, or at the address in
 /// MARFA_DOCS_URL. It needs no server, store or key, and sends no credential.
 ///
-/// A page is its path on the site. `get-started/files`, `/get-started/files`,
-/// `get-started/files.md` and `https://docs.marfa.so/get-started/files` name
+/// A page is its path on the site. `files`, `/files`,
+/// `files.md` and `https://docs.marfa.so/files` name
 /// the same page. `search`, `topics` and `help` are commands, so a page with
 /// one of those names takes a leading slash, such as `/search`.
 ///
@@ -43,7 +43,7 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 #[command(
     args_conflicts_with_subcommands = true,
     arg_required_else_help = true,
-    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs get-started/files"
+    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs files"
 )]
 pub struct DocsArgs {
     /// The page to print, as Markdown: its path on the docs site, or its address.
@@ -303,13 +303,13 @@ impl Site {
     }
 }
 
-/// One path for every way a page is named: `get-started/files`, with a
+/// One path for every way a page is named: `files`, with a
 /// leading slash, a leading `docs/`, a trailing `.md`, or the whole address
 /// of the page.
 pub fn page_path(named: &str) -> Result<String, CliError> {
     let refused = || {
         CliError::Invalid(format!(
-            "{named:?} is not a docs page: give its path, such as get-started/files, or its address"
+            "{named:?} is not a docs page: give its path, such as files, or its address"
         ))
     };
     let named = named.trim();
@@ -440,11 +440,11 @@ mod tests {
     }
 
     const HITS: &str = r#"{"hits":[
-        {"title":"Files","url":"https://docs.marfa.so/get-started/files","snippets":["a  folder\nof files","second"]},
+        {"title":"Files","url":"https://docs.marfa.so/files","snippets":["a  folder\nof files","second"]},
         {"title":"Bare","url":"https://docs.marfa.so/bare","snippets":[]}]}"#;
 
     const PAGES: &str = r#"{"pages":[
-        {"title":"Files","url":"https://docs.marfa.so/get-started/files","description":"Keep files.","breadcrumbs":["Get started"]},
+        {"title":"Files","url":"https://docs.marfa.so/files","description":"Keep files.","breadcrumbs":["Get started"]},
         {"title":"Bare","url":"https://docs.marfa.so/bare","description":null,"breadcrumbs":[]}]}"#;
 
     fn closed_port() -> String {
@@ -455,24 +455,24 @@ mod tests {
     #[test]
     fn every_way_to_name_a_page_is_one_path() {
         for named in [
-            "get-started/files",
-            "/get-started/files",
-            "get-started/files/",
-            "get-started/files.md",
-            "/get-started/files.md",
-            "docs/get-started/files",
-            "/docs/get-started/files.md",
-            "get-started/files#a-heading",
-            "get-started/files?x=1",
-            "  get-started/files  ",
-            "https://docs.marfa.so/get-started/files",
-            "https://docs.marfa.so/get-started/files.md",
-            "https://docs.marfa.so/docs/get-started/files/",
-            "http://localhost:3000/get-started/files?q=1#top",
+            "files",
+            "/files",
+            "files/",
+            "files.md",
+            "/files.md",
+            "docs/files",
+            "/docs/files.md",
+            "files#a-heading",
+            "files?x=1",
+            "  files  ",
+            "https://docs.marfa.so/files",
+            "https://docs.marfa.so/files.md",
+            "https://docs.marfa.so/docs/files/",
+            "http://localhost:3000/files?q=1#top",
         ] {
-            assert_eq!(page_path(named).unwrap(), "get-started/files", "{named}");
+            assert_eq!(page_path(named).unwrap(), "files", "{named}");
         }
-        assert_eq!(page_path("get-started").unwrap(), "get-started");
+        assert_eq!(page_path("overview").unwrap(), "overview");
         assert_eq!(page_path("docs").unwrap(), "docs");
         assert_eq!(page_path("v1.2/a_b~c").unwrap(), "v1.2/a_b~c");
     }
@@ -542,18 +542,18 @@ mod tests {
             markdown("200 OK", body),
         ]);
         let site = Site::at(&door.url).unwrap();
-        let url = format!("{}/get-started/files.md", door.url);
+        let url = format!("{}/files.md", door.url);
         for named in [
-            "get-started/files",
-            "/get-started/files",
-            "get-started/files.md",
-            "https://docs.marfa.so/docs/get-started/files",
+            "files",
+            "/files",
+            "files.md",
+            "https://docs.marfa.so/docs/files",
         ] {
             let page = site.page(named).unwrap();
             assert_eq!(
                 page,
                 Page {
-                    path: "get-started/files".into(),
+                    path: "files".into(),
                     url: url.clone(),
                     markdown: body.into()
                 },
@@ -562,7 +562,7 @@ mod tests {
         }
         let received = door.received();
         assert!(received.iter().all(|request| {
-            request.path() == "/get-started/files.md" && request.header("authorization").is_none()
+            request.path() == "/files.md" && request.header("authorization").is_none()
         }));
     }
 
@@ -795,7 +795,7 @@ mod tests {
         let hits: Hits = serde_json::from_str(HITS).unwrap();
         assert_eq!(
             describe_hits("files", &hits),
-            "Files  https://docs.marfa.so/get-started/files\n  a folder of files\n\
+            "Files  https://docs.marfa.so/files\n  a folder of files\n\
              Bare  https://docs.marfa.so/bare"
         );
         let none: Hits = serde_json::from_str(r#"{"hits":[]}"#).unwrap();
@@ -807,7 +807,7 @@ mod tests {
         let topics: Topics = serde_json::from_str(PAGES).unwrap();
         assert_eq!(
             describe_topics(&topics),
-            "Files  https://docs.marfa.so/get-started/files\n  Keep files.\n\
+            "Files  https://docs.marfa.so/files\n  Keep files.\n\
              Bare  https://docs.marfa.so/bare"
         );
     }
