@@ -14,7 +14,7 @@ When a directory is added as a folder, a device MUST bind it to the named `syste
 
 ### `folders/bind-live-folder`
 
-If the named item is not a live `system.folder`, then the command MUST refuse `folders add`.
+If the named item is not a live `system.folder`, then the CLI MUST refuse `folders add`.
 
 **Tests:** `device/folders.test.ts › refuses to follow an item that is not a live folder`.
 
@@ -110,7 +110,7 @@ When a settings edit is refused, a device MUST report the reason in `settings.fl
 
 ### `folders/settings-refusal-words`
 
-When a push or pull reports a refused settings edit, the command MUST say that the edited settings are not in force.
+When a push or pull reports a refused settings edit, the CLI MUST say that the edited settings are not in force.
 
 **Tests:** `device/folders.test.ts › keeps its settings in force and flags the file when an edit is refused`.
 
@@ -170,7 +170,7 @@ When changed folder settings require another type or tier slice, a device MUST h
 
 ### `folders/settings-read-permission`
 
-If the key cannot read `system.folder`, then the command MUST refuse `folders add` naming `system.folder:read`.
+If the key cannot read `system.folder`, then the CLI MUST refuse `folders add` naming `system.folder:read`.
 
 **Tests:** `device/folders.test.ts › refuses to follow settings its key cannot read, naming the permission`.
 
@@ -182,7 +182,7 @@ When the same folder is added again to its directory, a device MUST replace the 
 
 ### `folders/settings-watch-refusal`
 
-When a settings edit is refused during a watch, the command MUST say why the edited settings are not in force.
+When a settings edit is refused during a watch, the CLI MUST say why the edited settings are not in force.
 
 **Tests:** `device/folders-contract-a.test.ts › tells a watch why a settings edit is not in force`.
 
@@ -268,7 +268,7 @@ While a folder’s first sync waits, a device MUST include its waiting state and
 
 ### `folders/first-sync-watch-refused`
 
-While a folder’s first sync waits, the command MUST refuse to start a watch with `first_sync_waiting`.
+While a folder’s first sync waits, the CLI MUST refuse to start a watch with `first_sync_waiting`.
 
 **Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
 
@@ -304,13 +304,13 @@ While a folder’s first sync waits, a device MUST refuse restoration of removal
 
 ### `folders/first-sync-terminal-question`
 
-When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST ask for confirmation.
+When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the CLI MUST ask for confirmation.
 
 **Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
 
 ### `folders/first-sync-terminal-answer`
 
-When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST proceed only for `y` or `yes` without regard to case.
+When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the CLI MUST proceed only for `y` or `yes` without regard to case.
 
 **Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
 
@@ -322,19 +322,19 @@ When a confirmed folder’s sync is interrupted by a failed file landing, a devi
 
 ### `folders/first-sync-yes`
 
-When `folders add` is given `--yes`, the command MUST confirm the folder’s first sync without asking for input.
+When `folders add` is given `--yes`, the CLI MUST confirm the folder’s first sync without asking for input.
 
 **Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
 
 ### `folders/first-sync-confirm`
 
-When `folders confirm` is given a waiting folder, the command MUST clear the first-sync wait.
+When `folders confirm` is given a waiting folder, the CLI MUST clear the first-sync wait.
 
 **Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
 
 ### `folders/first-sync-confirm-local-only`
 
-When `folders confirm` is given a waiting folder, the command MUST NOT contact the server.
+When `folders confirm` is given a waiting folder, the CLI MUST NOT contact the server.
 
 **Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
 
@@ -486,7 +486,7 @@ When files in different folders are scanned, a device MUST keep each folder's qu
 
 ### `folders/registry-lists-folders`
 
-When the command lists the machine's folders, a device MUST include every registered folder's directory and `system.folder` ID.
+When the CLI lists the machine's folders, a device MUST include every registered folder's directory and `system.folder` ID.
 
 **Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`.
 
@@ -628,13 +628,13 @@ When a folder scan encounters a file excluded by a built-in secret pattern in a 
 
 ### `folders/secrets-said`
 
-When a folder push or watch encounters a file excluded by a built-in secret pattern, the command MUST name the excluded file in words.
+When a folder push or watch encounters a file excluded by a built-in secret pattern, the CLI MUST name the excluded file in words.
 
 **Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`, `device/folders.test.ts › says a refused secret in words once while watching`.
 
 ### `folders/secret-notice-once`
 
-While a folder file remains excluded by a built-in secret pattern, the command MUST say its watch notice only once.
+While a folder file remains excluded by a built-in secret pattern, the CLI MUST say its watch notice only once.
 
 **Tests:** `device/folders.test.ts › says a refused secret in words once while watching`, `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
 
@@ -1354,7 +1354,7 @@ While a document is held for encoding, a device MUST preserve its bytes during p
 
 ### `folders/encoding-status`
 
-While a document is held for encoding, the command MUST list it as `held` in `folders status`.
+While a document is held for encoding, the CLI MUST list it as `held` in `folders status`.
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
@@ -1458,7 +1458,7 @@ When a folder edit is resent after its ancestor version is unavailable, a device
 
 ### `folders/version-rebased-words`
 
-When a push or watch resends an edit because its ancestor version is unavailable, the command MUST say that it was resent on the version the copy holds.
+When a push or watch resends an edit because its ancestor version is unavailable, the CLI MUST say that it was resent on the version the copy holds.
 
 **Tests:** `device/folders-placement.test.ts › says in words that an edit went over a thinned version`, `device/folders-placement.test.ts › says while watching that an edit went over a thinned version`.
 
@@ -2540,13 +2540,13 @@ When a pull holds refused placements, a device MUST report their count as `unpla
 
 ### `folders/placement-watch-notice`
 
-While a refused-placement count is unchanged, the command MUST NOT repeat its watch notice for each eventful pass.
+While a refused-placement count is unchanged, the CLI MUST NOT repeat its watch notice for each eventful pass.
 
 **Tests:** `device/folders-placement.test.ts › says the placements it holds back once while watching`.
 
 ### `folders/placement-add-permission`
 
-If a key lacks `edge.in-folder:write`, then the command MUST refuse `folders add` naming that permission.
+If a key lacks `edge.in-folder:write`, then the CLI MUST refuse `folders add` naming that permission.
 
 **Tests:** `device/folders-placement.test.ts › names the permission a key without in-folder write lacks, when it is added`, `device/fidelity.test.ts › matches the key a folder asks about when it is added`.
 
@@ -2724,7 +2724,7 @@ When a new file write crashes before the file lands, a device MUST NOT journal t
 
 ### `folders/write-crash-status`
 
-When a write crashes before replacing an unchanged existing file, the command MUST report that file as `in_step` during recovery.
+When a write crashes before replacing an unchanged existing file, the CLI MUST report that file as `in_step` during recovery.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`.
 
@@ -2896,13 +2896,13 @@ While the folder directory is missing or replaced by another directory, a device
 
 ### `folders/root-gone-watch`
 
-While the folder directory is missing, the command MUST report that the directory cannot be found.
+While the folder directory is missing, the CLI MUST report that the directory cannot be found.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folders/root-gone-watch-continues`
 
-While the folder directory is missing, the command MUST keep the watch running.
+While the folder directory is missing, the CLI MUST keep the watch running.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
@@ -2962,7 +2962,7 @@ When a pull detects that the root directory disappeared or was replaced after th
 
 ### `folders/root-gone-command-refusal`
 
-When the folder directory is missing, the command MUST refuse `folders status`, `folders confirm`, and `folders restore` with the reason.
+When the folder directory is missing, the CLI MUST refuse `folders status`, `folders confirm`, and `folders restore` with the reason.
 
 **Tests:** `device/folders-contract-a.test.ts › refuses status and removal decisions while the folder directory is missing`.
 
@@ -2980,7 +2980,7 @@ When a directory was deleted before a walk began, a device MUST journal its trac
 
 ### `folders/delete-trashed-status`
 
-When a locally missing file's item has already been trashed elsewhere, the command MUST report that file as waiting on `scan` rather than `delete`.
+When a locally missing file's item has already been trashed elsewhere, the CLI MUST report that file as waiting on `scan` rather than `delete`.
 
 **Tests:** `device/folders-contract-a.test.ts › reports a locally missing item already trashed elsewhere as waiting on scan`.
 
@@ -3016,7 +3016,7 @@ When a pull preserves a purged item's changed file, a device MUST count that fil
 
 ### `folders/purged-removal-report`
 
-When `folders pull` or `folders watch` reports removed files, the command MUST distinguish files removed because their items were purged from files removed because their items were trashed or left by state.
+When `folders pull` or `folders watch` reports removed files, the CLI MUST distinguish files removed because their items were purged from files removed because their items were trashed or left by state.
 
 **Tests:** `device/folders-identity.test.ts › says in words that a purged item's file was removed`, `device/folders-identity.test.ts › says while watching that a purged item's file was removed`.
 
@@ -3348,7 +3348,7 @@ When a live file has taken a lost file’s former path, a device MUST requeue th
 
 ### `folders/lost-row-watch-notice`
 
-While a folder file stays bound to a row the copy no longer holds, the command MUST say its lost-row watch notice only once.
+While a folder file stays bound to a row the copy no longer holds, the CLI MUST say its lost-row watch notice only once.
 
 **Tests:** `device/folders-identity.test.ts › says in words when a file is bound to an item that is gone, once while watching`.
 
@@ -3416,19 +3416,19 @@ When a folder push’s catch-up fails environmentally but its copy remains usabl
 
 ### `folders/catchup-failure-said`
 
-When a folder push’s catch-up fails environmentally, the command MUST report why catch-up failed.
+When a folder push’s catch-up fails environmentally, the CLI MUST report why catch-up failed.
 
 **Tests:** `device/folders.test.ts › pulls at a push that cannot reach the server, and says the catch-up failed`.
 
 ### `folders/watch-unretryable-failure`
 
-When a folder watch hydration receives an answer no retry can change, the command MUST end the watch.
+When a folder watch hydration receives an answer no retry can change, the CLI MUST end the watch.
 
 **Tests:** `device/folders.test.ts › ends the watch and says so when its hydration meets an answer no retry changes`.
 
 ### `folders/watch-unretryable-failure-reason-said`
 
-When a folder watch hydration receives an answer no retry can change, the command MUST report why server changes stopped reaching the folder.
+When a folder watch hydration receives an answer no retry can change, the CLI MUST report why server changes stopped reaching the folder.
 
 **Tests:** `device/folders.test.ts › ends the watch and says so when its hydration meets an answer no retry changes`.
 
@@ -3524,13 +3524,13 @@ When a folder is added and the registry’s existing contents cannot be parsed, 
 
 ### `folders/one-folder-worker`
 
-While a process holds a folder for work, the command MUST refuse another working command on that folder with `reading_handle` before changing local or server state.
+While a process holds a folder for work, the CLI MUST refuse another working command on that folder with `reading_handle` before changing local or server state.
 
 **Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder a watch holds`, `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
 
 ### `folders/status-beside-watch`
 
-While another process watches a folder, the command MUST answer `folders status` without acquiring the folder’s working handle.
+While another process watches a folder, the CLI MUST answer `folders status` without acquiring the folder’s working handle.
 
 **Tests:** `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
 
@@ -3608,7 +3608,7 @@ When a missing folder file’s deletion grace expires and no other folder holds 
 
 ### `folders/missing-file-said`
 
-When a missing folder file is trashed after no other folder holds it, the command MUST say that no folder on the machine holds the file.
+When a missing folder file is trashed after no other folder holds it, the CLI MUST say that no folder on the machine holds the file.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
 
@@ -3858,7 +3858,7 @@ When a pull restarts after its working copy changes, a device MUST include compl
 
 ### `folders/watch-copy-change-notice`
 
-When the working copy keeps changing under consecutive `folders watch` passes, the command MUST report the condition once for that run of passes.
+When the working copy keeps changing under consecutive `folders watch` passes, the CLI MUST report the condition once for that run of passes.
 
 **Tests:** `device/folders-identity.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
 
@@ -3876,7 +3876,7 @@ When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a 
 
 ### `folders/report-distinct-items`
 
-When `folders push` or `folders watch` reports items held back by a pull, the command MUST report each item once, including separate entries for different items at the same path.
+When `folders push` or `folders watch` reports items held back by a pull, the CLI MUST report each item once, including separate entries for different items at the same path.
 
 **Tests:** `device/folders.test.ts › names each item it holds back at a secret's name, two at one path as two`.
 
@@ -3936,37 +3936,37 @@ While the key, saved folder settings and placement used by a refused placement w
 
 ### `folders/conflict-file-report`
 
-When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the command MUST name the file in its text output.
+When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the CLI MUST name the file in its text output.
 
 **Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`, `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
 
 ### `folders/conflict-copy-file`
 
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that folder, the command MUST name that file as the destination of the edit's text.
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that folder, the CLI MUST name that file as the destination of the edit's text.
 
 **Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`.
 
 ### `folders/conflict-copy-pending`
 
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that folder yet, the command MUST say that the copy is not a file in the folder yet.
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that folder yet, the CLI MUST say that the copy is not a file in the folder yet.
 
 **Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
 
 ### `folders/conflict-copy-arrival`
 
-When a `folders watch` pass writes a conflicted copy previously reported as having no file yet, the command MUST report the file that now holds the edit's text.
+When a `folders watch` pass writes a conflicted copy previously reported as having no file yet, the CLI MUST report the file that now holds the edit's text.
 
 **Tests:** `device/folders.test.ts › says in a watch the file a conflicted copy became, once it is one`.
 
 ### `folders/conflict-report-once`
 
-When `folders push` or `folders watch` has reported a conflicted write, the command MUST NOT report that verdict again.
+When `folders push` or `folders watch` has reported a conflicted write, the CLI MUST NOT report that verdict again.
 
 **Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`, `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`.
 
 ### `folders/conflict-other-item`
 
-When a conflicted write belongs to an item with no file in the watched or pushed folder, the command MUST NOT report that conflict as the folder's.
+When a conflicted write belongs to an item with no file in the watched or pushed folder, the CLI MUST NOT report that conflict as the folder's.
 
 **Tests:** `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a push`, `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a watch`.
 
@@ -4118,13 +4118,13 @@ When a paused pull removal is restored, a device MUST queue restoration of trash
 
 ### `folders/pause-said`
 
-When a folder push reports a paused disk or pull removal, the command MUST state the paused count and name `folders confirm` and `folders restore` as the ways to resolve it.
+When a folder push reports a paused disk or pull removal, the CLI MUST state the paused count and name `folders confirm` and `folders restore` as the ways to resolve it.
 
 **Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders-contract-b.test.ts › says a pull-side removal waits in push output with both ways to resolve it`.
 
 ### `folders/pause-watch-once`
 
-While a paused folder removal remains unchanged, the command MUST say its watch notice only once.
+While a paused folder removal remains unchanged, the CLI MUST say its watch notice only once.
 
 **Tests:** `device/folders.test.ts › says a paused removal once while watching`.
 
@@ -4136,7 +4136,7 @@ When a folder scan admits a new or edited document whose JSON-encoded text reach
 
 ### `folders/size-warning-said`
 
-When a folder push scans a document with a size warning, the command MUST say the path and warning in words.
+When a folder push scans a document with a size warning, the CLI MUST say the path and warning in words.
 
 **Tests:** `device/folders.test.ts › warns of a text near the limit`.
 
@@ -4166,7 +4166,7 @@ When a folder status reads a document near the fixed 1 MiB request limit, a devi
 
 ### `folders/status-local`
 
-When the command reads a folder’s status, the command MUST answer from the folder’s disk and local store without contacting the server.
+When the CLI reads a folder’s status, the CLI MUST answer from the folder’s disk and local store without contacting the server.
 
 **Tests:** `device/folders-contract-b.test.ts › reads status from disk and the held copy without contacting the server`.
 
@@ -4372,55 +4372,55 @@ When a non-document file is renamed while its bytes are still settling, a device
 
 ### `folders/still-changing-notice`
 
-While a folder file never settles enough for the watch to read it, the command MUST say once that the file is still changing and has not been sent.
+While a folder file never settles enough for the watch to read it, the CLI MUST say once that the file is still changing and has not been sent.
 
 **Tests:** `device/folders.test.ts › says once that a file which never stops changing has not been sent`.
 
 ### `folders/watch-answered-waiting`
 
-When a folder watch reports a pass, the command MUST distinguish answered writes from writes still waiting.
+When a folder watch reports a pass, the CLI MUST distinguish answered writes from writes still waiting.
 
 **Tests:** `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`.
 
 ### `folders/watch-unreachable-once`
 
-When a folder watch loses or regains access to the server, the command MUST say the reachability change once without repeating it while unchanged.
+When a folder watch loses or regains access to the server, the CLI MUST say the reachability change once without repeating it while unchanged.
 
 **Tests:** `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`.
 
 ### `folders/watch-reachability-details`
 
-When a folder watch reports that its server cannot be reached, the command MUST identify the server and the reason in that notice.
+When a folder watch reports that its server cannot be reached, the CLI MUST identify the server and the reason in that notice.
 
 **Tests:** `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`, `device/folders.test.ts › waits out a gateway refusing its key, naming no contract, without stopping`.
 
 ### `folders/watch-hydration-notice`
 
-While a folder watch retries an environmentally failed hydration, the command MUST say the failure once for that run of failures.
+While a folder watch retries an environmentally failed hydration, the CLI MUST say the failure once for that run of failures.
 
 **Tests:** `device/folders.test.ts › keeps watching through a hydration that failed, and tries it again`.
 
 ### `folders/push-stopped-reason`
 
-When a folder push’s drain stops, the command MUST say why it stopped.
+When a folder push’s drain stops, the CLI MUST say why it stopped.
 
 **Tests:** `device/folders.test.ts › says why a push's drain stopped`.
 
 ### `folders/watch-stopped-reason`
 
-When a folder watch's drain has a new or changed stop reason, the command MUST say why it stopped.
+When a folder watch's drain has a new or changed stop reason, the CLI MUST say why it stopped.
 
 **Tests:** `device/folders.test.ts › stops a watch whose credential is refused, with the credential's exit`.
 
 ### `folders/watch-credential-exit`
 
-When a folder watch receives the server’s contract-named credential refusal, the command MUST end the watch with exit code 5.
+When a folder watch receives the server’s contract-named credential refusal, the CLI MUST end the watch with exit code 5.
 
 **Tests:** `device/folders.test.ts › stops a watch whose credential is refused, with the credential's exit`.
 
 ### `folders/watch-credential-exit-reason-said`
 
-When a folder watch receives the server’s contract-named credential refusal, the command MUST say that writes wait for a working credential.
+When a folder watch receives the server’s contract-named credential refusal, the CLI MUST say that writes wait for a working credential.
 
 **Tests:** `device/folders.test.ts › stops a watch whose credential is refused, with the credential's exit`.
 
@@ -4432,18 +4432,18 @@ When a folder watch receives `401` without the server’s contract header, a dev
 
 ### `folders/watch-grace-silent`
 
-When a `folders watch` pass only waits for a journaled deletion's grace period to end, the command MUST produce no report for that pass.
+When a `folders watch` pass only waits for a journaled deletion's grace period to end, the CLI MUST produce no report for that pass.
 
 **Tests:** `device/folders.test.ts › says nothing for passes that only wait out a delete's grace`.
 
 ### `folders/watch-notice-once`
 
-When a `folders watch` pass reports new activity, the command MUST NOT repeat a standing notice unchanged since the preceding pass.
+When a `folders watch` pass reports new activity, the CLI MUST NOT repeat a standing notice unchanged since the preceding pass.
 
 **Tests:** `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
 
 ### `folders/watch-notice-change`
 
-When a standing notice changes during `folders watch`, the command MUST report the changed notice in the pass that observes it.
+When a standing notice changes during `folders watch`, the CLI MUST report the changed notice in the pass that observes it.
 
 **Tests:** `device/folders.test.ts › says a refused secret in words once while watching`.

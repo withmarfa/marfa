@@ -300,7 +300,7 @@ describe("the reference checks see what they are for", () => {
     const chapter = [
       "### `sample/cli-rule`",
       "",
-      "The command MUST answer.",
+      "The CLI MUST answer.",
       "",
       "**Tests:** `cli/folder.test.ts › no such CLI title`, `› no such continued CLI title`.",
     ].join("\n");
