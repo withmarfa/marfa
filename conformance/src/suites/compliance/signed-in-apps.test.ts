@@ -183,6 +183,46 @@ describe("an app signing in", () => {
     expect(tokens.scope.split(" ").sort()).toEqual(asked.split(" ").sort());
   });
 
+  it("keeps the published scope it was caught up to, so a request naming none carries it", async () => {
+    const omitted = await sentTo(await get(authorizePath(undefined), false));
+    expect(omitted.pathname).toBe("/auth/sign-in");
+    expect(omitted.searchParams.get("scope")?.split(" ").sort()).toEqual(
+      `${REGISTERED} ${PUBLISHED}`.split(" ").sort(),
+    );
+  });
+
+  it("is answered login_required under prompt=none from nobody signed in, and is not caught up", async () => {
+    const registration = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "signed-in-apps-silent",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        scope: REGISTERED,
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const silent = ((await registration.json()) as { client_id: string })
+      .client_id;
+
+    const asked = `${REGISTERED} ${PUBLISHED}`;
+    const answered = await sentTo(
+      await get(`${authorizePath(asked, silent)}&prompt=none`, false),
+    );
+    expect(answered.href.startsWith(CALLBACK), String(answered)).toBe(true);
+    expect(answered.searchParams.get("error")).toBe("login_required");
+    // The registration is as it was: a request naming no scope carries it.
+    const omitted = await sentTo(
+      await get(authorizePath(undefined, silent), false),
+    );
+    expect(omitted.pathname).toBe("/auth/sign-in");
+    expect(omitted.searchParams.get("scope")).toBe(REGISTERED);
+  });
+
   it("is limited by its grant, so a refreshed token shares the window of the one before it", async () => {
     const before = await remaining(tokens.access_token);
     const refreshed = await token({

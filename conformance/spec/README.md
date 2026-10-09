@@ -25,7 +25,7 @@ The contract has two halves.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, export and restore.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
-- `keys-and-oauth.md`: ordinary keys, management permissions, direct authority and the OAuth provider.
+- `keys-and-oauth.md`: keys, what they reach and their levers, and sign-in: discovery, registration, authorization with consent, tokens, grants, the device grant and the sign-in pages.
 - `instance-claim.md`: setup proof, the one owner, browser handoff and password recovery.
 - `instance.md`: what an instance says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the server sends.
@@ -128,6 +128,6 @@ Each device chapter lists what the real server cannot produce, and why. `src/sui
 ## Outside the fixtures
 
 - **Enrichment and OCR are off for a run.** The enrichment statements in `housekeeping.md` are asserted by fixtures that each boot a server of their own with enrichment on.
-- **Rate limiting is off for a run.** A run mints and revokes one key per file, which would spend the key operations' allowance. That allowance, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. No statement covers the caps on other paths.
+- **Rate limiting is off for a run.** A run mints and revokes one key per file, which would spend the key operations' allowance. That allowance, and what a caller past it is told, is `keys-and-oauth/keys-rate-cap`, asserted against a server booted with the limiter on. No statement covers the caps on other paths.
 - **Instance claim.** Normal server fixtures obtain machine authority through the private local listener, claim the owner through the production claim operation, then issue ordinary credentials through authorized operations; dedicated claim fixtures start unclaimed.
 - **Operating-system authority.** Public HTTP conformance can prove that network requests cannot reach the private control operations; it cannot prove file ownership, socket modes, unsafe-path rejection or refusal of a different OS account, which are exercised separately by the platform CI checks and packaged-container checks.

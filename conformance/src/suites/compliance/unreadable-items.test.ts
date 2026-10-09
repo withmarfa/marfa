@@ -18,6 +18,7 @@ import type { MarfaClient } from "../../client/api.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 /** What a caller can observe of one answer. */
 interface Seen {
@@ -64,7 +65,7 @@ function without(seen: Seen, id: string): Seen {
 }
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "unreadable-items",
   ));
@@ -849,5 +850,52 @@ describe("an item the key cannot read answers as a missing one", () => {
     // The witness: an edge of a type it holds is served at the same door.
     const own = await edge(from, task, "references");
     expect((await ask(narrow, "GET", `/edges/${own}`)).status).toBe(200);
+  });
+});
+
+describe("the neighbors of an item", () => {
+  it("count the neighbors the key cannot read in neighbors_omitted, and leave them out of neighbors", async () => {
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.status).toBe(201);
+    trackItem(ctx, note.data.item.id);
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const edge = await client.createEdge({
+      source_id: note.data.item.id,
+      target_id: bookmark.data.item.id,
+      edge_type: "references",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const minted = await client.createKey({
+      label: "neighbors-narrow",
+      source: `${ctx.source}-neighbors-narrow`,
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+
+    type Detail = {
+      neighbors?: { item: { id: string } }[];
+      neighbors_omitted?: number;
+    };
+    const path = `/items/${note.data.item.id}?include=neighbors`;
+    // The witness: a key reading both types is given the bookmark.
+    const full = (await ask(apiKey, "GET", path)).body as Detail;
+    expect(full.neighbors?.map((n) => n.item.id)).toEqual([
+      bookmark.data.item.id,
+    ]);
+    expect(full.neighbors_omitted).toBe(0);
+
+    const seen = await ask(minted.data.key, "GET", path);
+    expect(seen.status).toBe(200);
+    const narrow = seen.body as Detail;
+    expect(narrow.neighbors).toEqual([]);
+    expect(narrow.neighbors_omitted).toBe(1);
   });
 });

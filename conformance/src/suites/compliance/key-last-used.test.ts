@@ -81,6 +81,9 @@ describe("API key last_used_at compliance", () => {
     expect(found).toBeDefined();
     expect(found!.last_used_at).toBeDefined();
 
+    expect(found!.last_used_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/,
+    );
     const parsed = new Date(found!.last_used_at!);
     expect(parsed.getTime()).not.toBeNaN();
   });

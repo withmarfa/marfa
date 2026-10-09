@@ -132,7 +132,7 @@ If an entry of `POST /edges/bulk` names an `id` that an edge the key may read ho
 
 If `POST /edges`, or an entry of `POST /edges/bulk` under `atomic: false`, names an `id` that an edge holds that the key may not read, then the server MUST refuse it `id_reused`, with `409` on `POST /edges`, and carry `existing_id` alone in its `details`.
 
-**Reason:** the key learns the id is taken, which it must to choose another, and nothing else about an edge it may not read (`keys-and-oauth.md` 20).
+**Reason:** the key learns the id is taken, which it must to choose another, and nothing else about an edge it may not read (`keys-and-oauth/unreadable-as-missing`).
 
 **Tests:** `compliance/unreadable-items.test.ts › POST /edges and POST /edges/bulk naming the id of an edge it cannot read learn the id is taken, and nothing of the edge`.
 
@@ -218,7 +218,7 @@ If `GET /edges` carries no credential, then the server MUST answer `401`.
 
 If a credential whose type map reaches no type sends `GET /edges`, `GET /edges/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` or `POST /edges/bulk`, then the server MUST answer `403 type_not_permitted`, whether or not the id names an edge or an item, and on an empty page of `POST /edges/bulk` too.
 
-**Reason:** a credential that reaches no type is not one with nothing to see, and an empty `200` would say the wrong one of the two (`keys-and-oauth.md` 1).
+**Reason:** a credential that reaches no type is not one with nothing to see, and an empty `200` would say the wrong one of the two (`keys-and-oauth/permissions-no-content`).
 
 **Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single row, whatever the id names`.
 
@@ -1542,7 +1542,7 @@ If `PATCH /edges/{id}` moves the target onto an item whose type the key may not 
 
 If `POST /edges`, or an entry of `POST /edges/bulk` from a key that may write its edge type, names a source whose type the key may not read, then the server MUST answer exactly as for a source no item holds, `404 item_not_found` with the message `Edge source item not found: <id>`.
 
-**Reason:** an entry is judged as a create even where an edge from the source already matches it, so the answer discloses neither the source nor its edges (`keys-and-oauth.md` 20).
+**Reason:** an entry is judged as a create even where an edge from the source already matches it, so the answer discloses neither the source nor its edges (`keys-and-oauth/unreadable-as-missing`).
 
 **Tests:** `compliance/unreadable-items.test.ts › $name`, `compliance/edge-check-order.test.ts › answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can`.
 

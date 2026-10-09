@@ -18330,7 +18330,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant. `details.required_scope` or `details.source` names what you lack. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18842,7 +18842,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; it widens a key an app created, or you act through `keys.manage`, which only narrows; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

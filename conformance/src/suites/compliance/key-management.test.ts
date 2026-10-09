@@ -204,6 +204,27 @@ describe("key management", () => {
     expect(minted.status).toBe(403);
     expect(minted.error?.error.code).toBe("forbidden");
     expect(minted.error?.error.details?.required_scope).toBe("keys.mint");
+
+    // `keys.manage` lists, narrows and revokes every key, and mints none.
+    const managing = await getManagementClient().createKey({
+      label: `km-manage-only-${ctx.runId}`,
+      source: `${ctx.source}-km-manage-only`,
+      permissions: ["keys.manage"],
+    });
+    expect(managing.status, JSON.stringify(managing.error)).toBe(201);
+    trackKey(ctx, managing.data.id);
+    const manager = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: managing.data.key,
+    });
+    const refused = await manager.createKey({
+      label: `${label}-manager`,
+      source: `${ctx.source}-${label}-manager`,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details?.required_scope).toBe("keys.mint");
+    expect((await manager.listKeys()).status).toBe(200);
   });
 
   it("a mint naming no permissions, maps or claims takes the creator's whole set", async () => {
@@ -268,6 +289,7 @@ describe("key management", () => {
     expect(current.data.source).toBe(`${ctx.source}-${label}`);
     expect(current.data.permissions).toEqual([]);
     expect(current.data.type_permissions).toEqual({ "core.note": "write" });
+    expect(current.data.default_tier).toBe("library");
     expect(current.data).not.toHaveProperty("key");
 
     // The witness that it reads itself by this door alone.
@@ -502,6 +524,14 @@ describe("key management", () => {
     expect(widerPermission.error?.error.details?.required_scope).toBe(
       "schema.write",
     );
+
+    const widerNamespace = await caller.createKey({
+      label: `${label}-wider-namespace`,
+      source: `${ctx.source}-${label}-wider-namespace`,
+      extension_permissions: { [label]: "read" },
+    });
+    expect(widerNamespace.status).toBe(403);
+    expect(widerNamespace.error?.error.code).toBe("forbidden");
   });
 
   it("refuses a second key naming as its own a source already in use", async () => {
@@ -748,6 +778,7 @@ describe("key management", () => {
       },
     );
     expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
 
     // A key that reads every type and writes none still has the action
     // narrowed to what it may write, which is nothing, rather than refused.
@@ -773,11 +804,34 @@ describe("key management", () => {
       label: "owner-issued",
       source: `${ctx.source}-owner-issued`,
     });
-    expect(minted.ok).toBe(true);
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
     trackKey(ctx, minted.data.id);
-    expect(minted.data.type_permissions).toEqual({ "*": "write" });
-    expect(minted.data.permissions).toContain("instance.read");
-    expect(minted.data.permissions).toContain("keys.manage");
+    for (const map of [
+      "type_permissions",
+      "edge_permissions",
+      "extension_permissions",
+      "metadata_permissions",
+      "profile_permissions",
+    ] as const) {
+      expect(minted.data[map], map).toEqual({ "*": "write" });
+    }
+    expect([...(minted.data.permissions ?? [])].sort()).toEqual(
+      [
+        "audit.read",
+        "blobs.manage",
+        "config.manage",
+        "connectors.manage",
+        "grants.manage",
+        "instance.maintain",
+        "instance.read",
+        "items.purge",
+        "keys.manage",
+        "keys.mint",
+        "schema.write",
+        "webhooks.manage",
+      ].sort(),
+    );
+    expect(minted.data.sources).toEqual([]);
     expect(minted.data).not.toHaveProperty("is_operator");
   });
 });

@@ -3,10 +3,12 @@ import { MarfaClient } from "../../client/api.js";
 import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  getManagementClient,
   getOwnerClient,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -289,6 +291,125 @@ describe("a key reaches only the keys it could have minted", () => {
 
         expect((await app.revokeKey(wider.data.id)).status).toBe(404);
         expect((await app.revokeKey(own.data.id)).ok).toBe(true);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
+
+  it("answers a second revoke as an unknown key, and tells keys.manage the key was already revoked", async () => {
+    const peer = await mint("kr-twice");
+    expect((await client.revokeKey(peer.id)).ok).toBe(true);
+    const unknown = await client.revokeKey(UNKNOWN_ID);
+    const again = await client.revokeKey(peer.id);
+    expect(again.status).toBe(404);
+    expect(again.error?.error.code).toBe("api_key_not_found");
+    expect(again.error?.error.message).toBe(
+      unknown.error?.error.message.replace(UNKNOWN_ID, peer.id),
+    );
+    const managed = await getManagementClient().revokeKey(peer.id);
+    expect(managed.status).toBe(404);
+    expect(managed.error?.error.code).toBe("api_key_not_found");
+    expect(managed.error?.error.message).toContain("already revoked");
+  });
+
+  it(
+    "a signed-in app gives a key within its reach a permission its grant holds, and no other",
+    async () => {
+      const server = await bootFreshServer("key-reach-app-update");
+      try {
+        const token = await approvedAppToken(server, [
+          "core.note:read",
+          "keys.mint",
+          "audit.read",
+        ]);
+        const app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: token });
+        const working = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        // A key no app made, holding nothing the app does not, so the app
+        // reaches it and may give it what the app holds.
+        const target = await working.createKey({
+          label: "app-update-target",
+          source: "app-update-target",
+          type_permissions: { "core.note": "read" },
+          permissions: [],
+        });
+        expect(target.ok, JSON.stringify(target.error)).toBe(true);
+        expect(target.data.oauth_client_id).toBeUndefined();
+
+        const given = await app.updateKey(target.data.id, {
+          permissions: ["audit.read"],
+        });
+        expect(given.status, JSON.stringify(given.error)).toBe(200);
+        expect(given.data.permissions).toEqual(["audit.read"]);
+
+        const beyond = await app.updateKey(target.data.id, {
+          permissions: ["audit.read", "webhooks.manage"],
+        });
+        expect(beyond.status, JSON.stringify(beyond.error)).toBe(403);
+        expect(beyond.error?.error.code).toBe("forbidden");
+        expect(beyond.error?.error.details?.required_scope).toBe(
+          "webhooks.manage",
+        );
+        const listed = await working.listKeys();
+        expect(
+          listed.data.data.find((k) => k.id === target.data.id)?.permissions,
+          "a refused update changed the key",
+        ).toEqual(["audit.read"]);
+
+        // The mint is held to the grant as the update is, and no scope
+        // names an extension namespace.
+        const mintedBeyond = await app.createKey({
+          label: "app-mint-beyond",
+          source: "app-mint-beyond",
+          permissions: ["webhooks.manage"],
+        });
+        expect(mintedBeyond.status).toBe(403);
+        expect(mintedBeyond.error?.error.code).toBe("forbidden");
+        expect(mintedBeyond.error?.error.details?.required_scope).toBe(
+          "webhooks.manage",
+        );
+        const mintedNamespace = await app.createKey({
+          label: "app-mint-namespace",
+          source: "app-mint-namespace",
+          type_permissions: { "core.note": "read" },
+          extension_permissions: { notes: "read" },
+        });
+        expect(mintedNamespace.status).toBe(403);
+        expect(mintedNamespace.error?.error.code).toBe("forbidden");
+
+        // A key the app made is only ever narrowed, by the owner too.
+        const made = await app.createKey({
+          label: "app-made",
+          source: "app-made",
+          type_permissions: { "core.note": "read" },
+          permissions: [],
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        const owner = new MarfaClient({
+          baseUrl: server.apiUrl,
+          ownerCookie: server.ownerCookie,
+          ownerCredentials: TEST_OWNER,
+        });
+        const widened = await owner.updateKey(made.data.id, {
+          permissions: ["audit.read"],
+        });
+        expect(widened.status).toBe(403);
+        expect(widened.error?.error.code).toBe("forbidden");
+        expect(widened.error?.error.details?.required_scope).toBe("audit.read");
+        const widerMap = await owner.updateKey(made.data.id, {
+          type_permissions: { "core.note": "write" },
+        });
+        expect(widerMap.status).toBe(403);
+        expect(widerMap.error?.error.code).toBe("forbidden");
+        // The witness: the owner narrows it.
+        const narrowed = await owner.updateKey(made.data.id, {
+          type_permissions: {},
+        });
+        expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
       } finally {
         await server.stop();
       }

@@ -26,7 +26,7 @@ If a request to an operation that takes a credential carries an undeclared query
 
 If a credential that the operation's standing rule turns away sends an undeclared query key, then the server MUST answer the `403` it answers without the key.
 
-**Reason:** the refusal of the key comes after the standing rule (`keys-and-oauth.md` 16), so a credential that reaches no type learns nothing about the keys an operation declares.
+**Reason:** the refusal of the key comes after the standing rule (`keys-and-oauth/permission-before-body`), so a credential that reaches no type learns nothing about the keys an operation declares.
 
 **Tests:** `compliance/declared-refusals.test.ts › answers a copy stream request with a stray key 401, then 403 for a key that reads no type`.
 
@@ -202,7 +202,7 @@ When a wildcard `type` filter matches no type that a credential reaching some ty
 
 If a credential whose type map reaches no type sends a request to an operation that takes a `type` filter, or to `POST /items/lookup`, then the server MUST answer `403 type_not_permitted`, whatever the filter names, a wildcard and a type that nothing registers included.
 
-**Reason:** an empty answer would say that the instance holds nothing for the credential to read, rather than that it may read nothing (`keys-and-oauth.md` 1).
+**Reason:** an empty answer would say that the instance holds nothing for the credential to read, rather than that it may read nothing (`keys-and-oauth/permissions-no-content`).
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 type_not_permitted whatever the filter names, to a working key and to a management key`, `› a key whose map reaches no type is refused a wildcard too`.
 
@@ -210,7 +210,7 @@ If a credential whose type map reaches no type sends a request to an operation t
 
 When a credential's type map names the types it may read, the server MUST leave out of every listing and search the items of every other type.
 
-**Reason:** a type the credential may not read is not shown to it in a set, as it is not shown by id. `keys-and-oauth.md` 1 states what the map grants.
+**Reason:** a type the credential may not read is not shown to it in a set, as it is not shown by id. `keys-and-oauth/permissions-no-content` states what the map grants.
 
 **Tests:** `compliance/type-scoped-access.test.ts › scoped key list filtering only returns permitted types`, `› search results filtered by scoped permissions`, `› unlisted types are implicitly denied (no wildcard)`, `› namespace wildcard grants access to all types in the namespace`, `compliance/type-permissions.test.ts › none permission hides the type from a listing, not only from a write`, `› wildcard pattern matches all types in namespace`.
 
@@ -1108,7 +1108,7 @@ The server MUST leave out of an export the items of every type that the credenti
 
 When `GET /export` answers a row, the server MUST carry on it only the extension namespaces that the credential may read, in both formats.
 
-**Reason:** an archive restores only the namespaces that the key which wrote it may read. `keys-and-oauth.md` 21 states what a credential may read of an extension.
+**Reason:** an archive restores only the namespaces that the key which wrote it may read. `keys-and-oauth/extension-map-only` states what a credential may read of an extension.
 
 **Tests:** `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`.
 
@@ -1426,7 +1426,7 @@ When `POST /restore` takes a canonical row in a state that its lifecycle contain
 
 If an archive records a row with a `source` that no credential can hold, which is one that starts with the reserved prefix `oauth:`, then the server MUST answer `400 validation_error` naming the row.
 
-**Reason:** the restore is the one operation that copies `source` verbatim, and the key operations refuse that prefix (`keys-and-oauth.md` 34), so without this refusal a row planted through the restore would read ever after as written by an authority that never existed. An archive that legitimately records one is unrestorable, and deliberately.
+**Reason:** the restore is the one operation that copies `source` verbatim, and the key operations refuse that prefix (`keys-and-oauth/claims-reserved`), so without this refusal a row planted through the restore would read ever after as written by an authority that never existed. An archive that legitimately records one is unrestorable, and deliberately.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a source no credential can hold, and writes nothing`.
 

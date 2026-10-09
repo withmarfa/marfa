@@ -251,7 +251,15 @@ describe("claiming the one owner", () => {
         )
       ).status,
     ).toBe(401);
+    const recorded = async (action: string): Promise<number> =>
+      ((await local(`/audit?action=${action}`)).body.data as unknown[]).length;
+    const issuedBefore = await recorded("instance.setup_code.issued");
     code = (await local("/_control/setup/code", {})).body.code as string;
+    expect(
+      await recorded("instance.setup_code.issued"),
+      "the code was answered before its issue was recorded",
+    ).toBe(issuedBefore + 1);
+    const exchangedBefore = await recorded("instance.setup_code.exchanged");
     expect(
       (
         await post(
@@ -261,6 +269,10 @@ describe("claiming the one owner", () => {
         )
       ).status,
     ).toBe(200);
+    expect(
+      await recorded("instance.setup_code.exchanged"),
+      "the exchange was answered before it was recorded",
+    ).toBe(exchangedBefore + 1);
   });
 
   it("validates the password without consuming valid setup proof", async () => {
@@ -327,6 +339,13 @@ describe("claiming the one owner", () => {
         label: "Instance management",
         source: "owner-test",
         permissions: [
+          "schema.write",
+          "keys.mint",
+          "items.purge",
+          "webhooks.manage",
+          "config.manage",
+          "audit.read",
+          "grants.manage",
           "keys.manage",
           "connectors.manage",
           "instance.read",

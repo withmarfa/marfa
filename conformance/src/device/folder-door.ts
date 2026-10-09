@@ -296,7 +296,7 @@ export class FolderDoor {
     options: { resolve?: boolean } = {},
   ): Answer {
     // A row in the bin, or of a type the key cannot read, is not there to an
-    // update, as it is not to a read (`keys-and-oauth.md` 20).
+    // update, as it is not to a read (`keys-and-oauth/unreadable-as-missing`).
     const before = this.rows.get(id);
     if (!this.shows(before)) {
       return answers.itemNotFound(id);

@@ -86,12 +86,12 @@ async function register(
   return { clientId: body.client_id, clientSecret: body.client_secret };
 }
 
-function authorizeUrl(clientId: string): string {
+function authorizeUrl(clientId: string, scope = "core.note:read"): string {
   return `${server!.apiUrl}/auth/oauth2/authorize?${new URLSearchParams({
     response_type: "code",
     client_id: clientId,
     redirect_uri: CALLBACK,
-    scope: "core.note:read",
+    scope,
     state: "unverified-apps",
     code_challenge: "0123456789012345678901234567890123456789012",
     code_challenge_method: "S256",
@@ -109,8 +109,8 @@ async function sentTo(response: Response): Promise<URL> {
 }
 
 /** The page a person signed in reads before approving the app. */
-async function consentPage(clientId: string): Promise<string> {
-  const authorize = await fetch(authorizeUrl(clientId), {
+async function consentPage(clientId: string, scope?: string): Promise<string> {
+  const authorize = await fetch(authorizeUrl(clientId, scope), {
     redirect: "manual",
     headers: { cookie },
   });
@@ -132,11 +132,14 @@ async function signInPage(clientId: string): Promise<string> {
 }
 
 /** The approval page for a code the app asked for on a device. */
-async function deviceApprovalPage(app: Registered): Promise<string> {
+async function deviceApprovalPage(
+  app: Registered,
+  scope = "core.note:read",
+): Promise<string> {
   const headers: Record<string, string> = {
     "content-type": "application/x-www-form-urlencoded",
   };
-  const form = new URLSearchParams({ scope: "core.note:read" });
+  const form = new URLSearchParams({ scope });
   if (app.clientSecret === undefined) {
     form.set("client_id", app.clientId);
   } else {
@@ -206,5 +209,62 @@ describe("an app a person approves", () => {
     const secretPage = await deviceApprovalPage(secret);
     expect(secretPage).toContain("Secret Device App");
     expect(secretPage).toContain(CAUTION);
+  });
+});
+
+/**
+ * The line each toggle row on a page says, by the literal its checkbox
+ * submits: the row's label and, where it has one, how far it reaches.
+ */
+function rowLines(html: string): Map<string, string> {
+  const rows = new Map<string, string>();
+  for (const m of html.matchAll(
+    /<div class="subrow"><span>(.*?)<\/span><label class="sw"><input type="checkbox" name="scopes" value="([^"]+)"/g,
+  )) {
+    rows.set(
+      m[2]!,
+      m[1]!
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
+  }
+  return rows;
+}
+
+describe("a grant a person reads", () => {
+  it("is named in the same words on the consent page and the device approval page, reach included", async () => {
+    // A type of the person's own, so the wildcard below names one today.
+    const registered = await fetch(`${server!.apiUrl}/types`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${server!.workingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        id: "user.conformance_recipe",
+        label: "Conformance recipe",
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status, await registered.clone().text()).toBe(201);
+    const scope = "core.note:read core.note:write user.*:read audit.read";
+    const browser = await register("Same Words App", "none", [
+      "authorization_code",
+    ]);
+    const device = await register("Same Words Device", "none", [DEVICE_GRANT]);
+    const consent = rowLines(await consentPage(browser.clientId, scope));
+    const approval = rowLines(await deviceApprovalPage(device, scope));
+    expect([...consent.keys()].sort()).toEqual(scope.split(" ").sort());
+    expect(Object.fromEntries(approval)).toEqual(Object.fromEntries(consent));
+    // The read and the write of one type are told apart.
+    expect(consent.get("core.note:read")).not.toBe(
+      consent.get("core.note:write"),
+    );
+    // A wildcard names the types it covers today and says it grows; a
+    // grant of one type says no reach beyond it.
+    expect(consent.get("user.*:read")).toContain("Conformance recipe");
+    expect(consent.get("user.*:read")).toMatch(/later|add/i);
+    expect(consent.get("core.note:read")).not.toMatch(/later|today/i);
   });
 });

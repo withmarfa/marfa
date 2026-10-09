@@ -19,7 +19,7 @@ import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key may claim sources besides its own, and a write may name one it
- * claims (`keys-and-oauth.md` 34, `items/source-claimed`).
+ * claims (`keys-and-oauth/claims-answered`, `items/source-claimed`).
  *
  * The natural key is `(source, source_id)` and a key's own source is no other
  * unrevoked key's own, so two keys writing under their own sources never
@@ -1309,6 +1309,15 @@ describe("a key's claims", () => {
         `the owner granted ${reserved}, so a key's rows can read as an app's`,
       ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
+      const own = await owner.createKey({
+        label: "reserved-own",
+        source: reserved,
+      });
+      expect(
+        own.status,
+        `the owner minted a key whose own source is ${reserved}`,
+      ).toBe(400);
+      expect(own.error?.error.code).toBe("validation_error");
     }
 
     // The witness. The same caller grants an ordinary source on both doors,
@@ -1435,6 +1444,10 @@ describe("a key's claims", () => {
       listed.data.data.find((k) => k.id === atCap.data.id)?.sources,
       "a refused update changed the key's claims",
     ).toHaveLength(1000);
+    expect(
+      listed.data.data.some((k) => k.source === `${ctx.source}-too-many`),
+      "a refused mint stored a key",
+    ).toBe(false);
   });
 
   it("a mint naming nothing takes the creator's claims", async () => {

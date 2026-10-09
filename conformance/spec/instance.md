@@ -230,7 +230,7 @@ When a claimed instance's owner account is missing, the server MUST refuse local
 
 ## Health
 
-`GET /health` answers without a credential (`keys-and-oauth.md` 17). It reports four components, each probed on its own, and an overall `status`.
+`GET /health` answers without a credential (`keys-and-oauth/health-open`). It reports four components, each probed on its own, and an overall `status`.
 
 ### `instance/health-components`
 

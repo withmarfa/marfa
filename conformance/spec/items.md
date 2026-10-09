@@ -106,7 +106,7 @@ When `POST /items` or a `POST /items/bulk` entry names no `source`, or the crede
 
 ### `items/source-claimed`
 
-When `POST /items` or a `POST /items/bulk` entry names a source the credential's key claims (`keys-and-oauth.md` 34), the server MUST stamp the item with that source.
+When `POST /items` or a `POST /items/bulk` entry names a source the credential's key claims (`keys-and-oauth/claims-answered`), the server MUST stamp the item with that source.
 
 **Tests:** `compliance/claimed-sources.test.ts › writes under a source the key claims, and the row carries it`.
 
@@ -1598,7 +1598,7 @@ When the server answers a write or delete of an extension namespace, the server 
 
 ### `items/extension-read`
 
-When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth.md` 21) on `GET /items/{id}/extensions` and in the item's metadata, and `{ namespace, data }` on `GET /items/{id}/extensions/{namespace}`.
+When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth/extension-map-only`) on `GET /items/{id}/extensions` and in the item's metadata, and `{ namespace, data }` on `GET /items/{id}/extensions/{namespace}`.
 
 **Tests:** `compliance/extensions.test.ts › reads all extensions`, `› reads a specific namespace`, `› extensions persist on the item's metadata read`.
 
