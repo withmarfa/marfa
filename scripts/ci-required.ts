@@ -126,8 +126,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks", "core-checks-linux"]],
   // Markdown anywhere else is read only by Prettier and the contract's
   // reference check, which `CI (SQLite)` runs for every change, and a
-  // package's README by the version check. A fixture is test input and a generated tree is
-  // checked file by file, so those fall through to their folder's rule.
+  // package's README by the version check. A fixture is test input and a
+  // generated tree is checked file by file, so those fall through to their
+  // folder's rule.
   [
     /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],

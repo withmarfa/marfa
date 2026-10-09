@@ -566,9 +566,9 @@ When an include or ignore pattern matches a file's path directly, a device MUST 
 
 ### `folders/pattern-not-folder-root`
 
-A device MUST NOT match an include or ignore pattern against the folder's own directory, so a line that names only directories neither takes nor leaves out a file at the folder's top level.
+A device MUST NOT take or leave out a file at a folder's top level because an include or ignore pattern matches the folder's own directory.
 
-**Reason:** git reads a list the same way, and a bound file a line stops taking is kept as `folders/excluded-binding-kept` keeps it.
+**Reason:** git reads a list the same way, so a line that names only directories, such as `*/`, neither takes nor leaves out a top-level file. A bound file that such a line stops taking is kept, as `folders/excluded-binding-kept` says.
 
 **Tests:** `device/folders.test.ts › keeps a bound file at the top that a line naming only directories does not take`.
 
