@@ -149,6 +149,7 @@ describe("minting a key with an expiry", () => {
 
   it.each([
     ["a word", "tomorrow"],
+    ["a date with no time", "2999-01-01"],
     ["an instant that has passed", "2001-01-01T00:00:00.000Z"],
     ["a time whose UTC year is 10000", "9999-12-31T23:59:59-01:00"],
     ["null", null],
@@ -279,6 +280,20 @@ describe("a key whose time has passed", () => {
       }
     ).__sqliteAll(`SELECT revoked_at FROM api_keys WHERE id = '${lapsing.id}'`);
     expect(rows[0]?.revoked_at).not.toBeNull();
+    const audited = await (
+      ctx.storage as unknown as {
+        __sqliteAll: (
+          query: string,
+        ) => Promise<{ action: string; details: string }[]>;
+      }
+    ).__sqliteAll(
+      `SELECT action, details FROM audit_log WHERE resource_id = '${lapsing.id}'`,
+    );
+    expect(audited.map((row) => row.action)).toEqual(["key.revoke"]);
+    expect(JSON.parse(audited[0]?.details ?? "{}")).toMatchObject({
+      reason: "expired",
+      source,
+    });
     const again = await take();
     expect(again.status).toBe(409);
   });

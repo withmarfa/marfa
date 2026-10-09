@@ -18281,7 +18281,7 @@ export interface operations {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
                     enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
-                    /** @description When the key stops working, as an ISO 8601 time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`. */
+                    /** @description When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`. */
                     expires_at?: string;
                 };
             };
@@ -18793,7 +18793,7 @@ export interface operations {
                     permissions?: components["schemas"]["Permission"][];
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
-                    /** @description Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`. */
+                    /** @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`. */
                     expires_at?: string | null;
                     /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;

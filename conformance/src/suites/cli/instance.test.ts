@@ -380,6 +380,20 @@ describe("the instance from the terminal", () => {
     ]);
     expect(both.code).toBe(2);
     expect(both.envelope.error.code).toBe("usage");
+    for (const args of [
+      ["--expires-in", "7d", "--expires-at", exact.toISOString()],
+      ["--no-expiry", "--expires-in", "7d"],
+      ["--no-expiry", "--expires-at", exact.toISOString()],
+    ]) {
+      const refusedUpdate = await c.cli.refused([
+        "keys",
+        "update",
+        weekly.id,
+        ...args,
+      ]);
+      expect(refusedUpdate.code, args.join(" ")).toBe(2);
+      expect(refusedUpdate.envelope.error.code, args.join(" ")).toBe("usage");
+    }
 
     // A time of its own, shortened by a caller that can only narrow.
     const shorter = new Date(Date.now() + DAY_MS).toISOString();

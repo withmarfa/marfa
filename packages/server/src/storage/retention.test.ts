@@ -671,6 +671,52 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
   });
 });
 
+describe("RevokedKeyReaper.runOnce — keys that lapsed unrevoked", () => {
+  it("drops a key long past its expiry with its webhook subscriptions, and leaves a recent lapse and a live expiry alone", async () => {
+    const mint = (label: string, expiresAt: string) =>
+      ctx.storage.keys.create(
+        {
+          label,
+          source: `probe:lapse-${label}`,
+          type_permissions: {},
+          expires_at: expiresAt,
+        },
+        hashApiKey(`marfa_k1_lapse_${label}`, TEST_API_KEY_SALT),
+      );
+    const ago = (days: number) =>
+      new Date(FIXED_NOW.getTime() - days * MS_PER_DAY).toISOString();
+    const longLapsed = await mint("long", ago(31));
+    const recentlyLapsed = await mint("recent", ago(29));
+    const standing = await mint(
+      "standing",
+      new Date(FIXED_NOW.getTime() + MS_PER_DAY).toISOString(),
+    );
+    const subscribe = (keyId: string) =>
+      ctx.storage.outboundWebhooks.create({
+        url: "https://example.test/hook",
+        events: ["item.created"],
+        owner: { kind: "key", keyId },
+      });
+    const subscription = await subscribe(longLapsed.id);
+    const kept = await subscribe(recentlyLapsed.id);
+
+    // The witness: the rows the sweep must take are there before it runs.
+    expect(await keyRowExists(longLapsed.id)).toBe(true);
+    expect(
+      await ctx.storage.outboundWebhooks.get(subscription.id),
+    ).not.toBeNull();
+
+    const reaper = new RevokedKeyReaper(ctx.storage, () => FIXED_NOW);
+    expect(await reaper.runOnce()).toBe(1);
+
+    expect(await keyRowExists(longLapsed.id)).toBe(false);
+    expect(await ctx.storage.outboundWebhooks.get(subscription.id)).toBeNull();
+    expect(await keyRowExists(recentlyLapsed.id)).toBe(true);
+    expect(await ctx.storage.outboundWebhooks.get(kept.id)).not.toBeNull();
+    expect(await keyRowExists(standing.id)).toBe(true);
+  });
+});
+
 describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
   /**
    * A grant revoked through the user-facing path, which is the row this sweep

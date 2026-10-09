@@ -335,7 +335,9 @@
   "routes/keys.ts": {
     "boundary": "Audited ordinary key create/update/revoke; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts.",
     "calls": {
+      "AuditStore.log": 1,
       "KeyStore.create": 1,
+      "KeyStore.revokeLapsedHolders": 1,
       "runAuditedTransaction": 3
     }
   },
@@ -435,7 +437,7 @@
     "boundary": "Audited bounded trash/grant/key/client purge and shared audited inactive grant retirement; expired session and rate-record cleanup remain operational. credential-retention-audit.test.ts and grant-inactivity-retirer.test.ts.",
     "calls": {
       "AuthSessionStore.deleteExpired": 1,
-      "KeyStore.deleteRevokedKeysOlderThan": 1,
+      "KeyStore.deleteDeadKeysOlderThan": 1,
       "OauthProviderStore.deleteGrantlessClientsOlderThan": 1,
       "RateLimitStore.cleanup": 1,
       "runAuditedTransaction": 4,

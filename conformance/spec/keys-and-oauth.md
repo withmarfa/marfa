@@ -328,7 +328,13 @@ If `marfa keys create` or `marfa keys update` runs with an `--expires-in` that i
 
 ### `keys-and-oauth/command-expiry-conflict`
 
-If `marfa keys create` runs with both `--expires-in` and `--expires-at`, then the command MUST exit 2 with the code `usage`.
+If `marfa keys create` or `marfa keys update` runs with both `--expires-in` and `--expires-at`, then the command MUST exit 2 with the code `usage`.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-no-expiry-conflict`
+
+If `marfa keys update` runs with `--no-expiry` and with `--expires-in` or `--expires-at`, then the command MUST exit 2 with the code `usage`.
 
 **Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
 
@@ -370,7 +376,7 @@ When `POST /keys` or `PATCH /keys/{id}` names an `expires_at` date-time with no 
 
 ### `keys-and-oauth/expiry-invalid`
 
-If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` that is not a timestamp, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
+If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` string that is not a timestamp with a date and a time, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
 
 **Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
 
@@ -429,6 +435,14 @@ When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`
 When a mint names as the new key's own `source` one that only keys past their `expires_at` hold as their own, the server MUST mint the key.
 
 **Reason:** A key past its `expires_at` answers as unknown to a revoke, so nothing else could free its source for the key that replaces it.
+
+**Tests:** `compliance/key-expiry.test.ts › gives up its own source to the next mint, and holds it until then`.
+
+### `keys-and-oauth/expired-source-revoked`
+
+When a mint takes a `source` from keys past their `expires_at`, the server MUST record a `key.revoke` audit entry for each of those keys, with `resource_id` naming it.
+
+**Reason:** The mint revokes those keys, and their webhook subscriptions go with them, as with any revoke. A key's own source is held while it is not revoked.
 
 **Tests:** `compliance/key-expiry.test.ts › gives up its own source to the next mint, and holds it until then`.
 

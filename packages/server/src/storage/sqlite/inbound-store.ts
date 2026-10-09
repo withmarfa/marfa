@@ -22,6 +22,7 @@ import {
   inboundEndpoints,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { notRevokedOrExpired } from "./key-store.js";
 
 type EndpointRow = typeof inboundEndpoints.$inferSelect;
 type DeliveryRow = typeof inboundDeliveries.$inferSelect;
@@ -66,8 +67,7 @@ export class SqliteInboundStore implements InboundStore {
         SELECT 1 FROM connectors
         JOIN api_keys ON api_keys.id = connectors.key_id
         WHERE connectors.id = ${input.connectorId}
-          AND api_keys.revoked_at IS NULL
-          AND (api_keys.expires_at IS NULL OR api_keys.expires_at > ${createdAt})
+          AND ${notRevokedOrExpired(createdAt)}
       ) AND (
         SELECT COUNT(*) FROM inbound_endpoints
         WHERE connector_id = ${input.connectorId} AND retired_at IS NULL
@@ -83,8 +83,7 @@ export class SqliteInboundStore implements InboundStore {
       .where(
         and(
           eq(connectors.id, input.connectorId),
-          isNull(apiKeys.revoked_at),
-          or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, createdAt)),
+          notRevokedOrExpired(createdAt),
         ),
       )
       .get();
@@ -142,8 +141,7 @@ export class SqliteInboundStore implements InboundStore {
         and(
           eq(inboundEndpoints.token_hash, tokenHash),
           isNull(inboundEndpoints.retired_at),
-          isNull(apiKeys.revoked_at),
-          or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, now)),
+          notRevokedOrExpired(now),
         ),
       )
       .get();

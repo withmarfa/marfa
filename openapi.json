@@ -35016,7 +35016,7 @@
                   },
                   "expires_at": {
                     "type": "string",
-                    "description": "When the key stops working, as an ISO 8601 time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`."
+                    "description": "When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`."
                   }
                 },
                 "required": [
@@ -36327,7 +36327,7 @@
                       "string",
                       "null"
                     ],
-                    "description": "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`."
+                    "description": "Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`."
                   },
                   "source": {
                     "type": "string",

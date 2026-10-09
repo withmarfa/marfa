@@ -100,7 +100,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): StoredApiKey {
  *  NULL on a key minted without one, so the NULL branch keeps it live. The
  *  expiry arm is what stops a stamped row reading as active past its
  *  instant, since nothing revokes it on the way. */
-function notRevokedOrExpired(nowIso: string) {
+export function notRevokedOrExpired(nowIso: string) {
   return and(
     isNull(apiKeys.revoked_at),
     or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, nowIso)),
@@ -137,37 +137,7 @@ export class SqliteKeyStore implements KeyStore {
       expires_at: input.expires_at ?? null,
     };
     try {
-      await this.db.transaction(async (tx) => {
-        // A key past its expiry is dead but not revoked, and the unique
-        // index lets an unrevoked key hold its own source. It cannot be
-        // revoked by id (it answers as unknown), so a mint for its source
-        // revokes it, or the source would stay taken for good.
-        const lapsed = await tx
-          .select({ id: apiKeys.id })
-          .from(apiKeys)
-          .where(
-            and(
-              eq(apiKeys.source, input.source),
-              isNull(apiKeys.revoked_at),
-              isNotNull(apiKeys.expires_at),
-              lte(apiKeys.expires_at, now),
-            ),
-          )
-          .all();
-        if (lapsed.length > 0) {
-          const ids = lapsed.map((key) => key.id);
-          await tx
-            .update(apiKeys)
-            .set({ revoked_at: now })
-            .where(inArray(apiKeys.id, ids))
-            .run();
-          await tx
-            .delete(outboundWebhooks)
-            .where(inArray(outboundWebhooks.key_id, ids))
-            .run();
-        }
-        await tx.insert(apiKeys).values(row).run();
-      });
+      await this.db.insert(apiKeys).values(row).run();
     } catch (err) {
       // The partial unique index on an unrevoked key's own `source` is the
       // check, so two mints racing for one source cannot both pass it.
@@ -200,6 +170,36 @@ export class SqliteKeyStore implements KeyStore {
       expires_at: row.expires_at,
       last_used_at: null,
     };
+  }
+
+  async revokeLapsedHolders(source: string): Promise<string[]> {
+    const now = new Date().toISOString();
+    return this.db.transaction(async (tx) => {
+      const lapsed = await tx
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(
+          and(
+            eq(apiKeys.source, source),
+            isNull(apiKeys.revoked_at),
+            isNotNull(apiKeys.expires_at),
+            lte(apiKeys.expires_at, now),
+          ),
+        )
+        .all();
+      if (lapsed.length === 0) return [];
+      const ids = lapsed.map((key) => key.id);
+      await tx
+        .update(apiKeys)
+        .set({ revoked_at: now })
+        .where(inArray(apiKeys.id, ids))
+        .run();
+      await tx
+        .delete(outboundWebhooks)
+        .where(inArray(outboundWebhooks.key_id, ids))
+        .run();
+      return ids;
+    });
   }
 
   async list(): Promise<StoredApiKey[]> {
@@ -367,25 +367,38 @@ export class SqliteKeyStore implements KeyStore {
     return row?.total ?? 0;
   }
 
-  async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
+  async deleteDeadKeysOlderThan(cutoffIso: string): Promise<number> {
     return this.db.transaction(async (tx) => {
+      // Dead since before the cutoff: revoked then, or past its expiry then
+      // without ever being revoked.
       const candidates = await tx
         .select({ id: apiKeys.id })
         .from(apiKeys)
         .where(
-          and(isNotNull(apiKeys.revoked_at), lt(apiKeys.revoked_at, cutoffIso)),
+          or(
+            and(
+              isNotNull(apiKeys.revoked_at),
+              lt(apiKeys.revoked_at, cutoffIso),
+            ),
+            and(
+              isNull(apiKeys.revoked_at),
+              isNotNull(apiKeys.expires_at),
+              lt(apiKeys.expires_at, cutoffIso),
+            ),
+          ),
         )
         .orderBy(apiKeys.id)
         .limit(200);
       if (candidates.length === 0) return 0;
+      const ids = candidates.map((row) => row.id);
+      // A revoke removes a key's subscriptions; an expiry does not.
+      await tx
+        .delete(outboundWebhooks)
+        .where(inArray(outboundWebhooks.key_id, ids))
+        .run();
       const result = await tx
         .delete(apiKeys)
-        .where(
-          inArray(
-            apiKeys.id,
-            candidates.map((row) => row.id),
-          ),
-        )
+        .where(inArray(apiKeys.id, ids))
         .run();
       return result.rowsAffected;
     });

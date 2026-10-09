@@ -46,8 +46,10 @@ const NOT_ROW_ACCESS: Record<string, string> = {
   create: "a mint, held to its ceiling by credential-mint-doors.test.ts",
   validate: "the bearer check reading the presented credential itself",
   updateLastUsed: "the bearer check stamping the presented credential itself",
+  revokeLapsedHolders:
+    "a mint revoking the keys past their expiry that hold its source, which no credential reaches by id",
   count: "a number, which names no key",
-  deleteRevokedKeysOlderThan: "retention removing rows no credential holds",
+  deleteDeadKeysOlderThan: "retention removing rows no credential holds",
 };
 
 /**

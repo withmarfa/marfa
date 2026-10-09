@@ -52,7 +52,8 @@ const WRITES: Record<string, string> = {
   TypeStore: "create update delete seedPlatformTypes deletePlatformType",
   EdgeTypeStore: "create delete",
   SearchStore: "index setTags remove",
-  KeyStore: "create update revoke updateLastUsed deleteRevokedKeysOlderThan",
+  KeyStore:
+    "create update revoke revokeLapsedHolders updateLastUsed deleteDeadKeysOlderThan",
   BlobRegistry:
     "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion beginCopyDeletionAttempt settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
   WebhookStore: "acknowledge create update delete",

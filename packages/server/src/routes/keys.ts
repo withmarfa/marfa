@@ -251,7 +251,7 @@ const createKeyRoute = createRoute({
               .string()
               .optional()
               .describe(
-                "When the key stops working, as an ISO 8601 time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`.",
+                "When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`.",
               ),
           }),
         },
@@ -484,7 +484,7 @@ const UpdateKeyBodySchema = z.strictObject({
     .nullable()
     .optional()
     .describe(
-      "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`.",
+      "Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`.",
     ),
   source: z
     .string()
@@ -793,6 +793,15 @@ function refuseWideningKey(
  * revoking is how a key is ended on purpose.
  */
 function parseExpiry(value: string): string {
+  // A date alone, or a year, reads as midnight to the shared parser; an
+  // expiry names a moment.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid expires_at: expected an RFC 3339 timestamp",
+      { field: "expires_at", value },
+    );
+  }
   const instant = normalizeTimeBound(value, "expires_at");
   if (instant <= new Date().toISOString()) {
     throw new MarfaError(
@@ -913,6 +922,18 @@ export function keyRoutes(storage: Storage, salt: string) {
           body.permissions === undefined &&
           Object.values(requested).every((value) => value === undefined) &&
           requestedSources === undefined;
+        for (const lapsed of await storage.keys.revokeLapsedHolders(
+          body.source,
+        )) {
+          await storage.audit.log({
+            client_ip: c.get("clientIp") ?? null,
+            key_id: authorityId(c),
+            action: "key.revoke",
+            resource_type: "key",
+            resource_id: lapsed,
+            details: { reason: "expired", source: body.source },
+          });
+        }
         const creator = namesNoFamily ? callerKey : undefined;
         const seed = direct && namesNoFamily ? EVERY_TYPE : undefined;
         return storage.keys.create(

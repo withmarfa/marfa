@@ -1198,6 +1198,15 @@ export interface KeyStore {
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
   ): Promise<StoredApiKey>;
+  /**
+   * Revoke the keys past their expiry that still hold `source` as their own,
+   * with their webhook subscriptions, and answer their ids.
+   *
+   * A key past its expiry is dead but unrevoked, and an unrevoked key holds
+   * its own source. It answers as unknown to a revoke by id, so a mint for
+   * its source revokes it here, or the source would stay taken for good.
+   */
+  revokeLapsedHolders(source: string): Promise<string[]>;
   list(): Promise<StoredApiKey[]>;
   get(id: string): Promise<StoredApiKey | null>;
   validate(
@@ -1224,10 +1233,11 @@ export interface KeyStore {
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**
-   * Hard-delete at most 200 revoked keys whose `revoked_at` is older than `cutoffIso`.
-   * Returns the number deleted.
+   * Hard-delete at most 200 keys that died before `cutoffIso`, by their
+   * `revoked_at` or, for one never revoked, their `expires_at`, with their
+   * webhook subscriptions. Returns the number deleted.
    */
-  deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
+  deleteDeadKeysOlderThan(cutoffIso: string): Promise<number>;
 }
 
 /** The kinds of store this build can attach. A row outside the set is

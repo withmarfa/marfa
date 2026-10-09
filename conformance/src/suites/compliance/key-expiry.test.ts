@@ -175,11 +175,26 @@ describe("a key past its expires_at", () => {
     expect(held.error?.error.code).toBe("conflict");
 
     stampExpiry(lapsing.data.id, PAST);
+    // The witness: the lapse alone revokes nothing.
+    const before = await management.listAudit({
+      action: "key.revoke",
+      resource_id: lapsing.data.id,
+    });
+    expect(before.data.data).toHaveLength(0);
     const taken = await next();
     expect(taken.status).toBe(201);
     expect(taken.data.source).toBe(source);
     // The source is the new key's now, so a third mint is refused.
     expect((await next()).status).toBe(409);
+
+    // The mint revoked the lapsed key, and the log says so.
+    const revoked = await management.listAudit({
+      action: "key.revoke",
+      resource_id: lapsing.data.id,
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.data.data).toHaveLength(1);
+    expect(revoked.data.data[0]?.resource_id).toBe(lapsing.data.id);
   });
 
   it("answers 404 api_key_not_found to an update that would clear its expiry, and stays past it", async () => {
@@ -232,6 +247,7 @@ describe("a key minted with an expiry", () => {
 
   it.each([
     ["is not a timestamp", "tomorrow"],
+    ["is a date with no time", "2999-01-01"],
     ["has a UTC year of 10000", "9999-12-31T23:59:59-01:00"],
     ["is not ahead of now", PAST],
   ])(
