@@ -147,3 +147,25 @@ jobs:
         run: |
           cargo build -p marfa-cli
           scripts/binding-proof.sh
+
+  # A failed nightly run opens an issue, or comments on the one that is open.
+  # Only a schedule reports, so no pull request run can open an issue.
+  report-failure:
+    name: Report a failed scheduled run
+    needs: [changes, core]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh

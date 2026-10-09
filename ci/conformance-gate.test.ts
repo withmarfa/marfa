@@ -1,6 +1,6 @@
 /**
- * `Conformance`, the check a ruleset waits on, once its work is split over
- * shards: that it still exists under that name and nothing else has it, that
+ * `Conformance`, the one verdict `Full CI` collects for the conformance jobs,
+ * once its work is split over shards: that it still exists under that name and nothing else has it, that
  * it fails for any shard that failed or was cancelled and passes for ones the
  * classifier skipped, that the shards cover every file of their project once,
  * and that the matrix `ci.yml` falls back to is the classifier's.

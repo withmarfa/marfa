@@ -3,10 +3,11 @@
  *
  * Each job in `ci.yml` and `core.yml` runs when this answers `true` for it
  * and is skipped otherwise, and a skipped job satisfies a required check
- * where a workflow filtered out by `paths` would leave it pending. The
- * nightly and a dispatch answer `true` for every job, and so does a change
- * that could not be read, so a skip only ever comes from a diff that was
- * read and classified.
+ * where a workflow filtered out by `paths` would leave it pending. `Full CI`,
+ * the gate job of `ci.yml`, waits for the rest and is what a ruleset
+ * requires. The nightly and a dispatch answer `true` for every job, and so
+ * does a change that could not be read, so a skip only ever comes from a diff
+ * that was read and classified.
  *
  * A push to `main` runs every job too, unless `forPush` finds that it
  * changes only what no job but the format check reads and that this
@@ -51,7 +52,7 @@ export const JOBS = [
   // The contract's suites, run against a server booted from this checkout,
   // and the offline lane that needs none. `ci.yml` runs the three groups of
   // server fixtures as shards, each on a runner of its own, and `Conformance`
-  // is the check that waits on them all. See `CONFORMANCE_GROUPS`.
+  // collects them into one verdict. See `CONFORMANCE_GROUPS`.
   "conformance-offline",
   "conformance-correctness-sync",
   "conformance-compliance",
@@ -428,17 +429,13 @@ export function classify(paths: readonly string[]): Record<Job, boolean> {
 }
 
 /**
- * A draft's answer: `DRAFT_JOBS` as the diff names them, and `CI (SQLite)`
- * whatever it names, because that required check fails for a draft. A skipped
- * job passes its required check, so a draft that skipped every one would
- * merge before its first full run.
+ * A draft's answer: `DRAFT_JOBS` as the diff names them. A draft passes with
+ * the rest skipped, and `Draft CI` keeps it from merging, so nothing here
+ * has to fail it.
  */
 export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
   return Object.fromEntries(
-    JOBS.map((job) => [
-      job,
-      DRAFT_JOBS.includes(job) && (job === "ci-sqlite" || answer[job]),
-    ]),
+    JOBS.map((job) => [job, DRAFT_JOBS.includes(job) && answer[job]]),
   ) as Record<Job, boolean>;
 }
 

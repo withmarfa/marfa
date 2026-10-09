@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   # A draft runs only the quick jobs; marking it ready for review runs the
-  # rest, and so does every push after that.
+  # rest, and so does every push after that. `Full CI` is the required check.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -125,15 +125,6 @@ jobs:
       # in its own job and this one needs no Rust.
       - if: ${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}
         run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
-      # A skipped job passes its required check, and a draft skips every
-      # other required job, so a draft's results would let a pull request
-      # merge in the moment between marking it ready and the first run that
-      # runs them. This check fails for a draft, whatever the diff, until
-      # that run replaces it.
-      - if: ${{ github.event.pull_request.draft }}
-        run: |
-          echo "::error::A draft runs only the quick checks. Mark the pull request ready for review to run the tests, the contract, the core and the rest."
-          exit 1
 
   core-checks:
     needs: changes
@@ -232,7 +223,7 @@ jobs:
   # groups of fixtures a change can affect and how many shards each group
   # has, and writes the matrix. A group of more than one shard splits its
   # files by the time they take (`conformance/src/utils/shard-sequencer.ts`).
-  # `Conformance` below is the one check a ruleset waits on.
+  # `Conformance` below collects them into one verdict.
   conformance-shards:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-shards != '[]') }}
@@ -443,11 +434,10 @@ jobs:
         working-directory: conformance
         run: pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete
 
-  # The check a ruleset waits on, and the one `release.yml`'s green run
-  # stands for. It passes when every conformance job that ran passed and
-  # when the classifier skipped them all, which a skipped job's required
-  # check did before the work was split; it fails when any of them failed
-  # or was cancelled.
+  # The conformance jobs as one verdict, which `Full CI` collects with the
+  # rest. It passes when every conformance job that ran passed and when the
+  # classifier skipped them all; it fails when any of them failed or was
+  # cancelled, or was owed a run and skipped.
   conformance:
     needs:
       [changes, conformance-offline, conformance-shards, conformance-statuses]
@@ -793,3 +783,83 @@ jobs:
             echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."
             exit 1
           fi
+
+  # The one required check. A skipped job passes a required check, and a draft
+  # skips most jobs, so on a draft this job is named `Draft CI`: the required
+  # `Full CI` stays expected, which blocks a merge, until the run that marking
+  # the pull request ready starts has finished every job.
+  # It runs after a failed job and fails then. A cancelled run skips it, and a
+  # skipped job never reports as `Full CI`, so a cancel cannot leave it green.
+  # It waits for every job but `report-failure`, which only reports.
+  gate:
+    name: ${{ github.event.pull_request.draft && 'Draft CI' || 'Full CI' }}
+    needs:
+      [
+        changes,
+        ci-sqlite,
+        core-checks,
+        core-checks-linux,
+        conformance-shards,
+        conformance-offline,
+        conformance-statuses,
+        conformance,
+        cli-scenarios,
+        restore-drill,
+        image,
+        types-freshness,
+        openapi-freshness,
+        version-fields,
+        clients-freshness,
+      ]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          case " ${RESULTS} " in
+            *" failure "* | *" cancelled "*)
+              echo "::error::A job failed or was cancelled: ${RESULTS}"
+              exit 1
+              ;;
+          esac
+
+  # A failed nightly run opens an issue, or comments on the one that is open.
+  # Only a schedule reports, so no pull request run can open an issue.
+  report-failure:
+    name: Report a failed scheduled run
+    needs:
+      [
+        changes,
+        ci-sqlite,
+        core-checks,
+        core-checks-linux,
+        conformance-shards,
+        conformance-offline,
+        conformance-statuses,
+        conformance,
+        cli-scenarios,
+        restore-drill,
+        image,
+        types-freshness,
+        openapi-freshness,
+        version-fields,
+        clients-freshness,
+      ]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh

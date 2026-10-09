@@ -3,7 +3,8 @@ name: Benchmarks
 # The conformance suite's performance and load projects, off the gate: their
 # budgets measure a shared runner as much as the server, so a slow night
 # should not block a merge, but a failure still has to land somewhere it is
-# seen. A scheduled run that fails notifies like any other failed run.
+# seen. A scheduled run that fails opens an issue, or comments on the one
+# that is open.
 on:
   schedule:
     - cron: "43 4 * * *"
@@ -70,3 +71,23 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+  report-failure:
+    name: Report a failed scheduled run
+    needs: [benchmarks]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh
