@@ -351,6 +351,44 @@ describe("a cascaded trash names its root", () => {
       expect(own, `${path}: item.state_changed for ${parent}`).toBeDefined();
       expect(own?.item).not.toHaveProperty("trashed_with");
       expect(own?.item).not.toHaveProperty("trashed_by_cascade");
+      // And as a deletion, as a delete of the row would announce it.
+      const gone = frame(events, "item.deleted", parent);
+      expect(gone, `${path}: item.deleted for ${parent}`).toBeDefined();
+      expect(gone?.item).not.toHaveProperty("trashed_with");
+      expect(gone?.item).not.toHaveProperty("trashed_by_cascade");
+    }
+  });
+
+  it("announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes", async ({
+    signal,
+  }) => {
+    const tag = `bulk-trash-${ctx.runId}`;
+    const root = await task(tag);
+    // Tagged apart, so the child goes by the root's move alone.
+    const child = await note("child", `${tag}-under`);
+    await edge(root, child, "parent-of");
+
+    const paths = await framesOf(
+      tag,
+      () =>
+        runJob({
+          action: "transition",
+          state: "trashed",
+          filter: { tags: [tag] },
+        }),
+      signal,
+    );
+    for (const [path, events] of paths) {
+      const taken = frame(events, "item.deleted", child)?.item;
+      expect(taken?.trashed_with, `${path}: the child's item.deleted`).toBe(
+        root,
+      );
+      const changed = frame(events, "item.state_changed", root);
+      expect(changed, `${path}: item.state_changed for ${root}`).toBeDefined();
+      const gone = frame(events, "item.deleted", root);
+      expect(gone, `${path}: item.deleted for ${root}`).toBeDefined();
+      expect(gone?.item).not.toHaveProperty("trashed_with");
+      expect(gone?.item).not.toHaveProperty("trashed_by_cascade");
     }
   });
 

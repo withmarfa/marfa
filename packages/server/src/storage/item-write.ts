@@ -469,7 +469,16 @@ async function announceMove(
       if (moved.from === "trashed" && moved.item.state === "active") {
         await announceRestored();
       }
+      // The rows the cascade took first, then the row named, as a delete
+      // announces them.
       await trashedWithRoot();
+      if (moved.from !== "trashed" && moved.item.state === "trashed") {
+        await publish({
+          type: "deleted",
+          item: moved.item,
+          enableFanout,
+        });
+      }
       await broughtBackWithRoot();
       return;
     case "restore":

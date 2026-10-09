@@ -828,7 +828,7 @@ If `POST /items/{id}/transition` names a `state` other than `active`, `archived`
 
 When a transition moves an item to another state, the server MUST announce `item.state_changed` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/system-lifecycle`
 
@@ -903,6 +903,12 @@ When a delete or a transition into the bin moves an item, on its own operation o
 When a cascade moves an item into the bin, the server MUST announce `item.deleted` for it.
 
 **Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`.
+
+### `items/delete-announced`
+
+When a delete or a transition into the bin moves an item into the bin, the server MUST announce `item.deleted` for it.
+
+**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`.
 
 ### `items/trash-blocked`
 

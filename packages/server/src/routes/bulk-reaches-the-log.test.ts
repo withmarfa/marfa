@@ -249,9 +249,53 @@ describe("POST /items/{id}/transition reaches the event log", () => {
       "state_changed",
     ]);
   });
+
+  it("logs a state change, then a deletion for each row the cascade takes, then a deletion for the item a transition into the bin names", async () => {
+    const parent = await note("a parent");
+    const child = await note("its child");
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parent, target_id: child, edge_type: "parent-of" },
+    });
+    const cursor = await logCursor();
+
+    const res = await request(ctx.app, "POST", `/items/${parent}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "trashed" },
+    });
+    expect(res.status).toBe(200);
+
+    const rows = (await logSince(cursor)).filter((r) =>
+      [parent, child].includes(r.item_id ?? ""),
+    );
+    expect(rows.map((r) => [r.item_id, r.event_type])).toEqual([
+      [parent, "state_changed"],
+      [child, "deleted"],
+      [parent, "deleted"],
+    ]);
+    expect(JSON.parse(rows[2]!.payload).item).not.toHaveProperty(
+      "trashed_with",
+    );
+  });
 });
 
 describe("POST /items/bulk-actions reaches the event log", () => {
+  it("logs a state change and then a deletion for the item a bulk transition into the bin names", async () => {
+    const tag = `trash-${uniq()}`;
+    const named = await note("to the bin", [tag]);
+    const cursor = await logCursor();
+
+    const run = await runBulkActionAsync(
+      ctx,
+      { action: "transition", state: "trashed", filter: { tags: [tag] } },
+      ctx.workingKey,
+    );
+    expect(run.result?.succeeded).toBe(1);
+    const own = (await logSince(cursor)).filter((r) => r.item_id === named);
+    expect(own.map((r) => r.event_type)).toEqual(["state_changed", "deleted"]);
+    expect(JSON.parse(own[1]!.payload).item).not.toHaveProperty("trashed_with");
+  });
+
   it("logs a state change for every item a transition moved", async () => {
     const tag = `tr-${uniq()}`;
     const moved = await note("to archive", [tag]);
