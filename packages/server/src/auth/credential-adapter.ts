@@ -230,8 +230,8 @@ export function withCredentialAudit<
           args.model === "oauthClient" &&
           args.data
         ) {
-          // No app is told a browser session ended (statement 81), so no
-          // address to tell it at is kept.
+          // No app is told a browser session ended, so no address to tell
+          // it at is kept (`keys-and-oauth/no-backchannel-registered`).
           args = {
             ...args,
             data: {
