@@ -22,7 +22,8 @@ pub enum ConnectorsCommand {
         #[arg(long)]
         description: Option<String>,
     },
-    /// Every registered connector, newest first.
+    /// Registered connectors, newest first: every one with `connectors.manage`
+    /// or direct owner/local authority, otherwise the key's own.
     List,
     /// One connector's registration.
     Get {

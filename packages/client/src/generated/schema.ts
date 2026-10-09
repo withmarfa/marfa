@@ -14189,7 +14189,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is an app's session token, not a key, or direct owner or local authority. */
+            /** @description - `forbidden`: your credential is an app's access token, not a key, or direct owner or local authority. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

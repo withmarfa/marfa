@@ -181,7 +181,7 @@ Output:
 ### marfa login
 
 ```text
-Sign in to a server as the owner: a code, approved in the browser
+Sign in to a server as an app: a code the owner approves in the browser
 
 Usage: marfa login [OPTIONS]
 
@@ -849,8 +849,8 @@ Arguments:
 
 Options:
       --version <VERSION>
-          The version the edit was based on. Required: a write that names no version overwrites
-          whatever it finds
+          The version the edit was based on. Required: the server refuses an update that names no
+          version
 
       --properties <JSON>
           The properties, as a JSON object
@@ -3891,13 +3891,14 @@ Usage: marfa keys [OPTIONS] <COMMAND>
 
 Commands:
   create   Mint a key. Needs `keys.mint` or direct owner/local authority
-  list     List key metadata. Needs `keys.manage` or direct owner/local authority
+  list     List key metadata. Needs `keys.manage`, `keys.mint` (the keys within the caller's reach)
+           or direct owner/local authority
   current  The key this call bears, without plaintext: what it holds and what it claims. Any key may
            read itself
-  update   Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct
-           owner/local authority
-  revoke   Revoke a key; the next request bearing it is refused. Needs `keys.manage` or direct
-           owner/local authority
+  update   Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint`
+           (a key within the caller's reach) or direct owner/local authority
+  revoke   Revoke a key; the next request bearing it is refused. Needs `keys.manage`, `keys.mint` (a
+           key within the caller's reach) or direct owner/local authority
   keep     Keep a key for this server in the operating system's keychain, and make this server the
            one a bare command talks to. The key is read from MARFA_API_KEY or from stdin, or from
            `--key`, which other users of the machine can read in the process list; never from a file
@@ -3967,7 +3968,7 @@ Options:
           An edge type and its level, `references=write`, repeatable
 
       --metadata-permission <NAME=LEVEL>
-          A metadata subresource and its level, `tags=write`, repeatable
+          A kind of registration and its level, `types=write` or `edge_types=write`, repeatable
 
       --profile-permission <FIELD=LEVEL>
           A profile field and its level, `email=read`, repeatable
@@ -4027,7 +4028,8 @@ Output:
 ### marfa keys list
 
 ```text
-List key metadata. Needs `keys.manage` or direct owner/local authority
+List key metadata. Needs `keys.manage`, `keys.mint` (the keys within the caller's reach) or direct
+owner/local authority
 
 Usage: marfa keys list [OPTIONS]
 
@@ -4096,8 +4098,8 @@ Output:
 ### marfa keys update
 
 ```text
-Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct owner/local
-authority
+Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key
+within the caller's reach) or direct owner/local authority
 
 Usage: marfa keys update [OPTIONS] <ID>
 
@@ -4126,7 +4128,7 @@ Options:
           An edge type and its level, `references=write`, repeatable
 
       --metadata-permission <NAME=LEVEL>
-          A metadata subresource and its level, `tags=write`, repeatable
+          A kind of registration and its level, `types=write` or `edge_types=write`, repeatable
 
       --profile-permission <FIELD=LEVEL>
           A profile field and its level, `email=read`, repeatable
@@ -4205,8 +4207,8 @@ Output:
 ### marfa keys revoke
 
 ```text
-Revoke a key; the next request bearing it is refused. Needs `keys.manage` or direct owner/local
-authority
+Revoke a key; the next request bearing it is refused. Needs `keys.manage`, `keys.mint` (a key within
+the caller's reach) or direct owner/local authority
 
 Usage: marfa keys revoke [OPTIONS] <ID>
 
@@ -5113,7 +5115,8 @@ Usage: marfa connectors [OPTIONS] <COMMAND>
 Commands:
   register    Register the key this command runs under as a connector, or answer its registration if
               it has one: the key is the identity
-  list        Every registered connector, newest first
+  list        Registered connectors, newest first: every one with `connectors.manage` or direct
+              owner/local authority, otherwise the key's own
   get         One connector's registration
   delete      Remove a registration. The connector's own key, or `connectors.manage`
   heartbeat   Say the connector is alive. Its own key only
@@ -5200,7 +5203,8 @@ Output:
 ### marfa connectors list
 
 ```text
-Every registered connector, newest first
+Registered connectors, newest first: every one with `connectors.manage` or direct owner/local
+authority, otherwise the key's own
 
 Usage: marfa connectors list [OPTIONS]
 
@@ -6925,8 +6929,8 @@ Options:
           where no store has been made
 
       --version <VERSION>
-          The version the edit was based on. Required: an update that names no version overwrites
-          whatever it finds
+          The version the edit was based on. Required: the device refuses an update that names no
+          version, as the server does
 
       --source-id <KEY>
           The natural key to move the row to. The server refuses one another item already holds, so

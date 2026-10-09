@@ -80,7 +80,7 @@ enum Command {
     Metrics,
     /// Which server, instance and credential a bare command would use.
     Whoami,
-    /// Sign in to a server as the owner: a code, approved in the browser.
+    /// Sign in to a server as an app: a code the owner approves in the browser.
     Login(login::LoginArgs),
     /// Sign out of a server: the token is revoked and forgotten.
     Logout,

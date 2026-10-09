@@ -8,7 +8,7 @@ use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
 
-/// Sign in to a server as the owner, with a code approved in the browser.
+/// Sign in to a server as an app, with a code the owner approves in the browser.
 ///
 /// Under --json two records come out, one per line: the code and the page
 /// to approve it on, as soon as they exist, then the outcome once the owner
