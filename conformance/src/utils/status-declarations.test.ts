@@ -20,6 +20,8 @@ import {
   formatUndeclared,
   parseRequestLines,
   reportStatuses,
+  SIGN_IN_ROUTE_STATUSES,
+  UNPUBLISHED_ROUTES,
   unreachedDebt,
 } from "./status-declarations.js";
 import { FRESH_SERVER_LOGS } from "./fresh-server.js";
@@ -787,6 +789,91 @@ describe("the status checker", () => {
       server.close();
       for (const state of states)
         rmSync(state, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the sign-in routes", () => {
+  const tokenLine = (status: number, path = "/auth/oauth2/token") =>
+    logLine({ method: "POST", path, route: "/auth/*", status });
+
+  it("hold a route the sign-in library serves under its pattern to the statuses declared for it", () => {
+    const caught = reportStatuses(
+      parseRequestLines([tokenLine(400), tokenLine(418)].join("\n")),
+      documentDeclaring([200]),
+    );
+    expect(caught.undeclared).toEqual([
+      {
+        operation: "POST /auth/oauth2/token",
+        status: 418,
+        codes: [],
+        declared: [...SIGN_IN_ROUTE_STATUSES["POST /auth/oauth2/token"]!],
+      },
+    ]);
+    expect(caught.unexplained).toEqual([]);
+
+    // The witness: a declared status passes, and so do the limiter's and the
+    // write lock's, which no route answers on its own account.
+    const passed = reportStatuses(
+      parseRequestLines(
+        [tokenLine(400), tokenLine(429), tokenLine(503)].join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(passed.undeclared).toEqual([]);
+  });
+
+  it("hold a sign-in route the server serves itself to its declared statuses", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "GET",
+          path: "/auth/grants",
+          route: "/auth/grants",
+          status: 418,
+        }),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(
+      report.undeclared.map((u) => `${u.operation} ${String(u.status)}`),
+    ).toEqual(["GET /auth/grants 418"]);
+  });
+
+  it("report a route under the library's pattern that nothing names", () => {
+    const report = reportStatuses(
+      parseRequestLines(tokenLine(404, "/auth/not-a-route")),
+      documentDeclaring([200]),
+    );
+    expect(report.unexplained).toEqual(["POST /auth/not-a-route"]);
+  });
+
+  it("resolve the published registration operation under the pattern by its path", () => {
+    const report = reportStatuses(
+      parseRequestLines(tokenLine(201, "/auth/oauth2/register")),
+      {
+        paths: {
+          "/auth/oauth2/register": {
+            post: { responses: { "201": { description: "Registered" } } },
+          },
+        },
+      },
+    );
+    expect(report.observed.get("POST /auth/oauth2/register")?.has(201)).toBe(
+      true,
+    );
+    expect(report.unpublished.size).toBe(0);
+  });
+
+  it("are each named with why, and every unpublished sign-in route declares its statuses", () => {
+    for (const route of Object.keys(SIGN_IN_ROUTE_STATUSES)) {
+      expect(UNPUBLISHED_ROUTES[route], route).toBeDefined();
+    }
+    const signInRoutes = Object.keys(UNPUBLISHED_ROUTES).filter((route) =>
+      / \/(?:auth|\.well-known)\//.test(route),
+    );
+    for (const route of signInRoutes) {
+      expect(SIGN_IN_ROUTE_STATUSES[route], route).toBeDefined();
     }
   });
 });

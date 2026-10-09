@@ -73,12 +73,36 @@ export interface StatusReport {
 const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 
 /**
+ * The sign-in library's own routes, which it serves under one `/auth/*`
+ * pattern: the server's route walk sees the pattern, not these, so each is
+ * named here with why. A request under the pattern is held to the route its
+ * path names.
+ */
+export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
+  "POST /auth/sign-in/email": "password sign-in, which the sign-in form calls",
+  "POST /auth/sign-out": "a browser's sign-out",
+  "GET /auth/get-session": "the browser session a cookie names",
+  "POST /auth/revoke-session": "ends one browser session",
+  "POST /auth/revoke-sessions": "ends every browser session",
+  "POST /auth/revoke-other-sessions":
+    "ends every browser session but the caller's",
+  "POST /auth/change-password": "the owner's password change",
+  "GET /auth/jwks": "the key set that signs id tokens",
+  "GET /auth/oauth2/authorize": "an app's authorization request",
+  "POST /auth/oauth2/token": "the token exchange, every grant",
+  "POST /auth/oauth2/revoke": "RFC 7009 revocation",
+  "POST /auth/oauth2/introspect": "RFC 7662 introspection",
+  "GET /auth/oauth2/userinfo": "OpenID userinfo",
+  "POST /auth/oauth2/end-session/confirm": "the end-session confirmation",
+  "POST /auth/device/code": "RFC 8628 device authorization",
+};
+
+/**
  * The routes the server serves outside its document, each with why: the
  * server's own list, which its route walk holds to its route table, and the
- * sign-in library's catch-all, which that walk does not see because it is a
- * pattern rather than a door. A served route missing from here is reported,
- * so the document cannot lose a door into this bucket without somebody
- * writing the reason down.
+ * sign-in library's routes. A served route missing from here is reported, so
+ * the document cannot lose a door into this bucket without somebody writing
+ * the reason down.
  */
 export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
   ...(JSON.parse(
@@ -90,11 +114,66 @@ export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
       "utf8",
     ),
   ) as Record<string, string>),
-  "GET /auth/*":
-    "the sign-in library's own endpoints, a browser's and an OAuth client's rather than an API caller's",
-  "POST /auth/*":
-    "the same; the one door under it the document publishes, client registration, is resolved by its path",
+  ...SIGN_IN_LIBRARY_ROUTES,
 };
+
+/**
+ * The statuses each sign-in route and discovery document answers, which no
+ * document declares because none publishes them, so they are declared here
+ * and held as a published operation's are: a status a run draws and this
+ * does not list fails the run. `keys-and-oauth.md` rules what each answers
+ * and when.
+ */
+export const SIGN_IN_ROUTE_STATUSES: Readonly<
+  Record<string, readonly number[]>
+> = {
+  "GET /.well-known/oauth-authorization-server/auth": [200],
+  "GET /.well-known/openid-configuration/auth": [200],
+  "GET /auth/.well-known/oauth-authorization-server": [200],
+  "GET /auth/.well-known/openid-configuration": [200],
+  "GET /.well-known/oauth-protected-resource": [200],
+  "GET /auth/jwks": [200],
+  "GET /auth/sign-in": [200, 400],
+  "POST /auth/sign-in": [302, 403],
+  "POST /auth/sign-in/email": [200, 400, 401, 403],
+  "POST /auth/sign-out": [200, 500],
+  "GET /auth/get-session": [200],
+  "POST /auth/revoke-session": [200, 401],
+  "POST /auth/revoke-sessions": [200, 401],
+  "POST /auth/revoke-other-sessions": [200, 401],
+  "POST /auth/change-password": [200, 400, 401],
+  "GET /auth/oauth2/authorize": [200, 302],
+  "GET /auth/authorize": [200, 302, 400, 404],
+  "POST /auth/authorize/decision": [200, 302, 400, 403],
+  "GET /auth/error": [200],
+  "POST /auth/oauth2/token": [200, 400, 401],
+  "POST /auth/oauth2/revoke": [200, 400, 401],
+  "POST /auth/oauth2/introspect": [200, 400, 401],
+  "GET /auth/oauth2/userinfo": [200, 400, 401],
+  "GET /auth/oauth2/end-session": [200, 302, 400],
+  "POST /auth/oauth2/end-session/confirm": [200, 302, 400, 401],
+  "POST /auth/device/code": [200, 400, 401],
+  "GET /auth/device": [200],
+  "POST /auth/device": [302, 403],
+  "GET /auth/device/consent": [200, 302, 400],
+  "POST /auth/device/consent": [200, 302, 400, 403, 404],
+  "GET /auth/grants": [200, 401, 403],
+  "DELETE /auth/grants/{id}": [204, 401, 403, 404],
+  "GET /auth/static/auth.css": [200],
+  "GET /auth/static/password-toggle.js": [200],
+  "GET /auth/static/submit-state.js": [200],
+  "GET /auth/owner/manage": [200, 401],
+  "GET /auth/owner/restore": [200, 401],
+  "GET /auth/owner/password": [200, 401],
+  "POST /auth/owner/password": [200, 400, 401, 403],
+};
+
+/**
+ * Statuses any sign-in route answers through a refusal no route makes
+ * itself: the limiter, which a run switches off and a fixture booting its own
+ * server with it on draws, and the database's write lock.
+ */
+export const SIGN_IN_ROUTE_ANY_STATUS: readonly number[] = [429, 503];
 
 /**
  * Refusals the harness's server cannot be made to answer on most doors, by
@@ -299,21 +378,26 @@ export function declaredStatuses(
 }
 
 /**
- * A route the document does not publish is counted rather than refused: the
- * sign-in pages, `/health` and the document itself are outside the
- * reference by design, so a status on one has no declaration to contradict.
- * Whether a served route is missing from the document is the server's
- * `openapi-routes.test.ts` question, not this one.
+ * A route the document does not publish is counted, and a sign-in route among
+ * them is held to `signInStatuses`: the sign-in routes, `/health` and the
+ * document itself are outside the reference by design. Whether a served
+ * route is missing from the document is the server's `openapi-routes.test.ts`
+ * question, not this one.
  */
 export function reportStatuses(
   lines: readonly RequestLine[],
   document: OpenApiLike,
   recordedStatuses: Readonly<Record<string, string>> = RECORDED,
+  signInStatuses: Readonly<
+    Record<string, readonly number[]>
+  > = SIGN_IN_ROUTE_STATUSES,
 ): StatusReport {
   const declared = declaredStatuses(document);
   const observed = new Map<string, Map<number, Set<string>>>();
   const unpublished = new Map<string, Set<number>>();
   const local = new Map<string, Set<number>>();
+  /** What the sign-in routes answered, held to `signInStatuses`. */
+  const signIn = new Map<string, Map<number, Set<string>>>();
 
   for (const line of lines) {
     // HEAD is answered by the GET handler unless the document gives it an
@@ -322,15 +406,13 @@ export function reportStatuses(
       line.method === "HEAD" && !declared.has(`HEAD ${line.route}`)
         ? "GET"
         : line.method;
-    // A catch-all mount serves published operations under one pattern —
-    // Better Auth's `/auth/*` carries the registration door — so the
-    // concrete path decides when the pattern names no operation.
+    // A catch-all mount serves several routes under one pattern, the
+    // published registration door among them, so the concrete path decides
+    // which route answered.
     const byRoute = `${method} ${line.route}`;
     const byPath = `${method} ${line.path}`;
     const operation =
-      !declared.has(byRoute) && line.route.includes("*") && declared.has(byPath)
-        ? byPath
-        : byRoute;
+      !declared.has(byRoute) && line.route.includes("*") ? byPath : byRoute;
     if (
       !declared.has(operation) &&
       line.transport === "local_socket" &&
@@ -345,6 +427,14 @@ export function reportStatuses(
       const statuses = unpublished.get(operation) ?? new Set<number>();
       statuses.add(line.status);
       unpublished.set(operation, statuses);
+      if (signInStatuses[operation] !== undefined) {
+        const byStatus =
+          signIn.get(operation) ?? new Map<number, Set<string>>();
+        const codes = byStatus.get(line.status) ?? new Set<string>();
+        if (line.code !== undefined) codes.add(line.code);
+        byStatus.set(line.status, codes);
+        signIn.set(operation, byStatus);
+      }
       continue;
     }
     const byStatus = observed.get(operation) ?? new Map<number, Set<string>>();
@@ -365,6 +455,19 @@ export function reportStatuses(
         recorded.push(key);
         continue;
       }
+      undeclared.push({
+        operation,
+        status,
+        codes: [...codes].sort(),
+        declared: [...allowed].sort((a, b) => a - b),
+      });
+    }
+  }
+  for (const [operation, byStatus] of signIn) {
+    const allowed = signInStatuses[operation] ?? [];
+    for (const [status, codes] of byStatus) {
+      if (allowed.includes(status)) continue;
+      if (SIGN_IN_ROUTE_ANY_STATUS.includes(status)) continue;
       undeclared.push({
         operation,
         status,
