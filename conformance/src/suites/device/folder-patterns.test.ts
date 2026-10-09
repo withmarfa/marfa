@@ -165,3 +165,40 @@ it.each([
     ).toEqual([".ǰ/inside.md", "witness.md"]);
   },
 );
+
+it.each(["include", "ignore"] as const)(
+  "matches a class or a ? against one character outside ASCII in %s patterns",
+  async (kind) => {
+    const names = [
+      "caf\u00e9.md",
+      "cafe\u0301 2.md",
+      "caf\u00e8.md",
+      "cafe.md",
+      "witness.md",
+    ];
+    await witness(names);
+    const listed = (pattern: string) =>
+      scanned(names, {
+        [kind]: kind === "include" ? [pattern, "witness.md"] : [pattern],
+      });
+    const named = (members: string[]) =>
+      kind === "include"
+        ? [...members, "witness.md"].sort()
+        : names.filter((name) => !members.includes(name)).sort();
+    expect(await listed("caf[\u00e9\u00e8]*.md")).toEqual(
+      named(["caf\u00e9.md", "cafe\u0301 2.md", "caf\u00e8.md"]),
+    );
+    expect(await listed("caf[\u00e0-\u00ea].md")).toEqual(
+      named(["caf\u00e9.md", "caf\u00e8.md"]),
+    );
+    expect(await listed("CAF[\u00c9]*.md")).toEqual(
+      named(["caf\u00e9.md", "cafe\u0301 2.md"]),
+    );
+    expect(await listed("caf[!\u00e9].md")).toEqual(
+      named(["caf\u00e8.md", "cafe.md"]),
+    );
+    expect(await listed("caf?.md")).toEqual(
+      named(["caf\u00e9.md", "caf\u00e8.md", "cafe.md"]),
+    );
+  },
+);

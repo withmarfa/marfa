@@ -10,7 +10,7 @@ publish.workspace = true
 base64.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 globset = "0.4"
-ignore = "0.4"
+regex = "1"
 notify.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite.workspace = true

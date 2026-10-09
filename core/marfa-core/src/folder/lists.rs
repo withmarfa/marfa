@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
-use globset::{GlobBuilder, GlobMatcher};
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use globset::GlobBuilder;
+use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::Result;
@@ -77,8 +78,8 @@ const PACKAGES: &[&str] = &[
 ];
 
 pub struct Lists {
-    machine: Patterns,
-    secrets: Patterns,
+    machine: &'static Patterns,
+    secrets: &'static Patterns,
     include: Patterns,
     /// The include lines that name a dot-led name, which alone reach one.
     dotted: Patterns,
@@ -88,18 +89,27 @@ pub struct Lists {
 }
 
 struct Patterns {
-    original: Gitignore,
-    folded: Gitignore,
+    original: Vec<Line>,
+    folded: Vec<Line>,
+}
+
+/// One gitignore line, compiled.
+struct Line {
+    /// The line's place in its list, which decides between two that match.
+    index: usize,
+    regex: Regex,
+    is_whitelist: bool,
+    is_only_dir: bool,
 }
 
 struct DotName {
-    original: GlobMatcher,
-    folded: GlobMatcher,
+    original: Regex,
+    folded: Regex,
 }
 
 impl DotName {
     fn is_match(&self, name: &str) -> bool {
-        self.original.is_match(name) || self.folded.is_match(crate::names::folded(name))
+        self.original.is_match(name) || self.folded.is_match(&crate::names::folded(name))
     }
 }
 
@@ -128,17 +138,28 @@ impl Lists {
                     .case_insensitive(true)
                     .literal_separator(true)
                     .build()
-                    .map(|glob| glob.compile_matcher())
-                    .map_err(|error| refused("include", &name, &error.to_string()))
+                    .map_err(|error| error.to_string())
+                    .and_then(|glob| by_character(glob.regex()))
+                    .map_err(|why| refused("include", &name, &why))
             };
             dotted_names.push(DotName {
                 original: compile(&name)?,
                 folded: compile(&folded_pattern(&name))?,
             });
         }
+        // Compiled once: every pass builds the folder's lists, and these
+        // lines never change.
+        static BUILT_IN: OnceLock<(Patterns, Patterns)> = OnceLock::new();
+        let (machine, secrets) = BUILT_IN.get_or_init(|| {
+            (
+                built("built-in", &owned(&[STATE, JUNK, SWAP].concat()))
+                    .expect("the built-in lines are patterns"),
+                built("built-in", &owned(SECRETS)).expect("the built-in lines are patterns"),
+            )
+        });
         Ok(Lists {
-            machine: built("built-in", &owned(&[STATE, JUNK, SWAP].concat()))?,
-            secrets: built("built-in", &owned(SECRETS))?,
+            machine,
+            secrets,
             include: built("include", include)?,
             dotted: built("include", &dotted)?,
             dotted_names,
@@ -164,7 +185,7 @@ impl Lists {
     pub fn takes(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         let folded = crate::names::folded(&path);
-        if [&self.machine, &self.secrets, &self.ignore]
+        if [self.machine, self.secrets, &self.ignore]
             .into_iter()
             .any(|list| hit(list, &path, &folded, false))
         {
@@ -190,7 +211,7 @@ impl Lists {
 
     pub(super) fn secret(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        hit(&self.secrets, &path, &crate::names::folded(&path), false)
+        hit(self.secrets, &path, &crate::names::folded(&path), false)
     }
 
     /// A secret's name is refused file by file, so a package named like one is
@@ -198,7 +219,7 @@ impl Lists {
     pub(super) fn enters(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         let folded = crate::names::folded(&path);
-        if hit(&self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
+        if hit(self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
             return false;
         }
         let name = path.rsplit('/').next().unwrap_or(&path);
@@ -207,54 +228,149 @@ impl Lists {
 }
 
 fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
-    let (mut path, mut folded) = (Path::new(path), Path::new(folded));
+    let (mut path, mut folded) = (path, folded);
     loop {
         // Resolve line order across both forms before walking to a parent:
         // a direct match, including a negation, takes precedence over one there.
         let matched = [
-            list.original.matched(path, is_dir),
-            list.folded.matched(folded, is_dir),
+            matched(&list.original, path, is_dir),
+            matched(&list.folded, folded, is_dir),
         ]
         .into_iter()
-        .filter_map(|matched| matched.inner().copied())
-        .max_by(|one, other| one.from().cmp(&other.from()));
-        if let Some(glob) = matched {
-            return !glob.is_whitelist();
+        .flatten()
+        .max_by_key(|line| line.index);
+        if let Some(line) = matched {
+            return !line.is_whitelist;
         }
-        let (Some(parent), Some(folded_parent)) = (path.parent(), folded.parent()) else {
+        let (Some((parent, _)), Some((folded_parent, _))) =
+            (path.rsplit_once('/'), folded.rsplit_once('/'))
+        else {
             return false;
         };
         (path, folded, is_dir) = (parent, folded_parent, true);
     }
 }
 
+/// The last line that matches `path`, as gitignore reads a list.
+fn matched<'a>(lines: &'a [Line], path: &str, is_dir: bool) -> Option<&'a Line> {
+    lines
+        .iter()
+        .rev()
+        .find(|line| (!line.is_only_dir || is_dir) && line.regex.is_match(path))
+}
+
 fn built(list: &str, lines: &[String]) -> Result<Patterns> {
-    let (mut original, mut folded) = (GitignoreBuilder::new(""), GitignoreBuilder::new(""));
-    for builder in [&mut original, &mut folded] {
-        builder
-            .case_insensitive(true)
-            .map_err(|error| refused(list, "", &error.to_string()))?;
-    }
+    let (mut original, mut folded) = (Vec::new(), Vec::new());
     for (index, line) in lines.iter().enumerate() {
         let pattern: String = line.nfc().collect();
-        // Source metadata carries the line's ordinal in both matchers; fixed
-        // width makes path ordering also be numeric ordering on every target.
-        let source = std::path::PathBuf::from(format!("{index:020}"));
-        original
-            .add_line(Some(source.clone()), &pattern)
-            .map_err(|error| refused(list, line, &error.to_string()))?;
-        folded
-            .add_line(Some(source), &folded_pattern(&pattern))
-            .map_err(|error| refused(list, line, &error.to_string()))?;
+        let refuse = |why: String| refused(list, line, &why);
+        if let Some(compiled) = compiled(index, &pattern).map_err(refuse)? {
+            original.push(compiled);
+        }
+        if let Some(compiled) = compiled(index, &folded_pattern(&pattern)).map_err(refuse)? {
+            folded.push(compiled);
+        }
     }
-    Ok(Patterns {
-        original: original
-            .build()
-            .map_err(|error| refused(list, "", &error.to_string()))?,
-        folded: folded
-            .build()
-            .map_err(|error| refused(list, "", &error.to_string()))?,
-    })
+    Ok(Patterns { original, folded })
+}
+
+/// A gitignore line, read as git reads one: a comment or a blank line is
+/// nothing, `!` negates, a leading `/` anchors it to the folder, a trailing
+/// `/` matches only a directory, and a line with no other `/` matches a name
+/// at any depth.
+fn compiled(index: usize, line: &str) -> std::result::Result<Option<Line>, String> {
+    if line.starts_with('#') {
+        return Ok(None);
+    }
+    let mut line = if line.ends_with("\\ ") {
+        line
+    } else {
+        line.trim_end()
+    };
+    if line.is_empty() {
+        return Ok(None);
+    }
+    let (mut is_whitelist, mut is_only_dir, mut is_absolute) = (false, false, false);
+    if line.starts_with("\\!") || line.starts_with("\\#") {
+        line = &line[1..];
+        is_absolute = line.starts_with('/');
+    } else {
+        if let Some(rest) = line.strip_prefix('!') {
+            is_whitelist = true;
+            line = rest;
+        }
+        if let Some(rest) = line.strip_prefix('/') {
+            line = rest;
+            is_absolute = true;
+        }
+    }
+    if let Some(rest) = line.strip_suffix('/') {
+        is_only_dir = true;
+        line = rest.strip_suffix('\\').unwrap_or(rest);
+    }
+    let mut actual = line.to_string();
+    if !is_absolute && !line.contains('/') && !actual.starts_with("**/") && actual != "**" {
+        actual = format!("**/{actual}");
+    }
+    if actual.ends_with("/**") {
+        actual.push_str("/*");
+    }
+    let glob = GlobBuilder::new(&actual)
+        .literal_separator(true)
+        .case_insensitive(true)
+        .backslash_escape(true)
+        // As git reads `[` with no `]` after it: a literal bracket.
+        .allow_unclosed_class(true)
+        .build()
+        .map_err(|error| error.kind().to_string())?;
+    Ok(Some(Line {
+        index,
+        regex: by_character(glob.regex())?,
+        is_whitelist,
+        is_only_dir,
+    }))
+}
+
+/// A glob's regex, read over characters. globset writes its regex over bytes,
+/// spelling each character outside ASCII as its UTF-8 bytes, so a class, a
+/// negated class or a `?` meets such a character as several bytes and cannot
+/// match it as one. Read again with those bytes as the characters they spell,
+/// the regex matches by character, as the pattern's literals already do.
+fn by_character(bytes: &str) -> std::result::Result<Regex, String> {
+    let source = bytes.strip_prefix("(?-u)").unwrap_or(bytes);
+    let mut out = String::with_capacity(source.len());
+    let mut pending: Vec<u8> = Vec::new();
+    let flush = |out: &mut String, pending: &mut Vec<u8>| {
+        out.push_str(&String::from_utf8_lossy(pending));
+        pending.clear();
+    };
+    let mut chars = source.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            flush(&mut out, &mut pending);
+            out.push(ch);
+            continue;
+        }
+        let mut ahead = chars.clone();
+        if ahead.next() == Some('x') {
+            let hex: String = ahead.by_ref().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16)
+                && hex.len() == 2
+                && byte > 0x7f
+            {
+                pending.push(byte);
+                chars = ahead;
+                continue;
+            }
+        }
+        flush(&mut out, &mut pending);
+        out.push('\\');
+        if let Some(escaped) = chars.next() {
+            out.push(escaped);
+        }
+    }
+    flush(&mut out, &mut pending);
+    Regex::new(&out).map_err(|error| error.to_string())
 }
 
 fn folded_pattern(pattern: &str) -> String {
@@ -537,6 +653,35 @@ mod tests {
         }
         assert!(Lists::new(&["[z-a]".into()], &[]).is_err());
         assert!(Lists::new(&[], &["[z-a]".into()]).is_err());
+    }
+
+    #[test]
+    fn a_class_or_a_question_mark_matches_one_character_outside_ascii() {
+        for (pattern, name, matches) in [
+            ("caf[\u{e9}\u{e8}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e9}\u{e8}].md", "caf\u{e8}.md", true),
+            ("caf[\u{e9}\u{e8}].md", "cafe.md", false),
+            ("caf[\u{e0}-\u{ea}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e0}-\u{ea}].md", "caf\u{eb}.md", false),
+            ("CAF[\u{c9}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e9}].md", "cafe\u{301}.md", true),
+            ("caf[!\u{e9}].md", "caf\u{e8}.md", true),
+            ("caf[!\u{e9}].md", "caf\u{e9}.md", false),
+            ("caf?.md", "caf\u{e9}.md", true),
+            ("caf?.md", "caf.md", false),
+            (
+                "\u{65e5}[\u{672c}]?.md",
+                "\u{65e5}\u{672c}\u{8a9e}.md",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                !lists(&[], &[pattern]).takes(name),
+                matches,
+                "{pattern:?}, {name:?}"
+            );
+        }
+        assert!(lists(&[".caf[\u{e9}]/"], &[]).enters(".caf\u{e9}"));
     }
 
     #[test]

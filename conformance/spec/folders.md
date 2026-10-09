@@ -564,6 +564,12 @@ When an include or ignore pattern matches a file's path directly, a device MUST 
 
 **Tests:** `device/folder-patterns.test.ts › resolves an equivalent file pattern before a matching parent pattern`.
 
+### `folders/pattern-one-character`
+
+When an include or ignore pattern holds a `?` or a bracket class, a device MUST match each against exactly one character of the path, whatever the character's length in bytes.
+
+**Tests:** `device/folder-patterns.test.ts › matches a class or a ? against one character outside ASCII in %s patterns`.
+
 ### `folders/invalid-pattern-refused`
 
 When a folder’s include or ignore list contains an invalid gitignore pattern, a device MUST refuse admission using those settings.
