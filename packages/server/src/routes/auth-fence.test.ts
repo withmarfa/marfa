@@ -5,28 +5,29 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
+import census from "../auth/credential-census.json" with { type: "json" };
 import {
   FENCED_PLUGIN_ENDPOINTS,
   REACHABLE_PLUGIN_ENDPOINTS,
-} from "./oauth-plugin-fence.js";
+  SERVED_LIBRARY_PATHS,
+} from "./auth-fence.js";
 
 /**
- * The OAuth Provider plugin's management endpoints are refused before the
- * catch-all can serve them, and the list of what is refused is held to what
- * the plugin actually registers.
+ * Every sign-in library route Marfa does not serve is refused before the
+ * library can answer it, and the plugin's list of what is refused is held to
+ * what the plugin actually registers.
  *
  * Three properties, and none implies the others. The enumeration case says
- * the two lists between them decide every path the plugin routes, whatever
- * its prefix, and name nothing the plugin no longer registers, so a plugin
- * upgrade that adds a door and a fence entry that has gone stale both
- * redden. The driven case says the fence is actually mounted ahead of the
- * catch-all: a signed-in session reaching a fenced path, in either
- * trailing-slash spelling, gets the Marfa 404 and neither its consent row
- * nor the client table moves. The control cases say the signature the
- * driven case keys on is the fence's alone, and that every path declared
- * reachable answers as itself rather than with that signature, and the
- * reachable list itself is pinned, so moving a path between the two lists
- * is a change the suite sees.
+ * the plugin's two lists between them decide every path the plugin routes,
+ * whatever its prefix, and name nothing the plugin no longer registers, so a
+ * plugin upgrade that adds a door and a fence entry that has gone stale both
+ * redden. The driven case says the fence holds on the catch-all: a signed-in
+ * session reaching any library path the census does not serve, in either
+ * trailing-slash spelling, gets the Marfa 404, and neither its consent row,
+ * the client table nor the owner's profile moves. The control cases say every
+ * path declared reachable answers as itself rather than with that 404, and
+ * the reachable list itself is pinned, so moving a path between the two
+ * lists is a change the suite sees.
  */
 
 vi.setConfig({ testTimeout: 45_000 });
@@ -208,12 +209,25 @@ async function countClients(c: TestContext): Promise<number> {
 function concrete(path: string): string {
   return path
     .replaceAll(":identifier", "https%3A%2F%2Fapi.example.com")
-    .replaceAll(":client_id", "some-client");
+    .replaceAll(":client_id", "some-client")
+    .replaceAll(":id", "github")
+    .replaceAll(":token", "a-token");
 }
 
-/** The fence's signature, and only the fence's: the catch-all's own 404 is a
- *  bare response with no header, and the app-level `notFound` sends the
- *  envelope without the header. */
+/** Every library path the census names and Marfa does not serve. */
+const UNSERVED_LIBRARY_PATHS = [
+  ...new Set([
+    ...FENCED_PLUGIN_ENDPOINTS,
+    ...Object.values(
+      census as Record<string, { path: string | null; boundary: string }>,
+    )
+      .flatMap((entry) => (entry.path === null ? [] : [entry.path]))
+      .filter((path) => !SERVED_LIBRARY_PATHS.has(path)),
+  ]),
+].sort();
+
+/** The fence's refusal: the Marfa envelope with its header. The library's
+ *  own 404 is a bare response with no header. */
 async function isFenced(res: Response): Promise<boolean> {
   if (res.status !== 404) return false;
   if (res.headers.get("x-error-code") !== "not_found") return false;
@@ -247,6 +261,7 @@ function managementBody(
       redirect_uris: ["https://example.com/cb"],
     };
   }
+  if (path === "/update-user") return { name: "Fenced" };
   return {
     id: consentId,
     client_id: clientId,
@@ -273,7 +288,6 @@ describe("the plugin's management endpoints are fenced", () => {
       "/device",
       "/device/code",
       "/oauth2/authorize",
-      "/oauth2/continue",
       "/oauth2/end-session",
       "/oauth2/end-session/confirm",
       "/oauth2/introspect",
@@ -309,7 +323,7 @@ describe("the plugin's management endpoints are fenced", () => {
     }
   });
 
-  it("a signed-in session gets the Marfa 404 on every fenced path in both spellings, and neither its consent row nor the client table moves", async () => {
+  it("a signed-in session gets the Marfa 404 on every unserved library path in both spellings, and nothing it aims at moves", async () => {
     ctx = await createTestContext({});
     const cookie = await signInUser(ctx);
     const authUserId = ctx.owner.id;
@@ -317,7 +331,11 @@ describe("the plugin's management endpoints are fenced", () => {
     const consentId = await seedConsent(ctx, clientId, authUserId);
     const clientsBefore = await countClients(ctx);
 
-    for (const path of FENCED_PLUGIN_ENDPOINTS) {
+    const nameBefore = (await ctx.storage.owner?.find())?.name;
+    expect(nameBefore).toBeTruthy();
+    // Positive control: the census names the library's own core routes too.
+    expect(UNSERVED_LIBRARY_PATHS).toContain("/update-user");
+    for (const path of UNSERVED_LIBRARY_PATHS) {
       for (const spelling of [concrete(path), `${concrete(path)}/`]) {
         for (const method of ["GET", "POST"]) {
           const res = await request(ctx.app, method, `/auth${spelling}`, {
@@ -337,26 +355,38 @@ describe("the plugin's management endpoints are fenced", () => {
       SEEDED_SCOPES,
     ]);
     expect(await countClients(ctx)).toBe(clientsBefore);
+    // `update-user` aimed at the owner's name.
+    expect((await ctx.storage.owner?.find())?.name).toBe(nameBefore);
   });
 
-  it("the signature is the fence's alone, and every reachable path answers as itself", async () => {
+  it("an unknown path is refused the same way, and every reachable path answers as itself", async () => {
     ctx = await createTestContext({});
     const cookie = await signInUser(ctx);
 
-    // An unknown `/auth/*` path is refused by the catch-all with a bare 404
-    // and no header. That difference is what the driven case keys on, so a
-    // later global 404 shaper that added the header everywhere would hollow
-    // it out; this pins the shape.
+    // A path nobody listed is refused like a listed one.
     const unknown = await request(ctx.app, "GET", "/auth/oauth2/no-such-path", {
       headers: { cookie },
     });
-    expect(unknown.status).toBe(404);
-    expect(unknown.headers.get("x-error-code")).toBeNull();
+    expect(await isFenced(unknown)).toBe(true);
 
-    // Nothing declared reachable carries the fence's signature. That is all
+    // A served route spelled with a percent-escape names no route: the
+    // library routes on the raw path, so the fence does too.
+    for (const path of [
+      "/auth/change%2Dpassword",
+      "/auth/revoke%2Dsessions",
+      "/auth/oauth2/%74oken",
+    ]) {
+      const res = await request(ctx.app, "POST", path, {
+        headers: { cookie, origin: ORIGIN },
+        body: {},
+      });
+      expect(await isFenced(res), path).toBe(true);
+    }
+
+    // Nothing declared reachable carries the fence's refusal. That is all
     // this loop proves: a path the plugin does not serve for a method also
-    // passes, since the catch-all's bare 404 is not the signature. "Answers
-    // as itself" is carried by the enumeration case's routable check and the
+    // passes, since the library's bare 404 is not the fence's. "Answers as
+    // itself" is carried by the enumeration case's routable check and the
     // three explicit refusals below; the pin there is what makes moving a
     // path between the lists a change the suite sees.
     for (const path of REACHABLE_PLUGIN_ENDPOINTS) {

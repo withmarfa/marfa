@@ -37,8 +37,8 @@ const COOKIE_DOORS = [...BROWSER_FORM_DOORS, ...OWNER_COOKIE_DOORS];
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Marfa's own state-changing doors under `/auth`. The catch-all is Better
- *  Auth's, which checks the origin of what it serves itself, and the plugin
- *  fence answers `ALL` with a 404. */
+ *  Auth's, which checks the origin of what it serves itself and answers 404
+ *  on every path it does not serve. */
 function marfaAuthDoors(c: TestContext): string[] {
   return [
     ...new Set(

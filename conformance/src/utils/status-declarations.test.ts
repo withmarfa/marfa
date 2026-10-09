@@ -790,6 +790,35 @@ describe("the sign-in routes", () => {
     expect(passed.undeclared).toEqual([]);
   });
 
+  it("count no door for a path the catch-all refuses, and still hold a served one", () => {
+    const refused = (path: string) =>
+      logLine({
+        method: "POST",
+        path,
+        route: "/auth/*",
+        status: 404,
+        error_code: "not_found",
+      });
+    const report = reportStatuses(
+      parseRequestLines(
+        [
+          refused("/auth/verify-password"),
+          refused("/auth/not-a-route/"),
+          // A served route spelled with a percent-escape, logged decoded.
+          refused("/auth/change-password"),
+          // The witness: a served route under the pattern is still held.
+          tokenLine(418),
+        ].join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect([...report.unpublished.keys()]).toEqual(["POST /auth/oauth2/token"]);
+    expect(report.unexplained).toEqual([]);
+    expect(report.undeclared.map((u) => u.operation)).toEqual([
+      "POST /auth/oauth2/token",
+    ]);
+  });
+
   it("hold a sign-in route the server serves itself to its declared statuses", () => {
     const report = reportStatuses(
       parseRequestLines(
@@ -809,10 +838,18 @@ describe("the sign-in routes", () => {
 
   it("report a route under the library's pattern that nothing names", () => {
     const report = reportStatuses(
-      parseRequestLines(tokenLine(404, "/auth/not-a-route")),
+      parseRequestLines(
+        [
+          tokenLine(200, "/auth/not-a-route"),
+          tokenLine(404, "/auth/bare"),
+        ].join("\n"),
+      ),
       documentDeclaring([200]),
     );
-    expect(report.unexplained).toEqual(["POST /auth/not-a-route"]);
+    expect(report.unexplained).toEqual([
+      "POST /auth/bare",
+      "POST /auth/not-a-route",
+    ]);
   });
 
   it("resolve the published registration operation under the pattern by its path", () => {

@@ -58,7 +58,7 @@ import { restoreArchiveRoutes } from "./routes/restore-archive.js";
 import { platformTypeRoutes } from "./routes/platform-types.js";
 import { ownerRoutes } from "./routes/owner.js";
 import { authRoutes } from "./routes/auth-pages.js";
-import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
+import { refuseUnservedLibraryPath } from "./routes/auth-fence.js";
 import {
   oauthProviderAuthServerMetadata,
   oauthProviderOpenIdConfigMetadata,
@@ -756,12 +756,6 @@ export function createApp(
   // so this explicit GET handler wins over the plugin's own endpoints under
   // /auth/oauth2/*.
   app.route("/auth", authConsentRoutes({ storage, auth }));
-  // The plugin's management endpoints — consent rows, clients, the resource
-  // registry — answer 404 here before the catch-all can serve them. Marfa's
-  // own routes are the only writers of a grant's two records; the reasoning
-  // and the list are in `routes/oauth-plugin-fence.ts`, and a test holds the
-  // list to what the plugin registers.
-  app.route("/auth", oauthPluginFenceRoutes());
 
   // Marfa-owned /auth/error page. The @better-auth/oauth-provider plugin
   // redirects unrecoverable authorize failures here (e.g. invalid_client from
@@ -772,10 +766,12 @@ export function createApp(
 
   // Better-auth catch-all for unmatched /auth/* paths (sign-in, session,
   // plus the oauth-provider plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
-  // order — the explicit routes above win.
+  // order — the explicit routes above win. Only the library routes Marfa
+  // serves reach it; every other path answers 404 (`routes/auth-fence.ts`).
   if (auth) {
     const authInstance = auth;
     app.on(["POST", "GET"], "/auth/*", async (c) => {
+      refuseUnservedLibraryPath(new URL(c.req.url).pathname);
       // The one door of the library's that the document publishes. It takes
       // its request in the body, so a query key on it is a mistake like on
       // any other door.

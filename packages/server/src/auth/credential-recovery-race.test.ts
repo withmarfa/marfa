@@ -97,6 +97,7 @@ it.each(["recovery", "change"] as const)(
           {
             currentPassword: details.password,
             password: "replacement password",
+            clientAddress: null,
           },
         );
       }

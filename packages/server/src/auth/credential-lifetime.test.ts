@@ -109,19 +109,14 @@ it("drains an unawaited configured-handler adapter call and rejects its retained
     { name: "Owned" },
   ]);
   probe.enabled = false;
-  const cookie = accepted.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  // A later request runs in a scope of its own.
   expect(
     (
-      await request(ctx.app, "POST", "/auth/update-user", {
-        body: { name: "Fresh scope" },
-        headers: { cookie, origin: "http://localhost:0" },
+      await request(ctx.app, "POST", "/auth/sign-in/email", {
+        body,
+        headers: { origin: "http://localhost:0" },
       })
     ).status,
   ).toBe(200);
-  expect(await db.__sqliteAll("SELECT name FROM auth_user")).toEqual([
-    { name: "Fresh scope" },
-  ]);
+  expect(await db.__sqliteAll("SELECT id FROM auth_session")).toHaveLength(2);
 });
