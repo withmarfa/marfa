@@ -425,14 +425,14 @@ export function reportStatuses(
     }
     // The sign-in catch-all refusing a path it does not serve, in the
     // envelope, answered for no door: there is no route to explain and no
-    // status to hold. A path it serves and nothing names is still reported.
+    // status to hold. The log names the path decoded, so a served route
+    // spelled with a percent-escape, which the fence refuses, reads as that
+    // route. A path it serves and nothing names is still reported.
     if (
       !declared.has(operation) &&
       line.route.includes("*") &&
       line.status === 404 &&
-      line.code === "not_found" &&
-      UNPUBLISHED_ROUTES[operation] === undefined &&
-      signInStatuses[operation] === undefined
+      line.code === "not_found"
     ) {
       continue;
     }

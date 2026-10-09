@@ -837,6 +837,8 @@ describe("the sign-in routes", () => {
         [
           refused("/auth/verify-password"),
           refused("/auth/not-a-route/"),
+          // A served route spelled with a percent-escape, logged decoded.
+          refused("/auth/change-password"),
           // The witness: a served route under the pattern is still held.
           tokenLine(418),
         ].join("\n"),

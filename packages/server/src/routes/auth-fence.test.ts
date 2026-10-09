@@ -288,7 +288,6 @@ describe("the plugin's management endpoints are fenced", () => {
       "/device",
       "/device/code",
       "/oauth2/authorize",
-      "/oauth2/continue",
       "/oauth2/end-session",
       "/oauth2/end-session/confirm",
       "/oauth2/introspect",
@@ -369,6 +368,20 @@ describe("the plugin's management endpoints are fenced", () => {
       headers: { cookie },
     });
     expect(await isFenced(unknown)).toBe(true);
+
+    // A served route spelled with a percent-escape names no route: the
+    // library routes on the raw path, so the fence does too.
+    for (const path of [
+      "/auth/change%2Dpassword",
+      "/auth/revoke%2Dsessions",
+      "/auth/oauth2/%74oken",
+    ]) {
+      const res = await request(ctx.app, "POST", path, {
+        headers: { cookie, origin: ORIGIN },
+        body: {},
+      });
+      expect(await isFenced(res), path).toBe(true);
+    }
 
     // Nothing declared reachable carries the fence's refusal. That is all
     // this loop proves: a path the plugin does not serve for a method also

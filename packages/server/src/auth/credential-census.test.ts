@@ -69,7 +69,6 @@ it("serves over the wire only the library routes Marfa uses", () => {
     "/get-session",
     "/jwks",
     "/oauth2/authorize",
-    "/oauth2/continue",
     "/oauth2/end-session",
     "/oauth2/end-session/confirm",
     "/oauth2/introspect",

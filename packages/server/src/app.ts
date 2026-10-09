@@ -771,7 +771,7 @@ export function createApp(
   if (auth) {
     const authInstance = auth;
     app.on(["POST", "GET"], "/auth/*", async (c) => {
-      refuseUnservedLibraryPath(c.req.path);
+      refuseUnservedLibraryPath(new URL(c.req.url).pathname);
       // The one door of the library's that the document publishes. It takes
       // its request in the body, so a query key on it is a mistake like on
       // any other door.

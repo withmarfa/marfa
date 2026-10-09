@@ -77,8 +77,14 @@ const UNUSED = [
   "/account-info",
   "/token",
   "/ok",
+  "/oauth2/continue",
   // And a path nobody registered.
   "/not-a-route",
+  // Served routes spelled with a percent-escape, which name no route.
+  "/change%2Dpassword",
+  "/revoke%2Dsessions",
+  "/sign%2Din/email",
+  "/oauth2/%74oken",
 ];
 
 describe("the sign-in library's routes", () => {

@@ -59,10 +59,6 @@ import census from "../auth/credential-census.json" with { type: "json" };
  */
 export const REACHABLE_PLUGIN_ENDPOINTS: readonly string[] = [
   "/oauth2/authorize",
-  // The plugin's own continuation after its login page. Marfa's sign-in
-  // returns the browser to the authorize URL instead, so this goes unused,
-  // but it is part of the plugin's authorize flow and writes no grant record.
-  "/oauth2/continue",
   "/oauth2/token",
   "/oauth2/introspect",
   "/oauth2/revoke",
@@ -94,6 +90,12 @@ export const FENCED_PLUGIN_ENDPOINTS: readonly string[] = [
   "/device/approve",
   "/device/deny",
   "/device/token",
+  // The plugin's own continuation after its login page, which issues a code
+  // from a signed authorize query without passing through `/oauth2/authorize`
+  // again, where Marfa narrows the scopes, refuses a bearer header and audits
+  // a reused grant. Marfa's sign-in returns the browser to the authorize URL
+  // instead.
+  "/oauth2/continue",
   // Consent: every writer of one of the grant's two records. The accept
   // Marfa performs goes through the plugin in-process, never over the wire.
   "/oauth2/consent",
@@ -153,7 +155,9 @@ export const SERVED_LIBRARY_PATHS: ReadonlySet<string> = new Set(
 
 /**
  * Refuse a request the `/auth/*` catch-all received unless it names a route
- * the library serves here. `path` is the request path, `/auth` included.
+ * the library serves here. `path` is the request's raw pathname, `/auth`
+ * included, percent-escapes and all: the library and the facade route on
+ * that string, so the fence must judge the same one.
  */
 export function refuseUnservedLibraryPath(path: string): void {
   if (!SERVED_LIBRARY_PATHS.has(path.replace(/^\/auth/, "")))
