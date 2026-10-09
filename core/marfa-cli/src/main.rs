@@ -281,7 +281,16 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
                 | Command::Device(_)
                 | Command::Folders { .. }
                 | Command::Docs(_)
-                | Command::Export(_)
+        )
+    {
+        return Err(CliError::Usage(
+            "this command does not support --socket".into(),
+        ));
+    }
+    if cli.socket.is_some()
+        && matches!(
+            cli.command,
+            Command::Export(_)
                 | Command::Events(_)
                 | Command::Connectors {
                     command: connectors::ConnectorsCommand::Deliveries {
@@ -291,7 +300,8 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         )
     {
         return Err(CliError::Usage(
-            "this command does not support --socket".into(),
+            "this command needs a key or a token, which --socket does not carry; run it without --socket"
+                .into(),
         ));
     }
     if cli.socket.is_none()
@@ -427,20 +437,22 @@ mod tests {
             &["connectors", "deliveries", "body", "id", "delivery"],
         ] {
             assert!(
-                matches!(usage(words), Err(CliError::Usage(ref message)) if message == "this command does not support --socket"),
+                matches!(usage(words), Err(CliError::Usage(ref message)) if message.starts_with("this command needs a key or a token")),
                 "{words:?}"
             );
         }
-        // Witness: the neighbors of those commands are not refused as
-        // unsupported. They go on to the missing socket and fail there.
+        // Witness: the neighbors of those commands are not refused. They go
+        // on to the missing socket and fail there.
         for words in [
             &["connectors", "deliveries", "list", "id"][..],
             &["connectors", "list"],
             &["blobs", "download", "sha256:abc"],
         ] {
+            let result = usage(words);
             assert!(
-                !matches!(usage(words), Err(CliError::Usage(ref message)) if message == "this command does not support --socket"),
-                "{words:?}"
+                !matches!(result, Err(CliError::Usage(_))),
+                "{words:?}: {:?}",
+                result.err()
             );
         }
     }
