@@ -502,6 +502,14 @@ describe("key management", () => {
     expect(widerPermission.error?.error.details?.required_scope).toBe(
       "schema.write",
     );
+
+    const widerNamespace = await caller.createKey({
+      label: `${label}-wider-namespace`,
+      source: `${ctx.source}-${label}-wider-namespace`,
+      extension_permissions: { [label]: "read" },
+    });
+    expect(widerNamespace.status).toBe(403);
+    expect(widerNamespace.error?.error.code).toBe("forbidden");
   });
 
   it("refuses a second key naming as its own a source already in use", async () => {
@@ -773,11 +781,34 @@ describe("key management", () => {
       label: "owner-issued",
       source: `${ctx.source}-owner-issued`,
     });
-    expect(minted.ok).toBe(true);
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
     trackKey(ctx, minted.data.id);
-    expect(minted.data.type_permissions).toEqual({ "*": "write" });
-    expect(minted.data.permissions).toContain("instance.read");
-    expect(minted.data.permissions).toContain("keys.manage");
+    for (const map of [
+      "type_permissions",
+      "edge_permissions",
+      "extension_permissions",
+      "metadata_permissions",
+      "profile_permissions",
+    ] as const) {
+      expect(minted.data[map], map).toEqual({ "*": "write" });
+    }
+    expect([...minted.data.permissions].sort()).toEqual(
+      [
+        "audit.read",
+        "blobs.manage",
+        "config.manage",
+        "connectors.manage",
+        "grants.manage",
+        "instance.maintain",
+        "instance.read",
+        "items.purge",
+        "keys.manage",
+        "keys.mint",
+        "schema.write",
+        "webhooks.manage",
+      ].sort(),
+    );
+    expect(minted.data.sources).toEqual([]);
     expect(minted.data).not.toHaveProperty("is_operator");
   });
 });

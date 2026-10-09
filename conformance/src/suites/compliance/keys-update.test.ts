@@ -115,9 +115,24 @@ describe("PATCH /keys/{id}", () => {
     expect(r.error?.error.code).toBe("forbidden");
     expect(r.error?.error.details?.required_scope).toBe("*:write");
 
+    const permission = await self.updateKey(key.id, {
+      permissions: ["keys.mint", "audit.read"],
+    });
+    expect(permission.status).toBe(403);
+    expect(permission.error?.error.code).toBe("forbidden");
+    expect(permission.error?.error.details?.required_scope).toBe("audit.read");
+
+    const namespace = await self.updateKey(key.id, {
+      extension_permissions: { "ku-widen": "read" },
+    });
+    expect(namespace.status).toBe(403);
+    expect(namespace.error?.error.code).toBe("forbidden");
+
     const unchanged = await client.listKeys();
     const row = unchanged.data.data.find((k) => k.id === key.id);
     expect(row?.type_permissions).toEqual({ "core.note": "read" });
+    expect(row?.permissions).toEqual(["keys.mint"]);
+    expect(row?.extension_permissions).toEqual({});
   });
 
   it("refuses a caller without keys.mint", async () => {

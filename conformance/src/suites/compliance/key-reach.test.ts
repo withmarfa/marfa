@@ -3,6 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  getManagementClient,
   getOwnerClient,
   trackKey,
   cleanup,
@@ -295,6 +296,22 @@ describe("a key reaches only the keys it could have minted", () => {
     },
     2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
+
+  it("answers a second revoke as an unknown key, and tells keys.manage the key was already revoked", async () => {
+    const peer = await mint("kr-twice");
+    expect((await client.revokeKey(peer.id)).ok).toBe(true);
+    const unknown = await client.revokeKey(UNKNOWN_ID);
+    const again = await client.revokeKey(peer.id);
+    expect(again.status).toBe(404);
+    expect(again.error?.error.code).toBe("api_key_not_found");
+    expect(again.error?.error.message).toBe(
+      unknown.error?.error.message.replace(UNKNOWN_ID, peer.id),
+    );
+    const managed = await getManagementClient().revokeKey(peer.id);
+    expect(managed.status).toBe(404);
+    expect(managed.error?.error.code).toBe("api_key_not_found");
+    expect(managed.error?.error.message).toContain("already revoked");
+  });
 
   it(
     "a signed-in app gives a key within its reach a permission its grant holds, and no other",

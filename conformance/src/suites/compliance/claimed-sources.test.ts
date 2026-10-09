@@ -1309,6 +1309,15 @@ describe("a key's claims", () => {
         `the owner granted ${reserved}, so a key's rows can read as an app's`,
       ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
+      const own = await owner.createKey({
+        label: "reserved-own",
+        source: reserved,
+      });
+      expect(
+        own.status,
+        `the owner minted a key whose own source is ${reserved}`,
+      ).toBe(400);
+      expect(own.error?.error.code).toBe("validation_error");
     }
 
     // The witness. The same caller grants an ordinary source on both doors,

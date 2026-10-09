@@ -594,6 +594,10 @@ export interface DeviceFlow {
    * everything the consent screen offers.
    */
   approve(): Promise<void>;
+  /** The owner signs in and denies the code on the consent screen. */
+  deny(): Promise<void>;
+  /** The code a device's own request carries, for a fixture that ages it. */
+  deviceCode: string;
 }
 
 /**
@@ -661,9 +665,30 @@ export async function startDeviceFlow(
   };
   const origin = new URL(code.verification_uri_complete).origin;
 
+  const ownerSession = async (): Promise<string> => {
+    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(owner),
+    });
+    if (signIn.status !== 200) {
+      throw new Error(
+        `the owner could not sign in, so nothing can be decided: ${String(signIn.status)}`,
+      );
+    }
+    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+      signIn.headers.get("set-cookie") ?? "",
+    )?.[1];
+    if (cookie === undefined) {
+      throw new Error("the owner's sign-in set no session cookie");
+    }
+    return cookie;
+  };
+
   return {
     clientId: registered.client_id,
     interval: code.interval,
+    deviceCode: code.device_code,
     async poll() {
       const response = await fetch(discovery.token_endpoint, {
         method: "POST",
@@ -680,22 +705,7 @@ export async function startDeviceFlow(
       };
     },
     async approve() {
-      const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin },
-        body: JSON.stringify(owner),
-      });
-      if (signIn.status !== 200) {
-        throw new Error(
-          `the owner could not sign in, so nothing can be approved: ${String(signIn.status)}`,
-        );
-      }
-      const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-        signIn.headers.get("set-cookie") ?? "",
-      )?.[1];
-      if (cookie === undefined) {
-        throw new Error("the owner's sign-in set no session cookie");
-      }
+      const cookie = await ownerSession();
       const consent = await fetch(
         `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
         { headers: { cookie } },
@@ -724,6 +734,26 @@ export async function startDeviceFlow(
       if (approved.status !== 200) {
         throw new Error(
           `the owner's approval was refused: ${String(approved.status)}`,
+        );
+      }
+    },
+    async deny() {
+      const cookie = await ownerSession();
+      const denied = await fetch(`${origin}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          cookie,
+          origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          user_code: code.user_code,
+          decision: "deny",
+        }),
+      });
+      if (denied.status !== 200) {
+        throw new Error(
+          `the owner's denial was refused: ${String(denied.status)}`,
         );
       }
     },

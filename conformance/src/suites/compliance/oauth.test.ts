@@ -50,6 +50,61 @@ describe("OAuth provider", () => {
     expect(doc.code_challenge_methods_supported).toContain("S256");
   });
 
+  it("serves each discovery document under both of its spellings, alike", async () => {
+    const read = async (path: string) => {
+      const r = await fetch(`${apiUrl}${path}`);
+      expect(r.status, path).toBe(200);
+      return (await r.json()) as Record<string, unknown>;
+    };
+    const metadata = await read("/.well-known/oauth-authorization-server/auth");
+    expect(await read("/auth/.well-known/oauth-authorization-server")).toEqual(
+      metadata,
+    );
+    const openid = await read("/.well-known/openid-configuration/auth");
+    expect(await read("/auth/.well-known/openid-configuration")).toEqual(
+      openid,
+    );
+    expect(openid.issuer).toBe(metadata.issuer);
+  });
+
+  it("names every endpoint under the issuer, and serves the code, refresh and device grants and no other", async () => {
+    const r = await fetch(`${apiUrl}/.well-known/openid-configuration/auth`);
+    const doc = (await r.json()) as Record<string, unknown>;
+    const issuer = String(doc.issuer);
+    expect(doc).toMatchObject({
+      authorization_endpoint: `${issuer}/oauth2/authorize`,
+      token_endpoint: `${issuer}/oauth2/token`,
+      registration_endpoint: `${issuer}/oauth2/register`,
+      revocation_endpoint: `${issuer}/oauth2/revoke`,
+      introspection_endpoint: `${issuer}/oauth2/introspect`,
+      userinfo_endpoint: `${issuer}/oauth2/userinfo`,
+      end_session_endpoint: `${issuer}/oauth2/end-session`,
+      device_authorization_endpoint: `${issuer}/device/code`,
+      jwks_uri: `${issuer}/jwks`,
+    });
+    expect(doc.grant_types_supported).toEqual([
+      "authorization_code",
+      "refresh_token",
+      "urn:ietf:params:oauth:grant-type:device_code",
+    ]);
+    const jwks = await fetch(String(doc.jwks_uri));
+    expect(jwks.status).toBe(200);
+    const set = (await jwks.json()) as { keys: { kid?: string }[] };
+    expect(set.keys.length).toBeGreaterThan(0);
+  });
+
+  it("serves the protected resource metadata, naming this server as the resource and its issuer as the authorization server", async () => {
+    const metadata = (await (
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+    ).json()) as { issuer: string };
+    const r = await fetch(`${apiUrl}/.well-known/oauth-protected-resource`);
+    expect(r.status).toBe(200);
+    const doc = (await r.json()) as Record<string, unknown>;
+    expect(doc.resource).toBe(new URL(metadata.issuer).origin);
+    expect(doc.authorization_servers).toEqual([metadata.issuer]);
+    expect(doc.bearer_methods_supported).toEqual(["header"]);
+  });
+
   it("registers a native client dynamically and issues a client_id", async () => {
     const r = await client.registerOAuthClient({
       client_name: `conformance-${ctx.runId}`,
