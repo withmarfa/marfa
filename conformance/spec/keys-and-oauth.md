@@ -200,7 +200,7 @@ If a working key's update gives a key a permission, or a type, edge, metadata or
 
 ### `keys-and-oauth/manage-narrows-only`
 
-If a caller acting through `keys.manage` updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and not direct owner or local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys.manage` reaches every key so that it can take access away, and a power to add access to any key would be a power to mint.
 
@@ -950,7 +950,7 @@ When an access token holding `openid` asks `GET /auth/oauth2/userinfo`, the serv
 
 ### `keys-and-oauth/userinfo-email`
 
-When an access token asks `GET /auth/oauth2/userinfo`, the server MUST answer the person's `email` only if the token holds `email`.
+When an access token asks `GET /auth/oauth2/userinfo`, the server MUST answer the person's `email` only if the token holds `email` or a profile scope that reads it.
 
 **Tests:** `compliance/oauth-tokens.test.ts › answers the person's subject, and the email only to a token holding email`.
 
@@ -1168,7 +1168,7 @@ When one address is held to its sign-in limit, the server MUST still answer a si
 
 ### `keys-and-oauth/address-ipv6`
 
-The server MUST count an IPv6 address by its /64 for the sign-in and device code limits.
+The server MUST count an IPv6 address by its /64 for the password sign-in limits.
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
@@ -1318,7 +1318,7 @@ When the consent screen or the device approval page offers a grant of one type, 
 
 ## Browser sessions and apps
 
-A browser session ends by sign-out, by ending one, the other or every session, by a password change that keeps the current session, by local password recovery, by the provider's end-session once confirmed, or when it expires.
+A browser session ends by sign-out, by ending one, the other or every session, by a password change that keeps the current session, by local password recovery, or by the provider's end-session once confirmed.
 
 ### `keys-and-oauth/app-outlives-browser`
 

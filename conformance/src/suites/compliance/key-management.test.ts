@@ -289,6 +289,7 @@ describe("key management", () => {
     expect(current.data.source).toBe(`${ctx.source}-${label}`);
     expect(current.data.permissions).toEqual([]);
     expect(current.data.type_permissions).toEqual({ "core.note": "write" });
+    expect(current.data.default_tier).toBe("library");
     expect(current.data).not.toHaveProperty("key");
 
     // The witness that it reads itself by this door alone.
