@@ -484,7 +484,7 @@ const UpdateKeyBodySchema = z.strictObject({
     .nullable()
     .optional()
     .describe(
-      "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it, so the key never expires. Your own key's `expires_at` is the latest you can give.",
+      "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`.",
     ),
   source: z
     .string()

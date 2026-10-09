@@ -4062,7 +4062,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description Number of unrevoked keys. */
+        /** @description Number of keys that haven't been revoked or expired. */
         MetricCount: {
             /** @description Number of records. */
             total: number;
@@ -18793,7 +18793,7 @@ export interface operations {
                     permissions?: components["schemas"]["Permission"][];
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
-                    /** @description Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it, so the key never expires. Your own key's `expires_at` is the latest you can give. */
+                    /** @description Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`. */
                     expires_at?: string | null;
                     /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;

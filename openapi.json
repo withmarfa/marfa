@@ -6324,7 +6324,7 @@
         "required": [
           "total"
         ],
-        "description": "Number of unrevoked keys."
+        "description": "Number of keys that haven't been revoked or expired."
       },
       "WriteContentionRefusal": {
         "type": "object",
@@ -36327,7 +36327,7 @@
                       "string",
                       "null"
                     ],
-                    "description": "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it, so the key never expires. Your own key's `expires_at` is the latest you can give."
+                    "description": "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`."
                   },
                   "source": {
                     "type": "string",

@@ -261,8 +261,8 @@ export interface ApiKey {
   id: string;
   label: string;
   /**
-   * The credential's own source, which no other unrevoked key holds as its
-   * own: what its writes are stamped with unless a write names one of
+   * The credential's own source, which no other key that is neither revoked
+   * nor expired holds as its own: what its writes are stamped with unless a write names one of
    * `sources`. Keys claiming it write under it too.
    */
   source: string;

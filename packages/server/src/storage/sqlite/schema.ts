@@ -347,9 +347,8 @@ export const apiKeys = sqliteTable(
      */
     oauth_client_id: text("oauth_client_id"),
     created_at: text("created_at").notNull(),
-    // Hard lifetime bound. NULL means the key never expires, which is
-    // every key a door mints; a stamped row is refused at the bearer gate
-    // once it passes.
+    // Hard lifetime bound. NULL means the key never expires; a row past it
+    // is refused at the bearer gate.
     expires_at: text("expires_at"),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),

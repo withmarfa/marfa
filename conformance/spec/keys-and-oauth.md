@@ -472,7 +472,7 @@ If a key that has an `expires_at` sends `PATCH /keys/{id}` naming an `expires_at
 
 ### `keys-and-oauth/expiry-manage-narrows`
 
-If a caller holding `keys.manage`, and not direct owner or local authority, sends `PATCH /keys/{id}` naming an `expires_at` later than that of a key which has one, or `null`, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and not direct owner or local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys-and-oauth/manage-narrows-only` holds for a key's life as for its reach: a longer life is more access.
 
@@ -480,7 +480,7 @@ If a caller holding `keys.manage`, and not direct owner or local authority, send
 
 ### `keys-and-oauth/expiry-app-key-narrows`
 
-If `PATCH /keys/{id}` names an `expires_at` later than that of a key an app made, or `null`, then the server MUST answer `403 forbidden`, whoever the caller is.
+If `PATCH /keys/{id}` is sent for a key an app made that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`, whoever the caller is.
 
 **Reason:** `keys-and-oauth/app-key-narrows-only` holds for a key's life as for its reach.
 

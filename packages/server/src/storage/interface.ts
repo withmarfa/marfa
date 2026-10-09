@@ -3055,7 +3055,7 @@ export interface InboundStore {
     endpointId: string,
   ): Promise<{ endpoint: InboundEndpoint; retired: boolean } | null>;
   /** The live endpoint behind an address, while its registration's key is
-   *  unrevoked; null otherwise. */
+   *  neither revoked nor past its expiry; null otherwise. */
   target(tokenHash: string): Promise<InboundTarget | null>;
   /** How many deliveries the registration has not handled, and their
    *  bytes. */

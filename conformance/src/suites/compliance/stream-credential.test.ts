@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -315,10 +313,8 @@ describe("a quiet stream", () => {
   );
 });
 
-const runSqlite = promisify(execFile);
-
-/** Past the restart that sets a key's lifetime, so the key stands when the
- *  stream opens and lapses a while after. */
+/** Long enough that the key stands when the stream opens, and lapses a while
+ *  after. */
 const LIFETIME_MS = 20_000;
 
 describe("a stream answers to a credential only a server of its own can make", () => {
@@ -338,24 +334,15 @@ describe("a stream answers to a credential only a server of its own can make", (
     "ends a stream with credential_ended once its key expires",
     async ({ signal }) => {
       const server = own!;
-      // No door mints a key with a lifetime, so the stored key is given one
-      // while the server is stopped.
+      const expiresAt = new Date(Date.now() + LIFETIME_MS);
       const minted = await writerOf(server).createKey({
         label: "stream-expires",
         source: "stream-expires",
         permissions: [],
         type_permissions: { "core.note": "read" },
+        expires_at: expiresAt.toISOString(),
       });
       expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
-      const expiresAt = new Date(Date.now() + LIFETIME_MS);
-      await server.restart({
-        whileStopped: async () => {
-          await runSqlite("sqlite3", [
-            server.sqlitePath,
-            `UPDATE api_keys SET expires_at = '${expiresAt.toISOString()}' WHERE id = '${minted.data.id}';`,
-          ]);
-        },
-      });
 
       const last = await withStream(
         server.apiUrl,

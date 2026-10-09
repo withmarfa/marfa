@@ -141,7 +141,7 @@ export class SqliteKeyStore implements KeyStore {
         // A key past its expiry is dead but not revoked, and the unique
         // index lets an unrevoked key hold its own source. It cannot be
         // revoked by id (it answers as unknown), so a mint for its source
-        // retires it, or the source would stay taken for good.
+        // revokes it, or the source would stay taken for good.
         const lapsed = await tx
           .select({ id: apiKeys.id })
           .from(apiKeys)
@@ -262,7 +262,6 @@ export class SqliteKeyStore implements KeyStore {
           ? null
           : JSON.stringify(input.enforcement_override);
 
-    // `null` clears the expiry; an instant replaces it.
     if (input.expires_at !== undefined) patch.expires_at = input.expires_at;
 
     const [refreshed] = await this.db
