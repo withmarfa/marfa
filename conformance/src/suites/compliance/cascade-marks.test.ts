@@ -772,6 +772,9 @@ describe("a restore says what brought a row back", () => {
       const own = frame(events, "item.state_changed", root);
       expect(own, `${path}: the root's item.state_changed`).toBeDefined();
       expect(own).not.toHaveProperty("restored_with");
+      const ownBack = frame(events, "item.restored", root);
+      expect(ownBack, `${path}: the root's item.restored`).toBeDefined();
+      expect(ownBack).not.toHaveProperty("restored_with");
     }
     for (const [path, events] of paths.notes) {
       const back = frame(events, "item.restored", child);
@@ -809,6 +812,9 @@ describe("a restore says what brought a row back", () => {
       const own = frame(events, "item.state_changed", root);
       expect(own, `${path}: the root's item.state_changed`).toBeDefined();
       expect(own).not.toHaveProperty("restored_with");
+      const ownBack = frame(events, "item.restored", root);
+      expect(ownBack, `${path}: the root's item.restored`).toBeDefined();
+      expect(ownBack).not.toHaveProperty("restored_with");
     }
     for (const [path, events] of paths.notes) {
       const back = frame(events, "item.restored", child);

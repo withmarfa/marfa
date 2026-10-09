@@ -216,6 +216,41 @@ describe("POST /edges/bulk reaches the event log", () => {
   });
 });
 
+describe("POST /items/{id}/transition reaches the event log", () => {
+  it("logs a state change and then a restore for the item a transition out of the bin names, and only a state change for one into the archive", async () => {
+    const named = await note("named");
+    const cursor = await logCursor();
+    await request(ctx.app, "DELETE", `/items/${named}`, {
+      key: ctx.workingKey,
+    });
+    const back = await request(ctx.app, "POST", `/items/${named}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "active" },
+    });
+    expect(back.status).toBe(200);
+    const archived = await request(
+      ctx.app,
+      "POST",
+      `/items/${named}/transition`,
+      {
+        key: ctx.workingKey,
+        body: { state: "archived" },
+      },
+    );
+    expect(archived.status).toBe(200);
+
+    const types = (await logSince(cursor))
+      .filter((r) => r.item_id === named)
+      .map((r) => r.event_type);
+    expect(types).toEqual([
+      "deleted",
+      "state_changed",
+      "restored",
+      "state_changed",
+    ]);
+  });
+});
+
 describe("POST /items/bulk-actions reaches the event log", () => {
   it("logs a state change for every item a transition moved", async () => {
     const tag = `tr-${uniq()}`;
@@ -267,6 +302,30 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     expect(
       rows.filter((r) => r.item_id === child).map((r) => r.event_type),
     ).toEqual(["restored"]);
+  });
+
+  it("logs a state change and then a restore for the item a bulk transition out of the bin names", async () => {
+    const tag = `named-${uniq()}`;
+    const named = await note("named", [tag]);
+    await request(ctx.app, "DELETE", `/items/${named}`, {
+      key: ctx.workingKey,
+    });
+    const cursor = await logCursor();
+
+    const run = await runBulkActionAsync(
+      ctx,
+      {
+        action: "transition",
+        state: "active",
+        filter: { tags: [tag], state: "trashed" },
+      },
+      ctx.workingKey,
+    );
+    expect(run.result?.succeeded).toBe(1);
+    const rows = await logSince(cursor);
+    const own = rows.filter((r) => r.item_id === named);
+    expect(own.map((r) => r.event_type)).toEqual(["state_changed", "restored"]);
+    expect(JSON.parse(own[1]!.payload)).not.toHaveProperty("restored_with");
   });
 
   it("logs the edges a purge cascaded", async () => {

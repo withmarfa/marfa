@@ -970,7 +970,13 @@ When `POST /items/{id}/restore` names an item in the bin, the server MUST move i
 
 When a restore or a transition out of the bin moves an item to `active`, the server MUST announce `item.restored` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`.
+**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`, `› announces item.restored for the item a transition out of the bin names`, `compliance/cascade-marks.test.ts › names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+
+### `items/transition-announced`
+
+When a transition moves an item to another state, the server MUST announce `item.state_changed` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/restore-live`
 

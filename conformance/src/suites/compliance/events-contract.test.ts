@@ -269,6 +269,25 @@ describe("event stream contract", () => {
     expect(data.item.state).toBe("active");
   });
 
+  it("announces item.restored for the item a transition out of the bin names", async ({
+    signal,
+  }) => {
+    const id = await seed("moved-out-of-the-bin");
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    const event = await deliver(
+      "item.restored",
+      id,
+      async () => {
+        expect((await client.transitionItem(id, "active")).ok).toBe(true);
+      },
+      signal,
+    );
+    const data = event?.data as { item: { id: string; state: string } };
+    expect(data.item.id).toBe(id);
+    expect(data.item.state).toBe("active");
+    expect(data).not.toHaveProperty("restored_with");
+  });
+
   it("announces edge.created for an edge a conflicted copy is given", async ({
     signal,
   }) => {
