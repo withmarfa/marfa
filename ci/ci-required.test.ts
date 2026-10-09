@@ -760,7 +760,7 @@ describe("the conformance shards", () => {
 });
 
 describe("what a draft runs", () => {
-  it("runs the quick jobs the diff names, CI (SQLite) whatever it names, and nothing else", () => {
+  it("runs the quick jobs the diff names, and nothing else", () => {
     expect(DRAFT_JOBS).toEqual([
       "ci-sqlite",
       "workspace",
@@ -768,7 +768,8 @@ describe("what a draft runs", () => {
       "version-fields",
     ]);
     // A change only the core's tests read names no quick job but CI
-    // (SQLite), and its draft fails that required check, so it cannot merge.
+    // (SQLite), which every change names; `Draft CI` keeps the draft from
+    // merging.
     expect(runs(["core/marfa-core/tests/sync.rs"])).toEqual([
       "ci-sqlite",
       "core-checks",
@@ -794,17 +795,20 @@ describe("what a draft runs", () => {
 
 /**
  * The jobs of `ci.yml` that are not one job of the classifier's: the
- * conformance shards run as one matrix job, and `Conformance` itself is the
- * check a ruleset waits on, which collects the rest.
+ * conformance shards run as one matrix job, `Conformance` collects them into
+ * one verdict, `Full CI` collects every job for the ruleset and
+ * `report-failure` reports a failed night. `ci/full-ci-gate.test.ts` and
+ * `ci/nightly-report.test.ts` pin the last two.
  */
 const CONFORMANCE_SHARD_JOB = "conformance-shards";
 const CONFORMANCE_GATE = "conformance";
+const NOT_CLASSIFIED = [CONFORMANCE_GATE, "gate", "report-failure"];
 
 describe("each job reads its own answer", () => {
   it("ci.yml runs a job only when the classifier says so, and every one when it cannot tell", () => {
     const { jobs } = workflow("ci.yml");
     const gated = Object.keys(jobs).filter(
-      (name) => name !== "changes" && name !== CONFORMANCE_GATE,
+      (name) => name !== "changes" && !NOT_CLASSIFIED.includes(name),
     );
     expect(gated.sort()).toEqual(
       [
@@ -864,8 +868,7 @@ describe("each job reads its own answer", () => {
       "working-directory": "conformance",
       run: "pnpm exec vitest run --project generators src/utils/spec-citations.test.ts",
     });
-    const guard = steps.at(-1);
-    const after = steps.slice(format + 3, -1);
+    const after = steps.slice(format + 3);
     expect(after.map((step) => step.run ?? step.uses)).toEqual([
       "pnpm build",
       "pnpm typecheck",
@@ -882,10 +885,25 @@ describe("each job reads its own answer", () => {
         "${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}",
       );
     }
-    // A draft skips every other required job, and a skipped job passes its
-    // check, so this one fails for it until the run for ready for review.
-    expect(guard?.if).toBe("${{ github.event.pull_request.draft }}");
-    expect(guard?.run).toContain("exit 1");
+    // A draft passes here with the rest skipped; `Draft CI` keeps it from
+    // merging, so no step of any job fails a draft for being one.
+    const draftSteps = (all: Workflow["jobs"]) =>
+      Object.entries(all).flatMap(([id, job]) =>
+        job.steps
+          .filter((step) => step.if?.includes("pull_request.draft") === true)
+          .map(() => id),
+      );
+    expect(draftSteps(workflow("ci.yml").jobs)).toEqual([]);
+    // The witness: the same check finds a step that fails a draft.
+    expect(
+      draftSteps({
+        "ci-sqlite": {
+          steps: [
+            { if: "${{ github.event.pull_request.draft }}", run: "exit 1" },
+          ],
+        },
+      }),
+    ).toEqual(["ci-sqlite"]);
     // Nothing before the gated steps needs Rust, and nothing after does now
     // that the version check, the one test that runs cargo, is left out.
     expect(steps.some((step) => step.uses?.includes("rust"))).toBe(false);
@@ -1333,7 +1351,7 @@ describe("the classifier as CI runs it", () => {
     expect(server.full).toBe("false");
     expect(server["conformance-shards"]).toBe("[]");
     // Documentation names no quick job but the format check, which CI (SQLite)
-    // runs before it fails the draft.
+    // runs for every change.
     const docs = outputs(
       "pull_request",
       commits.base ?? "",
