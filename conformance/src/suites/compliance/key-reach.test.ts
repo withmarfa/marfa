@@ -8,6 +8,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -358,6 +359,57 @@ describe("a key reaches only the keys it could have minted", () => {
           listed.data.data.find((k) => k.id === target.data.id)?.permissions,
           "a refused update changed the key",
         ).toEqual(["audit.read"]);
+
+        // The mint is held to the grant as the update is, and no scope
+        // names an extension namespace.
+        const mintedBeyond = await app.createKey({
+          label: "app-mint-beyond",
+          source: "app-mint-beyond",
+          permissions: ["webhooks.manage"],
+        });
+        expect(mintedBeyond.status).toBe(403);
+        expect(mintedBeyond.error?.error.code).toBe("forbidden");
+        expect(mintedBeyond.error?.error.details?.required_scope).toBe(
+          "webhooks.manage",
+        );
+        const mintedNamespace = await app.createKey({
+          label: "app-mint-namespace",
+          source: "app-mint-namespace",
+          type_permissions: { "core.note": "read" },
+          extension_permissions: { notes: "read" },
+        });
+        expect(mintedNamespace.status).toBe(403);
+        expect(mintedNamespace.error?.error.code).toBe("forbidden");
+
+        // A key the app made is only ever narrowed, by the owner too.
+        const made = await app.createKey({
+          label: "app-made",
+          source: "app-made",
+          type_permissions: { "core.note": "read" },
+          permissions: [],
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        const owner = new MarfaClient({
+          baseUrl: server.apiUrl,
+          ownerCookie: server.ownerCookie,
+          ownerCredentials: TEST_OWNER,
+        });
+        const widened = await owner.updateKey(made.data.id, {
+          permissions: ["audit.read"],
+        });
+        expect(widened.status).toBe(403);
+        expect(widened.error?.error.code).toBe("forbidden");
+        expect(widened.error?.error.details?.required_scope).toBe("audit.read");
+        const widerMap = await owner.updateKey(made.data.id, {
+          type_permissions: { "core.note": "write" },
+        });
+        expect(widerMap.status).toBe(403);
+        expect(widerMap.error?.error.code).toBe("forbidden");
+        // The witness: the owner narrows it.
+        const narrowed = await owner.updateKey(made.data.id, {
+          type_permissions: {},
+        });
+        expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
       } finally {
         await server.stop();
       }

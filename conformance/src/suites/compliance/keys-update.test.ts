@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackKey, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  getManagementClient,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -44,6 +49,9 @@ describe("PATCH /keys/{id}", () => {
     expect(relabeled.data.label).toBe("ku-renamed");
     expect(relabeled.data.source).toBe(key.source);
     expect(relabeled.data.type_permissions).toEqual({ "core.note": "read" });
+    expect("key" in relabeled.data, "an update answered the plaintext").toBe(
+      false,
+    );
 
     const widened = await client.updateKey(key.id, {
       type_permissions: { "core.note": "write", "core.bookmark": "read" },
@@ -133,6 +141,34 @@ describe("PATCH /keys/{id}", () => {
     expect(row?.type_permissions).toEqual({ "core.note": "read" });
     expect(row?.permissions).toEqual(["keys.mint"]);
     expect(row?.extension_permissions).toEqual({});
+  });
+
+  it("only narrows a key for a caller acting through keys.manage", async () => {
+    const target = await narrowKey("ku-managed");
+    const managing = await getManagementClient().createKey({
+      label: "ku-manager",
+      source: `${ctx.source}-ku-manager`,
+      permissions: ["keys.manage", "audit.read"],
+    });
+    expect(managing.status, JSON.stringify(managing.error)).toBe(201);
+    trackKey(ctx, managing.data.id);
+    const manager = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: managing.data.key,
+    });
+    const widened = await manager.updateKey(target.id, {
+      permissions: ["audit.read"],
+    });
+    expect(widened.status).toBe(403);
+    expect(widened.error?.error.code).toBe("forbidden");
+    expect(widened.error?.error.details?.required_scope).toBe("audit.read");
+    // The witness: the same caller narrows it, and relabels it.
+    const narrowed = await manager.updateKey(target.id, {
+      label: "ku-managed-narrowed",
+      type_permissions: {},
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+    expect(narrowed.data.type_permissions).toEqual({});
   });
 
   it("refuses a caller without keys.mint", async () => {

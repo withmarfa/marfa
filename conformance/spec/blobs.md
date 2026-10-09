@@ -452,7 +452,7 @@ A reference is a digest anywhere in a string, as `stores/reference-digest-anywhe
 
 If a working key or an app's access token lacking `blobs.manage` whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
 
-**Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth.md` 1), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
+**Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth/permissions-no-content`), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
 
 **Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike`, `compliance/blob-reach-app.test.ts › is refused every blob door as a key reaching no type is`.
 
@@ -482,7 +482,7 @@ While no row references a blob, the server MUST answer `404 blob_not_found` to e
 
 If a working key or an access token lacking `blobs.manage` reads a blob that only rows it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
 
-**Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth.md` 20).
+**Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth/unreadable-as-missing`).
 
 **Tests:** `compliance/blob-reach.test.ts › answers a blob only an item of a type the key may not read references as an unknown one`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
 
@@ -538,7 +538,7 @@ While a working key may read an extension namespace by its extension map and may
 
 If a working key or an app's access token lacking `blobs.manage` may not read an extension namespace by its extension map, or may not read the type of the item it sits on, then the server MUST answer `404 blob_not_found` for a blob that only that namespace references.
 
-**Reason:** a key's label names no namespace, and an app holds no extension map, since no scope names a namespace (`keys-and-oauth.md` 21).
+**Reason:** a key's label names no namespace, and an app holds no extension map, since no scope names a namespace (`keys-and-oauth/extension-map-only` and `keys-and-oauth/app-no-namespace`).
 
 **Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› does not serve a blob an extension names to a key whose label is the namespace and whose extension map does not reach it`, `compliance/blob-reach-app.test.ts › is not served a blob named only in an extension, since no scope reaches a namespace`.
 

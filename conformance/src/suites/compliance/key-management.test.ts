@@ -204,6 +204,27 @@ describe("key management", () => {
     expect(minted.status).toBe(403);
     expect(minted.error?.error.code).toBe("forbidden");
     expect(minted.error?.error.details?.required_scope).toBe("keys.mint");
+
+    // `keys.manage` lists, narrows and revokes every key, and mints none.
+    const managing = await getManagementClient().createKey({
+      label: `km-manage-only-${ctx.runId}`,
+      source: `${ctx.source}-km-manage-only`,
+      permissions: ["keys.manage"],
+    });
+    expect(managing.status, JSON.stringify(managing.error)).toBe(201);
+    trackKey(ctx, managing.data.id);
+    const manager = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: managing.data.key,
+    });
+    const refused = await manager.createKey({
+      label: `${label}-manager`,
+      source: `${ctx.source}-${label}-manager`,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details?.required_scope).toBe("keys.mint");
+    expect((await manager.listKeys()).status).toBe(200);
   });
 
   it("a mint naming no permissions, maps or claims takes the creator's whole set", async () => {

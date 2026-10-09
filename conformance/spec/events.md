@@ -438,7 +438,7 @@ When a tag write or an extension write commits, the server MUST send `metadata.c
 
 When the server sends a frame carrying `metadata`, the server MUST include only the extension namespaces the subscriber may read.
 
-**Reason:** `keys-and-oauth.md` 21 gates every operation that answers extension data.
+**Reason:** `keys-and-oauth/extension-map-only` gates every operation that answers extension data.
 
 **Tests:** `compliance/events-contract.test.ts › carries on a metadata.changed frame only the extension namespaces the subscriber may read`.
 

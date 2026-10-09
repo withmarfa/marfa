@@ -859,7 +859,7 @@ export function requireReadableRow<T extends { type: string }>(
  *
  * **A key learns nothing about a row it may not read.** A natural key names
  * a row by the source and `source_id` the caller chose, so a key sharing a
- * source with another (`keys-and-oauth.md` 34) reaches rows of types it holds
+ * source with another (`keys-and-oauth/claims-answered`) reaches rows of types it holds
  * nothing on, and the refusal it gets is all it learns: that its key is
  * taken, which it needs, and not the row's id or any field of it, its type
  * included. `requireTypeAccess` names the type it refuses, which is right

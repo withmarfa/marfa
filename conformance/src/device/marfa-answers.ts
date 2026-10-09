@@ -969,7 +969,7 @@ export const answers = {
       { field: "properties" },
     ),
   /** An item read by id that the server does not hold, or holds of a type
-   *  the key may not read (`keys-and-oauth.md` 20). */
+   *  the key may not read (`keys-and-oauth/unreadable-as-missing`). */
   itemNotFound: (id: string): Answer =>
     refusal(404, "item_not_found", `Item ${id} not found`),
   /** An edge end a move names that the server does not hold (`edges/move-end-missing`). */

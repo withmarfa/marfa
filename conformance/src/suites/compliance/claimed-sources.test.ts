@@ -19,7 +19,7 @@ import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key may claim sources besides its own, and a write may name one it
- * claims (`keys-and-oauth.md` 34, `items/source-claimed`).
+ * claims (`keys-and-oauth/claims-answered`, `items/source-claimed`).
  *
  * The natural key is `(source, source_id)` and a key's own source is no other
  * unrevoked key's own, so two keys writing under their own sources never

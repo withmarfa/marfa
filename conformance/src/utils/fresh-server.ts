@@ -602,8 +602,9 @@ export interface DeviceFlow {
 
 /**
  * Registers a native app and requests a device code for the claimed owner to approve.
- * Without explicit scopes it requests content and the seven existing permissions;
- * tests of management access must name those additional permissions explicitly.
+ * Without explicit scopes it requests content and seven permissions, every
+ * permission but `instance.read`, `instance.maintain`, `connectors.manage`,
+ * `blobs.manage` and `keys.manage`, which a fixture names when it needs them.
  */
 export async function startDeviceFlow(
   server: FreshServer,

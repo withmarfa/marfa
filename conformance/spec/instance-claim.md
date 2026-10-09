@@ -136,7 +136,7 @@ When the server logs setup exchange requests, the server MUST omit submitted set
 
 ### `instance-claim/management-is-not-owner`
 
-When an ordinary credential holding all five management permissions requests `GET /owner`, including with an accompanying owner cookie, the server MUST answer `403 forbidden`.
+When an ordinary credential holding all twelve permissions requests `GET /owner`, including with an accompanying owner cookie, the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/owner.test.ts › ordinary full management access cannot become the owner`.
 

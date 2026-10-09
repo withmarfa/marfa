@@ -17,10 +17,10 @@
  * being reserved after the fact: a row written while the word was ordinary.
  * An archive cannot carry one in, because the restore validates each
  * identifier against the same reserved set. Every deployment is checked before
- * a root is reserved — most recently for the seven permission roots — and
- * none held such a row, so this is expected to stay silent, and that is
- * precisely the state in which a silent check is worth having, because the
- * only thing it can ever report is something nobody predicted.
+ * a root is reserved, and none held such a row, so this is expected to stay
+ * silent, and that is precisely the state in which a silent check is worth
+ * having, because the only thing it can ever report is something nobody
+ * predicted.
  *
  * It follows `platform-family.ts`: recognize, say so loudly enough that the
  * report cannot be mistaken for normal, and let the server start. Refusing to

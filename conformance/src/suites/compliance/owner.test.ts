@@ -327,6 +327,13 @@ describe("claiming the one owner", () => {
         label: "Instance management",
         source: "owner-test",
         permissions: [
+          "schema.write",
+          "keys.mint",
+          "items.purge",
+          "webhooks.manage",
+          "config.manage",
+          "audit.read",
+          "grants.manage",
           "keys.manage",
           "connectors.manage",
           "instance.read",

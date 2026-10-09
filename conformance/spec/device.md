@@ -1468,7 +1468,7 @@ When `whoami` reads a server on another contract, the command MUST report the co
 
 If the server refuses `status` the item counts `403 type_not_permitted`, then the command MUST still describe the server, say the counts need a working key and exit 0.
 
-**Reason:** a credential whose type permissions reach no type is refused the counts (`keys-and-oauth.md` 1).
+**Reason:** a credential whose type permissions reach no type is refused the counts (`keys-and-oauth/permissions-no-content`).
 
 **Tests:** `device/contract.test.ts › describes the server to a key that reaches no type, and says the counts need a working key`.
 
@@ -2812,7 +2812,7 @@ If a pin of a row is refused because the server holds the row in the bin, then a
 
 If a caller pins a row the server holds in the bin, of a type the key may not read, then a device MUST refuse it `not_found` without the code `trashed`.
 
-**Reason:** the server answers a row of a type the key may not read as a missing one, in the bin too (`keys-and-oauth.md` 20), so the copy tells the key nothing more of it.
+**Reason:** the server answers a row of a type the key may not read as a missing one, in the bin too (`keys-and-oauth/unreadable-as-missing`), so the copy tells the key nothing more of it.
 
 **Tests:** `device/bin-live.test.ts › refuses a pin of a row in the bin of a type the key may not read as one that is gone`.
 
@@ -3533,11 +3533,11 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **Invalid copy proof.** The real server does not omit or forge its certificate, listing classification or completion marker, so scripted answers exercise fail-closed decoding.
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
-- **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
+- **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth/revoke-immediate` already covers.
 - **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions/auto-resolved`), so the refusal a device has to classify (`queue-and-verdicts/conflict-blocks`) is one the real server does not give for a write it can resolve. A write carrying only `edges` and a stale version is refused rather than resolved, because there is nothing to merge, but that is not a write that asked for resolution.
 - **An answer on another contract, or a success naming none.** The run's server names the contract the binary was built for on every answer, and nothing over the wire asks it for another.
 - **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the row (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
-- **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth.md` 33 asserts it against a server booted with the limiter on.
+- **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`README.md`). The real server does answer one, and `keys-and-oauth/keys-rate-cap` asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the row the copy holds (`device/server-row-order`). The run's server answers a read with the row as it stands when it is asked, so the scripted server answers with the older row, standing for the read that lost the race.
 - **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders/placement-root-relative`).
 - **A `404 item_not_found` naming the bin, and a `403` naming the grant a key lacks.** The server does not yet say either in `details`; the device reads both where they come (`queue-and-verdicts/refusal-in-bin` and `queue-and-verdicts/refusal-parts`), and the fixtures script the shapes the server will answer.

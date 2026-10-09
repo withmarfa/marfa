@@ -44,7 +44,7 @@ Software-consumed values live in Infisical, never in a file here. A local `.infi
 
 ## Words
 
-`GLOSSARY.md` fixes the vocabulary, the seven permission names, the time rule and the error meanings. A pull request is checked against it.
+`GLOSSARY.md` fixes the vocabulary, the twelve permission names, the time rule and the error meanings. A pull request is checked against it.
 
 ## The contract
 
