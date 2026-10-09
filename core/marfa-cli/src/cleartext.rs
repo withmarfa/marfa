@@ -37,12 +37,7 @@ pub fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(Host::Domain(name)) => name == "localhost",
         Some(Host::Ipv4(address)) => address.is_loopback(),
-        Some(Host::Ipv6(address)) => {
-            address.is_loopback()
-                || address
-                    .to_ipv4_mapped()
-                    .is_some_and(|address| address.is_loopback())
-        }
+        Some(Host::Ipv6(address)) => address.is_loopback(),
         None => false,
     }
 }
@@ -100,7 +95,6 @@ mod tests {
             "http://127.0.0.1",
             "http://127.1.2.3:80",
             "http://[::1]:8600",
-            "http://[::ffff:127.0.0.1]",
         ] {
             assert!(is_loopback(&Url::parse(address).unwrap()), "{address}");
         }
@@ -112,6 +106,7 @@ mod tests {
             "http://10.0.0.5",
             "http://[::2]",
             "http://[::ffff:10.0.0.5]",
+            "http://[::ffff:127.0.0.1]",
         ] {
             assert!(!is_loopback(&Url::parse(address).unwrap()), "{address}");
         }
