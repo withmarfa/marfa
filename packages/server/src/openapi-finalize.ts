@@ -1148,7 +1148,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   type: "array",
                   items: { type: "string" },
                   description:
-                    "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`.",
+                    "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`.",
                 },
                 response_types: {
                   type: "array",
@@ -1169,7 +1169,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 scope: {
                   type: "string",
                   description:
-                    "Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows.",
+                    "Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows, without `offline_access` if `grant_types` names neither `refresh_token` nor `authorization_code`.",
                 },
                 token_endpoint_auth_method: {
                   type: "string",
@@ -1207,7 +1207,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   scope: {
                     type: "string",
                     description:
-                      "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows.",
+                      "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token.",
                   },
                   redirect_uris: {
                     type: "array",

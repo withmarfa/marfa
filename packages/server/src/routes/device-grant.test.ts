@@ -10,8 +10,9 @@
  * initiates, a signed-in person approves on Marfa's consent screen, the
  * device polls the token endpoint and the bearer reaches the data plane; a
  * poll before the approval is `authorization_pending`; a denial answers the
- * poll with `access_denied` and leaves no grant; a refresh token is minted
- * only for a client registered for the refresh grant; unticking a scope narrows
+ * poll with `access_denied` and leaves no grant; a client that may not
+ * refresh is refused `offline_access` and is not registered for it by
+ * default, while one that may is minted a refresh token; unticking a scope narrows
  * the token and the grant to the ticked set; the verification form refuses
  * a code nobody issued and forwards a live one; a code one person claimed is
  * not another's to approve; a client without the grant cannot initiate; and
@@ -59,6 +60,15 @@ async function registerClient(
   c: TestContext,
   grantTypes: string[],
 ): Promise<string> {
+  return (await register(c, grantTypes)).client_id;
+}
+
+/** The same registration, answered whole, naming `scope` when given. */
+async function register(
+  c: TestContext,
+  grantTypes: string[],
+  scope?: string,
+): Promise<{ client_id: string; scope: string }> {
   const res = await request(c.app, "POST", "/auth/oauth2/register", {
     body: {
       client_name: "Device Test App",
@@ -67,6 +77,7 @@ async function registerClient(
       token_endpoint_auth_method: "none",
       redirect_uris: [`${ORIGIN}/callback`],
       response_types: grantTypes.includes("authorization_code") ? ["code"] : [],
+      ...(scope === undefined ? {} : { scope }),
     },
     headers: { origin: ORIGIN },
   });
@@ -75,7 +86,7 @@ async function registerClient(
       `registration failed (${String(res.status)}): ${await res.text()}`,
     );
   }
-  return ((await res.json()) as { client_id: string }).client_id;
+  return (await res.json()) as { client_id: string; scope: string };
 }
 
 async function signInUser(c: TestContext): Promise<string> {
@@ -261,7 +272,7 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(audits.data[0]!.details.approved_scopes).toEqual(["core.note:read"]);
   });
 
-  it("a client registered for the refresh grant is minted a refresh token on offline_access, and one that is not is not", async () => {
+  it("a client registered for the refresh grant is minted a refresh token on offline_access, and one that may not refresh is refused offline_access when it asks for a code", async () => {
     ctx = await createTestContext({});
     const c = ctx;
     const cookie = await signInUser(c);
@@ -297,24 +308,58 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(refreshed.status).toBe(200);
     expect(((await refreshed.json()) as TokenBody).access_token).toBeTruthy();
 
-    // Without the grant, `offline_access` is approved and honored for the
-    // session scopes alone: the access token comes, the refresh token does
-    // not.
-    const deviceOnly = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
-    const second = await initiate(c, deviceOnly, scope);
-    expect((await openConsent(c, second.user_code, cookie)).status).toBe(200);
+    // Registered for neither the refresh grant nor the code grant, the client
+    // could never exchange a refresh token, so the request is refused and
+    // says why rather than ending in an access token alone. It holds for a
+    // registration that named `offline_access` itself too.
+    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], scope);
+    expect(deviceOnly.scope.split(" ")).toContain("offline_access");
+    const refused = await request(c.app, "POST", "/auth/device/code", {
+      form: { client_id: deviceOnly.client_id, scope },
+      headers: { origin: ORIGIN },
+    });
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.error_description).toContain("refresh_token");
+    expect(body.device_code).toBeUndefined();
+  });
+
+  it("registers a client that may not refresh, naming no scope, for every scope but offline_access, and its device flow ends in an access token alone", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+
+    // The witness: a client that may refresh is registered for it.
+    const refreshing = await register(c, [
+      DEVICE_CODE_GRANT_TYPE,
+      "refresh_token",
+    ]);
+    const everything = refreshing.scope.split(" ");
+    expect(everything).toContain("offline_access");
+
+    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE]);
+    expect(deviceOnly.scope.split(" ")).toEqual(
+      everything.filter((s) => s !== "offline_access"),
+    );
+    const stored = await c.storage.oauthProvider?.getClient(
+      deviceOnly.client_id,
+    );
+    expect(stored?.scopes).toEqual(
+      everything.filter((s) => s !== "offline_access"),
+    );
+
+    const init = await initiate(c, deviceOnly.client_id, "core.note:read");
+    const cookie = await signInUser(c);
+    expect((await openConsent(c, init.user_code, cookie)).status).toBe(200);
     expect(
-      (
-        await decide(c, second.user_code, cookie, "approve", [
-          "core.note:read",
-          "offline_access",
-        ])
-      ).status,
+      (await decide(c, init.user_code, cookie, "approve", ["core.note:read"]))
+        .status,
     ).toBe(200);
-    const plain = await poll(c, second.device_code, deviceOnly);
-    expect(plain.status).toBe(200);
-    expect(plain.body.access_token).toBeTruthy();
-    expect(plain.body.refresh_token).toBeUndefined();
+    const minted = await poll(c, init.device_code, deviceOnly.client_id);
+    expect(minted.status).toBe(200);
+    expect(minted.body.access_token).toBeTruthy();
+    expect(minted.body.scope).toBe("core.note:read");
+    expect(minted.body.refresh_token).toBeUndefined();
   });
 
   it("names the types a wildcard covers today on the approval screen, as the authorize screen does", async () => {

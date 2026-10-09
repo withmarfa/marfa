@@ -110,6 +110,19 @@ describe("a device code", () => {
     expect(body.device_code).toBeUndefined();
   });
 
+  it("is refused 400 invalid_scope for offline_access when its client may not refresh, and is told to register refresh_token", async () => {
+    // The witness: the same scope without `offline_access` is issued a code.
+    expect((await ask("core.note:read")).status).toBe(200);
+    const refused = await ask("core.note:read offline_access");
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.error_description).toEqual(
+      expect.stringContaining("refresh_token"),
+    );
+    expect(body.device_code).toBeUndefined();
+  });
+
   it("answers slow_down to a poll sooner than the interval after the previous one", async () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     // The witness: the code's first poll is answered on its state.
@@ -188,5 +201,52 @@ describe("a device code whose grant is revoked", () => {
     expect(polled.status).toBe(400);
     expect(polled.body.error).toBe("invalid_grant");
     expect(polled.body.access_token).toBeUndefined();
+  });
+});
+
+describe("offline_access on a device", () => {
+  it("answers offline_access a refresh token, which exchanges, for a client registered for the refresh grant", async () => {
+    const flow = await startDeviceFlow(server!, [
+      "core.note:read",
+      "offline_access",
+    ]);
+    await flow.approve();
+    const approved = await flow.poll();
+    expect(approved.status).toBe(200);
+    expect(approved.body.access_token).toBeTruthy();
+    expect(approved.body.refresh_token).toBeTruthy();
+    const refreshed = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: approved.body.refresh_token!,
+        client_id: flow.clientId,
+      }),
+    });
+    expect(refreshed.status).toBe(200);
+    const body = (await refreshed.json()) as Record<string, unknown>;
+    expect(body.access_token).toEqual(expect.any(String));
+  });
+
+  it("registers a client that may not refresh, naming no scope, for every scope but offline_access, and answers its device flow an access token alone", async () => {
+    // The witness: a client that may refresh, naming no scope, is registered
+    // for `offline_access`.
+    const refreshing = await startDeviceFlow(server!, ["core.note:read"]);
+    const everything = refreshing.registeredScope.split(" ");
+    expect(everything).toContain("offline_access");
+
+    const flow = await startDeviceFlow(server!, ["core.note:read"], {
+      grantTypes: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
+    expect(flow.registeredScope.split(" ")).toEqual(
+      everything.filter((scope) => scope !== "offline_access"),
+    );
+    await flow.approve();
+    const approved = await flow.poll();
+    expect(approved.status).toBe(200);
+    expect(approved.body.access_token).toBeTruthy();
+    expect(approved.body.scope).toBe("core.note:read");
+    expect(approved.body.refresh_token).toBeUndefined();
   });
 });

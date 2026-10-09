@@ -585,6 +585,8 @@ export interface DevicePoll {
 export interface DeviceFlow {
   /** The client the app registered for itself. */
   clientId: string;
+  /** The scope the registration answered, which named none. */
+  registeredScope: string;
   /** Seconds a poller must leave between polls, as the initiation answered. */
   interval: number;
   /** One poll of the token door, as an app makes it: no credential. */
@@ -605,10 +607,13 @@ export interface DeviceFlow {
  * Without explicit scopes it requests content and seven permissions, every
  * permission but `instance.read`, `instance.maintain`, `connectors.manage`,
  * `blobs.manage` and `keys.manage`, which a fixture names when it needs them.
+ * The app registers the device grant and the refresh grant unless
+ * `grantTypes` names others.
  */
 export async function startDeviceFlow(
   server: FreshServer,
   scopes?: readonly string[],
+  options: { grantTypes?: readonly string[] } = {},
 ): Promise<DeviceFlow> {
   const owner = TEST_OWNER;
 
@@ -627,7 +632,7 @@ export async function startDeviceFlow(
       body: JSON.stringify({
         client_name: "conformance",
         application_type: "native",
-        grant_types: [
+        grant_types: options.grantTypes ?? [
           "urn:ietf:params:oauth:grant-type:device_code",
           "refresh_token",
         ],
@@ -635,7 +640,7 @@ export async function startDeviceFlow(
         token_endpoint_auth_method: "none",
       }),
     })
-  ).json()) as { client_id: string };
+  ).json()) as { client_id: string; scope: string };
 
   const code = (await (
     await fetch(discovery.device_authorization_endpoint, {
@@ -688,6 +693,7 @@ export async function startDeviceFlow(
 
   return {
     clientId: registered.client_id,
+    registeredScope: registered.scope,
     interval: code.interval,
     deviceCode: code.device_code,
     async poll() {

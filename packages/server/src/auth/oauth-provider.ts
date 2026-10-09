@@ -415,9 +415,10 @@ export function buildOauthProviderPlugin(
     // ----- Scope grammar -----
     // The allowlist. The plugin's registration validates a requested `scope`
     // against `clientRegistrationAllowedScopes`; the registration adapter
-    // stores the scope a request names, and this whole set only for a request
-    // that names none. Custom types registered at runtime require a server
-    // restart to surface here.
+    // stores the scope a request names, and this whole set for a request that
+    // names none, less `offline_access` for a client that may not refresh
+    // (`settleRegistrationScope`). Custom types registered at runtime require
+    // a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above carries the runtime namespace roots, but the
@@ -624,8 +625,8 @@ export function buildOauthProjectionPlugin(opts: {
     hooks: {
       after: [
         {
-          // Registration answers and stores the scope the client asked
-          // for. See `keepRequestedRegistrationScope`.
+          // Registration answers the scope it stored. See
+          // `keepRequestedRegistrationScope`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
             Promise.resolve(keepRequestedRegistrationScope(ctx)),
@@ -660,6 +661,15 @@ export function buildOauthProjectionPlugin(opts: {
           : []),
       ],
       before: [
+        {
+          // What registration stores and answers. See
+          // `settleRegistrationScope`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
+          handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            settleRegistrationScope(ctx, liveScopes);
+            return Promise.resolve();
+          }),
+        },
         {
           // Narrows the requested scope set on the authorize endpoint so a
           // scope the server cannot grant costs the requester that scope
@@ -777,9 +787,55 @@ export function buildOauthProjectionPlugin(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Match the registration response to the requested scope stored by the adapter.
- * The provider otherwise answers with its whole registration allowlist.
- * A request naming no scope retains that default.
+ * Whether a client may exchange a refresh token, by the provider's own rule
+ * (`clientAllowsGrant`, which the package does not export): `grant_types`
+ * naming `refresh_token` or `authorization_code`, and a registration that
+ * names none registers `authorization_code`. Only such a client is issued a
+ * refresh token for `offline_access`.
+ */
+export function clientMayRefresh(grantTypes: unknown): boolean {
+  const named =
+    Array.isArray(grantTypes) && grantTypes.length > 0
+      ? grantTypes
+      : ["authorization_code"];
+  return (
+    named.includes("refresh_token") || named.includes("authorization_code")
+  );
+}
+
+/**
+ * Before-hook for `/oauth2/register`: settle the scope the client is
+ * registered for, which the credential adapter stores and
+ * `keepRequestedRegistrationScope` answers. The provider stores and answers
+ * its whole allowlist whatever the request names.
+ *
+ * A request naming no scope keeps that allowlist, less `offline_access` for a
+ * client that may not refresh: the device code request refuses such a client
+ * that scope (`offerDeviceScopes`), so a default holding it would leave the
+ * client refused a scope it never chose.
+ */
+function settleRegistrationScope(
+  ctx: HookCtxLite,
+  allowed: ReadonlySet<string>,
+): void {
+  const request = credentialRequest.getStore();
+  const body = ctx.body;
+  if (!request || !body || typeof body !== "object") return;
+  const asked =
+    typeof body.scope === "string"
+      ? [...new Set(body.scope.split(" ").filter((s) => s.length > 0))]
+      : [];
+  if (asked.length > 0) request.registrationScopes = asked;
+  else if (!clientMayRefresh(body.grant_types))
+    request.registrationScopes = [...allowed].filter(
+      (s) => s !== "offline_access",
+    );
+}
+
+/**
+ * Match the registration response to the scope `settleRegistrationScope`
+ * settled, which the adapter stored. The provider otherwise answers with its
+ * whole registration allowlist, which stands where nothing was settled.
  */
 function keepRequestedRegistrationScope(
   ctx: HookCtxLite,
@@ -796,11 +852,9 @@ function keepRequestedRegistrationScope(
   const kept = { ...registered };
   delete kept.backchannel_logout_uri;
   delete kept.backchannel_logout_session_required;
-  const asked = ctx.body?.scope;
-  if (typeof asked !== "string") return kept;
-  const requested = [...new Set(asked.split(" ").filter((s) => s.length > 0))];
-  if (requested.length === 0) return kept;
-  return { ...kept, scope: requested.join(" ") };
+  const settled = credentialRequest.getStore()?.registrationScopes;
+  if (!settled) return kept;
+  return { ...kept, scope: settled.join(" ") };
 }
 
 // ---------------------------------------------------------------------------
@@ -1813,6 +1867,11 @@ async function guardRefreshTokenGrant(
  * later screens offer. The widened view lives on the request, in the
  * credential adapter, and dies with it; the approval screen writes the scopes
  * the person ticked (`catchUpClientScopeCeiling`, `routes/auth-pages.ts`).
+ *
+ * It also refuses `offline_access` to a client that may not refresh. The
+ * provider would approve the scope and issue an access token alone, and a
+ * client told nothing would sign the person in again when it ends. A client
+ * the store does not know is left to the provider's own refusal.
  */
 async function offerDeviceScopes(
   ctx: HookCtxLite,
@@ -1828,6 +1887,16 @@ async function offerDeviceScopes(
     typeof rawScope === "string"
       ? rawScope.split(" ").filter((s) => s.length > 0)
       : [];
+  if (requested.includes("offline_access")) {
+    const client = await storage.oauthProvider?.getClient(clientId);
+    if (client && !clientMayRefresh(client.grantTypes)) {
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_scope",
+        error_description:
+          "offline_access needs a refresh token, and this client may not use one: register refresh_token in grant_types to ask for it.",
+      });
+    }
+  }
   await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
 }
 
