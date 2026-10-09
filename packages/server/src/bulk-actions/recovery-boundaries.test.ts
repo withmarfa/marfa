@@ -335,7 +335,10 @@ it("a rolled-back cascade does not leak carried membership into its later child 
   expect((await ctx.storage.items.getIncludingTrashed(child))?.state).toBe(
     "trashed",
   );
-  expect((await events(cursor)).map((e) => e.item_id)).toEqual([child]);
+  expect((await events(cursor)).map((e) => [e.item_id, e.event_type])).toEqual([
+    [child, "state_changed"],
+    [child, "deleted"],
+  ]);
   expect(await ctx.storage.bulkActionJobs.carriedItems("job", [child])).toEqual(
     new Set(),
   );

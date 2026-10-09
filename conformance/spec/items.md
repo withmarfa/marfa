@@ -824,6 +824,12 @@ If `POST /items/{id}/transition` names a `state` other than `active`, `archived`
 
 **Tests:** `correctness/lifecycle-transitions.test.ts › rejects a state outside the enum`, `› offers a canonical type three states, and not the fourth`.
 
+### `items/transition-announced`
+
+When a transition moves an item to another state, the server MUST announce `item.state_changed` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+
 ### `items/system-lifecycle`
 
 The server MUST hold a `system.*` item to the lifecycle `active` to `revoked`, where `revoked` is final.
@@ -898,6 +904,12 @@ When a cascade moves an item into the bin, the server MUST announce `item.delete
 
 **Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`.
 
+### `items/delete-announced`
+
+When a delete or a transition into the bin moves an item into the bin, the server MUST announce `item.deleted` for it.
+
+**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`.
+
 ### `items/trash-blocked`
 
 If a delete or a transition into the bin would move an item that a `block` edge holds, as its source or its target, the item named or one the cascade reaches, then the server MUST answer `400 edge_constraint_violation`.
@@ -970,7 +982,7 @@ When `POST /items/{id}/restore` names an item in the bin, the server MUST move i
 
 When a restore or a transition out of the bin moves an item to `active`, the server MUST announce `item.restored` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`.
+**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`, `› announces item.restored for the item a transition out of the bin names`, `compliance/cascade-marks.test.ts › names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/restore-live`
 
@@ -1014,7 +1026,7 @@ When a restore or a transition out of the bin brings back an item it did not nam
 
 The server MUST NOT carry `restored_with` on the `item.restored` of the item a restore or a transition named.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the row restored on each row its restore brings back, and not on the row itself`.
+**Tests:** `compliance/cascade-marks.test.ts › names the row restored on each row its restore brings back, and not on the row itself`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/restore-archive-alone`
 

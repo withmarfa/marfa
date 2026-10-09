@@ -1294,7 +1294,7 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "storage/item-write.ts": {
-    sites: 13,
+    sites: 14,
     why: "every item write's own events, inside its transaction: a create and its edges, an update with the keep-both copy it may write and the edges either changed, a delete and what its cascade took, a transition, a restore and what either brought back, and a purge with the edges it took",
   },
   "routes/items.ts": {
