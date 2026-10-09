@@ -738,6 +738,27 @@ describe("the instance from the terminal", () => {
     expect(readFileSync(out).equals(bytes)).toBe(true);
   });
 
+  it("refuses export, events and a delivery body under the private socket", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const viaSocket = c.cli.viaSocket(socket!);
+
+    // Direct local authority is answered 401 on these, so the command
+    // refuses before it sends anything.
+    for (const args of [
+      ["export"],
+      ["events"],
+      ["connectors", "deliveries", "body", "connector-id", "delivery-id"],
+    ]) {
+      const refused = await viaSocket.refused(args);
+      expect(refused.code, args.join(" ")).toBe(2);
+      expect(refused.envelope.error.code, args.join(" ")).toBe("usage");
+    }
+  });
+
   it("reaches management operations with named permissions and refuses a content key", async () => {
     const drift = await c.operator.json<{
       data: Array<{ id: string; item_count: number; removable: boolean }>;

@@ -281,6 +281,13 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
                 | Command::Device(_)
                 | Command::Folders { .. }
                 | Command::Docs(_)
+                | Command::Export(_)
+                | Command::Events(_)
+                | Command::Connectors {
+                    command: connectors::ConnectorsCommand::Deliveries {
+                        command: connectors::DeliveriesCommand::Body { .. }
+                    }
+                }
         )
     {
         return Err(CliError::Usage(
@@ -405,6 +412,37 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["marfa", "keys", "bootstrap"]).is_err());
         assert!(Cli::try_parse_from(["marfa", "keys", "create", "--operator"]).is_err());
+    }
+
+    #[test]
+    fn socket_authority_is_refused_for_commands_that_need_a_key() {
+        let usage = |words: &[&str]| {
+            let mut argv = vec!["marfa", "--socket", "/marfa-test-missing/control.sock"];
+            argv.extend_from_slice(words);
+            run(Cli::try_parse_from(argv).unwrap())
+        };
+        for words in [
+            &["export"][..],
+            &["events"],
+            &["connectors", "deliveries", "body", "id", "delivery"],
+        ] {
+            assert!(
+                matches!(usage(words), Err(CliError::Usage(ref message)) if message == "this command does not support --socket"),
+                "{words:?}"
+            );
+        }
+        // Witness: the neighbors of those commands are not refused as
+        // unsupported. They go on to the missing socket and fail there.
+        for words in [
+            &["connectors", "deliveries", "list", "id"][..],
+            &["connectors", "list"],
+            &["blobs", "download", "sha256:abc"],
+        ] {
+            assert!(
+                !matches!(usage(words), Err(CliError::Usage(ref message)) if message == "this command does not support --socket"),
+                "{words:?}"
+            );
+        }
     }
 
     #[test]

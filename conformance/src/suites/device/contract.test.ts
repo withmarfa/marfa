@@ -521,6 +521,32 @@ describe("the contract the binary was built for", () => {
     expect(missing.code).not.toBe(0);
     expect(server.requests).toEqual([]);
   });
+
+  it("refuses export, events and a delivery body under --socket before sending a request", async () => {
+    server = await ScriptedServer.start();
+    for (const args of [
+      ["export"],
+      ["events"],
+      ["connectors", "deliveries", "body", ID, ID],
+    ]) {
+      const label = args.join(" ");
+      // Witness: without --socket the same command does send its request.
+      const before = server.requests.length;
+      await marfa(["--json", "--url", server.url, "--key", KEY, ...args]);
+      expect(server.requests.length, label).toBeGreaterThan(before);
+
+      const sent = server.requests.length;
+      const refused = await marfa([
+        "--json",
+        "--socket",
+        "/marfa-test-missing/control.sock",
+        ...args,
+      ]);
+      expect(refused.code, `${label}: ${refused.stderr}`).toBe(2);
+      expect(refusal(refused.stderr).error.code, label).toBe("usage");
+      expect(server.requests.length, label).toBe(sent);
+    }
+  });
 });
 
 /**

@@ -1524,6 +1524,14 @@ When a command that streams its answer and needs no credential, such as `blobs d
 
 **Tests:** `cli/instance.test.ts › downloads a blob through the private socket, byte for byte`.
 
+### `device/local-socket-needs-key`
+
+If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST refuse it `usage` before it sends a request.
+
+**Reason:** direct local authority carries no key, and these doors answer it `401`.
+
+**Tests:** `device/contract.test.ts › refuses export, events and a delivery body under --socket before sending a request`, `cli/instance.test.ts › refuses export, events and a delivery body under the private socket`.
+
 ### `device/redeliver-request`
 
 When `webhooks redeliver <id> <delivery_id>` runs, the command MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.
