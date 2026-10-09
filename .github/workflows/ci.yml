@@ -56,7 +56,12 @@ jobs:
       core-checks: ${{ steps.classify.outputs.core-checks }}
       swift-package: ${{ steps.classify.outputs.swift-package }}
       core-checks-linux: ${{ steps.classify.outputs.core-checks-linux }}
-      conformance: ${{ steps.classify.outputs.conformance }}
+      conformance-offline: ${{ steps.classify.outputs.conformance-offline }}
+      conformance-correctness-sync: ${{ steps.classify.outputs.conformance-correctness-sync }}
+      conformance-compliance: ${{ steps.classify.outputs.conformance-compliance }}
+      conformance-device: ${{ steps.classify.outputs.conformance-device }}
+      conformance-statuses: ${{ steps.classify.outputs.conformance-statuses }}
+      conformance-shards: ${{ steps.classify.outputs.conformance-shards }}
       cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
       image: ${{ steps.classify.outputs.image }}
@@ -215,17 +220,32 @@ jobs:
   # answering about neither tree. Here the tree under test is the tree the
   # suite runs against.
   #
-  # A job in this workflow rather than one of its own, because `release.yml`
-  # names `ci.yml` as the run a commit must be green on before it can be
-  # released. A published package should not be able to come from a commit
-  # the contract failed.
-  conformance:
+  # Jobs in this workflow rather than a workflow of their own, because
+  # `release.yml` names `ci.yml` as the run a commit must be green on before
+  # it can be released. A published package should not be able to come from
+  # a commit the contract failed.
+  #
+  # The suite is one serial process per runner, so its time is its files'
+  # time added up. It is run as shards, each on a runner that boots its own
+  # object store and server: the fixtures isolate themselves by credential
+  # and share nothing between files. `scripts/ci-required.ts` says which
+  # groups of fixtures a change can affect and how many shards each group
+  # has, and writes the matrix. A group of more than one shard splits its
+  # files by the time they take (`conformance/src/utils/shard-sequencer.ts`).
+  # `Conformance` below is the one check a ruleset waits on.
+  conformance-shards:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance != 'false') }}
-    name: Conformance
-    # The serial suite includes real expiry waits and large archive restores.
-    timeout-minutes: 90
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-shards != '[]') }}
+    name: Conformance shard (${{ matrix.name }})
+    timeout-minutes: 30
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
+    strategy:
+      # Every shard reports, so one failure shows all the others there are.
+      fail-fast: false
+      matrix:
+        # The whole layout, for a classifier that did not answer; the
+        # classifier's test holds it to `conformanceShards`.
+        include: ${{ fromJSON(needs.changes.outputs.conformance-shards || '[{"name":"correctness and sync","slug":"correctness-sync","args":"--project correctness --project sync","device":false},{"name":"compliance 1/4","slug":"compliance-1","args":"--project compliance --shard=1/4","device":false},{"name":"compliance 2/4","slug":"compliance-2","args":"--project compliance --shard=2/4","device":false},{"name":"compliance 3/4","slug":"compliance-3","args":"--project compliance --shard=3/4","device":false},{"name":"compliance 4/4","slug":"compliance-4","args":"--project compliance --shard=4/4","device":false},{"name":"device 1/4","slug":"device-1","args":"--project device --shard=1/4","device":true},{"name":"device 2/4","slug":"device-2","args":"--project device --shard=2/4","device":true},{"name":"device 3/4","slug":"device-3","args":"--project device --shard=3/4","device":true},{"name":"device 4/4","slug":"device-4","args":"--project device --shard=4/4","device":true}]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -234,56 +254,52 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: pnpm
       - name: Install socket ACL inspection
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       # `marfa:up` runs the server through tsx, which resolves
-      # @withmarfa/shared through its dist, and the offline lane reads the
-      # type registry from the same place.
+      # @withmarfa/shared through its dist.
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # A pull request that leaves the crates alone reuses the binary `main`
-      # built from the same sources and runs no Rust. A push, the nightly and
-      # a dispatch always build it, with the current compiler.
+      # Only the device fixtures drive the `marfa` binary. A pull request
+      # that leaves the crates alone reuses the binary `main` built from the
+      # same sources and runs no Rust. A push, the nightly and a dispatch
+      # always build it, with the current compiler.
       - name: Key the device under test
         id: device-key
+        if: ${{ matrix.device }}
         run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the device under test
         id: device
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ matrix.device && github.event_name == 'pull_request' }}
         uses: actions/cache/restore@v6
         with:
           path: core/target/debug/marfa
           key: ${{ steps.device-key.outputs.key }}
       # Restored with the time it was built, which the device suite reads as
       # older than this checkout's sources; the key vouches that they match.
-      - if: ${{ steps.device.outputs.cache-hit == 'true' }}
+      - if: ${{ matrix.device && steps.device.outputs.cache-hit == 'true' }}
         run: touch core/target/debug/marfa
-      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+      - if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
-      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+      - if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the device under test
-        if: ${{ steps.device.outputs.cache-hit != 'true' }}
+        if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' }}
         working-directory: core
         run: cargo build -p marfa-cli
-      - if: ${{ steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+      - if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v6
         with:
           path: core/target/debug/marfa
           key: ${{ steps.device-key.outputs.key }}
-      - run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
-
-      # Typecheck, lint and format are not repeated here. The suite is a
-      # workspace package, so the root's own checks reach it and they run in
-      # the job above.
-      - name: Offline lane
-        working-directory: conformance
-        run: pnpm test:generators
+      - if: ${{ matrix.device }}
+        run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
 
       # The object store the server attaches beside its disk, so the
       # object-store half of the blob chapters is asserted rather than
@@ -306,37 +322,50 @@ jobs:
           pnpm marfa:up --state "$RUNNER_TEMP/marfa"
           cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
 
-      - name: Run the default selection
+      - name: Run the shard
         working-directory: conformance
+        env:
+          ARGS: ${{ matrix.args }}
         run: |
+          read -r -a args <<< "$ARGS"
           if [ "$RUNNER_OS" = macOS ]; then
-            ../core/scripts/login-keychain-unchanged.sh pnpm test:conformance
+            ../core/scripts/login-keychain-unchanged.sh pnpm exec vitest run "${args[@]}"
           else
-            pnpm test:conformance
+            pnpm exec vitest run "${args[@]}"
           fi
 
-      # Reads the log of the server the selection just drove, so it runs
-      # here rather than as a job of its own and before the stop, which
-      # clears the state directory the log is in. `--complete` because this
-      # selection reaches every door: a declared status nothing drew fails
-      # unless the checker lists why nothing can.
+      # Reads the log of the server the shard just drove, so it runs here
+      # rather than as a job of its own and before the stop, which clears
+      # the state directory the log is in. It holds every status observed to
+      # its declaration. That a declared status nothing drew fails unless the
+      # checker lists why nothing can (`--complete`) is a fact about the
+      # whole selection and not one shard, so `Conformance statuses` checks it
+      # over every shard's log.
       - name: Hold every status observed to its declaration
         working-directory: conformance
-        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa" --complete
+        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa"
+
+      # What `Conformance statuses` needs besides the log: the document this
+      # build serves, which the log is held to.
+      - name: Keep the document the server served
+        run: curl --fail --silent --show-error "$MARFA_API_URL/openapi.json" --output "$RUNNER_TEMP/marfa/openapi.json"
 
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it. The server is still running here, which costs
       # nothing: the log is appended to and what a failure needs is already
-      # written.
+      # written. Kept whether or not the shard passed, since the statuses job
+      # reads every shard's.
       - name: Keep the server log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: marfa-server-log
+          name: marfa-server-log-${{ matrix.slug }}
           path: |
             ${{ runner.temp }}/marfa/server.log
             ${{ runner.temp }}/marfa/fresh-server-logs/
+            ${{ runner.temp }}/marfa/openapi.json
           if-no-files-found: ignore
+          retention-days: 3
 
       # The detached server must be reaped even when the selection fails.
       - name: Stop the server
@@ -348,6 +377,96 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm garage:down --state "$RUNNER_TEMP/garage"
+
+  # The lane that needs no server and no object store: the generators,
+  # everything under `src/utils/`, the decision tests and the checks that the
+  # contract cites only what exists. A change to the contract alone runs
+  # this and nothing else of the conformance jobs, but for the two chapters
+  # a fixture reads.
+  conformance-offline:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-offline != 'false') }}
+    name: Conformance offline lane
+    timeout-minutes: 20
+    runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
+      - run: pnpm install --frozen-lockfile
+      # The lane reads the type registry through the dist of the packages
+      # the server is built from.
+      - run: pnpm --filter "@withmarfa/server..." build
+      - name: Offline lane
+        working-directory: conformance
+        run: pnpm test:generators
+
+  # A declared status that no request drew is a fixture someone removed or a
+  # door nobody exercises, and only the whole selection can tell: each shard
+  # draws a part of the statuses and holds those to their declaration
+  # itself. So this reads every shard's server log, with the document the
+  # servers served, and holds the declared statuses nothing drew to the
+  # checker's list of the ones nothing can draw. It runs when the change
+  # reaches every group of shards: a change that reaches fewer cannot say
+  # which statuses the others would have drawn, and the push to `main`
+  # after it runs them all.
+  conformance-statuses:
+    needs: [changes, conformance-shards]
+    if: ${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}
+    name: Conformance statuses
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: marfa-server-log-*
+          path: ${{ runner.temp }}/shard-logs
+      - name: Hold every declared status to a request
+        working-directory: conformance
+        run: pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete
+
+  # The check a ruleset waits on, and the one `release.yml`'s green run
+  # stands for. It passes when every conformance job that ran passed and
+  # when the classifier skipped them all, which a skipped job's required
+  # check did before the work was split; it fails when any of them failed
+  # or was cancelled.
+  conformance:
+    needs: [conformance-offline, conformance-shards, conformance-statuses]
+    if: ${{ !cancelled() }}
+    name: Conformance
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every conformance job that ran to have passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              failure | cancelled)
+                echo "::error::A conformance job ended as $result."
+                exit 1
+                ;;
+            esac
+          done
 
   # The scenario suite: the `marfa` binary driven as the reference client
   # against a server booted from this same checkout, end to end. A gate
@@ -449,8 +568,8 @@ jobs:
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-cli"
 
   # The restore drill: a fresh instance rebuilt from the bucket alone, to
-  # the byte, against the same local object store the conformance job
-  # attaches. Litestream streams the database and the server's own
+  # the byte, against the same local object store the conformance shards
+  # attach. Litestream streams the database and the server's own
   # replication carries the blobs; `conformance/scripts/restore-drill.ts`
   # says what it proves and prints its report, which is kept as an
   # artifact whether or not it passed.

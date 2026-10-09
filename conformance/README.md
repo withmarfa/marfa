@@ -142,7 +142,8 @@ verdicts the suites gate on. Among `src/utils/`, `schema-coverage.test.ts`
 reads the specification against itself, and `spec-citations.test.ts` holds
 every reference to it in the repository to a rule that exists, by ID.
 `vitest.config.ts` decides which file lands in which project, and the
-`test:conformance` script decides which projects the gate runs.
+`test:conformance` script decides which projects a local run of the gate runs;
+CI runs the same projects as shards.
 `test:cli` is the scenario suite's own gate, run by its own job.
 `test:performance` and `test:load` sit off the gate, and run every night and
 on request in `.github/workflows/benchmarks.yml`, the load suites at the
@@ -166,12 +167,40 @@ such as the owner, boots its own server with `bootFreshServer` in
 
 ## CI
 
-The `conformance` job in `.github/workflows/ci.yml` is the gate, on every pull
-request that can affect it and every push to `main`, on Ubuntu; it also runs on macOS every night
-and when the workflow is dispatched with `macos`. The tree under test is the tree the suite
-runs against and the device under test is the binary built from it: there is
-no pinned server commit and no second checkout. Typecheck, lint and formatting
-are not repeated there: the repository root's own checks reach this package
-and run in the job beside it. Lint is the one worth knowing about, because
-this package is deliberately not clean under the root ESLint config and
-`eslint.config.js` at the root says why.
+The contract's gate is `Conformance` in `.github/workflows/ci.yml`, on every pull
+request that can affect it and every push to `main`, on Ubuntu; it also runs on
+macOS every night and when the workflow is dispatched with `macos`. It is a
+check that collects the jobs below and passes when every one that ran passed,
+or when the classifier skipped them all.
+
+- **Shards.** The server's fixtures run in three groups, each on runners of
+  its own that boot their own object store and server: correctness and sync on
+  one, compliance over four and the device over four. The fixtures isolate
+  themselves by credential, so a runner takes any part of a group. A group of
+  more than one shard splits its files with `pnpm test:compliance --shard=1/4`,
+  weighed by the seconds each file takes (`src/utils/shard-weights.ts`) rather
+  than by Vitest's own split by path, which can leave one shard with far more of the slow files than another.
+  A file not in the weights is still run, by exactly one shard. Only the device
+  shards build or restore the `marfa` binary.
+- **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
+  server.
+- **Statuses.** Each shard holds the statuses its server answered to their
+  declaration and keeps its server log and the document it served.
+  `Conformance statuses` then merges every shard's log and holds the declared
+  statuses no request drew to the list of the ones nothing can draw
+  (`pnpm check:statuses --shards <dir> --complete`). That needs the whole
+  selection, so it runs when the change reaches all three groups; a change to
+  one group's fixtures runs that group, and the push to `main` that follows
+  runs them all.
+
+`scripts/ci-required.ts` says which groups a change reaches and writes the
+matrix. A change to `spec/` alone runs the offline lane, and the compliance
+shards only for `errors.md` and `coverage.md`, the two chapters a fixture reads
+while it runs.
+
+The tree under test is the tree the suite runs against and the device under
+test is the binary built from it: there is no pinned server commit and no
+second checkout. Typecheck, lint and formatting are not repeated there: the
+repository root's own checks reach this package and run in the job beside it.
+Lint is the one worth knowing about, because this package is deliberately not
+clean under the root ESLint config and `eslint.config.js` at the root says why.

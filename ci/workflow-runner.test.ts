@@ -27,8 +27,11 @@ const MAC_JOBS = new Set([
 const NIGHTLY_MAC_RUNNER =
   "${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
 
+// The statuses job and `Conformance`, the check that collects the others,
+// only read what the shards kept, so they run on Ubuntu.
 const NIGHTLY_MAC_JOBS = new Set([
-  "ci.yml:conformance",
+  "ci.yml:conformance-offline",
+  "ci.yml:conformance-shards",
   "ci.yml:cli-scenarios",
 ]);
 
