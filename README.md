@@ -30,6 +30,7 @@ Under the hood, Marfa is a server that keeps everything in a single SQLite file 
 git clone https://github.com/withmarfa/marfa.git
 cd marfa
 pnpm install
+pnpm build
 pnpm test
 ```
 

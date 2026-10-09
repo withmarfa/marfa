@@ -80,9 +80,8 @@ export interface RetentionOverride {
  * Hard-deletes trashed items that entered the bin longer ago than the
  * configured retention window. Idempotent.
  *
- * If `retentionDays <= 0`, the housekeeping job is a no-op: the operator
- * can leave the deployment running with no trash purge by setting the env
- * var to 0. The default at the config layer is 60.
+ * At a retention of 0 the job deletes nothing, so nothing in the trash
+ * expires by age. The setting's default is 60.
  *
  * When `override` is supplied, a `runOnce()` honors the
  * `trash_retention_days` override from the instance configuration. When

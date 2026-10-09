@@ -18,15 +18,19 @@ pub enum KeysCommand {
     /// unnamed is held as nothing. With none named, the key takes the
     /// caller's whole set.
     Create(KeyCreateArgs),
-    /// List key metadata. Needs `keys.manage` or direct owner/local authority.
+    /// List key metadata. Needs `keys.manage`, `keys.mint` (the keys within
+    /// the caller's reach) or direct owner/local authority.
     List,
     /// The key this call bears, without plaintext: what it holds and what it
     /// claims. Any key may read itself.
     Current,
-    /// Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct owner/local authority.
+    /// Change a key's label, tier, expiry or permission maps. Needs `keys.manage`,
+    /// `keys.mint` (a key within the caller's reach) or direct owner/local
+    /// authority.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
-    /// `keys.manage` or direct owner/local authority.
+    /// `keys.manage`, `keys.mint` (a key within the caller's reach) or direct
+    /// owner/local authority.
     Revoke {
         /// The key id.
         id: String,
@@ -105,7 +109,8 @@ pub struct PermissionMapArgs {
     /// An edge type and its level, `references=write`, repeatable.
     #[arg(long = "edge-permission", value_name = "TYPE=LEVEL")]
     pub edge_permissions: Vec<String>,
-    /// A metadata subresource and its level, `tags=write`, repeatable.
+    /// A kind of registration and its level, `types=write` or
+    /// `edge_types=write`, repeatable.
     #[arg(long = "metadata-permission", value_name = "NAME=LEVEL")]
     pub metadata_permissions: Vec<String>,
     /// A profile field and its level, `email=read`, repeatable.

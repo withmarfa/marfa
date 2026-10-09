@@ -309,8 +309,8 @@ pub struct CreateArgs {
 pub struct UpdateArgs {
     /// The item id.
     pub id: String,
-    /// The version the edit was based on. Required: a write that names no
-    /// version overwrites whatever it finds.
+    /// The version the edit was based on. Required: the server refuses an
+    /// update that names no version.
     #[arg(long)]
     pub version: i64,
     #[command(flatten)]

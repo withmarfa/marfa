@@ -162,9 +162,9 @@ When a credential sends `GET /connectors`, the server MUST answer the whole list
 
 ### `connectors/read-registration`
 
-When the connector's own key or direct owner or local authority sends `GET /connectors/{id}`, the server MUST answer `200` with the registration, as `POST /connectors` answers it.
+When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}`, the server MUST answer `200` with the registration, as `POST /connectors` answers it.
 
-**Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`, `› registers the key as a connector and lists it`.
+**Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`, `› registers the key as a connector and lists it`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
 
 ### `connectors/read-hidden`
 

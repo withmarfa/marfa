@@ -142,7 +142,7 @@ An update names the version it was made against, and a delete names the version 
 
 If a caller queues an update that names no version, then a device MUST refuse it, queueing and sending nothing.
 
-**Reason:** a write that names no version overwrites whatever it finds (`versions/update-version-missing`).
+**Reason:** the server refuses an update that names no version (`versions/update-version-missing` and `edges/update-version-required`), so a device that sent one would learn only later that it could never land.
 
 **Tests:** `device/queue.test.ts › refuses an update queued with no version`.
 

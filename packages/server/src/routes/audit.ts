@@ -23,7 +23,7 @@ const AuditEntrySchema = z
       ),
     action: z
       .string()
-      .describe("What happened, such as `key.create` or `owner.created`."),
+      .describe("What happened, such as `key.create` or `owner.claimed`."),
     resource_type: z
       .string()
       .describe("The kind of resource acted on, such as `key`."),

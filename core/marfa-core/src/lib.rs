@@ -1094,7 +1094,7 @@ impl Core {
         };
         let Some(base) = edit.base_version else {
             return Err(CoreError::Invalid(format!(
-                "an update to edge {id} carries no version; a write that names no version overwrites whatever it finds"
+                "an update to edge {id} carries no version; name the version the edit was based on"
             )));
         };
         if base != held.version {
@@ -1887,7 +1887,7 @@ fn queue_update(
     };
     let Some(base) = edit.base_version else {
         return Err(CoreError::Invalid(format!(
-            "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
+            "an update to {id} carries no version; name the version the edit was based on"
         )));
     };
     // An unchanged type or tier is not sent: the drain reads one in a sent

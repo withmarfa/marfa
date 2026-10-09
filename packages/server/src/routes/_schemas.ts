@@ -71,7 +71,7 @@ export const TierEnum = z
 export const PermissionEnum = z
   .enum(PERMISSIONS as unknown as [string, ...string[]])
   .describe(
-    "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access.",
+    "A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, platform type drift, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.",
   )
   .openapi("Permission");
 

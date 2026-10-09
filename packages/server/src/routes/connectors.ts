@@ -333,7 +333,7 @@ export const ownKeyOrManagerResponses = {
 // ---------------------------------------------------------------------------
 
 /**
- * A connector registers under a working key of its own. A session token's
+ * A connector registers under a working key of its own. An access token's
  * synthetic key is the token row, renewed on every refresh, so a
  * registration keyed to it would be orphaned by the next.
  */
@@ -348,7 +348,7 @@ const workingKeyOnly = standingRule("a working key", (c) => {
   if (c.get("authType") === "oauth") {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
-      "A connector registers under a key, not under an app's session token",
+      "A connector registers under a key, not under an app's access token",
     );
   }
 });
@@ -390,7 +390,7 @@ const registerConnectorRoute = createRoute({
     },
     ...anyKeyResponses,
     ...forbiddenResponse(
-      "- `forbidden`: your credential is an app's session token, not a key, or direct owner or local authority.",
+      "- `forbidden`: your credential is an app's access token, not a key, or direct owner or local authority.",
     ),
   },
 });
