@@ -93,6 +93,9 @@ interface HookCtxLite {
   /** The request headers; read for a client that authenticates with HTTP
    *  Basic rather than a `client_id` in the body. */
   headers?: Headers | null;
+  /** The request as it arrived; read for a form field sent more than once,
+   *  which the parsed `body` holds only the last value of. */
+  request?: Request;
   /** Set by the same before-hook when the presented token was already
    *  nothing this server would accept before the plugin ran. */
   revokedTokenWasDead?: boolean;
@@ -825,8 +828,14 @@ function settleRegistrationScope(
     typeof body.scope === "string"
       ? [...new Set(body.scope.split(" ").filter((s) => s.length > 0))]
       : [];
+  // The provider's schema trims each grant type before it stores them.
+  const grantTypes = Array.isArray(body.grant_types)
+    ? body.grant_types.map((g: unknown) =>
+        typeof g === "string" ? g.trim() : g,
+      )
+    : body.grant_types;
   if (asked.length > 0) request.registrationScopes = asked;
-  else if (!clientMayRefresh(body.grant_types))
+  else if (!clientMayRefresh(grantTypes))
     request.registrationScopes = [...allowed].filter(
       (s) => s !== "offline_access",
     );
@@ -884,13 +893,14 @@ function normalizeRevokeToken(raw: unknown): string | undefined {
 }
 
 /**
- * The client a revoke request authenticates as, in the plugin's own order
- * of precedence: a client assertion first, then HTTP Basic, then the
- * `client_id` in the body. The order matters because the body field is not
- * an authentication attempt: the plugin admits `Authorization: Basic` beside
- * a bare body `client_id` and never compares the two, so a hook that read
- * the body first would take the caller's word over the credential the
- * plugin verified. An assertion is answered with undefined, since verifying
+ * The client a revoke or device code request authenticates as, in the
+ * plugin's own order of precedence: a client assertion first, then HTTP
+ * Basic, then the `client_id` in the body. The order matters because the
+ * body field is not an authentication attempt: the plugin admits
+ * `Authorization: Basic` beside a bare body `client_id` and never compares
+ * the two, so a hook that read the body first would take the caller's word
+ * over the credential the plugin verified. An assertion is answered with
+ * undefined, since verifying
  * one is the plugin's job and nothing here should pretend to; the caller
  * treats that as "cannot tell" and does nothing.
  *
@@ -898,7 +908,7 @@ function normalizeRevokeToken(raw: unknown): string | undefined {
  * shape that exercises it (a confidential client) is not one the store's
  * public-only registration mints.
  */
-export function resolveRevokeClientId(input: {
+export function resolvePresentedClientId(input: {
   body: Record<string, unknown> | undefined;
   headers: Headers | null | undefined;
 }): string | undefined {
@@ -985,7 +995,7 @@ async function resolveClientRevoke(
     const request = credentialRequest.getStore();
     if (
       request &&
-      resolveRevokeClientId({ body, headers: ctx.headers }) === row.clientId
+      resolvePresentedClientId({ body, headers: ctx.headers }) === row.clientId
     ) {
       request.revoke = { clientId: row.clientId, userId: row.userId };
     } else if (request) {
@@ -1878,15 +1888,9 @@ async function offerDeviceScopes(
   storage: Storage,
   bundleScopes: Set<string>,
 ): Promise<void> {
-  const body = ctx.body;
-  if (!body || typeof body !== "object") return;
-  const clientId = body.client_id;
-  const rawScope = body.scope;
-  if (typeof clientId !== "string" || clientId.length === 0) return;
-  const requested =
-    typeof rawScope === "string"
-      ? rawScope.split(" ").filter((s) => s.length > 0)
-      : [];
+  const asked = await readDeviceCodeRequest(ctx);
+  if (!asked) return;
+  const { clientId, requested } = asked;
   if (requested.includes("offline_access")) {
     const client = await storage.oauthProvider?.getClient(clientId);
     if (client && !clientMayRefresh(client.grantTypes)) {
@@ -1898,6 +1902,84 @@ async function offerDeviceScopes(
     }
   }
   await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
+}
+
+/** The fields of a device code request the client and its scope are read from. */
+const DEVICE_CODE_FIELDS = [
+  "client_id",
+  "scope",
+  "client_secret",
+  "client_assertion",
+  "client_assertion_type",
+] as const;
+
+/**
+ * The client a device code request names and the scopes it asks for, read
+ * as the provider and its device plugin read them, or undefined where the
+ * hook cannot tell the client.
+ *
+ * A form field sent more than once counts as its one non-empty value, and
+ * more than one non-empty value is refused by the plugin. The scope splits
+ * on any run of whitespace. The client follows `resolvePresentedClientId`,
+ * except that an assertion names the client in its `sub`, or else its `iss`,
+ * which must match a `client_id` sent beside it. The hook reads that claim
+ * unverified: the provider verifies the assertion before it issues a code,
+ * so a forged one is refused either way.
+ *
+ * Every request the hook cannot tell the client of is one the provider
+ * refuses on its own: a repeated field, an assertion naming no client or a
+ * different one, or no client at all.
+ */
+async function readDeviceCodeRequest(
+  ctx: HookCtxLite,
+): Promise<{ clientId: string; requested: string[] } | undefined> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return undefined;
+  const fields: Record<string, string | undefined> = {};
+  for (const field of DEVICE_CODE_FIELDS) {
+    const value = body[field];
+    fields[field] =
+      typeof value === "string" && value.length > 0 ? value : undefined;
+  }
+  const contentType = ctx.request?.headers.get("content-type") ?? "";
+  if (ctx.request && /application\/x-www-form-urlencoded/i.test(contentType)) {
+    const form = new URLSearchParams(await ctx.request.clone().text());
+    for (const field of DEVICE_CODE_FIELDS) {
+      const values = form.getAll(field).filter((v) => v.length > 0);
+      if (values.length > 1) return undefined;
+      fields[field] = values[0];
+    }
+  }
+  const clientId =
+    fields.client_assertion !== undefined ||
+    fields.client_assertion_type !== undefined
+      ? assertedClientId(fields.client_assertion, fields.client_id)
+      : resolvePresentedClientId({ body: fields, headers: ctx.headers });
+  if (clientId === undefined) return undefined;
+  const requested = (fields.scope ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((s) => s.length > 0);
+  return { clientId, requested };
+}
+
+/** The client a JWT client assertion claims to be, as the provider reads it. */
+function assertedClientId(
+  assertion: string | undefined,
+  hint: string | undefined,
+): string | undefined {
+  try {
+    const payload: unknown = JSON.parse(
+      Buffer.from(assertion?.split(".")[1] ?? "", "base64url").toString(),
+    );
+    if (!payload || typeof payload !== "object") return undefined;
+    const claims = payload as { sub?: unknown; iss?: unknown };
+    const claimed = claims.sub ?? claims.iss;
+    if (typeof claimed !== "string" || claimed.length === 0) return undefined;
+    return hint === undefined || hint === claimed ? claimed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

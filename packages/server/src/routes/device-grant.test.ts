@@ -18,6 +18,7 @@
  * not another's to approve; a client without the grant cannot initiate; and
  * the discovery document advertises the grant and the initiation endpoint.
  */
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { createTestContext, request, storedDeviceCode } from "../test-utils.js";
@@ -587,5 +588,158 @@ describe("the device authorization grant through the provider plugin", () => {
     };
     expect(body.grant_types_supported).toContain(DEVICE_CODE_GRANT_TYPE);
     expect(body.device_authorization_endpoint).toMatch(/\/auth\/device\/code$/);
+  });
+});
+
+describe("the offline_access refusal reads a device code request as the provider does", () => {
+  const ASKED = "core.note:read offline_access";
+
+  /** A refused answer, which names the registration the client lacks. */
+  async function expectRefused(res: Response): Promise<void> {
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.error_description).toContain("refresh_token");
+    expect(body.device_code).toBeUndefined();
+  }
+
+  async function ask(
+    c: TestContext,
+    form: Record<string, string | string[]>,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    return request(c.app, "POST", "/auth/device/code", {
+      form,
+      headers: { origin: ORIGIN, ...headers },
+    });
+  }
+
+  it("refuses a client that authenticates with HTTP Basic and names no client_id", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const res = await request(c.app, "POST", "/auth/oauth2/register", {
+      body: {
+        client_name: "Device Test App",
+        grant_types: [DEVICE_CODE_GRANT_TYPE],
+        token_endpoint_auth_method: "client_secret_basic",
+        response_types: [],
+        scope: ASKED,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(201);
+    const { client_id, client_secret } = (await res.json()) as {
+      client_id: string;
+      client_secret: string;
+    };
+    const basic = {
+      authorization: `Basic ${Buffer.from(
+        `${encodeURIComponent(client_id)}:${encodeURIComponent(client_secret)}`,
+      ).toString("base64")}`,
+    };
+    // The witness: the provider authenticates the client from the header.
+    expect((await ask(c, { scope: "core.note:read" }, basic)).status).toBe(200);
+    await expectRefused(await ask(c, { scope: ASKED }, basic));
+  });
+
+  it("refuses offline_access separated from the other scopes by a tab", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], ASKED);
+    await expectRefused(
+      await ask(c, {
+        client_id: deviceOnly.client_id,
+        scope: "core.note:read\toffline_access",
+      }),
+    );
+  });
+
+  it("refuses a repeated scope or client_id field whose last value is empty", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], ASKED);
+    // The witness: the provider reads the one value that is not empty.
+    expect(
+      (
+        await ask(c, {
+          client_id: deviceOnly.client_id,
+          scope: ["core.note:read", ""],
+        })
+      ).status,
+    ).toBe(200);
+    await expectRefused(
+      await ask(c, { client_id: deviceOnly.client_id, scope: [ASKED, ""] }),
+    );
+    await expectRefused(
+      await ask(c, { client_id: [deviceOnly.client_id, ""], scope: ASKED }),
+    );
+  });
+
+  it("refuses a client that authenticates with a signed assertion", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    });
+    const kid = randomUUID();
+    const res = await request(c.app, "POST", "/auth/oauth2/register", {
+      body: {
+        client_name: "Device Test App",
+        grant_types: [DEVICE_CODE_GRANT_TYPE],
+        token_endpoint_auth_method: "private_key_jwt",
+        response_types: [],
+        scope: ASKED,
+        jwks: {
+          keys: [{ ...publicKey.export({ format: "jwk" }), kid, alg: "ES256" }],
+        },
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const { client_id } = (await res.json()) as { client_id: string };
+    const discovery = (await (
+      await request(
+        c.app,
+        "GET",
+        "/.well-known/oauth-authorization-server/auth",
+      )
+    ).json()) as { device_authorization_endpoint: string };
+    const assertion = (): string => {
+      const now = Math.floor(Date.now() / 1000);
+      const part = (value: unknown) =>
+        Buffer.from(JSON.stringify(value)).toString("base64url");
+      const signed = `${part({ alg: "ES256", kid, typ: "JWT" })}.${part({
+        iss: client_id,
+        sub: client_id,
+        aud: discovery.device_authorization_endpoint,
+        iat: now,
+        exp: now + 60,
+        jti: randomUUID(),
+      })}`;
+      const signature = sign("sha256", Buffer.from(signed), {
+        key: privateKey,
+        dsaEncoding: "ieee-p1363",
+      }).toString("base64url");
+      return `${signed}.${signature}`;
+    };
+    const asserted = (scope: string) => ({
+      scope,
+      client_assertion_type:
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_assertion: assertion(),
+    });
+    // The refusal comes before the provider verifies the assertion, so it
+    // holds whatever that verification would answer.
+    await expectRefused(await ask(c, asserted(ASKED)));
+  });
+
+  it("registers a client whose grant_types name refresh_token with stray spaces for offline_access", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const registered = await register(c, [
+      DEVICE_CODE_GRANT_TYPE,
+      " refresh_token ",
+    ]);
+    expect(registered.scope.split(" ")).toContain("offline_access");
   });
 });

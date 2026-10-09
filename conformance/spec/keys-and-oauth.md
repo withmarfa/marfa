@@ -888,7 +888,7 @@ When a registration names no scope, the server MUST register the client for ever
 
 **Reason:** Such a client may not exchange a refresh token, and `keys-and-oauth/device-offline-no-refresh` refuses it `offline_access`, so a default that held the scope would register the client for a scope it can never use.
 
-**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/device-grant.test.ts › registers a client that may not refresh, naming no scope, for every scope but offline_access, and answers its device flow an access token alone`.
+**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for every scope but offline_access, and answers its device flow an access token alone`.
 
 ### `keys-and-oauth/register-web-default`
 
@@ -1108,7 +1108,7 @@ When the server issues tokens to a client whose `grant_types` name `refresh_toke
 
 **Reason:** `grant_types` names the grants a client uses at the token endpoint (RFC 7591), so a client may exchange a refresh token only where it names `refresh_token`, or names `authorization_code` and refreshes what that grant issues.
 
-**Tests:** `compliance/oauth-tokens.test.ts › are issued only to an authorization that asked for offline_access`, `compliance/device-grant.test.ts › answers offline_access a refresh token, which exchanges, for a client registered for the refresh grant`.
+**Tests:** `compliance/oauth-tokens.test.ts › are issued only to an authorization that asked for offline_access`, `compliance/device-offline-access.test.ts › answers offline_access a refresh token, which exchanges, for a client registered for the refresh grant`, `› answers offline_access a refresh token, which exchanges, for a client registered for the code grant and not the refresh grant`.
 
 ### `keys-and-oauth/refresh-online-none`
 
