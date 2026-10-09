@@ -1,0 +1,153 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import { TEST_OWNER as OWNER } from "../../utils/target.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
+import {
+  authorize,
+  authorizeQuery,
+  codeFor,
+  connect,
+  issuerOrigin,
+  pkce,
+  registerApp,
+  signIn,
+  token,
+} from "../../utils/signed-in.js";
+
+/**
+ * The audit record of a change to a credential, and of the security
+ * observations the sign-in operations make, read the moment the answer
+ * arrives: an answer that came before its record would leave a change no
+ * one can account for. Sign-in and consent need the owner, so this file
+ * boots a server of its own.
+ */
+let server: FreshServer;
+let origin: string;
+let cookie: string;
+let management: MarfaClient;
+
+const NOTES = "core.note:read";
+
+beforeAll(async () => {
+  server = await bootFreshServer("credential-audit");
+  origin = await issuerOrigin(server);
+  cookie = await signIn(server, origin);
+  management = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: server.managementKey,
+  });
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+afterAll(async () => {
+  await server.stop();
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+/** The audit entries of one action, optionally of one resource. */
+async function logged(action: string, resourceId?: string): Promise<number> {
+  const page = await management.listAudit({
+    action,
+    resource_id: resourceId,
+    limit: 200,
+  });
+  expect(page.status, JSON.stringify(page.error)).toBe(200);
+  return page.data.data.length;
+}
+
+describe("a credential change", () => {
+  it("is in the audit log when the mint, the update and the revoke of a key answer", async () => {
+    const minted = await management.createKey({
+      label: "audited",
+      source: "audited",
+      permissions: ["audit.read"],
+    });
+    expect(minted.status).toBe(201);
+    expect(await logged("key.create", minted.data.id)).toBe(1);
+    expect(
+      (await management.updateKey(minted.data.id, { label: "audited-2" }))
+        .status,
+    ).toBe(200);
+    expect(await logged("key.update", minted.data.id)).toBe(1);
+    expect((await management.revokeKey(minted.data.id)).status).toBe(200);
+    expect(await logged("key.revoke", minted.data.id)).toBe(1);
+  });
+
+  it("is in the audit log when a consent, a token and a grant's revocation answer", async () => {
+    const consents = await logged("auth.grant.created");
+    const tokens = await logged("auth.token.issued");
+    const app = await registerApp(server, NOTES);
+    await connect(server, origin, cookie, app, NOTES);
+    expect(await logged("auth.grant.created")).toBe(consents + 1);
+    expect(await logged("auth.token.issued")).toBeGreaterThan(tokens);
+
+    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    const grant = (
+      (await listed.json()) as { data: { id: string; client_id: string }[] }
+    ).data.find((g) => g.client_id === app.clientId);
+    expect(grant).toBeDefined();
+    const revokes = await logged("auth.grant.revoked");
+    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    expect(revoked.status).toBe(204);
+    expect(await logged("auth.grant.revoked")).toBe(revokes + 1);
+  });
+});
+
+describe("a security observation", () => {
+  it("is in the audit log when the refusal of a failed sign-in answers", async () => {
+    const before = await logged("auth.sign_in.failed");
+    const failed = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ email: OWNER.email, password: "not it" }),
+    });
+    expect(failed.status).toBe(401);
+    expect(await logged("auth.sign_in.failed")).toBe(before + 1);
+  });
+
+  it("is in the audit log when the refusal of a replayed refresh token answers", async () => {
+    const scope = `${NOTES} offline_access`;
+    const app = await registerApp(server, scope);
+    const first = await connect(server, origin, cookie, app, scope);
+    const form = {
+      grant_type: "refresh_token",
+      client_id: app.clientId,
+      refresh_token: first.refresh_token!,
+    };
+    expect((await token(server, form)).status).toBe(200);
+    const before = await logged("auth.refresh.replayed");
+    const replayed = await token(server, form);
+    expect(replayed.status).toBe(400);
+    expect(await logged("auth.refresh.replayed")).toBe(before + 1);
+  });
+
+  it("is in the audit log when an authorization narrowed to what can be granted answers", async () => {
+    const app = await registerApp(server, NOTES);
+    const before = await logged("auth.scopes.narrowed", app.clientId);
+    const response = await authorize(
+      server,
+      authorizeQuery(
+        app.clientId,
+        `${NOTES} user.nothing_registered_here:read`,
+        pkce(),
+      ),
+      cookie,
+    );
+    expect([200, 302]).toContain(response.status);
+    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(
+      before + 1,
+    );
+    // The witness: a request nothing narrows records no such entry.
+    await codeFor(server, origin, cookie, app, NOTES);
+    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(
+      before + 1,
+    );
+  });
+});
