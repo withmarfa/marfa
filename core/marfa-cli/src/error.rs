@@ -48,7 +48,7 @@ pub enum CliError {
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
     #[error(
-        "no credential for {origin}: pass --key, set MARFA_API_KEY, keep a key with `marfa keys keep`, or sign in with `marfa login`"
+        "no credential for {origin}: set MARFA_API_KEY, keep a key with `marfa keys keep`, sign in with `marfa login`, or pass --key"
     )]
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
@@ -122,12 +122,13 @@ impl From<CoreError> for CliError {
                     status,
                     code,
                     message,
+                    details,
                 } => Self::Refused {
                     status,
                     code,
                     message,
                     retry_after_seconds: None,
-                    details: None,
+                    details,
                 },
                 CoreError::RateLimited {
                     code,

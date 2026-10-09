@@ -33,13 +33,13 @@ echo "== follow, while the binary makes a note on the server"
 node_proof follow &
 node_follow=$!
 sleep 3
-"${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_API_KEY}" \
+"${core}/target/debug/marfa" \
   items create --type core.note --tier feed \
   --properties '{"title":"Made by the binary","body":"arrives through follow"}' >/dev/null
 wait "${node_follow}"
 
 echo "== thumbnail, read from the copy with no request"
-marfa() { "${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_API_KEY}" "$@" >/dev/null; }
+marfa() { "${core}/target/debug/marfa" "$@" >/dev/null; }
 # The server does not recheck a value written before its property became a
 # thumbnail, so the copy holds one value that is not an image.
 marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'

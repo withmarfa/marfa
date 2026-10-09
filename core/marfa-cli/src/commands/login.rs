@@ -2,6 +2,7 @@ use clap::Args;
 use serde_json::json;
 
 use crate::auth::{self, DeviceCode, Discovery};
+use crate::cleartext;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::output::Printer;
@@ -32,6 +33,7 @@ pub struct LoginArgs {
 
 pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
     let url = Remote::url_named(named)?;
+    cleartext::guard(&url);
     let remote = Remote::public_at(&url)?;
     let origin = remote.origin().to_string();
     // A lock no command may use would leave an approved token nowhere to go.

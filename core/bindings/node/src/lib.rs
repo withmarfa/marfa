@@ -973,6 +973,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             status,
             code,
             message,
+            ..
         } => format!("answered {status} ({code}): {message}"),
         E::Io(message)
         | E::Network(message)

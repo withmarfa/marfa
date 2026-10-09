@@ -10,8 +10,8 @@ export MARFA_SERVER_ENV="${work}/server.env"
 trap '"${scripts}/server-down.sh" "${MARFA_SERVER_ENV}" >/dev/null 2>&1 || true; rm -rf "${work}"' EXIT
 
 check_key() {
-  curl -fsS --max-time 10 "${MARFA_TEST_URL}/keys/current" \
-    -H "Authorization: Bearer $1" |
+  printf 'Authorization: Bearer %s\n' "$1" |
+    curl -fsS --max-time 10 "${MARFA_TEST_URL}/keys/current" -H @- |
     python3 -c 'import json,sys
 key = json.load(sys.stdin)
 assert "keys.mint" in key["permissions"], "missing working permission"

@@ -12,6 +12,7 @@ use marfa_core::{Core, CoreError, Server};
 use serde_json::Value;
 
 use crate::auth;
+use crate::cleartext;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 #[cfg(test)]
@@ -192,11 +193,13 @@ fn renewal_error(error: CliError) -> CoreError {
             status,
             code,
             message,
+            details,
             ..
         } => CoreError::Server {
             status,
             code,
             message,
+            details,
         },
         CliError::ContractMismatch {
             origin,
@@ -267,6 +270,9 @@ impl Remote {
         bearer: Option<String>,
         kept: Option<Kept>,
     ) -> Result<Remote, CliError> {
+        if bearer.as_deref().is_some_and(|bearer| !bearer.is_empty()) {
+            cleartext::guard(url);
+        }
         let http = Http::with_timeouts(
             url,
             bearer.as_deref().unwrap_or_default(),
@@ -755,6 +761,22 @@ mod tests {
                 retry_after_seconds: None,
                 details: None,
             },
+            CliError::Refused {
+                status: 400,
+                code: "invalid_scope".into(),
+                message: "refused scope".into(),
+                retry_after_seconds: None,
+                details: Some(Box::new(
+                    serde_json::json!({ "required_scope": "items.read" }),
+                )),
+            },
+            CliError::Refused {
+                status: 429,
+                code: "rate_limited".into(),
+                message: "slow down".into(),
+                retry_after_seconds: Some(30),
+                details: None,
+            },
         ];
         for error in errors {
             let expected = error.envelope();
@@ -783,6 +805,62 @@ mod tests {
             assert_eq!(crossed.code(), code);
             assert_eq!(crossed.exit(), exit);
             assert!(crossed.envelope()["error"]["server"].is_null());
+        }
+    }
+
+    #[test]
+    fn a_refused_renewal_keeps_the_structured_details_of_the_server_refusal() {
+        let present = serde_json::json!({ "required_scope": "items.read" });
+        for expected in [Some(present), None] {
+            let details = match &expected {
+                Some(details) => format!(r#","details":{details}"#),
+                None => String::new(),
+            };
+            let refusal = format!(
+                r#"{{"error":{{"code":"invalid_scope","message":"scope refused"{details}}}}}"#
+            );
+            let door = Door::open(vec![
+                Answer::json(
+                    "401 Unauthorized",
+                    r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+                ),
+                root(&marfa_core::contract::CONTRACT_VERSION.to_string()),
+                Answer::json("400 Bad Request", &refusal),
+            ]);
+            let kept = Kept::Token {
+                access_token: "marfa_at_old".into(),
+                refresh_token: Some("marfa_rt_old".into()),
+                expires_at: Some(crate::auth::now_seconds() + 3600),
+                client_id: "client".into(),
+                scope: None,
+                token_endpoint: format!("{}/auth/oauth2/token", door.url),
+                revocation_endpoint: None,
+            };
+            let origin = marfa_core::http::origin_of(&door.url).unwrap();
+            let _keychain = credentials::hold(&origin);
+            credentials::keep(&origin, &kept).unwrap();
+            let remote = Remote::holding(&door.url, kept).unwrap();
+            let error = remote.json(&Request::get(&["items"])).unwrap_err();
+            match &error {
+                CliError::Refused {
+                    status,
+                    code,
+                    message,
+                    retry_after_seconds,
+                    details,
+                } => {
+                    assert_eq!((*status, code.as_str()), (400, "invalid_scope"));
+                    assert_eq!(message, "scope refused");
+                    assert_eq!(*retry_after_seconds, None);
+                    assert_eq!(details.as_deref(), expected.as_ref());
+                }
+                other => panic!("{other:?}"),
+            }
+            let server = &error.envelope()["error"]["server"];
+            assert_eq!(server["status"], 400);
+            assert_eq!(server["code"], "invalid_scope");
+            assert_eq!(server["details"], expected.unwrap_or(Value::Null));
+            door.received();
         }
     }
 
@@ -857,6 +935,16 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_guards_its_address_only_where_it_holds_a_credential() {
+        let door = Door::open(vec![]);
+        Remote::public_at(&door.url).unwrap();
+        Remote::keeping(&door.url, "o".into(), None, Some(String::new()), None).unwrap();
+        assert_eq!(cleartext::guarded(), Vec::<String>::new());
+        Remote::keyed(&door.url, "marfa_k1_x").unwrap();
+        assert_eq!(cleartext::guarded(), vec![door.url.clone()]);
+    }
+
+    #[test]
     fn a_call_with_no_credential_is_refused_before_it_is_sent() {
         let door = Door::open(vec![]);
         let remote = remote_at(&door, None);
@@ -912,6 +1000,15 @@ mod tests {
         assert!(
             matches!(credentials::read(&origin).unwrap(), Some(Kept::Token { access_token, .. }) if access_token == "marfa_at_new"),
             "the rotated set is the kept one, and the refused refresh left it"
+        );
+        let token = format!("{}/auth/oauth2/token", door.url);
+        assert_eq!(
+            cleartext::guarded()
+                .iter()
+                .filter(|guarded| **guarded == token)
+                .count(),
+            2,
+            "each refresh token sent is guarded first"
         );
         let received = door.received();
         let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();

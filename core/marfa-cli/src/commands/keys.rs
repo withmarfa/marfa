@@ -33,7 +33,8 @@ pub enum KeysCommand {
     },
     /// Keep a key for this server in the operating system's keychain, and
     /// make this server the one a bare command talks to. The key is read
-    /// from `--key`, from MARFA_API_KEY, or from stdin; never from a file.
+    /// from MARFA_API_KEY or from stdin, or from `--key`, which other users
+    /// of the machine can read in the process list; never from a file.
     Keep,
     /// Forget the key kept for this server.
     Forget,
@@ -364,7 +365,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let key = match key {
         Some(key) => key,
         None => {
-            read_line("no key to keep: pass --key, set MARFA_API_KEY, or write the key on stdin")?
+            read_line("no key to keep: set MARFA_API_KEY, write the key on stdin, or pass --key")?
         }
     };
     crate::auth::with_credential_lock(remote.origin(), || {

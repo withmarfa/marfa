@@ -1576,6 +1576,56 @@ When `keys forget` runs, the command MUST forget the credential kept for the ser
 
 **Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
 
+### `device/command-cleartext-warning`
+
+If the command is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the command MUST print a warning that names the address on standard error before it sends the credential.
+
+**Reason:** a credential sent over plain `http` can be read by anyone on the path, and the owner may not have noticed the scheme of the address that was named.
+
+**Tests:** `cli/cleartext.test.ts › warns before it sends a key to a plain http address on another host, and then sends it`, `› warns before a working copy sends a key to a plain http address on another host`.
+
+### `device/command-cleartext-sends`
+
+When the command has printed the plain `http` warning, the command MUST go on to send the request.
+
+**Reason:** an owner's private network may already be encrypted below the address, so the warning informs and does not refuse.
+
+**Tests:** `cli/cleartext.test.ts › warns before it sends a key to a plain http address on another host, and then sends it`.
+
+### `device/command-cleartext-sign-in`
+
+If `login` is given an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the command MUST print a warning that names the address on standard error before it sends a request to it.
+
+**Reason:** a sign-in sends a device code and receives tokens, and the person types a password on the address's sign-in page.
+
+**Tests:** `cli/cleartext.test.ts › warns before a sign-in sends anything to a plain http address on another host`.
+
+### `device/command-cleartext-loopback`
+
+Where the address of the server is `http` and its host is `localhost`, an address in `127.0.0.0/8` or `::1`, the command MUST NOT print the plain `http` warning.
+
+**Reason:** a request to this machine does not cross a network.
+
+**Tests:** `cli/cleartext.test.ts › prints no warning for a plain http address on this machine, which it reaches with the key`.
+
+### `device/command-cleartext-https`
+
+Where the address of the server is `https`, the command MUST NOT print the plain `http` warning.
+
+**Tests:** `cli/cleartext.test.ts › prints no warning for an https address, which it reaches`.
+
+### `device/command-cleartext-allow-flag`
+
+Where `--allow-http` is given, the command MUST NOT print the plain `http` warning.
+
+**Tests:** `cli/cleartext.test.ts › prints no warning where --allow-http states it is intended, and sends the key`.
+
+### `device/command-cleartext-allow-env`
+
+Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the command MUST NOT print the plain `http` warning.
+
+**Tests:** `cli/cleartext.test.ts › prints no warning where MARFA_ALLOW_HTTP states it is intended, and warns where it does not`.
+
 ## The working copy's contract
 
 The contract version a device speaks is the one in the document its core is built from.

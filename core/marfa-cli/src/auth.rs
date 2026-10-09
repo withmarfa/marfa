@@ -12,6 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::cleartext;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::remote::Remote;
@@ -208,6 +209,7 @@ pub enum Poll {
 }
 
 pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result<Poll, CliError> {
+    cleartext::guard(&discovery.token_endpoint);
     let door = Remote::public_at(&discovery.token_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().form(&[
         ("grant_type", DEVICE_CODE_GRANT),
@@ -344,6 +346,7 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
     // An answer on another contract is not read, which would leave the kept
     // refresh token spent with no new pair, so the root is checked first.
     Remote::public_at(origin)?.hold_root()?;
+    cleartext::guard(&token_endpoint);
     let door = Remote::public_at(&token_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().form(&[
         ("grant_type", "refresh_token"),
@@ -585,6 +588,7 @@ pub fn revoke(kept: &Kept) -> Result<bool, CliError> {
         ..
     } = kept
     {
+        cleartext::guard(revocation_endpoint);
         let door = Remote::public_at(revocation_endpoint)?;
         let (token, hint) = match refresh_token {
             Some(refresh_token) => (refresh_token.as_str(), "refresh_token"),
@@ -832,6 +836,32 @@ mod tests {
             matches!(&refused, Err(CliError::Invalid(message)) if message.contains("off the issuer")),
             "{refused:?}"
         );
+    }
+
+    #[test]
+    fn a_device_code_and_a_revoked_token_are_guarded_before_they_are_sent() {
+        let door = Door::open(vec![
+            Answer::json("400 Bad Request", r#"{"error":"authorization_pending"}"#),
+            Answer::json("200 OK", "{}"),
+        ]);
+        let discovery: Discovery = serde_json::from_str(&document(&door.url, &door.url)).unwrap();
+        poll(&discovery, "client", "dc").unwrap();
+        let revocation = format!("{}/auth/oauth2/revoke", door.url);
+        let kept = Kept::Token {
+            access_token: "marfa_at_x".into(),
+            refresh_token: Some("marfa_rt_x".into()),
+            expires_at: None,
+            client_id: "client".into(),
+            scope: None,
+            token_endpoint: discovery.token_endpoint.clone(),
+            revocation_endpoint: Some(revocation.clone()),
+        };
+        assert!(revoke(&kept).unwrap());
+        assert_eq!(
+            cleartext::guarded(),
+            vec![discovery.token_endpoint.clone(), revocation]
+        );
+        door.received();
     }
 
     #[test]
