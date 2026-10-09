@@ -65,11 +65,15 @@ describe("what a change runs", () => {
       ],
       ["ci-sqlite"],
     ],
-    ["a README Prettier does not read", ["core/README.md"], []],
+    [
+      "a README Prettier does not read, which the reference check does",
+      ["core/README.md"],
+      ["ci-sqlite"],
+    ],
     [
       "the command reference, which a Rust test holds to the binary's help",
       ["core/marfa-cli/COMMANDS.md"],
-      ["core-checks", "core-checks-linux"],
+      ["ci-sqlite", "core-checks", "core-checks-linux"],
     ],
     [
       "a published package's README, which the version check reads",
@@ -81,7 +85,7 @@ describe("what a change runs", () => {
       ["GLOSSARY.md", "LICENSE"],
       ["ci-sqlite"],
     ],
-    ["the licence alone", ["LICENSE"], []],
+    ["the licence alone", ["LICENSE"], ["ci-sqlite"]],
     [
       "agent instructions, settings and Git hooks, in any language ESLint does not read",
       [
@@ -124,7 +128,7 @@ describe("what a change runs", () => {
     [
       "the core's ignore file, which can hide a generated client file",
       ["core/.gitignore"],
-      ["clients-freshness"],
+      ["ci-sqlite", "clients-freshness"],
     ],
     [
       "the settings example, which the settings census test reads",
@@ -157,21 +161,25 @@ describe("what a change runs", () => {
       ["packages/client/src/client.ts"],
       ["ci-sqlite", "workspace", "clients-freshness"],
     ],
-    ["a Rust-only change", ["core/marfa-core/src/store.rs"], RUST],
+    [
+      "a Rust-only change",
+      ["core/marfa-core/src/store.rs"],
+      [...RUST, "ci-sqlite"],
+    ],
     [
       "a Rust test, which is not in the binary",
       ["core/marfa-cli/tests/folder.rs"],
-      ["core-checks", "core-checks-linux", "core"],
+      ["ci-sqlite", "core-checks", "core-checks-linux", "core"],
     ],
     [
       "a Swift-only change, which the Linux job does not check",
       ["core/bindings/swift/src/lib.rs"],
-      ["core-checks", "core", "swift-package"],
+      ["ci-sqlite", "core-checks", "core", "swift-package"],
     ],
     [
       "the Swift crate's lockfile, which pins the uniffi the glue is made with",
       ["core/bindings/swift/Cargo.lock"],
-      ["core-checks", "core", "swift-package", "version-fields"],
+      ["ci-sqlite", "core-checks", "core", "swift-package", "version-fields"],
     ],
     [
       "the Swift crate's manifest, which declares it",
@@ -188,17 +196,17 @@ describe("what a change runs", () => {
     [
       "the script that builds the Swift package",
       ["core/bindings/swift/build.sh"],
-      ["core-checks", "core", "swift-package"],
+      ["ci-sqlite", "core-checks", "core", "swift-package"],
     ],
     [
       "the Node module's Rust, a member of the core workspace",
       ["core/bindings/node/src/lib.rs"],
-      ["core-checks", "core-checks-linux", "core"],
+      ["ci-sqlite", "core-checks", "core-checks-linux", "core"],
     ],
     [
       "the Node module's JavaScript",
       ["core/bindings/node/test/pin.test.mjs"],
-      ["core"],
+      ["ci-sqlite", "core"],
     ],
     [
       "the API document",
@@ -269,7 +277,7 @@ describe("what a change runs", () => {
     [
       "a crate the binary could come to be built from",
       ["core/marfa-wire/src/lib.rs"],
-      RUST,
+      [...RUST, "ci-sqlite"],
     ],
     [
       "a dependency",
@@ -521,9 +529,10 @@ describe("what a draft runs", () => {
       "types-freshness",
       "version-fields",
     ]);
-    // A change only the core's tests read names no quick job, and its draft
-    // still fails the one required check that runs, so it cannot merge.
+    // A change only the core's tests read names no quick job but CI
+    // (SQLite), and its draft fails that required check, so it cannot merge.
     expect(runs(["core/marfa-core/tests/sync.rs"])).toEqual([
+      "ci-sqlite",
       "core-checks",
       "core-checks-linux",
       "core",
@@ -577,7 +586,7 @@ describe("each job reads its own answer", () => {
     ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
-  it("CI (SQLite) checks formatting and these rules for any change and the rest only for the workspace", () => {
+  it("CI (SQLite) checks formatting, these rules and the contract's references for any change and the rest only for the workspace", () => {
     const steps = workflow("ci.yml").jobs["ci-sqlite"]?.steps ?? [];
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
@@ -585,8 +594,12 @@ describe("each job reads its own answer", () => {
     expect(steps[format + 1]).toEqual({
       run: "pnpm vitest run ci/ci-required.test.ts",
     });
+    expect(steps[format + 2]).toEqual({
+      "working-directory": "conformance",
+      run: "pnpm exec vitest run --project generators src/utils/spec-citations.test.ts",
+    });
     const guard = steps.at(-1);
-    const after = steps.slice(format + 2, -1);
+    const after = steps.slice(format + 3, -1);
     expect(after.map((step) => step.run ?? step.uses)).toEqual([
       "pnpm build",
       "pnpm typecheck",

@@ -3,12 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  chapterIds,
   chapterNames,
   citationsIn,
   citationsInText,
   isId,
-  migratedChapters,
   readChapter,
   readChapters,
   statementText,
@@ -19,52 +17,7 @@ import {
 // written in this file are not read as references by the checks that walk
 // its source.
 
-describe("a numbered chapter", () => {
-  const cited = "`device/stop.test.ts › a stopped call`";
-
-  it("reads a statement, its wrapped continuation, its reason and its tests", () => {
-    const chapter = readChapter(
-      "sample.md",
-      `# Sample\n\n1. A rule\n   that wraps.\n\n**Reason:** why.\n\n**Tests:** ${cited}\n\n2. Another.\n`,
-    );
-    expect(chapter.form).toBe("numbered");
-    expect(chapter.statements).toEqual([
-      {
-        key: "1",
-        rule: "A rule that wraps.",
-        reason: "why.",
-        tests: cited,
-        line: 3,
-      },
-      { key: "2", rule: "Another.", line: 10 },
-    ]);
-    expect(statementText(chapter.statements[0])).toBe(
-      `A rule that wraps. ${cited}`,
-    );
-    expect(chapter.orphans).toEqual([]);
-  });
-
-  it("refuses a rule that goes on after a blank line, and names it", () => {
-    const chapter = readChapter(
-      "sample.md",
-      "1. A rule.\n\n  A second paragraph of it.\n",
-    );
-    expect(chapter.orphans).toEqual(["sample.md 1: A second paragraph of it."]);
-    expect(chapter.statements[0].rule).toBe("A rule.");
-  });
-
-  it("does not carry Tests across a heading or a paragraph of prose", () => {
-    for (const boundary of ["## Another", "Some prose."]) {
-      const chapter = readChapter(
-        "sample.md",
-        `1. A rule.\n\n${boundary}\n\n**Tests:** ${cited}\n`,
-      );
-      expect(chapter.statements[0].tests, boundary).toBeUndefined();
-    }
-  });
-});
-
-describe("a chapter in the ID form", () => {
+describe("a chapter", () => {
   const text = [
     "# Sample",
     "",
@@ -92,14 +45,10 @@ describe("a chapter in the ID form", () => {
     "**Tests:** waiting on #7.",
     "",
   ].join("\n");
-  const chapter = readChapter("sample", text);
-
-  it("is read as the ID form", () => {
-    expect(chapter.form).toBe("id");
-  });
+  const chapter = readChapter(text);
 
   it("reads each statement's rule, reason, tests and line", () => {
-    expect(chapter.statements.map((s) => [s.key, s.line])).toEqual([
+    expect(chapter.statements.map((s) => [s.id, s.line])).toEqual([
       ["sample/one", 7],
       ["sample/two", 16],
     ]);
@@ -109,12 +58,12 @@ describe("a chapter in the ID form", () => {
     );
     expect(one.reason).toBe("why.");
     expect(one.tests).toBe("`compliance/a.test.ts › one`, `› two`.");
-    expect(one.paragraphs?.map((p) => [p.kind, p.line, p.end])).toEqual([
+    expect(one.paragraphs.map((p) => [p.kind, p.line, p.end])).toEqual([
       ["rule", 9, 10],
       ["reason", 12, 12],
       ["tests", 14, 14],
     ]);
-    expect(two.paragraphs?.map((p) => p.kind)).toEqual([
+    expect(two.paragraphs.map((p) => p.kind)).toEqual([
       "rule",
       "rule",
       "tests",
@@ -122,35 +71,29 @@ describe("a chapter in the ID form", () => {
   });
 
   it("does not read a heading inside a fenced block", () => {
-    expect(chapter.statements.map((s) => s.key)).not.toContain("sample/fenced");
+    expect(chapter.statements.map((s) => s.id)).not.toContain("sample/fenced");
   });
 
   it("lists the chapter's IDs in order", () => {
-    expect(chapter.statements.map((s) => s.key)).toEqual([
+    expect(chapter.statements.map((s) => s.id)).toEqual([
       "sample/one",
       "sample/two",
     ]);
     expect(chapter.stray).toEqual([]);
-    expect(chapterIds(chapter)).toEqual(["sample/one", "sample/two"]);
+  });
+
+  it("gives a statement's rule and tests as one text", () => {
+    expect(statementText(chapter.statements[0])).toBe(
+      "When asked, the server MUST answer with both fields. `compliance/a.test.ts › one`, `› two`.",
+    );
   });
 
   it("sets aside a heading that is not one ID, at any level but 1 and 2", () => {
     const stray = readChapter(
-      "sample",
       "### `sample/a` and more\n\nText.\n\n#### `sample/b`\n\n### Plain\n",
     );
-    expect(stray.form).toBe("none");
+    expect(stray.statements).toEqual([]);
     expect(stray.stray).toEqual([1, 5, 7]);
-  });
-});
-
-describe("the form of a chapter", () => {
-  it("is numbered, id, mixed or none by what it holds", () => {
-    const formOf = (text: string) => readChapter("sample", text).form;
-    expect(formOf("1. A rule.\n")).toBe("numbered");
-    expect(formOf("### `sample/a`\n\nThe server MUST.\n")).toBe("id");
-    expect(formOf("1. A rule.\n\n### `sample/a`\n")).toBe("mixed");
-    expect(formOf("# Sample\n\nProse.\n\n### Plain heading\n")).toBe("none");
   });
 });
 
@@ -198,24 +141,17 @@ describe("the grammar of an ID", () => {
 });
 
 describe("the citations in a text", () => {
-  it("reads CLI citations in ID metadata without changing numbered parsing", () => {
+  it("reads CLI citations as it reads the other projects'", () => {
     const tests =
       "`cli/folder.test.ts › one`, `› two`, `device/folders.test.ts › three`, `› four`.";
-    expect(citationsIn(tests, true)).toEqual([
+    expect(citationsIn(tests)).toEqual([
       { file: "cli/folder.test.ts", title: "one" },
       { file: "cli/folder.test.ts", title: "two" },
       { file: "device/folders.test.ts", title: "three" },
       { file: "device/folders.test.ts", title: "four" },
     ]);
-    expect(citationsInText(`1. A rule. ${tests}`)).toEqual([
-      { file: "device/folders.test.ts", title: "three" },
-      { file: "device/folders.test.ts", title: "four" },
-    ]);
     expect(
-      citationsIn(
-        "`cli/folder.test.ts › one`, `not a fixture`, `› two`.",
-        true,
-      ),
+      citationsIn("`cli/folder.test.ts › one`, `not a fixture`, `› two`."),
     ).toEqual([{ file: "cli/folder.test.ts", title: "one" }]);
   });
 
@@ -260,26 +196,29 @@ describe("the chapters in a directory", () => {
   const write = (name: string, text: string) =>
     writeFileSync(join(directory, name), text);
   write("README.md", "### `sample/a`\n");
-  write("coverage.md", "1. Row.\n");
-  write("findings.md", "## 1. A finding\n");
-  write("Reading Notes.md", "1. Prose.\n");
-  write("alpha.md", "1. A rule.\n");
+  write("coverage.md", "| Row |\n");
+  write("Reading Notes.md", "Prose.\n");
+  write(
+    "alpha.md",
+    "### `alpha/a`\n\nThe server MUST.\n\n**Tests:** waiting on #1.\n",
+  );
   write(
     "beta-gamma.md",
     "### `beta-gamma/a`\n\nThe server MUST.\n\n**Tests:** waiting on #1.\n",
   );
-  write("notes.txt", "1. Not a chapter.\n");
+  write("notes.txt", "Not a chapter.\n");
 
   it("lists the files that hold statements, by name", () => {
     expect(chapterNames(directory)).toEqual(["alpha", "beta-gamma"]);
     expect(chapterNames(join(directory, "none"))).toEqual([]);
   });
 
-  it("reads each and names the ones in the ID form as migrated", () => {
+  it("reads each", () => {
     const read = readChapters(directory);
-    expect(read.get("alpha")?.form).toBe("numbered");
-    expect(read.get("beta-gamma")?.form).toBe("id");
-    expect(migratedChapters(directory)).toEqual(["beta-gamma"]);
+    expect(read.get("alpha")?.statements.map((s) => s.id)).toEqual(["alpha/a"]);
+    expect(read.get("beta-gamma")?.statements.map((s) => s.id)).toEqual([
+      "beta-gamma/a",
+    ]);
     rmSync(directory, { recursive: true });
   });
 });

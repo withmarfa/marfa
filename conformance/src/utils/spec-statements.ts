@@ -3,14 +3,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * The one reader of a contract chapter.
- *
- * A chapter is written in one of two forms while the contract moves from the
- * first to the second, chapter by chapter. Numbered: `5. **Bold.** text.`,
- * cited as the chapter's name and the number. ID: a level-3 heading holding
- * one code-font ID, then the rule, an optional reason and the tests, cited
- * as the ID. Every check that reads statements reads them here, so no two
- * of them can disagree about what a statement is.
+ * The one reader of a contract chapter: a level-3 heading holding one
+ * code-font ID, then the rule, an optional reason and the tests. Every check
+ * that reads statements reads them here, so no two of them can disagree
+ * about what a statement is.
  */
 
 export const SPEC_DIR = resolve(
@@ -21,11 +17,9 @@ export const SPEC_DIR = resolve(
 );
 
 /** Files in `spec/` that hold no statements. */
-const NOT_CHAPTERS = new Set(["README", "coverage", "findings"]);
+const NOT_CHAPTERS = new Set(["README", "coverage"]);
 
-export type ChapterForm = "numbered" | "id" | "mixed" | "none";
-
-/** One paragraph of an ID statement, with its label read off. */
+/** One paragraph of a statement, with its label read off. */
 export interface Paragraph {
   kind: "rule" | "reason" | "tests";
   /** The paragraph without its `**Reason:**` or `**Tests:**` label. */
@@ -36,23 +30,19 @@ export interface Paragraph {
 }
 
 export interface Statement {
-  /** The number as text for a numbered statement, the ID for an ID one. */
-  key: string;
+  id: string;
   rule: string;
   reason?: string;
   tests?: string;
-  /** The line the statement starts on, 1-based. */
+  /** The line of the statement's heading, 1-based. */
   line: number;
-  /** An ID statement's paragraphs in order, whatever their kind. */
-  paragraphs?: Paragraph[];
+  /** The statement's paragraphs in order, whatever their kind. */
+  paragraphs: Paragraph[];
 }
 
 export interface Chapter {
-  form: ChapterForm;
   statements: Statement[];
-  /** Numbered form: a statement that goes on after a blank line, which the parse cannot read. */
-  orphans: string[];
-  /** ID form: headings the form has no place for. */
+  /** Headings the form has no place for, by line. */
   stray: number[];
 }
 
@@ -79,85 +69,7 @@ const ID_HEADING = /^### `([^`]+)`\s*$/;
 const HEADING = /^(#{1,6}) (.*?)\s*$/;
 const FENCE = /^\s*```/;
 
-export function readChapter(name: string, text: string): Chapter {
-  const numbered = readNumbered(name, text);
-  const id = readIds(text);
-  const hasNumbered = numbered.found.length > 0;
-  const hasIds = id.statements.length > 0;
-  const form: ChapterForm =
-    hasNumbered && hasIds
-      ? "mixed"
-      : hasNumbered
-        ? "numbered"
-        : hasIds
-          ? "id"
-          : "none";
-  return {
-    form,
-    statements: [...numbered.found, ...id.statements].sort(
-      (a, b) => a.line - b.line,
-    ),
-    orphans: numbered.orphans,
-    stray: id.stray,
-  };
-}
-
-function readNumbered(
-  chapter: string,
-  text: string,
-): { found: Statement[]; orphans: string[] } {
-  const lines = text.split("\n");
-  const found: Statement[] = [];
-  const orphans: string[] = [];
-  let current: Statement | undefined;
-  let numbered: Statement | undefined;
-  // The statement a blank line just ended, kept only until the next
-  // non-blank line says whether that line meant to continue it.
-  let ended: Statement | undefined;
-  lines.forEach((line, index) => {
-    const start = /^(\d+)\. (.*)$/.exec(line);
-    if (start) {
-      current = { key: start[1], rule: start[2], line: index + 1 };
-      numbered = current;
-      ended = undefined;
-      found.push(current);
-      return;
-    }
-    if (/^\s*$/.test(line)) {
-      ended = ended ?? current;
-      current = undefined;
-      return;
-    }
-    if (numbered && /^\*\*Tests:\*\*/.test(line)) {
-      const tests = line.replace(/^\*\*Tests:\*\*\s*/, "");
-      numbered.tests =
-        numbered.tests === undefined ? tests : `${numbered.tests} ${tests}`;
-      ended = undefined;
-      return;
-    }
-    if (numbered && /^\*\*Reason:\*\*/.test(line)) {
-      numbered.reason = line.replace(/^\*\*Reason:\*\*\s*/, "");
-      ended = undefined;
-      return;
-    }
-    // A statement prettier left wrapped continues on an indented line.
-    if (current && /^\s+\S/.test(line)) {
-      current.rule += ` ${line.trim()}`;
-      return;
-    }
-    if (ended && /^\s+\S/.test(line)) {
-      orphans.push(`${chapter} ${ended.key}: ${line.trim().slice(0, 60)}`);
-    }
-    ended = undefined;
-    numbered = undefined;
-  });
-  return { found, orphans };
-}
-
-function readIds(text: string): {
-  statements: Statement[];
-  stray: number[];
-} {
+export function readChapter(text: string): Chapter {
   const statements: Statement[] = [];
   const stray: number[] = [];
   let current: Statement | undefined;
@@ -175,12 +87,7 @@ function readIds(text: string): {
             ? "reason"
             : "tests";
       const body = labelled === null ? joined : labelled[2];
-      (current.paragraphs ??= []).push({
-        kind,
-        text: body,
-        line: open.line,
-        end,
-      });
+      current.paragraphs.push({ kind, text: body, line: open.line, end });
       if (kind === "rule" && current.rule === "") current.rule = body;
       if (kind === "reason") current.reason ??= body;
       if (kind === "tests") current.tests ??= body;
@@ -205,7 +112,7 @@ function readIds(text: string): {
       if (level <= 2) return;
       const code = ID_HEADING.exec(line);
       if (level === 3 && code !== null) {
-        current = { key: code[1], rule: "", line: number, paragraphs: [] };
+        current = { id: code[1], rule: "", line: number, paragraphs: [] };
         statements.push(current);
       } else {
         stray.push(number);
@@ -243,8 +150,6 @@ export function withoutDefinitions(text: string): string {
 }
 
 const CITATION_FILE =
-  /^((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
-const ID_CITATION_FILE =
   /^((?:correctness|compliance|device|sync|cli)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
 const CITATION_CONTINUED = /^› (.+)$/;
 
@@ -260,15 +165,12 @@ const CITATION_CONTINUED = /^› (.+)$/;
  * would cut one in half. A paragraph is one text: pass a paragraph and not
  * a file.
  */
-export function citationsIn(
-  text: string,
-  idForm = false,
-): { file: string; title?: string }[] {
+export function citationsIn(text: string): { file: string; title?: string }[] {
   const out: { file: string; title?: string }[] = [];
   let file: string | undefined;
   let end = -1;
   for (const span of text.matchAll(/`([^`]+)`/g)) {
-    const cited = (idForm ? ID_CITATION_FILE : CITATION_FILE).exec(span[1]);
+    const cited = CITATION_FILE.exec(span[1]);
     const continued = CITATION_CONTINUED.exec(span[1]);
     if (cited) {
       file = cited[1];
@@ -291,10 +193,7 @@ export function citationsIn(
 export function citationsInText(
   text: string,
 ): { file: string; title?: string }[] {
-  const idForm = text.split("\n").some((line) => ID_HEADING.test(line));
-  return text
-    .split(/\n\s*\n/)
-    .flatMap((paragraph) => citationsIn(paragraph, idForm));
+  return text.split(/\n\s*\n/).flatMap((paragraph) => citationsIn(paragraph));
 }
 
 /** Whether a file stem names a chapter, as opposed to the files that hold no statements. */
@@ -316,21 +215,7 @@ export function readChapters(dir = SPEC_DIR): Map<string, Chapter> {
   return new Map(
     chapterNames(dir).map((name) => [
       name,
-      readChapter(name, readFileSync(resolve(dir, `${name}.md`), "utf8")),
+      readChapter(readFileSync(resolve(dir, `${name}.md`), "utf8")),
     ]),
   );
-}
-
-/** The chapters already written in the ID form. */
-export function migratedChapters(dir = SPEC_DIR): string[] {
-  return [...readChapters(dir)]
-    .filter(([, chapter]) => chapter.form === "id")
-    .map(([name]) => name);
-}
-
-/** The IDs a chapter has. */
-export function chapterIds(chapter: Chapter): string[] {
-  return chapter.statements
-    .filter((statement) => !/^\d+$/.test(statement.key))
-    .map((statement) => statement.key);
 }

@@ -1,11 +1,12 @@
 /**
- * A chapter written in the ID form follows `spec/README.md`.
+ * Every chapter follows `spec/README.md`.
  *
  * Every rule asserted here is one the README states and a reader or a
  * script can check from the text alone. A failure lists each statement or
  * line that breaks the rule, by name: `<chapter> <id>` for a statement and
- * `<chapter> line <n>` for a line. Chapters still numbered, the README and
- * the two files that hold no statements are outside it.
+ * `<chapter> line <n>` for a line. The README and `coverage.md`, which hold
+ * no statements, are outside it. A reference by number anywhere in the
+ * repository is `spec-citations.test.ts`'s.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -21,8 +22,9 @@ import {
 
 /** The rules, each with the sentence a failure reports. */
 const RULES = {
-  mixedForm:
-    "a chapter is wholly numbered or wholly in the ID form, never both",
+  hasStatements: "a chapter states at least one rule",
+  noNumberedStatements:
+    "no line opens with a number and a full stop, the shape of a numbered statement",
   idGrammar:
     "every ID is the chapter's name, a slash and a slug of lowercase words and digits joined by hyphens, at most 40 characters",
   idUnique: "every ID is stated once",
@@ -38,7 +40,7 @@ const RULES = {
     "a Tests paragraph holds fixture citations ending in a period, or exactly the words waiting on and an issue number, and never both",
   noServerTests: "a statement never names the server's own tests",
   noNumberedRefs:
-    "an ID chapter refers to a statement by its ID, never by a bare number or the words statement and a number",
+    "a chapter refers to a statement by its ID, never by a bare number in parentheses",
   normativeOutside:
     "no key word of RFC 2119 in capitals stands outside a rule paragraph",
   emDash: "no em dash",
@@ -78,26 +80,23 @@ function shaped(statement: Statement): boolean {
 /** What breaks each rule in one chapter, named so a failure says where to look. */
 function violations(name: string, text: string): Record<Rule, string[]> {
   const found = empty();
-  const chapter = readChapter(name, text);
+  const chapter = readChapter(text);
   const lines = text.split("\n");
   const where = (id: string) => `${name} ${id}`;
   const at = (line: number) => `${name} line ${String(line)}`;
 
-  if (chapter.form === "mixed") found.mixedForm.push(name);
+  if (chapter.statements.length === 0) found.hasStatements.push(name);
 
   const seen = new Set<string>();
-  for (const { key } of chapter.statements.filter(
-    (s) => !/^\d+$/.test(s.key),
-  )) {
-    if (!isId(name, key)) found.idGrammar.push(where(key));
-    if (seen.has(key)) found.idUnique.push(where(key));
-    seen.add(key);
+  for (const { id } of chapter.statements) {
+    if (!isId(name, id)) found.idGrammar.push(where(id));
+    if (seen.has(id)) found.idUnique.push(where(id));
+    seen.add(id);
   }
 
   const ruleLines = new Set<number>();
   for (const statement of chapter.statements) {
-    if (statement.paragraphs === undefined) continue;
-    const id = statement.key;
+    const id = statement.id;
     if (!shaped(statement)) found.blockShape.push(where(id));
     for (const paragraph of statement.paragraphs) {
       if (paragraph.kind !== "rule") continue;
@@ -124,8 +123,7 @@ function violations(name: string, text: string): Record<Rule, string[]> {
       const tests = statement.tests.trim();
       const spans = tests.match(/`[^`]+`/g) ?? [];
       const cited =
-        CITATIONS.test(tests) &&
-        citationsIn(tests, true).length === spans.length;
+        CITATIONS.test(tests) && citationsIn(tests).length === spans.length;
       if (!cited && !WAITING.test(tests)) found.testsShape.push(where(id));
     }
 
@@ -136,10 +134,8 @@ function violations(name: string, text: string): Record<Rule, string[]> {
   for (const line of chapter.stray) found.blockShape.push(at(line));
 
   lines.forEach((line, index) => {
-    if (
-      /\(\d+(?:(?:,| and| to) ?\d+)*\)/.test(line) ||
-      /\bstatements? \d+/i.test(line)
-    ) {
+    if (/^\s*\d+\. /.test(line)) found.noNumberedStatements.push(at(index + 1));
+    if (/\(\d+(?:(?:,| and| to) ?\d+)*\)/.test(line)) {
       found.noNumberedRefs.push(at(index + 1));
     }
     if (!ruleLines.has(index + 1) && ANY_KEYWORD.test(line)) {
@@ -150,12 +146,12 @@ function violations(name: string, text: string): Record<Rule, string[]> {
   return found;
 }
 
-// Holds of nothing while no chapter is written in the ID form. The witness
-// below is what shows each rule can fail.
-describe("the chapters written in the ID form", () => {
-  const chapters = [...readChapters()].filter(
-    ([, chapter]) => chapter.form === "id" || chapter.form === "mixed",
-  );
+// The witness below is what shows each rule can fail.
+describe("the chapters", () => {
+  const chapters = [...readChapters()];
+  it("are read", () => {
+    expect(chapters.map(([name]) => name)).toContain("items");
+  });
   const found = empty();
   for (const [name] of chapters) {
     const one = violations(
@@ -352,7 +348,7 @@ describe("the form check sees what it is for", () => {
     "",
     "The server MUST answer.",
     "",
-    "**Reason:** as in (3) and (4, 5), and as statement 6 says. REFS",
+    "**Reason:** as in (3) and (4, 5). REFS",
     "",
     "**Tests:** waiting on #1.",
     "",
@@ -383,7 +379,13 @@ describe("the form check sees what it is for", () => {
   const at = (marker: string) => `sample line ${String(line(marker))}`;
   const s = (id: string) => `sample sample/${id}`;
 
-  it("accepts CLI fixtures and continued titles in ID rules", () => {
+  it("fails a chapter that states no rule", () => {
+    expect(violations("sample", "# Sample\n\nProse.\n").hasStatements).toEqual([
+      "sample",
+    ]);
+  });
+
+  it("accepts CLI fixtures and continued titles", () => {
     const text = [
       "### `sample/cli-rule`",
       "",
@@ -395,10 +397,9 @@ describe("the form check sees what it is for", () => {
   });
 
   it("passes a chapter that follows the form in every way it may", () => {
-    const readable = readChapter("sample", GOOD);
-    expect(readable.form).toBe("id");
+    const readable = readChapter(GOOD);
     expect(
-      readable.statements.map((statement) => statement.key),
+      readable.statements.map((statement) => statement.id),
       "the parse read fewer statements than the text holds, so the clean result below is about part of it",
     ).toEqual([
       "sample/always",
@@ -416,7 +417,8 @@ describe("the form check sees what it is for", () => {
     // Anything else in the list, or one missing, is the check disagreeing
     // with the README about what a rule means.
     expect(violations("sample", BAD)).toEqual({
-      mixedForm: ["sample"],
+      hasStatements: [],
+      noNumberedStatements: [at("NUMBERED")],
       idGrammar: [s("Bad_Id")],
       idUnique: [s("twice")],
       blockShape: [

@@ -290,7 +290,7 @@ describe("the doors that lost or broke data without a JSON Content-Type", () => 
   });
 });
 
-/** What a JSON door answers a body not sent as JSON: statement 13's refusal. */
+/** What a JSON door answers a body not sent as JSON (`errors/json-content-type`). */
 async function expectRefusedAsNotJson(): Promise<void> {
   const res = await fetch(`${apiUrl}/items`, {
     method: "POST",

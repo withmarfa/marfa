@@ -14221,6 +14221,58 @@ describe("what a folder takes", () => {
     expect(idIn(harness, "drafts/draft.md")).toBe(draft);
   });
 
+  it("keeps a bound file at the top that a line naming only directories does not take", async () => {
+    harness = await folderHarness("folder-top-unreached", {
+      events: [copyLiveReplay("1", [])],
+    });
+    scriptFolderWrites(harness);
+    put(harness, "top.md", "---\ntitle: Top\n---\nbody\n");
+    put(harness, "deep/inner.md", "---\ntitle: Inner\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const top = idIn(harness, "top.md");
+    expect(top).toBeDefined();
+
+    // A line that names every directory and nothing at the top: the folder's
+    // own directory is not a path a line matches, whatever it names.
+    scriptFolderChanges(harness);
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8") + 'include:\n  - "*/"\n',
+    );
+    writeFileSync(
+      join(harness.dir, "top.md"),
+      read(harness, "top.md") + "edited while not taken\n",
+    );
+    const updates = sentUpdates(harness).length;
+    const narrowed = await harness.folder.push();
+    expect(narrowed.ok, JSON.stringify(narrowed)).toBe(true);
+    if (!narrowed.ok) return;
+    // As a file a list change stops taking: not reached, not deleted, its
+    // edits held and its bytes left as they are.
+    expect([
+      narrowed.value.scan.missing,
+      narrowed.value.scan.unreached,
+    ]).toEqual([0, 1]);
+    expect(sentUpdates(harness).slice(updates)).toEqual([]);
+    expect(read(harness, "top.md")).toContain("edited while not taken");
+    expect(idIn(harness, "top.md")).toBe(top);
+
+    // Taken again, the file is still its item's.
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8").replace(
+        /include:\n(\s*- .*\n)+/,
+        "include: []\n",
+      ),
+    );
+    const taken = await harness.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.value.scan.unreached).toBe(0);
+    expect(sentUpdates(harness).map((update) => update.id)).toContain(top);
+    expect(idIn(harness, "top.md")).toBe(top);
+  });
+
   it("reaches a dot-led path its include list names", async () => {
     harness = await folderHarness("folder-include-dot-led", {
       settings: {

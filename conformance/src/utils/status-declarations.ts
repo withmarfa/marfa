@@ -64,8 +64,6 @@ export interface StatusReport {
   unanswered: string[];
   /** Exempt codes the document no longer declares anywhere. */
   staleCodes: string[];
-  /** Undeclared statuses this run drew that `findings.md` records. */
-  recorded: string[];
   /** Request lines read, so an empty log cannot read as a clean run. */
   lines: number;
 }
@@ -213,15 +211,6 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
  * unlisted fails.
  */
 export const UNREACHED: Readonly<Record<string, string>> = {};
-
-/**
- * Undeclared statuses the server answers that `findings.md` records, keyed
- * `METHOD /path status`, each naming its entry. The fixture that shows one
- * asserts what the server does, so the run draws it; recorded here it is
- * reported as recorded rather than as a new contradiction, and an entry no
- * run draws any more is stale, since the server stopped answering it.
- */
-export const RECORDED: Readonly<Record<string, string>> = {};
 
 /**
  * The request lines in a server log, which also carries startup and failure
@@ -387,7 +376,6 @@ export function declaredStatuses(
 export function reportStatuses(
   lines: readonly RequestLine[],
   document: OpenApiLike,
-  recordedStatuses: Readonly<Record<string, string>> = RECORDED,
   signInStatuses: Readonly<
     Record<string, readonly number[]>
   > = SIGN_IN_ROUTE_STATUSES,
@@ -458,16 +446,10 @@ export function reportStatuses(
   }
 
   const undeclared: UndeclaredStatus[] = [];
-  const recorded: string[] = [];
   for (const [operation, byStatus] of observed) {
     const allowed = declared.get(operation) ?? new Set<number>();
     for (const [status, codes] of byStatus) {
       if (allowed.has(status)) continue;
-      const key = `${operation} ${String(status)}`;
-      if (recordedStatuses[key] !== undefined) {
-        recorded.push(key);
-        continue;
-      }
       undeclared.push({
         operation,
         status,
@@ -543,7 +525,6 @@ export function reportStatuses(
     undeclaredCodes,
     unanswered,
     staleCodes,
-    recorded: recorded.sort(),
     lines: lines.length,
   };
 }
@@ -555,7 +536,6 @@ export function reportStatuses(
 export function unreachedDebt(
   report: StatusReport,
   listed: Readonly<Record<string, string>> = UNREACHED,
-  recordedStatuses: Readonly<Record<string, string>> = RECORDED,
 ): { unlisted: string[]; stale: string[] } {
   const unanswered = new Set(report.unanswered);
   return {
@@ -565,9 +545,6 @@ export function unreachedDebt(
         .filter((key) => !unanswered.has(key))
         .sort(),
       ...report.staleCodes.map((code) => `code ${code}`),
-      ...Object.keys(recordedStatuses)
-        .filter((key) => !report.recorded.includes(key))
-        .map((key) => `recorded ${key}`),
     ],
   };
 }

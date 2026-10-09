@@ -31,9 +31,9 @@ import { fileURLToPath } from "node:url";
 
 /** Each output, named for the job that reads it. */
 export const JOBS = [
-  // `CI (SQLite)`. It runs the format check and this classifier's test for
-  // any change outside `core/` but the licence, and for a crate manifest,
-  // and its build, typecheck, lint and tests only for `workspace`.
+  // `CI (SQLite)`. It runs the format check, this classifier's test and the
+  // contract's reference check for any change, and its build, typecheck,
+  // lint and tests only for `workspace`.
   "ci-sqlite",
   "workspace",
   // `Core checks`, on macOS: the core's format, lint and tests, the login
@@ -116,17 +116,19 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Checkout applies it to every file every job reads.
   [/^\.gitattributes$/, ALL],
 
-  // The contract's statements are cited by number and checked by the suite,
-  // and the error code census test holds `errors.md` to the codes the server
+  // The contract's statements are cited by ID and checked by the suite, and
+  // the error code census test holds `errors.md` to the codes the server
   // sends.
   [/^conformance\/spec\//, ["workspace", "conformance"]],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.
   [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks", "core-checks-linux"]],
-  // Markdown anywhere else is read only by Prettier, and a package's README
-  // by the version check. A fixture is test input and a generated tree is
-  // checked file by file, so those fall through to their folder's rule.
+  // Markdown anywhere else is read only by Prettier and the contract's
+  // reference check, which `CI (SQLite)` runs for every change, and a
+  // package's README by the version check. A fixture is test input and a
+  // generated tree is checked file by file, so those fall through to their
+  // folder's rule.
   [
     /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
@@ -228,8 +230,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
-  // A crate's tests are not in the binary, and spec citations are read only
-  // from `src/`.
+  // A crate's tests are not in the binary.
   [/^core\/[^/]+\/tests\//, ["core-checks", "core-checks-linux", "core"]],
   // Any other crate can be one the binary is built from.
   [/^core\//, RUST],
@@ -270,18 +271,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.prettierignore$/, []],
 ];
 
-/**
- * Whether `CI (SQLite)` runs its format check and this classifier's test
- * for a path: anything outside `core/`, which Prettier ignores, but the
- * licence, and every crate manifest, which the test reads.
- */
-function checked(path: string): boolean {
-  return (
-    (!path.startsWith("core/") && path !== "LICENSE") ||
-    basename(path) === "Cargo.toml"
-  );
-}
-
 /** What `eslint .` reads: JavaScript and TypeScript outside its ignores. */
 function linted(path: string): boolean {
   return /\.[cm]?[jt]sx?$/.test(path) && !/^(core|conformance)\//.test(path);
@@ -320,7 +309,9 @@ export function affected(path: string): Set<Job> {
   const jobs = new Set<Job>(rule ? rule[1] : ALL);
   if (versioned(path)) jobs.add("version-fields");
   if (linted(path)) jobs.add("workspace");
-  if (checked(path) || jobs.has("workspace")) jobs.add("ci-sqlite");
+  // Its format check, this classifier's test and the contract's reference
+  // check read every path.
+  jobs.add("ci-sqlite");
   return jobs;
 }
 
@@ -352,8 +343,9 @@ export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
 }
 
 /**
- * Whether an answer runs nothing but `CI (SQLite)`'s format check and this
- * classifier's test, as a change to documentation or agent instructions does.
+ * Whether an answer runs nothing but `CI (SQLite)`'s format check, this
+ * classifier's test and the contract's reference check, as a change to
+ * documentation or agent instructions does.
  */
 export function documentationOnly(answer: Record<Job, boolean>): boolean {
   return JOBS.every((job) => job === "ci-sqlite" || !answer[job]);

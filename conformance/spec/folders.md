@@ -2,6 +2,8 @@
 
 A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
+`device.md` lists the answers the scripted server gives that the real server cannot be made to give, and why; `device/fidelity.test.ts` checks every answer the real server can produce against the scripted server's.
+
 ## Binding and settings
 
 ### `folders/bind-folder`
@@ -81,6 +83,18 @@ When the server accepts an edit of the settings file, a device MUST use the resu
 If an edited settings file cannot be parsed, names another folder, or asks for unsupported settings, then a device MUST retain the settings in force.
 
 **Tests:** `device/folders.test.ts › keeps its settings in force and flags the file when an edit is refused`.
+
+### `folders/settings-name-refusal`
+
+If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST refuse to read those settings.
+
+**Tests:** `device/folder-names.test.ts › stops where it is told, naming the setting, and runs with a default it takes`, `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`.
+
+### `folders/settings-name-guidance`
+
+If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders change` as the command that changes it.
+
+**Tests:** `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`, `device/folders-contract-c.test.ts › names each refused default and explains how to change it`.
 
 ### `folders/settings-refused-bytes`
 
@@ -183,6 +197,176 @@ When a current settings file omits a setting, a device MUST advise writing an em
 When the settings change to require another slice during a running watch, a device MUST defer hydration of that slice until the next push or watch restart.
 
 **Tests:** `device/folders-contract-a.test.ts › hydrates a changed watch slice at the next push rather than during the watch`.
+
+## Local refusals and first sync
+
+### `folders/invalid-document-contained`
+
+When a folder document fails local field validation or names a type absent from the held catalog, a device MUST retain the file’s bytes.
+
+**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+
+### `folders/invalid-document-flagged`
+
+When a folder document fails local field validation or names a type absent from the held catalog, a device MUST flag the local refusal.
+
+**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+
+### `folders/invalid-document-scan-continues`
+
+When a folder document fails local field validation or names a type absent from the held catalog, a device MUST continue scanning other files.
+
+**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+
+### `folders/invalid-document-retried`
+
+When a refused folder document is corrected or its type becomes available in the held catalog, a device MUST retry admission at a later scan.
+
+**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+
+### `folders/first-sync-waits`
+
+When a folder is added without confirmation and has files to write or send, a device MUST hold its first sync for confirmation.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
+
+### `folders/first-sync-no-effects`
+
+While a folder’s first sync waits for confirmation, a device MUST NOT write item files into the directory.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
+
+### `folders/first-sync-no-effects-writes-unsent`
+
+While a folder’s first sync waits for confirmation, a device MUST NOT send queued writes to the server.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
+
+### `folders/first-sync-plan`
+
+When a waiting folder’s first-sync plan is read, a device MUST report the counts `write`, `send` and `beside` from the current copy and directory.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
+
+### `folders/first-sync-plan-writes-unsent`
+
+When a waiting folder’s first-sync plan is read, a device MUST NOT send queued writes to the server.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
+
+### `folders/first-sync-offline-plan`
+
+When a waiting folder’s server is unreachable and the folder already holds a usable copy, a device MUST report its first-sync plan from that copy.
+
+**Tests:** `device/folders.test.ts › reads the copy it already holds when the server is out of reach`.
+
+### `folders/first-sync-status`
+
+While a folder’s first sync waits, a device MUST include its waiting state and last read plan in folder status.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
+
+### `folders/first-sync-watch-refused`
+
+While a folder’s first sync waits, the command MUST refuse to start a watch with `first_sync_waiting`.
+
+**Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
+
+### `folders/first-sync-drain-refused`
+
+While a folder’s first sync waits, a device MUST refuse a drain through the folder’s device door with `first_sync_waiting`.
+
+**Tests:** `device/folders.test.ts › refuses a drain by the folder's device door while it waits`.
+
+### `folders/first-sync-pull-refused`
+
+While a folder’s first sync waits, a device MUST refuse a pull with `first_sync_waiting`.
+
+**Tests:** `device/folders-contract-b.test.ts › refuses a pull during first sync and uses the directory as it stands after confirmation`.
+
+### `folders/first-sync-current-directory`
+
+When a folder’s first sync is confirmed, a device MUST process the directory as it stands rather than execute an earlier plan’s file list.
+
+**Tests:** `device/folders-contract-b.test.ts › refuses a pull during first sync and uses the directory as it stands after confirmation`.
+
+### `folders/first-sync-settings-refused`
+
+While a folder’s first sync waits, a device MUST refuse submission of its settings-file edit with `first_sync_waiting`.
+
+**Tests:** waiting on #1890.
+
+### `folders/first-sync-restore-refused`
+
+While a folder’s first sync waits, a device MUST refuse restoration of removals with `first_sync_waiting`.
+
+**Tests:** `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
+
+### `folders/first-sync-terminal-question`
+
+When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST ask for confirmation.
+
+**Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
+
+### `folders/first-sync-terminal-answer`
+
+When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST proceed only for `y` or `yes` without regard to case.
+
+**Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
+
+### `folders/first-sync-interrupted-confirmed`
+
+When a confirmed folder’s sync is interrupted by a failed file landing, a device MUST keep first sync confirmed for the next attempt and for a later add over the same state.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps first sync confirmed after a failed landing and after adding the folder again`.
+
+### `folders/first-sync-yes`
+
+When `folders add` is given `--yes`, the command MUST confirm the folder’s first sync without asking for input.
+
+**Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
+
+### `folders/first-sync-confirm`
+
+When `folders confirm` is given a waiting folder, the command MUST clear the first-sync wait.
+
+**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
+
+### `folders/first-sync-confirm-local-only`
+
+When `folders confirm` is given a waiting folder, the command MUST NOT contact the server.
+
+**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
+
+### `folders/first-sync-confirmation-kept`
+
+When a confirmed folder syncs again or is added again over its own state, a device MUST keep the first sync confirmed.
+
+**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`.
+
+### `folders/first-sync-empty-confirmed`
+
+When a waiting folder’s plan has no files to write, send or place beside another file, a device MUST confirm the first sync automatically.
+
+**Tests:** `device/folders.test.ts › confirms itself where there is nothing to write, send or keep`.
+
+### `folders/first-sync-remove`
+
+When a waiting folder is removed, a device MUST remove its state despite unsent queued writes.
+
+**Tests:** `device/folders.test.ts › is canceled by removing the folder, which leaves its files`.
+
+### `folders/first-sync-remove-files-preserved`
+
+When a waiting folder is removed, a device MUST leave its item files intact.
+
+**Tests:** `device/folders.test.ts › is canceled by removing the folder, which leaves its files`.
+
+### `folders/first-sync-per-machine`
+
+When machines follow the same `system.folder`, a device MUST keep each machine’s first-sync confirmation independently in that folder’s local state.
+
+**Tests:** `device/folders.test.ts › asks of each machine's folder for itself`.
 
 ## Search and defaults
 
@@ -312,6 +496,12 @@ When a folder is added to an empty directory, a device MUST materialize the held
 
 **Tests:** `device/folders.test.ts › hydrates into an empty directory and pushes without holding anything else`.
 
+### `folders/empty-directory-push`
+
+When a file is edited in a newly added folder directory, a device MUST send that edit during push.
+
+**Tests:** `device/folders.test.ts › hydrates into an empty directory and pushes without holding anything else`.
+
 ### `folders/item-to-file`
 
 When a pull meets an item held by the folder search and eligible for writing, a device MUST write the item as a file.
@@ -347,6 +537,340 @@ When a device creates a new file item, a device MUST use the folder defaults' ti
 When a folder is registered, a device MUST record its store identity beside its directory and folder ID in the machine registry.
 
 **Tests:** `device/folders-contract-a.test.ts › records each folder's distinct store identity in the shared registry`.
+
+## What a folder admits, and file names
+
+### `folders/include-empty`
+
+When a folder’s include list is empty, a device MUST admit every path not excluded by dot-name rules, built-in lists or its ignore list.
+
+**Tests:** `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
+
+### `folders/include-negation`
+
+When the last applicable include pattern for a folder path is negated, a device MUST exclude that path from admission.
+
+**Tests:** `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`.
+
+### `folders/list-pattern-order`
+
+When several patterns in one include or ignore list match the same path, a device MUST use the last matching pattern's inclusion or exclusion, including matches through equivalent Unicode names.
+
+**Tests:** `device/folder-patterns.test.ts › resolves %s negations in line order across original and equivalent names`.
+
+### `folders/list-path-before-parent`
+
+When an include or ignore pattern matches a file's path directly, a device MUST use that match before considering a pattern matching an ancestor directory.
+
+**Tests:** `device/folder-patterns.test.ts › resolves an equivalent file pattern before a matching parent pattern`.
+
+### `folders/pattern-not-folder-root`
+
+A device MUST NOT take or leave out a file at a folder's top level because an include or ignore pattern matches the folder's own directory.
+
+**Reason:** git reads a list the same way, so a line that names only directories, such as `*/`, neither takes nor leaves out a top-level file. A bound file that such a line stops taking is kept, as `folders/excluded-binding-kept` says.
+
+**Tests:** `device/folders.test.ts › keeps a bound file at the top that a line naming only directories does not take`.
+
+### `folders/pattern-one-character`
+
+When an include or ignore pattern holds a `?` or a bracket class, a device MUST match each against exactly one character of the path, whatever the character's length in bytes.
+
+**Tests:** `device/folder-patterns.test.ts › matches a class or a ? against one character outside ASCII in %s patterns`.
+
+### `folders/invalid-pattern-refused`
+
+When a folder’s include or ignore list contains an invalid gitignore pattern, a device MUST refuse admission using those settings.
+
+**Tests:** `device/folders-contract-b.test.ts › refuses an invalid %s pattern before admission`.
+
+### `folders/include-paths`
+
+When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the folder root.
+
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folder-patterns.test.ts › keeps the members of the %s range in include patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
+
+### `folders/ignore-paths`
+
+When a folder path matches its ignore list, a device MUST exclude that path from admission even when the include list also matches it.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`, `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`, `device/folder-patterns.test.ts › keeps the members of the %s range in ignore patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
+
+### `folders/include-dot-directories`
+
+When a folder path has a dot-led directory component, a device MUST admit it only where a non-negated include pattern explicitly names every dot-led directory on its path.
+
+**Tests:** `device/folders.test.ts › reaches a dot-led path its include list names`, `device/folders.test.ts › excludes a dot-led directory at any depth`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`, `device/folders.test.ts › takes nothing under a dot-led directory a negated include line names`, `device/folder-patterns.test.ts › keeps the members of the %s range when entering dot directories`.
+
+### `folders/builtin-machine-names`
+
+A device MUST exclude `.DS_Store`, `Thumbs.db`, `._*`, `.Spotlight-V100`, `.Trashes`, `Icon` followed by a carriage return and `desktop.ini` from folder admission regardless of the configured lists.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
+
+### `folders/builtin-temporary-names`
+
+A device MUST exclude `*.swp`, `*~`, `.#*`, `#*#`, `~$*`, `*.tmp`, `.~lock.*#`, `*___jb_tmp___`, `*___jb_old___`, `*.crdownload`, `*.crswap`, `*.part` and `*.download` from folder admission regardless of the configured lists.
+
+**Tests:** `device/folders.test.ts › never takes an editor's or a download's temporary file`, `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
+
+### `folders/builtin-secret-names`
+
+A device MUST exclude `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `credentials`, `*credentials.json` and `credentials.db` from folder admission regardless of the configured lists.
+
+**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`, `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
+
+### `folders/secrets-reported`
+
+When a folder scan encounters a file excluded by a built-in secret pattern in a directory it walks, a device MUST name the file in the scan report’s `secrets`.
+
+**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`.
+
+### `folders/secrets-said`
+
+When a folder push or watch encounters a file excluded by a built-in secret pattern, the command MUST name the excluded file in words.
+
+**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`, `device/folders.test.ts › says a refused secret in words once while watching`.
+
+### `folders/secret-notice-once`
+
+While a folder file remains excluded by a built-in secret pattern, the command MUST say its watch notice only once.
+
+**Tests:** `device/folders.test.ts › says a refused secret in words once while watching`, `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
+
+### `folders/pull-outside-lists`
+
+When a folder pull would write a path excluded by the folder’s lists, a device MUST report the item as `outside`.
+
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`.
+
+### `folders/pull-outside-lists-file-unwritten`
+
+When a folder pull would write a path excluded by the folder’s lists, a device MUST NOT write the item’s file.
+
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`.
+
+### `folders/excluded-binding-kept`
+
+When a folder’s lists stop admitting a bound file, a device MUST retain its binding.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/excluded-no-deletion`
+
+When a folder’s lists stop admitting a bound file, a device MUST NOT journal its deletion.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/excluded-binding-kept-edits-unsent`
+
+When a folder’s lists stop admitting a bound file, a device MUST NOT send its edits.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/excluded-scan-count`
+
+When a folder’s lists stop admitting a bound file, a device MUST count the file as `unreached` in the scan report.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/excluded-pull-preserved`
+
+When a folder’s lists stop admitting a bound file, a device MUST leave its bytes untouched during a pull.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/included-again`
+
+When a folder’s lists admit a previously excluded bound file again, a device MUST send its intervening edit to the same item.
+
+**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
+
+### `folders/package-scan`
+
+When a folder scan encounters a directory ending in `.app`, `.bundle`, `.pages`, `.numbers`, `.key`, `.photoslibrary`, `.xcodeproj` or `.rtfd` without regard to case, a device MUST report the directory as `package`.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`, `device/folders-contract-b.test.ts › reports every built-in package extension without scanning its contents`.
+
+### `folders/package-scan-contents-excluded`
+
+When a folder scan encounters a directory ending in `.app`, `.bundle`, `.pages`, `.numbers`, `.key`, `.photoslibrary`, `.xcodeproj` or `.rtfd` without regard to case, a device MUST NOT admit the directory’s contents.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`, `device/folders-contract-b.test.ts › reports every built-in package extension without scanning its contents`.
+
+### `folders/macos-package-scan`
+
+Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST report the directory as `package`.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`.
+
+### `folders/macos-package-scan-contents-excluded`
+
+Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST NOT admit the directory’s contents.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`.
+
+### `folders/package-pull`
+
+When a folder placement falls inside a package, a device MUST count the item as `outside`.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`.
+
+### `folders/package-pull-file-unwritten`
+
+When a folder placement falls inside a package, a device MUST NOT write its file.
+
+**Tests:** `device/folders.test.ts › does not walk into a package`.
+
+### `folders/unreadable-directory`
+
+When a folder scan cannot read a directory or an entry’s details, a device MUST report that directory as `unreadable`.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+
+### `folders/unreadable-directory-scan-continues`
+
+When a folder scan cannot read a directory or an entry’s details, a device MUST continue scanning other directories.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+
+### `folders/unreadable-bindings`
+
+When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST count it as `unreached`.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+
+### `folders/unreadable-no-deletion`
+
+When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST NOT journal its deletion.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+
+### `folders/unreadable-pull`
+
+When a folder pull cannot write a bound file inside an unreadable directory, a device MUST retain its binding.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
+
+### `folders/unreadable-pull-unwritten-count`
+
+When a folder pull cannot write a bound file inside an unreadable directory, a device MUST count the item as `unwritten`.
+
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
+
+### `folders/title-separators`
+
+When a device makes a file name from an item's title, a device MUST replace `/`, `\` and `:` with `-`.
+
+**Tests:** `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
+
+### `folders/title-controls`
+
+When a device makes a file name from an item's title, a device MUST replace each control character with a space.
+
+**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
+
+### `folders/title-trimming`
+
+When a device makes a file name from a nonblank item title, a device MUST trim surrounding whitespace and leading dots, using `untitled` when that leaves an empty name.
+
+**Tests:** `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
+
+### `folders/name-byte-limit`
+
+When a generated file name would exceed 255 bytes of UTF-8, a device MUST shorten its stem at a character boundary to fit within 255 bytes, retaining any numbering suffix and an extension of at most 32 bytes including its dot.
+
+**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
+
+### `folders/name-long-ending`
+
+When a generated file name has more than 32 bytes from its last dot to its end, a device MUST treat that ending as part of the stem when shortening the name.
+
+**Tests:** `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
+
+### `folders/name-comparison`
+
+When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
+
+**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
+
+### `folders/same-name-scan-choice`
+
+When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST admit the already-bound path or otherwise the first path in order.
+
+**Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
+
+### `folders/same-name-scan-choice-other-paths-held`
+
+When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST hold the other paths with flag `name` until renamed.
+
+**Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
+
+### `folders/same-name-beside`
+
+When two folder items are placed at names equal without regard to case or Unicode normalization, a device MUST place the later item beside the earlier one under a numbered name.
+
+**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`.
+
+### `folders/case-rename-unsent`
+
+When a folder file is renamed only in case or Unicode normalization, a device MUST NOT queue a placement change for that rename.
+
+**Tests:** `device/folders-contract-b.test.ts › does not send a placement for an equivalent rename to %s`.
+
+### `folders/lookup-both-normalizations`
+
+When a folder asks the server to resolve a title whose NFC and NFD forms differ, a device MUST look up both forms.
+
+**Tests:** `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`.
+
+### `folders/state-not-admitted`
+
+A device MUST exclude every file under a folder’s `.marfa/` state directory from item admission regardless of the include list.
+
+**Tests:** `device/folders.test.ts › keeps its own state in .marfa and never pushes it`.
+
+### `folders/watched-settings`
+
+When `.marfa/folder.yaml` changes during a folder watch, a device MUST submit the settings edit through the folder operation at its next pass.
+
+**Tests:** `device/folders.test.ts › sends an edit to its settings file through the folder door`.
+
+### `folders/binary-outside-search`
+
+When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST leave the file unsent.
+
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
+
+### `folders/binary-outside-search-skipped-count`
+
+When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST count the file as `skipped`.
+
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
+
+### `folders/embedded-outside-search`
+
+When a document in a folder embeds a file outside the folder’s search, a device MUST admit that file as the document’s attachment.
+
+**Tests:** `device/folders.test.ts › sends an embedded file with its file`, `device/folders.test.ts › writes an embedded file where its link says`, `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+
+### `folders/document-outside-search`
+
+When a folder document names an admissible type outside the folder’s search, a device MUST create its item under that type.
+
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+
+### `folders/new-file-only-members`
+
+When an item outside a folder’s search has no bound file and no document embeds it, a device MUST NOT write a new file for the item.
+
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+
+### `folders/outside-document-unmatched`
+
+When a folder document’s accepted type is outside the folder’s search, a device MUST count its bound file as `unmatched` at the next pull.
+
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
 
 ## Document fields and presentation
 
@@ -620,6 +1144,18 @@ When a pull moves an alias before its anchor, a device MUST expand the alias as 
 
 **Tests:** `device/folders-contract-a.test.ts › expands an alias moved before its anchor while preserving other anchor groups`.
 
+### `folders/preserve-alias-values`
+
+When a pull changes or removes a YAML anchor, a device MUST expand affected aliases as needed to preserve their intended values.
+
+**Tests:** `device/folders-contract-a.test.ts › expands affected aliases and preserves untouched anchors when removal is %s`.
+
+### `folders/preserve-unaffected-anchors`
+
+When a pull changes one YAML anchor group, a device MUST preserve untouched anchor groups as written.
+
+**Tests:** `device/folders-contract-a.test.ts › expands affected aliases and preserves untouched anchors when removal is %s`.
+
 ### `folders/old-state-version-advance`
 
 When an item advances to another version after a state change was flagged as indistinguishable from an old buffer, a device MUST accept an explicit state edit from the newly rendered current file.
@@ -632,7 +1168,7 @@ When a document names its current body property in frontmatter as well as having
 
 **Tests:** `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
-## Document recognition and refused edits
+## Document recognition and refusals
 
 ### `folders/frontmatter-fences`
 
@@ -730,6 +1266,36 @@ When a later accepted change supersedes a refused change of the same tag or stat
 
 **Tests:** `device/folders-contract-a.test.ts › releases a refused %s when a later change of it is accepted`.
 
+### `folders/document-name-refusal`
+
+If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST report the file's path and the refusal reason.
+
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
+
+### `folders/document-name-preserve`
+
+If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST preserve the file's bytes.
+
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
+
+### `folders/document-name-no-writes`
+
+If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST NOT queue any write from that file.
+
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
+
+### `folders/document-name-continue`
+
+When a scan refuses a document's tag or property name or tag count, a device MUST continue scanning the other files.
+
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
+
+### `folders/document-name-retry`
+
+When a document's refused tag or property name or tag count is corrected, a device MUST accept the corrected file at the next scan.
+
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
+
 ## Unreadable documents
 
 ### `folders/unreadable-yaml`
@@ -803,6 +1369,134 @@ When a document is saved as UTF-8 without NUL bytes, a device MUST admit its con
 When a non-document file contains bytes that are not valid UTF-8 or include NUL, a device MUST admit those bytes as a file item rather than apply document encoding restrictions.
 
 **Tests:** `device/folders-contract-a.test.ts › applies default properties to documents but not file items`.
+
+## Document versions
+
+### `folders/version-line`
+
+When a pull writes a Markdown file, a device MUST write `marfa_version` naming the item version rendered.
+
+**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`.
+
+### `folders/version-stale-merge`
+
+When a file names an older version not consumed by its accepted edits, a device MUST send the property edit as a merge based on that version, including a version the copy never held.
+
+**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › merges a file whose line names a version the copy skipped against that line`, `device/folders.test.ts › merges a file behind the copy, clearing nothing its lines left out`.
+
+### `folders/version-absent-merge`
+
+When a document edit has no usable version line, a device MUST send its properties as a merge rather than a replacement.
+
+**Tests:** `device/folders.test.ts › merges an edit from a file with no version line`, `device/folders.test.ts › reads a quoted version line as the version, and a removed one as no version`.
+
+### `folders/version-consumed`
+
+When an earlier accepted edit consumed a file's version line, a device MUST base the next edit from that line on the copy's current version.
+
+**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › keeps a line an edit spent spent after the pull rewrites it`.
+
+### `folders/version-rewrite-waiting`
+
+When a pull rewrites a file over its waiting edit and that edit later lands, a device MUST treat the rewritten line as consumed by the accepted edit.
+
+**Tests:** `device/folders.test.ts › keeps the line a pull wrote over a waiting edit spent, once that edit lands`, `device/folders.test.ts › keeps a line spent where a pull writes the file over the edit that spent it`.
+
+### `folders/version-rewrite-refused`
+
+When a pull rewrites a file over a waiting edit that is then refused, a device MUST base the next edit from that rewritten file on its version line.
+
+**Tests:** `device/folders.test.ts › takes back the line a pull wrote over a waiting edit when that edit is refused`.
+
+### `folders/version-answered-unchanged`
+
+When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit was accepted or conflicted, a device MUST base the next edit from that newer buffer on its own version line.
+
+**Tests:** `device/folders.test.ts › lifts no answered edit's line when a pull writes over a waiting one, a conflicted edit's included`.
+
+### `folders/version-dead-unchanged`
+
+When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit died, a device MUST base the next edit from that newer buffer on its own version line.
+
+**Tests:** `device/folders.test.ts › lifts no dead edit's line when a pull writes over a later waiting one`.
+
+### `folders/version-external-write`
+
+When a write queued outside the file lands after a pull rewrote the file over it, a device MUST base the next file edit on the copy's current version.
+
+**Tests:** `device/folders.test.ts › keeps the line a pull wrote over an edit queued outside the file spent, once that edit lands`.
+
+### `folders/version-dead-consumed`
+
+When an edit dies after exhausting retries, a device MUST base another edit from that same buffer on the copy's current version.
+
+**Tests:** `device/folders.test.ts › keeps a dead edit's line spent, since the server may have taken it`.
+
+### `folders/version-dead-refused`
+
+When a released dead edit is explicitly refused and no accepted edit has used its version line, a device MUST base the next edit from that buffer on the buffer's version line.
+
+**Tests:** `device/folders.test.ts › takes back a dead edit's line once, released, the server refuses it`.
+
+### `folders/version-only-save`
+
+When a save changes only `marfa_version`, a device MUST NOT send an item edit.
+
+**Tests:** `device/folders.test.ts › sends nothing for a save that changes only the version line`.
+
+### `folders/version-ancestor-missing`
+
+When the server no longer holds the file edit's ancestor version, a device MUST retry the edit as a property merge on the copy's current version.
+
+**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
+
+### `folders/version-rebased-count`
+
+When a folder edit is resent after its ancestor version is unavailable, a device MUST count that resend as `rebased`.
+
+**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
+
+### `folders/version-rebased-words`
+
+When a push or watch resends an edit because its ancestor version is unavailable, the command MUST say that it was resent on the version the copy holds.
+
+**Tests:** `device/folders.test.ts › says in words that an edit went over a thinned version`, `device/folders.test.ts › says while watching that an edit went over a thinned version`.
+
+### `folders/version-rebase-limit`
+
+When an edit resent after an unavailable ancestor is blocked for another unavailable ancestor, a device MUST leave it blocked until another pass.
+
+**Tests:** `device/folders.test.ts › stops at one resend where the server no longer holds the version the copy holds either`.
+
+### `folders/version-only-pull`
+
+When a remote version change alters nothing rendered in the file, a device MUST leave the file's bytes unchanged.
+
+**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`.
+
+### `folders/version-own-edit-landed`
+
+When the file's own edit lands and the file remains unchanged since scan, a device MUST update its version line to the accepted version.
+
+**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`, `device/folders.test.ts › writes the line into a file saved without one, once its edit lands`.
+
+### `folders/version-own-edit-after-pull`
+
+When a file's own edit lands after a pull wrote the file while it waited, a device MUST update the version line again to the accepted version.
+
+**Tests:** `device/folders.test.ts › rewrites the line once its own edit lands, where a pull wrote the file while that edit waited`.
+
+### `folders/version-unknown-base`
+
+When a document has no version line or names a version ahead of the working copy, a device MUST base its property merge on the copy's current item version.
+
+**Tests:** `device/folders-contract-a.test.ts › merges on the copy version when the file version line is %s`.
+
+### `folders/version-not-property`
+
+When a device sends a document edit, a device MUST omit `marfa_version` from item properties.
+
+**Tests:** `device/folders-contract-a.test.ts › merges on the copy version when the file version line is %s`.
 
 ## Edge lines and name lookup
 
@@ -1046,6 +1740,36 @@ When a later edit replaces a refused edge move, a device MUST move from the edge
 
 **Tests:** `device/folders.test.ts › keeps the old edge where the replace is refused`.
 
+### `folders/edge-move-gone-create`
+
+When an edge move is answered that the edge is gone, a device MUST create the edge the document line now requests.
+
+**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`, `device/folders.test.ts › makes the edge a gone move's line asks for at the next drain, where the first one stops`.
+
+### `folders/edge-move-gone-properties`
+
+When an edge move is answered that the edge is gone, a device MUST preserve the former edge's properties in the replacement edge it creates for the document line.
+
+**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`.
+
+### `folders/edge-move-waits-create`
+
+When a line moves an edge to an item whose create is queued, a device MUST wait for that item create before sending the move.
+
+**Tests:** `device/folders.test.ts › waits for the create of the item its line now names before it moves the edge`.
+
+### `folders/edge-move-dead-keeps`
+
+When an edge move dies after its retries, a device MUST retain the accepted server edge.
+
+**Tests:** `device/folders.test.ts › leaves the server's edge whole where a move dies after its retries`.
+
+### `folders/edge-create-refusal-holds`
+
+When the server refuses an edge create from a document line, a device MUST report the refusal beside any unresolved-name flag for that file.
+
+**Tests:** `device/folders.test.ts › holds a file whose line's edge is refused, and says it beside a name it cannot resolve`.
+
 ### `folders/edge-catalog-boundaries`
 
 When a folder is added, hydrated or caught up, a device MUST read the current edge-type catalog.
@@ -1127,6 +1851,18 @@ When a Markdown body embeds a document rather than a file item, a device MUST tr
 When a body-link lookup cannot reach the server, a device MUST retry it at the next pass that reaches the server.
 
 **Tests:** `device/folders.test.ts › waits for body link lookups and retries them when the server returns`.
+
+### `folders/body-missing-report`
+
+When a body link resolves to no item, a device MUST flag its document with the link text and reason.
+
+**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
+
+### `folders/body-unresolved-keeps-edges`
+
+While a body link is unresolved, a device MUST retain the document's existing references until every link resolves.
+
+**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
 
 ### `folders/embed-edge`
 
@@ -1260,6 +1996,12 @@ When an embed path leads outside the folder, a device MUST report the embed in `
 
 **Tests:** `device/folders.test.ts › reports an embed pointing outside the folder`.
 
+### `folders/embed-outside-no-write`
+
+When an embed path leads outside the folder, a device MUST NOT read or write the file it names.
+
+**Tests:** `device/folders.test.ts › reports an embed pointing outside the folder`.
+
 ### `folders/embed-two-paths`
 
 When one attachment is embedded at different paths, a device MUST write it at the first path in path order.
@@ -1284,9 +2026,21 @@ When an embed names no attachment the key can read, a device MUST report the emb
 
 **Tests:** `device/folders.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
 
+### `folders/embed-unreadable-no-write`
+
+When an embed names no attachment the key can read, a device MUST NOT write a file for it.
+
+**Tests:** `device/folders.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
+
 ### `folders/embed-ambiguous-target`
 
 When an embed name matches two attachments, a device MUST report the ambiguity.
+
+**Tests:** `device/folders.test.ts › writes nothing for a name two attachments share, and says so`.
+
+### `folders/embed-ambiguous-no-write`
+
+When an embed name matches two attachments, a device MUST NOT write a file for it.
 
 **Tests:** `device/folders.test.ts › writes nothing for a name two attachments share, and says so`.
 
@@ -1618,6 +2372,26 @@ When a device gives way to another device's placement, a device MUST remove its 
 
 **Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders.test.ts › follows another Mac's move of the same file, giving its own way`.
 
+### `folders/placement-newer-copy`
+
+When a device gives way to another machine's placement, a device MUST retain a newer placement already held in its working copy instead of replacing it with the older placement read from the server.
+
+**Tests:** `device/folders.test.ts › follows a move it heard of after the read it gives way from`.
+
+### `folders/placement-give-way-atomic`
+
+When a device gives way to another machine's placement, a device MUST expose the server's placement and withdrawal of its own placement writes as one change to the working copy.
+
+**Reason:** A concurrent caller must not observe the withdrawn local move without the placement that replaces it.
+
+**Tests:** waiting on #1890.
+
+### `folders/placement-forget-unchanged`
+
+When a placement read during giving way finds an edge missing from the server, a device MUST remove that edge from its working copy only if the edge has not changed in the copy since the read began.
+
+**Tests:** waiting on #1890.
+
 ### `folders/placement-collision-order`
 
 When several items claim one path, a device MUST rank existing placements by creation time and then edge ID, ahead of unplaced items.
@@ -1660,6 +2434,12 @@ When a placement is excluded by the folder lists, is inside a package, contains 
 
 **Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › does not walk into a package`.
 
+### `folders/placement-outside-no-write`
+
+When a placement is excluded by the folder lists, contains `..`, or escapes through a symbolic link, a device MUST NOT write the file at that path.
+
+**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
+
 ### `folders/placement-outside-edge-kept`
 
 When a placement is outside the paths the folder writes, a device MUST leave the edge's path unchanged.
@@ -1672,9 +2452,27 @@ When a placement extension would change a document into a non-document or a file
 
 **Tests:** `device/folders.test.ts › writes no file where its placement would make it another kind of file`.
 
+### `folders/placement-unsuited-no-write`
+
+When a placement would make a file another kind of item, a device MUST NOT write the file at that path.
+
+**Tests:** `device/folders.test.ts › writes no file where its placement would make it another kind of file`.
+
 ### `folders/placement-filesystem-failure`
 
 When the filesystem refuses a placement, a device MUST count the affected item `unwritten`.
+
+**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
+
+### `folders/placement-filesystem-keeps`
+
+When the filesystem refuses a placement, a device MUST retain the file at its previous path.
+
+**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
+
+### `folders/placement-filesystem-continues`
+
+When the filesystem refuses one placement, a device MUST continue processing other files.
 
 **Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
 
@@ -1721,6 +2519,12 @@ When the key cannot be read, a device MUST treat it as unchanged for retrying re
 When a later placement for an item lands, a device MUST release that item's earlier placement refusal.
 
 **Tests:** `device/folders.test.ts › follows another Mac's move of an item whose move it was refused`, `device/folders.test.ts › sends a refused move again once a later placement of the item lands`.
+
+### `folders/purged-placement-refusal`
+
+When a refused placement belongs to an item no longer held in the working copy, a device MUST stop reporting that placement as refused.
+
+**Tests:** `device/folders.test.ts › lets go of a refused placement once its item is purged`.
 
 ### `folders/placement-refused-file-kept`
 
@@ -1799,6 +2603,92 @@ When `GET /keys/current` answers `403 forbidden` for a credential that is not a 
 When a watch cannot read the current key, a device MUST suppress repeated key requests across successive passes.
 
 **Tests:** `device/folders.test.ts › asks a key it could not read again at most once a minute while watching`.
+
+## Ending a placement
+
+### `folders/placement-end-departure`
+
+When a file leaves a folder because its item was trashed or left the search's states, a device MUST delete that folder's `in-folder` edge for the item.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+
+### `folders/placement-end-transfer`
+
+When a file transfers to another folder on the machine and its original folder's search no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
+
+### `folders/placement-end-delete`
+
+When a scan sends a missing file's item deletion or finds its item already trashed, a device MUST delete that folder's `in-folder` edge for the item.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file the person deleted`, `device/folders-contract-c-retry.test.ts › ends the placement of a missing file already trashed on another device`.
+
+### `folders/placement-last-binding`
+
+While another file in the folder remains bound to an item, a device MUST NOT end that folder's placement of the item.
+
+**Tests:** waiting on #1890.
+
+### `folders/placement-end-retry`
+
+If ending a departing file's placement fails locally, then a device MUST retain the file's binding so a later pass can retry ending the placement.
+
+**Tests:** `device/folders.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders.test.ts › leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace`.
+
+### `folders/placement-purge-no-delete`
+
+When an item's purge removes its placement from the working copy, a device MUST NOT send a separate deletion of that placement.
+
+**Tests:** `device/folders.test.ts › sends nothing to end the placement of a purged item, which the purge took with it`.
+
+### `folders/placement-held-transfer`
+
+When a file moves to a folder that does not hold its item but its original folder's search still holds the item, a device MUST retain the original folder's placement.
+
+**Tests:** `device/folders.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
+
+### `folders/placement-unmatched-kept`
+
+While a folder retains an item's file as `unmatched`, a device MUST retain that folder's placement of the item.
+
+**Tests:** `device/folders.test.ts › keeps a folder's placement of an item whose file stays where it is`.
+
+### `folders/placement-restore-new`
+
+When a folder's search holds an item again after its placement ended, a device MUST place the item using the current first-placement setting or title as for a new item.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+
+### `folders/placement-end-count`
+
+When a pull queues the end of a placement, a device MUST count that end in the pull report's `ended` field.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+
+### `folders/placement-end-same-push`
+
+When a folder sync's pull ends a placement, a device MUST send that end in the same sync unless `folders/push-server-unavailable`, `folders/push-credential-stopped` or `folders/push-undelivered` prevents a further drain.
+
+**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`.
+
+### `folders/placement-end-already-gone`
+
+When the server answers a placement's deletion with `edge_not_found`, a device MUST treat that placement as ended.
+
+**Tests:** `device/folders.test.ts › takes the end of a placement another machine ended first as done`.
+
+### `folders/placement-end-refused-queue`
+
+When the server refuses a placement's deletion for the key's grant, a device MUST retain the refused deletion in the queue.
+
+**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
+
+### `folders/placement-end-refused-once`
+
+While a refused placement deletion remains in the queue, a device MUST NOT queue another deletion of the same placement.
+
+**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
 
 ## File writes and recovery
 
@@ -1892,6 +2782,12 @@ When a settings file cannot be written, a device MUST report `settings.unwritten
 
 **Tests:** `device/folders.test.ts › reports a settings file it cannot write, and goes on`.
 
+### `folders/write-settings-continues`
+
+When a settings file cannot be written, a device MUST continue the folder pass.
+
+**Tests:** `device/folders.test.ts › reports a settings file it cannot write, and goes on`.
+
 ### `folders/write-permissions`
 
 When a device replaces an existing file, a device MUST retain its permission bits except where the item's executable property requires changing executable bits.
@@ -1922,7 +2818,13 @@ When a document cannot be rendered safely, a device MUST count it `unwritten`.
 
 **Tests:** `cli/folder.test.ts › preserves %s edits and continues pulling another document`.
 
-## Deletion and missing directories
+### `folders/write-read-only`
+
+When an existing file is read-only, a device MUST leave it unchanged during a pull.
+
+**Tests:** `device/folders-contract-a.test.ts › keeps a read-only document unchanged when another device changes its item`.
+
+## Deletion, purges and missing directories
 
 ### `folders/delete-grace`
 
@@ -1995,6 +2897,12 @@ While the folder directory is missing or replaced by another directory, a device
 ### `folders/root-gone-watch`
 
 While the folder directory is missing, the command MUST report that the directory cannot be found.
+
+**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
+
+### `folders/root-gone-watch-continues`
+
+While the folder directory is missing, the command MUST keep the watch running.
 
 **Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
 
@@ -2082,547 +2990,35 @@ When a pull encounters files already deleted locally, a device MUST exclude thos
 
 **Tests:** `device/folders-contract-a.test.ts › reports a locally missing item already trashed elsewhere as waiting on scan`.
 
-## Document versions
+### `folders/purged-file-remove`
 
-### `folders/version-line`
+When a catch-up has applied an item's purge, its file's path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-When a pull writes a Markdown file, a device MUST write `marfa_version` naming the item version rendered.
+**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`.
+### `folders/purged-file-count`
 
-### `folders/version-stale-merge`
+When a pull removes a purged item's file, a device MUST count that file in both `removed` and `purged`.
 
-When a file names an older version not consumed by its accepted edits, a device MUST send the property edit as a merge based on that version, including a version the copy never held.
+**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › merges a file whose line names a version the copy skipped against that line`, `device/folders.test.ts › merges a file behind the copy, clearing nothing its lines left out`.
+### `folders/purged-edit-preserve`
 
-### `folders/version-absent-merge`
+When a purged item's file has changed since the device last wrote it, a device MUST preserve that file during a pull.
 
-When a document edit has no usable version line, a device MUST send its properties as a merge rather than a replacement.
+**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
 
-**Tests:** `device/folders.test.ts › merges an edit from a file with no version line`, `device/folders.test.ts › reads a quoted version line as the version, and a removed one as no version`.
+### `folders/purged-edit-count`
 
-### `folders/version-consumed`
+When a pull preserves a purged item's changed file, a device MUST count that file as `kept`.
 
-When an earlier accepted edit consumed a file's version line, a device MUST base the next edit from that line on the copy's current version.
+**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › keeps a line an edit spent spent after the pull rewrites it`.
+### `folders/purged-removal-report`
 
-### `folders/version-rewrite-waiting`
+When `folders pull` or `folders watch` reports removed files, the command MUST distinguish files removed because their items were purged from files removed because their items were trashed or left by state.
 
-When a pull rewrites a file over its waiting edit and that edit later lands, a device MUST treat the rewritten line as consumed by the accepted edit.
-
-**Tests:** `device/folders.test.ts › keeps the line a pull wrote over a waiting edit spent, once that edit lands`, `device/folders.test.ts › keeps a line spent where a pull writes the file over the edit that spent it`.
-
-### `folders/version-rewrite-refused`
-
-When a pull rewrites a file over a waiting edit that is then refused, a device MUST base the next edit from that rewritten file on its version line.
-
-**Tests:** `device/folders.test.ts › takes back the line a pull wrote over a waiting edit when that edit is refused`.
-
-### `folders/version-answered-unchanged`
-
-When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit was accepted or conflicted, a device MUST base the next edit from that newer buffer on its own version line.
-
-**Tests:** `device/folders.test.ts › lifts no answered edit's line when a pull writes over a waiting one, a conflicted edit's included`.
-
-### `folders/version-dead-unchanged`
-
-When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit died, a device MUST base the next edit from that newer buffer on its own version line.
-
-**Tests:** `device/folders.test.ts › lifts no dead edit's line when a pull writes over a later waiting one`.
-
-### `folders/version-external-write`
-
-When a write queued outside the file lands after a pull rewrote the file over it, a device MUST base the next file edit on the copy's current version.
-
-**Tests:** `device/folders.test.ts › keeps the line a pull wrote over an edit queued outside the file spent, once that edit lands`.
-
-### `folders/version-dead-consumed`
-
-When an edit dies after exhausting retries, a device MUST base another edit from that same buffer on the copy's current version.
-
-**Tests:** `device/folders.test.ts › keeps a dead edit's line spent, since the server may have taken it`.
-
-### `folders/version-dead-refused`
-
-When a released dead edit is explicitly refused and no accepted edit has used its version line, a device MUST base the next edit from that buffer on the buffer's version line.
-
-**Tests:** `device/folders.test.ts › takes back a dead edit's line once, released, the server refuses it`.
-
-### `folders/version-only-save`
-
-When a save changes only `marfa_version`, a device MUST NOT send an item edit.
-
-**Tests:** `device/folders.test.ts › sends nothing for a save that changes only the version line`.
-
-### `folders/version-ancestor-missing`
-
-When the server no longer holds the file edit's ancestor version, a device MUST retry the edit as a property merge on the copy's current version.
-
-**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
-
-### `folders/version-rebased-count`
-
-When a folder edit is resent after its ancestor version is unavailable, a device MUST count that resend as `rebased`.
-
-**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
-
-### `folders/version-rebased-words`
-
-When a push or watch resends an edit because its ancestor version is unavailable, the command MUST say that it was resent on the version the copy holds.
-
-**Tests:** `device/folders.test.ts › says in words that an edit went over a thinned version`, `device/folders.test.ts › says while watching that an edit went over a thinned version`.
-
-### `folders/version-rebase-limit`
-
-When an edit resent after an unavailable ancestor is blocked for another unavailable ancestor, a device MUST leave it blocked until another pass.
-
-**Tests:** `device/folders.test.ts › stops at one resend where the server no longer holds the version the copy holds either`.
-
-### `folders/version-only-pull`
-
-When a remote version change alters nothing rendered in the file, a device MUST leave the file's bytes unchanged.
-
-**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`.
-
-### `folders/version-own-edit-landed`
-
-When the file's own edit lands and the file remains unchanged since scan, a device MUST update its version line to the accepted version.
-
-**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`, `device/folders.test.ts › writes the line into a file saved without one, once its edit lands`.
-
-### `folders/version-own-edit-after-pull`
-
-When a file's own edit lands after a pull wrote the file while it waited, a device MUST update the version line again to the accepted version.
-
-**Tests:** `device/folders.test.ts › rewrites the line once its own edit lands, where a pull wrote the file while that edit waited`.
-
-### `folders/version-unknown-base`
-
-When a document has no version line or names a version ahead of the working copy, a device MUST base its property merge on the copy's current item version.
-
-**Tests:** `device/folders-contract-a.test.ts › merges on the copy version when the file version line is %s`.
-
-### `folders/version-not-property`
-
-When a device sends a document edit, a device MUST omit `marfa_version` from item properties.
-
-**Tests:** `device/folders-contract-a.test.ts › merges on the copy version when the file version line is %s`.
-
-## Edge write recovery
-
-### `folders/edge-move-gone-create`
-
-When an edge move is answered that the edge is gone, a device MUST create the edge the document line now requests.
-
-**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`, `device/folders.test.ts › makes the edge a gone move's line asks for at the next drain, where the first one stops`.
-
-### `folders/edge-move-gone-properties`
-
-When an edge move is answered that the edge is gone, a device MUST preserve the former edge's properties in the replacement edge it creates for the document line.
-
-**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`.
-
-### `folders/edge-move-waits-create`
-
-When a line moves an edge to an item whose create is queued, a device MUST wait for that item create before sending the move.
-
-**Tests:** `device/folders.test.ts › waits for the create of the item its line now names before it moves the edge`.
-
-### `folders/edge-move-dead-keeps`
-
-When an edge move dies after its retries, a device MUST retain the accepted server edge.
-
-**Tests:** `device/folders.test.ts › leaves the server's edge whole where a move dies after its retries`.
-
-### `folders/edge-create-refusal-holds`
-
-When the server refuses an edge create from a document line, a device MUST report the refusal beside any unresolved-name flag for that file.
-
-**Tests:** `device/folders.test.ts › holds a file whose line's edge is refused, and says it beside a name it cannot resolve`.
-
-### `folders/body-missing-report`
-
-When a body link resolves to no item, a device MUST flag its document with the link text and reason.
-
-**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
-
-### `folders/body-unresolved-keeps-edges`
-
-While a body link is unresolved, a device MUST retain the document's existing references until every link resolves.
-
-**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
-
-### `folders/preserve-alias-values`
-
-When a pull changes or removes a YAML anchor, a device MUST expand affected aliases as needed to preserve their intended values.
-
-**Tests:** `device/folders-contract-a.test.ts › expands affected aliases and preserves untouched anchors when removal is %s`.
-
-### `folders/preserve-unaffected-anchors`
-
-When a pull changes one YAML anchor group, a device MUST preserve untouched anchor groups as written.
-
-**Tests:** `device/folders-contract-a.test.ts › expands affected aliases and preserves untouched anchors when removal is %s`.
-
-### `folders/write-read-only`
-
-When an existing file is read-only, a device MUST leave it unchanged during a pull.
-
-**Tests:** `device/folders-contract-a.test.ts › keeps a read-only document unchanged when another device changes its item`.
-
-## Reports and continuation
-
-### `folders/empty-directory-push`
-
-When a file is edited in a newly added folder directory, a device MUST send that edit during push.
-
-**Tests:** `device/folders.test.ts › hydrates into an empty directory and pushes without holding anything else`.
-
-### `folders/placement-outside-no-write`
-
-When a placement is excluded by the folder lists, contains `..`, or escapes through a symbolic link, a device MUST NOT write the file at that path.
-
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
-
-### `folders/placement-unsuited-no-write`
-
-When a placement would make a file another kind of item, a device MUST NOT write the file at that path.
-
-**Tests:** `device/folders.test.ts › writes no file where its placement would make it another kind of file`.
-
-### `folders/placement-filesystem-keeps`
-
-When the filesystem refuses a placement, a device MUST retain the file at its previous path.
-
-**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
-
-### `folders/placement-filesystem-continues`
-
-When the filesystem refuses one placement, a device MUST continue processing other files.
-
-**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
-
-### `folders/embed-outside-no-write`
-
-When an embed path leads outside the folder, a device MUST NOT read or write the file it names.
-
-**Tests:** `device/folders.test.ts › reports an embed pointing outside the folder`.
-
-### `folders/embed-unreadable-no-write`
-
-When an embed names no attachment the key can read, a device MUST NOT write a file for it.
-
-**Tests:** `device/folders.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
-
-### `folders/embed-ambiguous-no-write`
-
-When an embed name matches two attachments, a device MUST NOT write a file for it.
-
-**Tests:** `device/folders.test.ts › writes nothing for a name two attachments share, and says so`.
-
-### `folders/write-settings-continues`
-
-When a settings file cannot be written, a device MUST continue the folder pass.
-
-**Tests:** `device/folders.test.ts › reports a settings file it cannot write, and goes on`.
-
-### `folders/root-gone-watch-continues`
-
-While the folder directory is missing, the command MUST keep the watch running.
-
-**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
-
-## Lists and names
-
-### `folders/include-empty`
-
-When a folder’s include list is empty, a device MUST admit every path not excluded by dot-name rules, built-in lists or its ignore list.
-
-**Tests:** `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
-
-### `folders/include-negation`
-
-When the last applicable include pattern for a folder path is negated, a device MUST exclude that path from admission.
-
-**Tests:** `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`.
-
-### `folders/list-pattern-order`
-
-When several patterns in one include or ignore list match the same path, a device MUST use the last matching pattern's inclusion or exclusion, including matches through equivalent Unicode names.
-
-**Tests:** `device/folder-patterns.test.ts › resolves %s negations in line order across original and equivalent names`.
-
-### `folders/list-path-before-parent`
-
-When an include or ignore pattern matches a file's path directly, a device MUST use that match before considering a pattern matching an ancestor directory.
-
-**Tests:** `device/folder-patterns.test.ts › resolves an equivalent file pattern before a matching parent pattern`.
-
-### `folders/invalid-pattern-refused`
-
-When a folder’s include or ignore list contains an invalid gitignore pattern, a device MUST refuse admission using those settings.
-
-**Tests:** `device/folders-contract-b.test.ts › refuses an invalid %s pattern before admission`.
-
-### `folders/include-paths`
-
-When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the folder root.
-
-**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folder-patterns.test.ts › keeps the members of the %s range in include patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
-
-### `folders/ignore-paths`
-
-When a folder path matches its ignore list, a device MUST exclude that path from admission even when the include list also matches it.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`, `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`, `device/folder-patterns.test.ts › keeps the members of the %s range in ignore patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
-
-### `folders/include-dot-directories`
-
-When a folder path has a dot-led directory component, a device MUST admit it only where a non-negated include pattern explicitly names every dot-led directory on its path.
-
-**Tests:** `device/folders.test.ts › reaches a dot-led path its include list names`, `device/folders.test.ts › excludes a dot-led directory at any depth`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`, `device/folders.test.ts › takes nothing under a dot-led directory a negated include line names`, `device/folder-patterns.test.ts › keeps the members of the %s range when entering dot directories`.
-
-### `folders/builtin-machine-names`
-
-A device MUST exclude `.DS_Store`, `Thumbs.db`, `._*`, `.Spotlight-V100`, `.Trashes`, `Icon` followed by a carriage return and `desktop.ini` from folder admission regardless of the configured lists.
-
-**Tests:** `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
-
-### `folders/builtin-temporary-names`
-
-A device MUST exclude `*.swp`, `*~`, `.#*`, `#*#`, `~$*`, `*.tmp`, `.~lock.*#`, `*___jb_tmp___`, `*___jb_old___`, `*.crdownload`, `*.crswap`, `*.part` and `*.download` from folder admission regardless of the configured lists.
-
-**Tests:** `device/folders.test.ts › never takes an editor's or a download's temporary file`, `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
-
-### `folders/builtin-secret-names`
-
-A device MUST exclude `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `credentials`, `*credentials.json` and `credentials.db` from folder admission regardless of the configured lists.
-
-**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`, `device/folders-contract-b.test.ts › keeps every built-in machine, temporary and secret name outside admission`.
-
-### `folders/secrets-reported`
-
-When a folder scan encounters a file excluded by a built-in secret pattern in a directory it walks, a device MUST name the file in the scan report’s `secrets`.
-
-**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`.
-
-### `folders/secrets-said`
-
-When a folder push or watch encounters a file excluded by a built-in secret pattern, the command MUST name the excluded file in words.
-
-**Tests:** `device/folders.test.ts › never takes a secret whatever its lists say`, `device/folders.test.ts › says a refused secret in words once while watching`.
-
-### `folders/secret-notice-once`
-
-While a folder file remains excluded by a built-in secret pattern, the command MUST say its watch notice only once.
-
-**Tests:** `device/folders.test.ts › says a refused secret in words once while watching`, `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
-
-### `folders/pull-outside-lists`
-
-When a folder pull would write a path excluded by the folder’s lists, a device MUST report the item as `outside`.
-
-**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`.
-
-### `folders/pull-outside-lists-file-unwritten`
-
-When a folder pull would write a path excluded by the folder’s lists, a device MUST NOT write the item’s file.
-
-**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`.
-
-### `folders/excluded-binding-kept`
-
-When a folder’s lists stop admitting a bound file, a device MUST retain its binding.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/excluded-no-deletion`
-
-When a folder’s lists stop admitting a bound file, a device MUST NOT journal its deletion.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/excluded-binding-kept-edits-unsent`
-
-When a folder’s lists stop admitting a bound file, a device MUST NOT send its edits.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/excluded-scan-count`
-
-When a folder’s lists stop admitting a bound file, a device MUST count the file as `unreached` in the scan report.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/excluded-pull-preserved`
-
-When a folder’s lists stop admitting a bound file, a device MUST leave its bytes untouched during a pull.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/included-again`
-
-When a folder’s lists admit a previously excluded bound file again, a device MUST send its intervening edit to the same item.
-
-**Tests:** `device/folders.test.ts › ignores what its ignore list names`.
-
-### `folders/package-scan`
-
-When a folder scan encounters a directory ending in `.app`, `.bundle`, `.pages`, `.numbers`, `.key`, `.photoslibrary`, `.xcodeproj` or `.rtfd` without regard to case, a device MUST report the directory as `package`.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`, `device/folders-contract-b.test.ts › reports every built-in package extension without scanning its contents`.
-
-### `folders/package-scan-contents-excluded`
-
-When a folder scan encounters a directory ending in `.app`, `.bundle`, `.pages`, `.numbers`, `.key`, `.photoslibrary`, `.xcodeproj` or `.rtfd` without regard to case, a device MUST NOT admit the directory’s contents.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`, `device/folders-contract-b.test.ts › reports every built-in package extension without scanning its contents`.
-
-### `folders/macos-package-scan`
-
-Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST report the directory as `package`.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`.
-
-### `folders/macos-package-scan-contents-excluded`
-
-Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST NOT admit the directory’s contents.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`.
-
-### `folders/package-pull`
-
-When a folder placement falls inside a package, a device MUST count the item as `outside`.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`.
-
-### `folders/package-pull-file-unwritten`
-
-When a folder placement falls inside a package, a device MUST NOT write its file.
-
-**Tests:** `device/folders.test.ts › does not walk into a package`.
-
-### `folders/unreadable-directory`
-
-When a folder scan cannot read a directory or an entry’s details, a device MUST report that directory as `unreadable`.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
-
-### `folders/unreadable-directory-scan-continues`
-
-When a folder scan cannot read a directory or an entry’s details, a device MUST continue scanning other directories.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
-
-### `folders/unreadable-bindings`
-
-When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST count it as `unreached`.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
-
-### `folders/unreadable-no-deletion`
-
-When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST NOT journal its deletion.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
-
-### `folders/unreadable-pull`
-
-When a folder pull cannot write a bound file inside an unreadable directory, a device MUST retain its binding.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
-
-### `folders/unreadable-pull-unwritten-count`
-
-When a folder pull cannot write a bound file inside an unreadable directory, a device MUST count the item as `unwritten`.
-
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`.
-
-### `folders/name-comparison`
-
-When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
-
-**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
-
-### `folders/same-name-scan-choice`
-
-When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST admit the already-bound path or otherwise the first path in order.
-
-**Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
-
-### `folders/same-name-scan-choice-other-paths-held`
-
-When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST hold the other paths with flag `name` until renamed.
-
-**Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
-
-### `folders/same-name-beside`
-
-When two folder items are placed at names equal without regard to case or Unicode normalization, a device MUST place the later item beside the earlier one under a numbered name.
-
-**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`.
-
-### `folders/case-rename-unsent`
-
-When a folder file is renamed only in case or Unicode normalization, a device MUST NOT queue a placement change for that rename.
-
-**Tests:** `device/folders-contract-b.test.ts › does not send a placement for an equivalent rename to %s`.
-
-### `folders/lookup-both-normalizations`
-
-When a folder asks the server to resolve a title whose NFC and NFD forms differ, a device MUST look up both forms.
-
-**Tests:** `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`.
-
-### `folders/state-not-admitted`
-
-A device MUST exclude every file under a folder’s `.marfa/` state directory from item admission regardless of the include list.
-
-**Tests:** `device/folders.test.ts › keeps its own state in .marfa and never pushes it`.
-
-### `folders/watched-settings`
-
-When `.marfa/folder.yaml` changes during a folder watch, a device MUST submit the settings edit through the folder operation at its next pass.
-
-**Tests:** `device/folders.test.ts › sends an edit to its settings file through the folder door`.
-
-### `folders/binary-outside-search`
-
-When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST leave the file unsent.
-
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
-
-### `folders/binary-outside-search-skipped-count`
-
-When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST count the file as `skipped`.
-
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
-
-### `folders/embedded-outside-search`
-
-When a document in a folder embeds a file outside the folder’s search, a device MUST admit that file as the document’s attachment.
-
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`, `device/folders.test.ts › writes an embedded file where its link says`, `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
-
-### `folders/document-outside-search`
-
-When a folder document names an admissible type outside the folder’s search, a device MUST create its item under that type.
-
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
-
-### `folders/new-file-only-members`
-
-When an item outside a folder’s search has no bound file and no document embeds it, a device MUST NOT write a new file for the item.
-
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
-
-### `folders/outside-document-unmatched`
-
-When a folder document’s accepted type is outside the folder’s search, a device MUST count its bound file as `unmatched` at the next pull.
-
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`.
+**Tests:** `device/folders.test.ts › says in words that a purged item's file was removed`, `device/folders.test.ts › says while watching that a purged item's file was removed`.
 
 ## Paths, links and files
 
@@ -3422,6 +3818,158 @@ When the person deletes either of two files whose folders both hold the item, a 
 
 **Tests:** `device/folders.test.ts › keeps two folders' files for one item editable`, `device/folders.test.ts › trashes a file item deleted where both folders hold it`.
 
+## Pulls and pushes
+
+### `folders/pull-gone-item-file`
+
+If an item leaves the working copy before a pull writes its file, then a device MUST NOT write a file for that item.
+
+**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+
+### `folders/pull-gone-item-binding`
+
+If an item leaves the working copy before a pull writes its file, then a device MUST NOT bind a file to that item.
+
+**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+
+### `folders/pull-gone-item-placement`
+
+If an item leaves the working copy before a pull queues its placement, then a device MUST NOT queue a placement for that item.
+
+**Tests:** `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+
+### `folders/pull-gone-item-continue`
+
+If an item leaves the working copy during a pull, then a device MUST continue the pull without failing solely because that item is gone.
+
+**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`, `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+
+### `folders/pull-retry-copy`
+
+When the working copy changes under a pull, a device MUST restart the pull from a fresh read of the copy, making at most three attempts in total.
+
+**Tests:** `device/folders.test.ts › pulls again where the copy changes under the pull`, `device/folders-contract-c.test.ts › retries a changed copy three times in total and succeeds on the third stable read`.
+
+### `folders/pull-retry-counts`
+
+When a pull restarts after its working copy changes, a device MUST include completed file writes, rewrites, moves, revivals, placements, placement ends, removals, purged-file removals, transfers in and transfers out from earlier attempts in its final report.
+
+**Tests:** `device/folders.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains transfer-%s counts across a restart`.
+
+### `folders/watch-copy-change-notice`
+
+When the working copy keeps changing under consecutive `folders watch` passes, the command MUST report the condition once for that run of passes.
+
+**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
+
+### `folders/watch-copy-change-retry`
+
+When a watch pass exhausts its pull attempts because the working copy keeps changing, a device MUST continue watching and retry the pull in the next pass.
+
+**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
+
+### `folders/pull-flagged-items`
+
+When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another folder.
+
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders.test.ts › writes no file where its placement would make it another kind of file`, `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+
+### `folders/report-distinct-items`
+
+When `folders push` or `folders watch` reports items held back by a pull, the command MUST report each item once, including separate entries for different items at the same path.
+
+**Tests:** `device/folders.test.ts › names each item it holds back at a secret's name, two at one path as two`.
+
+### `folders/elsewhere-unflagged`
+
+When a pull counts an item as `elsewhere` because its file is moving to another folder on the machine, a device MUST NOT include the item in the pull report's `flagged` entries.
+
+**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
+
+### `folders/push-send-placement`
+
+When a folder sync writes a file whose placement is not on the server, a device MUST send that placement in the same sync unless `folders/push-server-unavailable`, `folders/push-credential-stopped` or `folders/push-undelivered` prevents a further drain.
+
+**Tests:** `cli/folder.test.ts › is in step after the one push that writes its files`, `cli/folder.test.ts › is in step after the push that runs a confirmed first sync`, `device/folders.test.ts › sends the placement of each file a push writes in the push, and counts it`.
+
+### `folders/push-count-placement`
+
+When a folder sync sends a placement after its pull, a device MUST include that placement in the sync report's count of answered writes.
+
+**Tests:** `cli/folder.test.ts › is in step after the one push that writes its files`, `device/folders.test.ts › sends the placement of each file a push writes in the push, and counts it`.
+
+### `folders/push-server-unavailable`
+
+If a folder sync's catch-up fails environmentally or its first drain reports the server unavailable, then a device MUST NOT drain again after that sync's pull.
+
+**Tests:** `device/folders.test.ts › leaves the placements of the files a push wrote waiting where it could not reach the server, and sends them at the next push`, `device/folders.test.ts › leaves the placements waiting where the server fails them as the push sends them, and sends them at the next push`.
+
+### `folders/push-credential-stopped`
+
+If a folder sync's first drain stops because the server refuses the credential, then a device MUST NOT drain again after that sync's pull.
+
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain a refused credential stopped`.
+
+### `folders/push-undelivered`
+
+If a folder sync's first drain leaves a write undelivered, then a device MUST NOT drain again after that sync's pull.
+
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+
+### `folders/push-placement-retry`
+
+When a folder sync leaves placements queued after its pull and a later sync can deliver them, a device MUST send those placements in the later sync.
+
+**Tests:** `device/folders.test.ts › leaves the placements of the files a push wrote waiting where it could not reach the server, and sends them at the next push`, `device/folders.test.ts › leaves the placements waiting where the server fails them as the push sends them, and sends them at the next push`, `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+
+### `folders/push-placement-verdict`
+
+When the server refuses a placement sent after a folder sync's pull, a device MUST include that refusal among the sync report's verdicts.
+
+**Tests:** `device/folders.test.ts › reports a placement the server refuses in the push's second drain, and does not send it again`.
+
+### `folders/push-placement-withheld`
+
+While the key, saved folder settings and placement used by a refused placement write remain unchanged, a device MUST NOT send that placement write again.
+
+**Tests:** `device/folders.test.ts › reports a placement the server refuses in the push's second drain, and does not send it again`.
+
+### `folders/conflict-file-report`
+
+When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the command MUST name the file in its text output.
+
+**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`, `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
+
+### `folders/conflict-copy-file`
+
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that folder, the command MUST name that file as the destination of the edit's text.
+
+**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`.
+
+### `folders/conflict-copy-pending`
+
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that folder yet, the command MUST say that the copy is not a file in the folder yet.
+
+**Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
+
+### `folders/conflict-copy-arrival`
+
+When a `folders watch` pass writes a conflicted copy previously reported as having no file yet, the command MUST report the file that now holds the edit's text.
+
+**Tests:** `device/folders.test.ts › says in a watch the file a conflicted copy became, once it is one`.
+
+### `folders/conflict-report-once`
+
+When `folders push` or `folders watch` has reported a conflicted write, the command MUST NOT report that verdict again.
+
+**Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`, `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`.
+
+### `folders/conflict-other-item`
+
+When a conflicted write belongs to an item with no file in the watched or pushed folder, the command MUST NOT report that conflict as the folder's.
+
+**Tests:** `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a push`, `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a watch`.
+
 ## Paused removals, size and status
 
 ### `folders/removal-threshold`
@@ -3882,382 +4430,6 @@ When a folder watch receives `401` without the server’s contract header, a dev
 
 **Tests:** `device/folders.test.ts › waits out a gateway refusing its key, naming no contract, without stopping`.
 
-## Local refusals and first sync
-
-### `folders/invalid-document-contained`
-
-When a folder document fails local field validation or names a type absent from the held catalog, a device MUST retain the file’s bytes.
-
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
-
-### `folders/invalid-document-flagged`
-
-When a folder document fails local field validation or names a type absent from the held catalog, a device MUST flag the local refusal.
-
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
-
-### `folders/invalid-document-scan-continues`
-
-When a folder document fails local field validation or names a type absent from the held catalog, a device MUST continue scanning other files.
-
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
-
-### `folders/invalid-document-retried`
-
-When a refused folder document is corrected or its type becomes available in the held catalog, a device MUST retry admission at a later scan.
-
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
-
-### `folders/first-sync-waits`
-
-When a folder is added without confirmation and has files to write or send, a device MUST hold its first sync for confirmation.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
-
-### `folders/first-sync-no-effects`
-
-While a folder’s first sync waits for confirmation, a device MUST NOT write item files into the directory.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
-
-### `folders/first-sync-no-effects-writes-unsent`
-
-While a folder’s first sync waits for confirmation, a device MUST NOT send queued writes to the server.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
-
-### `folders/first-sync-plan`
-
-When a waiting folder’s first-sync plan is read, a device MUST report the counts `write`, `send` and `beside` from the current copy and directory.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
-
-### `folders/first-sync-plan-writes-unsent`
-
-When a waiting folder’s first-sync plan is read, a device MUST NOT send queued writes to the server.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
-
-### `folders/first-sync-offline-plan`
-
-When a waiting folder’s server is unreachable and the folder already holds a usable copy, a device MUST report its first-sync plan from that copy.
-
-**Tests:** `device/folders.test.ts › reads the copy it already holds when the server is out of reach`.
-
-### `folders/first-sync-status`
-
-While a folder’s first sync waits, a device MUST include its waiting state and last read plan in folder status.
-
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`.
-
-### `folders/first-sync-watch-refused`
-
-While a folder’s first sync waits, the command MUST refuse to start a watch with `first_sync_waiting`.
-
-**Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
-
-### `folders/first-sync-drain-refused`
-
-While a folder’s first sync waits, a device MUST refuse a drain through the folder’s device door with `first_sync_waiting`.
-
-**Tests:** `device/folders.test.ts › refuses a drain by the folder's device door while it waits`.
-
-### `folders/first-sync-pull-refused`
-
-While a folder’s first sync waits, a device MUST refuse a pull with `first_sync_waiting`.
-
-**Tests:** `device/folders-contract-b.test.ts › refuses a pull during first sync and uses the directory as it stands after confirmation`.
-
-### `folders/first-sync-current-directory`
-
-When a folder’s first sync is confirmed, a device MUST process the directory as it stands rather than execute an earlier plan’s file list.
-
-**Tests:** `device/folders-contract-b.test.ts › refuses a pull during first sync and uses the directory as it stands after confirmation`.
-
-### `folders/first-sync-settings-refused`
-
-While a folder’s first sync waits, a device MUST refuse submission of its settings-file edit with `first_sync_waiting`.
-
-**Tests:** waiting on #1890.
-
-### `folders/first-sync-restore-refused`
-
-While a folder’s first sync waits, a device MUST refuse restoration of removals with `first_sync_waiting`.
-
-**Tests:** `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
-
-### `folders/first-sync-terminal-question`
-
-When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST ask for confirmation.
-
-**Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
-
-### `folders/first-sync-terminal-answer`
-
-When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the command MUST proceed only for `y` or `yes` without regard to case.
-
-**Tests:** `device/folders-contract-b.test.ts › asks before first sync at a terminal and obeys %s`.
-
-### `folders/first-sync-interrupted-confirmed`
-
-When a confirmed folder’s sync is interrupted by a failed file landing, a device MUST keep first sync confirmed for the next attempt and for a later add over the same state.
-
-**Tests:** `device/folders-contract-b.test.ts › keeps first sync confirmed after a failed landing and after adding the folder again`.
-
-### `folders/first-sync-yes`
-
-When `folders add` is given `--yes`, the command MUST confirm the folder’s first sync without asking for input.
-
-**Tests:** `device/folders.test.ts › refuses a watch while it waits, and a script confirms it with --yes`.
-
-### `folders/first-sync-confirm`
-
-When `folders confirm` is given a waiting folder, the command MUST clear the first-sync wait.
-
-**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
-
-### `folders/first-sync-confirm-local-only`
-
-When `folders confirm` is given a waiting folder, the command MUST NOT contact the server.
-
-**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`, `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
-
-### `folders/first-sync-confirmation-kept`
-
-When a confirmed folder syncs again or is added again over its own state, a device MUST keep the first sync confirmed.
-
-**Tests:** `device/folders.test.ts › goes once it is confirmed, and does not ask again`.
-
-### `folders/first-sync-empty-confirmed`
-
-When a waiting folder’s plan has no files to write, send or place beside another file, a device MUST confirm the first sync automatically.
-
-**Tests:** `device/folders.test.ts › confirms itself where there is nothing to write, send or keep`.
-
-### `folders/first-sync-remove`
-
-When a waiting folder is removed, a device MUST remove its state despite unsent queued writes.
-
-**Tests:** `device/folders.test.ts › is canceled by removing the folder, which leaves its files`.
-
-### `folders/first-sync-remove-files-preserved`
-
-When a waiting folder is removed, a device MUST leave its item files intact.
-
-**Tests:** `device/folders.test.ts › is canceled by removing the folder, which leaves its files`.
-
-### `folders/first-sync-per-machine`
-
-When machines follow the same `system.folder`, a device MUST keep each machine’s first-sync confirmation independently in that folder’s local state.
-
-**Tests:** `device/folders.test.ts › asks of each machine's folder for itself`.
-
-## Refused document names and settings
-
-### `folders/document-name-refusal`
-
-If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST report the file's path and the refusal reason.
-
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
-
-### `folders/document-name-preserve`
-
-If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST preserve the file's bytes.
-
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
-
-### `folders/document-name-no-writes`
-
-If a document contains a tag or property name the server refuses, or would exceed the item's tag limit, then a device MUST NOT queue any write from that file.
-
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
-
-### `folders/document-name-continue`
-
-When a scan refuses a document's tag or property name or tag count, a device MUST continue scanning the other files.
-
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved`.
-
-### `folders/document-name-retry`
-
-When a document's refused tag or property name or tag count is corrected, a device MUST accept the corrected file at the next scan.
-
-**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `device/folder-names.test.ts › queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
-
-### `folders/settings-name-refusal`
-
-If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST refuse to read those settings.
-
-**Tests:** `device/folder-names.test.ts › stops where it is told, naming the setting, and runs with a default it takes`, `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`.
-
-### `folders/settings-name-guidance`
-
-If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders change` as the command that changes it.
-
-**Tests:** `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`, `device/folders-contract-c.test.ts › names each refused default and explains how to change it`.
-
-## Giving way to another machine's placement
-
-### `folders/placement-newer-copy`
-
-When a device gives way to another machine's placement, a device MUST retain a newer placement already held in its working copy instead of replacing it with the older placement read from the server.
-
-**Tests:** `device/folders.test.ts › follows a move it heard of after the read it gives way from`.
-
-### `folders/placement-give-way-atomic`
-
-When a device gives way to another machine's placement, a device MUST expose the server's placement and withdrawal of its own placement writes as one change to the working copy.
-
-**Reason:** A concurrent caller must not observe the withdrawn local move without the placement that replaces it.
-
-**Tests:** waiting on #1890.
-
-### `folders/placement-forget-unchanged`
-
-When a placement read during giving way finds an edge missing from the server, a device MUST remove that edge from its working copy only if the edge has not changed in the copy since the read began.
-
-**Tests:** waiting on #1890.
-
-## Names made from titles
-
-### `folders/title-separators`
-
-When a device makes a file name from an item's title, a device MUST replace `/`, `\` and `:` with `-`.
-
-**Tests:** `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
-
-### `folders/title-controls`
-
-When a device makes a file name from an item's title, a device MUST replace each control character with a space.
-
-**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
-
-### `folders/title-trimming`
-
-When a device makes a file name from a nonblank item title, a device MUST trim surrounding whitespace and leading dots, using `untitled` when that leaves an empty name.
-
-**Tests:** `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
-
-### `folders/name-byte-limit`
-
-When a generated file name would exceed 255 bytes of UTF-8, a device MUST shorten its stem at a character boundary to fit within 255 bytes, retaining any numbering suffix and an extension of at most 32 bytes including its dot.
-
-**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
-
-### `folders/name-long-ending`
-
-When a generated file name has more than 32 bytes from its last dot to its end, a device MUST treat that ending as part of the stem when shortening the name.
-
-**Tests:** `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
-
-## Items a pull does not write
-
-### `folders/pull-flagged-items`
-
-When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another folder.
-
-**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders.test.ts › writes no file where its placement would make it another kind of file`, `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
-
-### `folders/report-distinct-items`
-
-When `folders push` or `folders watch` reports items held back by a pull, the command MUST report each item once, including separate entries for different items at the same path.
-
-**Tests:** `device/folders.test.ts › names each item it holds back at a secret's name, two at one path as two`.
-
-### `folders/elsewhere-unflagged`
-
-When a pull counts an item as `elsewhere` because its file is moving to another folder on the machine, a device MUST NOT include the item in the pull report's `flagged` entries.
-
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
-
-## A push that leaves a folder in step
-
-### `folders/push-send-placement`
-
-When a folder sync writes a file whose placement is not on the server, a device MUST send that placement in the same sync unless `folders/push-server-unavailable`, `folders/push-credential-stopped` or `folders/push-undelivered` prevents a further drain.
-
-**Tests:** `cli/folder.test.ts › is in step after the one push that writes its files`, `cli/folder.test.ts › is in step after the push that runs a confirmed first sync`, `device/folders.test.ts › sends the placement of each file a push writes in the push, and counts it`.
-
-### `folders/push-count-placement`
-
-When a folder sync sends a placement after its pull, a device MUST include that placement in the sync report's count of answered writes.
-
-**Tests:** `cli/folder.test.ts › is in step after the one push that writes its files`, `device/folders.test.ts › sends the placement of each file a push writes in the push, and counts it`.
-
-### `folders/push-server-unavailable`
-
-If a folder sync's catch-up fails environmentally or its first drain reports the server unavailable, then a device MUST NOT drain again after that sync's pull.
-
-**Tests:** `device/folders.test.ts › leaves the placements of the files a push wrote waiting where it could not reach the server, and sends them at the next push`, `device/folders.test.ts › leaves the placements waiting where the server fails them as the push sends them, and sends them at the next push`.
-
-### `folders/push-credential-stopped`
-
-If a folder sync's first drain stops because the server refuses the credential, then a device MUST NOT drain again after that sync's pull.
-
-**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain a refused credential stopped`.
-
-### `folders/push-undelivered`
-
-If a folder sync's first drain leaves a write undelivered, then a device MUST NOT drain again after that sync's pull.
-
-**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
-
-### `folders/push-placement-retry`
-
-When a folder sync leaves placements queued after its pull and a later sync can deliver them, a device MUST send those placements in the later sync.
-
-**Tests:** `device/folders.test.ts › leaves the placements of the files a push wrote waiting where it could not reach the server, and sends them at the next push`, `device/folders.test.ts › leaves the placements waiting where the server fails them as the push sends them, and sends them at the next push`, `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
-
-### `folders/push-placement-verdict`
-
-When the server refuses a placement sent after a folder sync's pull, a device MUST include that refusal among the sync report's verdicts.
-
-**Tests:** `device/folders.test.ts › reports a placement the server refuses in the push's second drain, and does not send it again`.
-
-### `folders/push-placement-withheld`
-
-While the key, saved folder settings and placement used by a refused placement write remain unchanged, a device MUST NOT send that placement write again.
-
-**Tests:** `device/folders.test.ts › reports a placement the server refuses in the push's second drain, and does not send it again`.
-
-## Conflict and watch reports
-
-### `folders/conflict-file-report`
-
-When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the command MUST name the file in its text output.
-
-**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`, `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
-
-### `folders/conflict-copy-file`
-
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that folder, the command MUST name that file as the destination of the edit's text.
-
-**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`.
-
-### `folders/conflict-copy-pending`
-
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that folder yet, the command MUST say that the copy is not a file in the folder yet.
-
-**Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
-
-### `folders/conflict-copy-arrival`
-
-When a `folders watch` pass writes a conflicted copy previously reported as having no file yet, the command MUST report the file that now holds the edit's text.
-
-**Tests:** `device/folders.test.ts › says in a watch the file a conflicted copy became, once it is one`.
-
-### `folders/conflict-report-once`
-
-When `folders push` or `folders watch` has reported a conflicted write, the command MUST NOT report that verdict again.
-
-**Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`, `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`.
-
-### `folders/conflict-other-item`
-
-When a conflicted write belongs to an item with no file in the watched or pushed folder, the command MUST NOT report that conflict as the folder's.
-
-**Tests:** `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a push`, `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a watch`.
-
 ### `folders/watch-grace-silent`
 
 When a `folders watch` pass only waits for a journaled deletion's grace period to end, the command MUST produce no report for that pass.
@@ -4275,179 +4447,3 @@ When a `folders watch` pass reports new activity, the command MUST NOT repeat a 
 When a standing notice changes during `folders watch`, the command MUST report the changed notice in the pass that observes it.
 
 **Tests:** `device/folders.test.ts › says a refused secret in words once while watching`.
-
-## A pull whose working copy changes
-
-### `folders/pull-gone-item-file`
-
-If an item leaves the working copy before a pull writes its file, then a device MUST NOT write a file for that item.
-
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
-
-### `folders/pull-gone-item-binding`
-
-If an item leaves the working copy before a pull writes its file, then a device MUST NOT bind a file to that item.
-
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
-
-### `folders/pull-gone-item-placement`
-
-If an item leaves the working copy before a pull queues its placement, then a device MUST NOT queue a placement for that item.
-
-**Tests:** `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
-
-### `folders/pull-gone-item-continue`
-
-If an item leaves the working copy during a pull, then a device MUST continue the pull without failing solely because that item is gone.
-
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`, `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
-
-### `folders/pull-retry-copy`
-
-When the working copy changes under a pull, a device MUST restart the pull from a fresh read of the copy, making at most three attempts in total.
-
-**Tests:** `device/folders.test.ts › pulls again where the copy changes under the pull`, `device/folders-contract-c.test.ts › retries a changed copy three times in total and succeeds on the third stable read`.
-
-### `folders/watch-copy-change-notice`
-
-When the working copy keeps changing under consecutive `folders watch` passes, the command MUST report the condition once for that run of passes.
-
-**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
-
-### `folders/watch-copy-change-retry`
-
-When a watch pass exhausts its pull attempts because the working copy keeps changing, a device MUST continue watching and retry the pull in the next pass.
-
-**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
-
-### `folders/purged-file-remove`
-
-When a catch-up has applied an item's purge, its file's path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
-
-**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
-
-### `folders/purged-file-count`
-
-When a pull removes a purged item's file, a device MUST count that file in both `removed` and `purged`.
-
-**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
-
-### `folders/purged-edit-preserve`
-
-When a purged item's file has changed since the device last wrote it, a device MUST preserve that file during a pull.
-
-**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
-
-### `folders/purged-edit-count`
-
-When a pull preserves a purged item's changed file, a device MUST count that file as `kept`.
-
-**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
-
-### `folders/purged-removal-report`
-
-When `folders pull` or `folders watch` reports removed files, the command MUST distinguish files removed because their items were purged from files removed because their items were trashed or left by state.
-
-**Tests:** `device/folders.test.ts › says in words that a purged item's file was removed`, `device/folders.test.ts › says while watching that a purged item's file was removed`.
-
-### `folders/purged-placement-refusal`
-
-When a refused placement belongs to an item no longer held in the working copy, a device MUST stop reporting that placement as refused.
-
-**Tests:** `device/folders.test.ts › lets go of a refused placement once its item is purged`.
-
-### `folders/pull-retry-counts`
-
-When a pull restarts after its working copy changes, a device MUST include completed file writes, rewrites, moves, revivals, placements, placement ends, removals, purged-file removals, transfers in and transfers out from earlier attempts in its final report.
-
-**Tests:** `device/folders.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains transfer-%s counts across a restart`.
-
-## When a placement ends
-
-### `folders/placement-end-departure`
-
-When a file leaves a folder because its item was trashed or left the search's states, a device MUST delete that folder's `in-folder` edge for the item.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
-
-### `folders/placement-end-transfer`
-
-When a file transfers to another folder on the machine and its original folder's search no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
-
-### `folders/placement-end-delete`
-
-When a scan sends a missing file's item deletion or finds its item already trashed, a device MUST delete that folder's `in-folder` edge for the item.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file the person deleted`, `device/folders-contract-c-retry.test.ts › ends the placement of a missing file already trashed on another device`.
-
-### `folders/placement-last-binding`
-
-While another file in the folder remains bound to an item, a device MUST NOT end that folder's placement of the item.
-
-**Tests:** waiting on #1890.
-
-### `folders/placement-end-retry`
-
-If ending a departing file's placement fails locally, then a device MUST retain the file's binding so a later pass can retry ending the placement.
-
-**Tests:** `device/folders.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders.test.ts › leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace`.
-
-### `folders/placement-purge-no-delete`
-
-When an item's purge removes its placement from the working copy, a device MUST NOT send a separate deletion of that placement.
-
-**Tests:** `device/folders.test.ts › sends nothing to end the placement of a purged item, which the purge took with it`.
-
-### `folders/placement-held-transfer`
-
-When a file moves to a folder that does not hold its item but its original folder's search still holds the item, a device MUST retain the original folder's placement.
-
-**Tests:** `device/folders.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
-
-### `folders/placement-unmatched-kept`
-
-While a folder retains an item's file as `unmatched`, a device MUST retain that folder's placement of the item.
-
-**Tests:** `device/folders.test.ts › keeps a folder's placement of an item whose file stays where it is`.
-
-### `folders/placement-restore-new`
-
-When a folder's search holds an item again after its placement ended, a device MUST place the item using the current first-placement setting or title as for a new item.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
-
-### `folders/placement-end-count`
-
-When a pull queues the end of a placement, a device MUST count that end in the pull report's `ended` field.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
-
-### `folders/placement-end-same-push`
-
-When a folder sync's pull ends a placement, a device MUST send that end in the same sync unless `folders/push-server-unavailable`, `folders/push-credential-stopped` or `folders/push-undelivered` prevents a further drain.
-
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`.
-
-### `folders/placement-end-already-gone`
-
-When the server answers a placement's deletion with `edge_not_found`, a device MUST treat that placement as ended.
-
-**Tests:** `device/folders.test.ts › takes the end of a placement another machine ended first as done`.
-
-### `folders/placement-end-refused-queue`
-
-When the server refuses a placement's deletion for the key's grant, a device MUST retain the refused deletion in the queue.
-
-**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
-
-### `folders/placement-end-refused-once`
-
-While a refused placement deletion remains in the queue, a device MUST NOT queue another deletion of the same placement.
-
-**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
-
-## What the real server cannot be made to produce
-
-The list and the reason for each entry are in `device.md`; `device/fidelity.test.ts` checks every answer the real server can produce against the scripted server's.

@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
-use globset::{GlobBuilder, GlobMatcher};
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use globset::GlobBuilder;
+use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::Result;
@@ -77,8 +79,8 @@ const PACKAGES: &[&str] = &[
 ];
 
 pub struct Lists {
-    machine: Patterns,
-    secrets: Patterns,
+    machine: &'static Patterns,
+    secrets: &'static Patterns,
     include: Patterns,
     /// The include lines that name a dot-led name, which alone reach one.
     dotted: Patterns,
@@ -88,18 +90,48 @@ pub struct Lists {
 }
 
 struct Patterns {
-    original: Gitignore,
-    folded: Gitignore,
+    original: Lines,
+    folded: Lines,
+}
+
+/// One list's gitignore lines, compiled together.
+struct Lines {
+    set: RegexSet,
+    /// Each pattern in `set`, in order.
+    lines: Vec<Line>,
+}
+
+struct Line {
+    /// The line's place in its list, which decides between two that match.
+    index: usize,
+    is_whitelist: bool,
+    is_only_dir: bool,
+}
+
+impl Lines {
+    fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    /// The last line that matches `path`, as gitignore reads a list.
+    fn matched(&self, path: &str, is_dir: bool) -> Option<&Line> {
+        self.set
+            .matches(path)
+            .into_iter()
+            .rev()
+            .map(|at| &self.lines[at])
+            .find(|line| !line.is_only_dir || is_dir)
+    }
 }
 
 struct DotName {
-    original: GlobMatcher,
-    folded: GlobMatcher,
+    original: Regex,
+    folded: Regex,
 }
 
 impl DotName {
     fn is_match(&self, name: &str) -> bool {
-        self.original.is_match(name) || self.folded.is_match(crate::names::folded(name))
+        self.original.is_match(name) || self.folded.is_match(&crate::names::folded(name))
     }
 }
 
@@ -125,20 +157,34 @@ impl Lists {
         {
             let compile = |pattern: &str| {
                 GlobBuilder::new(pattern)
-                    .case_insensitive(true)
                     .literal_separator(true)
                     .build()
-                    .map(|glob| glob.compile_matcher())
-                    .map_err(|error| refused("include", &name, &error.to_string()))
+                    .map_err(|error| error.to_string())
+                    .and_then(|glob| {
+                        limited(&mut RegexBuilder::new(&by_character(glob.regex())))
+                            .build()
+                            .map_err(|error| error.to_string())
+                    })
+                    .map_err(|why| refused("include", &name, &why))
             };
             dotted_names.push(DotName {
                 original: compile(&name)?,
                 folded: compile(&folded_pattern(&name))?,
             });
         }
+        // Compiled once: every pass builds the folder's lists, and these
+        // lines never change.
+        static BUILT_IN: OnceLock<(Patterns, Patterns)> = OnceLock::new();
+        let (machine, secrets) = BUILT_IN.get_or_init(|| {
+            (
+                built("built-in", &owned(&[STATE, JUNK, SWAP].concat()))
+                    .expect("the built-in lines are patterns"),
+                built("built-in", &owned(SECRETS)).expect("the built-in lines are patterns"),
+            )
+        });
         Ok(Lists {
-            machine: built("built-in", &owned(&[STATE, JUNK, SWAP].concat()))?,
-            secrets: built("built-in", &owned(SECRETS))?,
+            machine,
+            secrets,
             include: built("include", include)?,
             dotted: built("include", &dotted)?,
             dotted_names,
@@ -164,7 +210,7 @@ impl Lists {
     pub fn takes(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         let folded = crate::names::folded(&path);
-        if [&self.machine, &self.secrets, &self.ignore]
+        if [self.machine, self.secrets, &self.ignore]
             .into_iter()
             .any(|list| hit(list, &path, &folded, false))
         {
@@ -190,7 +236,7 @@ impl Lists {
 
     pub(super) fn secret(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        hit(&self.secrets, &path, &crate::names::folded(&path), false)
+        hit(self.secrets, &path, &crate::names::folded(&path), false)
     }
 
     /// A secret's name is refused file by file, so a package named like one is
@@ -198,7 +244,7 @@ impl Lists {
     pub(super) fn enters(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         let folded = crate::names::folded(&path);
-        if hit(&self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
+        if hit(self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
             return false;
         }
         let name = path.rsplit('/').next().unwrap_or(&path);
@@ -207,7 +253,7 @@ impl Lists {
 }
 
 fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
-    let (mut path, mut folded) = (Path::new(path), Path::new(folded));
+    let (mut path, mut folded) = (path, folded);
     loop {
         // Resolve line order across both forms before walking to a parent:
         // a direct match, including a negation, takes precedence over one there.
@@ -216,12 +262,14 @@ fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
             list.folded.matched(folded, is_dir),
         ]
         .into_iter()
-        .filter_map(|matched| matched.inner().copied())
-        .max_by(|one, other| one.from().cmp(&other.from()));
-        if let Some(glob) = matched {
-            return !glob.is_whitelist();
+        .flatten()
+        .max_by_key(|line| line.index);
+        if let Some(line) = matched {
+            return !line.is_whitelist;
         }
-        let (Some(parent), Some(folded_parent)) = (path.parent(), folded.parent()) else {
+        let (Some((parent, _)), Some((folded_parent, _))) =
+            (path.rsplit_once('/'), folded.rsplit_once('/'))
+        else {
             return false;
         };
         (path, folded, is_dir) = (parent, folded_parent, true);
@@ -229,32 +277,300 @@ fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
 }
 
 fn built(list: &str, lines: &[String]) -> Result<Patterns> {
-    let (mut original, mut folded) = (GitignoreBuilder::new(""), GitignoreBuilder::new(""));
-    for builder in [&mut original, &mut folded] {
-        builder
-            .case_insensitive(true)
-            .map_err(|error| refused(list, "", &error.to_string()))?;
-    }
+    let (mut original, mut folded) = ((Vec::new(), Vec::new()), (Vec::new(), Vec::new()));
     for (index, line) in lines.iter().enumerate() {
         let pattern: String = line.nfc().collect();
-        // Source metadata carries the line's ordinal in both matchers; fixed
-        // width makes path ordering also be numeric ordering on every target.
-        let source = std::path::PathBuf::from(format!("{index:020}"));
-        original
-            .add_line(Some(source.clone()), &pattern)
-            .map_err(|error| refused(list, line, &error.to_string()))?;
-        folded
-            .add_line(Some(source), &folded_pattern(&pattern))
-            .map_err(|error| refused(list, line, &error.to_string()))?;
+        let refuse = |why: String| refused(list, line, &why);
+        for (form, (regexes, read)) in [
+            (pattern.clone(), &mut original),
+            (folded_pattern(&pattern), &mut folded),
+        ] {
+            if let Some((regex, line)) = compiled(index, &form).map_err(refuse)? {
+                regexes.push(regex);
+                read.push(line);
+            }
+        }
     }
+    let set = |(regexes, lines): (Vec<String>, Vec<Line>)| {
+        // Each line is held to globset's limit on its own above, so the set
+        // is allowed that much for every line it holds.
+        let limit = (10 << 20) * regexes.len().max(1);
+        RegexSetBuilder::new(&regexes)
+            .dot_matches_new_line(true)
+            .size_limit(limit)
+            .dfa_size_limit(limit)
+            .build()
+            .map(|set| Lines { set, lines })
+            .map_err(|error| {
+                CoreError::Invalid(format!(
+                    "the folder's {list} list is too long to match: {error}"
+                ))
+            })
+    };
     Ok(Patterns {
-        original: original
-            .build()
-            .map_err(|error| refused(list, "", &error.to_string()))?,
-        folded: folded
-            .build()
-            .map_err(|error| refused(list, "", &error.to_string()))?,
+        original: set(original)?,
+        folded: set(folded)?,
     })
+}
+
+/// A gitignore line, read as git reads one: a comment or a blank line is
+/// nothing, `!` negates, a leading `/` anchors it to the folder, a trailing
+/// `/` matches only a directory, and a line with no other `/` matches a name
+/// at any depth. Answers the line's regex and what else it says.
+fn compiled(index: usize, line: &str) -> std::result::Result<Option<(String, Line)>, String> {
+    if line.starts_with('#') {
+        return Ok(None);
+    }
+    let mut line = if line.ends_with("\\ ") {
+        line
+    } else {
+        line.trim_end()
+    };
+    if line.is_empty() {
+        return Ok(None);
+    }
+    let (mut is_whitelist, mut is_only_dir, mut is_absolute) = (false, false, false);
+    if line.starts_with("\\!") || line.starts_with("\\#") {
+        line = &line[1..];
+        is_absolute = line.starts_with('/');
+    } else {
+        if let Some(rest) = line.strip_prefix('!') {
+            is_whitelist = true;
+            line = rest;
+        }
+        if let Some(rest) = line.strip_prefix('/') {
+            line = rest;
+            is_absolute = true;
+        }
+    }
+    if let Some(rest) = line.strip_suffix('/') {
+        is_only_dir = true;
+        line = rest.strip_suffix('\\').unwrap_or(rest);
+    }
+    let mut actual = line.to_string();
+    if !is_absolute && !line.contains('/') && !actual.starts_with("**/") && actual != "**" {
+        actual = format!("**/{actual}");
+    }
+    if actual.ends_with("/**") {
+        actual.push_str("/*");
+    }
+    let glob = GlobBuilder::new(&actual)
+        .literal_separator(true)
+        .backslash_escape(true)
+        // As git reads `[` with no `]` after it: a literal bracket.
+        .allow_unclosed_class(true)
+        .build()
+        .map_err(|error| error.kind().to_string())?;
+    let regex = by_character(glob.regex());
+    // Refused here, line by line, so the refusal names the line.
+    limited(&mut RegexBuilder::new(&regex))
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(Some((
+        regex,
+        Line {
+            index,
+            is_whitelist,
+            is_only_dir,
+        },
+    )))
+}
+
+/// As globset builds its own: a wildcard crosses a newline in a name, and a
+/// pattern is held to the same size.
+fn limited(builder: &mut RegexBuilder) -> &mut RegexBuilder {
+    builder
+        .dot_matches_new_line(true)
+        .size_limit(10 << 20)
+        .dfa_size_limit(10 << 20)
+}
+
+/// A glob's regex, read over characters. globset writes its regex over bytes,
+/// spelling each character outside ASCII as its UTF-8 bytes, so a class, a
+/// negated class or a `?` meets such a character as several bytes and cannot
+/// match it as one. Read again with those bytes as the characters they spell,
+/// the regex matches by character, as the pattern's literals already do.
+///
+/// Case is ignored for ASCII letters, as globset ignores it, and for a class
+/// member by adding every character the name comparison folds with it. The
+/// folded form carries the rest, its literals folded already, so a pattern
+/// matches what the name comparison (`names::same`) calls the same name and
+/// nothing more, negated or not.
+fn by_character(bytes: &str) -> String {
+    let source = bytes.strip_prefix("(?-u)").unwrap_or(bytes);
+    let mut decoded = String::with_capacity(source.len());
+    let mut pending: Vec<u8> = Vec::new();
+    let flush = |out: &mut String, pending: &mut Vec<u8>| {
+        out.push_str(&String::from_utf8_lossy(pending));
+        pending.clear();
+    };
+    let mut chars = source.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            flush(&mut decoded, &mut pending);
+            decoded.push(ch);
+            continue;
+        }
+        let mut ahead = chars.clone();
+        if ahead.next() == Some('x') {
+            let hex: String = ahead.by_ref().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16)
+                && hex.len() == 2
+                && byte > 0x7f
+            {
+                pending.push(byte);
+                chars = ahead;
+                continue;
+            }
+        }
+        flush(&mut decoded, &mut pending);
+        decoded.push('\\');
+        if let Some(escaped) = chars.next() {
+            decoded.push(escaped);
+        }
+    }
+    flush(&mut decoded, &mut pending);
+    case_free(&decoded)
+}
+
+/// The regex with each ASCII letter, alone or in a class, standing for both
+/// its cases, and each class holding every character the name comparison
+/// folds with one of its members.
+fn case_free(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() * 2);
+    let mut chars = source.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                out.push('\\');
+                if let Some(escaped) = chars.next() {
+                    out.push(escaped);
+                }
+            }
+            '[' => {
+                let negated = chars.next_if_eq(&'^').is_some();
+                let mut ranges = Vec::new();
+                let member = |chars: &mut std::iter::Peekable<std::str::Chars>| {
+                    let ch = chars.next()?;
+                    if ch == '\\' { chars.next() } else { Some(ch) }
+                };
+                while chars.peek().is_some_and(|ch| *ch != ']') {
+                    let Some(start) = member(&mut chars) else {
+                        break;
+                    };
+                    let mut ahead = chars.clone();
+                    let end =
+                        if ahead.next() == Some('-') && ahead.peek().is_some_and(|ch| *ch != ']') {
+                            chars.next();
+                            member(&mut chars).unwrap_or(start)
+                        } else {
+                            start
+                        };
+                    ranges.push((start, end));
+                }
+                chars.next();
+                let mut both = ranges.clone();
+                for &(start, end) in &ranges {
+                    for (low, high) in [('a', 'z'), ('A', 'Z')] {
+                        let (from, to) = (start.max(low), end.min(high));
+                        if from <= to {
+                            let swap = |ch: char| {
+                                if ch.is_ascii_lowercase() {
+                                    ch.to_ascii_uppercase()
+                                } else {
+                                    ch.to_ascii_lowercase()
+                                }
+                            };
+                            both.push((swap(from), swap(to)));
+                        }
+                    }
+                }
+                for &(start, end) in &ranges {
+                    let members = (start as u32)..=(end as u32);
+                    // A range wider than a script's letters is not walked:
+                    // its other case is mostly itself.
+                    if members.clone().count() > FOLDED_RANGE_LIMIT {
+                        continue;
+                    }
+                    for ch in members.filter_map(char::from_u32) {
+                        for &same in folded_with(ch) {
+                            if same != ch {
+                                both.push((same, same));
+                            }
+                        }
+                    }
+                }
+                out.push('[');
+                if negated {
+                    out.push('^');
+                }
+                for (start, end) in both {
+                    class_member(&mut out, start);
+                    if start != end {
+                        out.push('-');
+                        class_member(&mut out, end);
+                    }
+                }
+                out.push(']');
+            }
+            ch if ch.is_ascii_alphabetic() => {
+                out.push('[');
+                out.push(ch.to_ascii_lowercase());
+                out.push(ch.to_ascii_uppercase());
+                out.push(']');
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Every character the name comparison folds as it folds `ch`, `ch` among
+/// them, or none where nothing else folds with it.
+fn folded_with(ch: char) -> &'static [char] {
+    // Read once from every cased character, so a letter more than one case
+    // step from another, such as `ß` and `ẞ` or the three forms of `ǅ`, is
+    // found as the comparison finds it.
+    static FOLDS: OnceLock<HashMap<String, Vec<char>>> = OnceLock::new();
+    let folds = FOLDS.get_or_init(|| {
+        let mut folds: HashMap<String, Vec<char>> = HashMap::new();
+        for cased in (0..=char::MAX as u32)
+            .filter_map(char::from_u32)
+            .filter(|ch| {
+                ch.to_lowercase().ne(std::iter::once(*ch))
+                    || ch.to_uppercase().ne(std::iter::once(*ch))
+            })
+        {
+            folds
+                .entry(crate::names::folded(&cased.to_string()))
+                .or_default()
+                .push(cased);
+        }
+        // The fold itself, where it is one character nothing maps from.
+        for (fold, members) in folds.iter_mut() {
+            let mut chars = fold.chars();
+            if let (Some(one), None) = (chars.next(), chars.next())
+                && !members.contains(&one)
+            {
+                members.push(one);
+            }
+        }
+        folds.retain(|_, members| members.len() > 1);
+        folds
+    });
+    folds
+        .get(&crate::names::folded(&ch.to_string()))
+        .map_or(&[], Vec::as_slice)
+}
+
+/// The widest class range whose members' folded companions a class holds.
+const FOLDED_RANGE_LIMIT: usize = 1024;
+
+fn class_member(out: &mut String, ch: char) {
+    if matches!(ch, '\\' | '[' | ']' | '^' | '-' | '&' | '~') {
+        out.push('\\');
+    }
+    out.push(ch);
 }
 
 fn folded_pattern(pattern: &str) -> String {
@@ -537,6 +853,90 @@ mod tests {
         }
         assert!(Lists::new(&["[z-a]".into()], &[]).is_err());
         assert!(Lists::new(&[], &["[z-a]".into()]).is_err());
+    }
+
+    #[test]
+    fn a_class_or_a_question_mark_matches_one_character_outside_ascii() {
+        for (pattern, name, matches) in [
+            ("caf[\u{e9}\u{e8}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e9}\u{e8}].md", "caf\u{e8}.md", true),
+            ("caf[\u{e9}\u{e8}].md", "cafe.md", false),
+            ("caf[\u{e0}-\u{ea}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e0}-\u{ea}].md", "caf\u{eb}.md", false),
+            ("CAF[\u{c9}].md", "caf\u{e9}.md", true),
+            ("caf[\u{e9}].md", "cafe\u{301}.md", true),
+            ("caf[!\u{e9}].md", "caf\u{e8}.md", true),
+            ("caf[!\u{e9}].md", "caf\u{e9}.md", false),
+            ("caf?.md", "caf\u{e9}.md", true),
+            ("caf?.md", "caf.md", false),
+            (
+                "\u{65e5}[\u{672c}]?.md",
+                "\u{65e5}\u{672c}\u{8a9e}.md",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                !lists(&[], &[pattern]).takes(name),
+                matches,
+                "{pattern:?}, {name:?}"
+            );
+        }
+        assert!(lists(&[".caf[\u{e9}]/"], &[]).enters(".caf\u{e9}"));
+    }
+
+    #[test]
+    fn a_wildcard_crosses_a_newline_in_a_name() {
+        let bare = lists(&[], &[]);
+        assert!(!bare.takes("keys\n/id_rsa"));
+        assert!(!bare.takes("a\nb/server.pem"));
+        assert!(!bare.takes("}\n/k~~"));
+        assert!(lists(&["docs/**"], &[]).takes("docs/a\nb.md"));
+        assert!(!lists(&[], &["drafts/**"]).takes("drafts/a\nb.md"));
+        assert!(lists(&[".a*/"], &[]).enters(".a\nb"));
+    }
+
+    #[test]
+    fn case_is_ignored_as_names_compare_and_no_further() {
+        // Unicode's own case pairs that the name comparison does not fold.
+        assert!(lists(&[], &["S"]).takes("\u{17f}"));
+        assert!(lists(&[], &["*\u{3c3}.md"]).takes("\u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}.md"));
+        // What it does fold, through the folded form.
+        assert!(!lists(&[], &["k"]).takes("\u{212a}"));
+        assert!(!lists(&[], &["CAF\u{c9}.md"]).takes("caf\u{e9}.md"));
+        // ASCII case in classes and literals alike.
+        assert!(!lists(&[], &["[a-c]*.MD"]).takes("B.md"));
+        assert!(!lists(&[], &["[!a-c]*.md"]).takes("D.md"));
+        assert!(lists(&[], &["[!a-c]*.md"]).takes("C.md"));
+        // A negated class outside ASCII, either case on either side.
+        assert!(lists(&[], &["[!\u{c9}]*.md"]).takes("\u{e9}.md"));
+        assert!(lists(&[], &["[!\u{c9}]*.md"]).takes("\u{c9}.md"));
+        assert!(lists(&[], &["[!\u{e9}]*.md"]).takes("\u{c9}.md"));
+        assert!(lists(&[], &["[!\u{c0}-\u{de}]x"]).takes("\u{e0}x"));
+        assert!(!lists(&[], &["[!\u{c9}]*.md"]).takes("\u{e8}.md"));
+        // Letters whose other case is more than one step away.
+        assert!(lists(&[], &["[!\u{df}]x"]).takes("\u{1e9e}x"));
+        for name in ["\u{1c4}x", "\u{1c5}x", "\u{1c6}x"] {
+            assert!(lists(&[], &["[!\u{1c5}]x"]).takes(name), "{name:?}");
+            assert!(!lists(&[], &["[\u{1c5}]x"]).takes(name), "{name:?}");
+        }
+        assert!(lists(&[], &["[!\u{3b8}]x"]).takes("\u{3f4}x"));
+        assert!(lists(&[], &["[!\u{1f80}]x"]).takes("\u{1f88}x"));
+    }
+
+    #[test]
+    fn a_long_list_compiles_when_each_of_its_lines_does() {
+        let long: Vec<String> = (0..4000).map(|i| format!("*cache{i}*")).collect();
+        let lists = Lists::new(&[], &long).unwrap();
+        assert!(!lists.takes("a/xcache3999y.md"));
+        assert!(lists.takes("a/notes.md"));
+    }
+
+    #[test]
+    fn a_line_naming_only_directories_never_names_the_folder_itself() {
+        assert!(!lists(&["*/"], &[]).takes("top.md"));
+        assert!(lists(&["*/"], &[]).takes("deep/top.md"));
+        assert!(!lists(&["/"], &[]).takes("top.md"));
+        assert!(lists(&[], &["**/"]).takes("top.md"));
     }
 
     #[test]

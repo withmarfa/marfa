@@ -137,11 +137,12 @@ deletes what it created.
 
 `package.json` carries the full list, and `pnpm test:conformance` is what the
 gate runs. `pnpm test:generators` is the offline lane and needs no server: the
-generators, everything under `src/utils/` — including
-`spec-citations.test.ts` and `schema-coverage.test.ts`, which read the
-specification against itself — and the `*.decision.test.ts` verdicts the
-suites gate on. `vitest.config.ts` decides which file lands in which project,
-and the `test:conformance` script decides which projects the gate runs.
+generators, everything under `src/utils/`, and the `*.decision.test.ts`
+verdicts the suites gate on. Among `src/utils/`, `schema-coverage.test.ts`
+reads the specification against itself, and `spec-citations.test.ts` holds
+every reference to it in the repository to a rule that exists, by ID.
+`vitest.config.ts` decides which file lands in which project, and the
+`test:conformance` script decides which projects the gate runs.
 `test:cli` is the scenario suite's own gate, run by its own job.
 `test:performance` and `test:load` sit off the gate, and run every night and
 on request in `.github/workflows/benchmarks.yml`, the load suites at the
