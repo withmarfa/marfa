@@ -102,7 +102,11 @@ async function approved(): Promise<{
   };
   const grant = body.data.find((g) => g.client_id === app.clientId);
   expect(grant, "the approved app is not listed").toBeDefined();
-  return { clientId: app.clientId, access: issued.access_token!, grant: grant! };
+  return {
+    clientId: app.clientId,
+    access: issued.access_token!,
+    grant: grant!,
+  };
 }
 
 /** A key an app mints with its token, as a client of that app's. */

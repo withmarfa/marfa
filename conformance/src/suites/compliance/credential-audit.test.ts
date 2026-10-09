@@ -141,13 +141,9 @@ describe("a security observation", () => {
       cookie,
     );
     expect([200, 302]).toContain(response.status);
-    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(
-      before + 1,
-    );
+    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(before + 1);
     // The witness: a request nothing narrows records no such entry.
     await codeFor(server, origin, cookie, app, NOTES);
-    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(
-      before + 1,
-    );
+    expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(before + 1);
   });
 });

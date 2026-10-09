@@ -814,7 +814,7 @@ describe("key management", () => {
     ] as const) {
       expect(minted.data[map], map).toEqual({ "*": "write" });
     }
-    expect([...minted.data.permissions].sort()).toEqual(
+    expect([...(minted.data.permissions ?? [])].sort()).toEqual(
       [
         "audit.read",
         "blobs.manage",

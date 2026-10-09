@@ -109,10 +109,7 @@ async function sentTo(response: Response): Promise<URL> {
 }
 
 /** The page a person signed in reads before approving the app. */
-async function consentPage(
-  clientId: string,
-  scope?: string,
-): Promise<string> {
+async function consentPage(clientId: string, scope?: string): Promise<string> {
   const authorize = await fetch(authorizeUrl(clientId, scope), {
     redirect: "manual",
     headers: { cookie },
@@ -224,7 +221,13 @@ function rowLines(html: string): Map<string, string> {
   for (const m of html.matchAll(
     /<div class="subrow"><span>(.*?)<\/span><label class="sw"><input type="checkbox" name="scopes" value="([^"]+)"/g,
   )) {
-    rows.set(m[2]!, m[1]!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    rows.set(
+      m[2]!,
+      m[1]!
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
   }
   return rows;
 }

@@ -83,75 +83,67 @@ describe("password sign-in", () => {
     const sameBlock = await signIn(shared, OWNER.password, "2001:db8:1:1::ff");
     expect(sameBlock.status).toBe(429);
     // The witness: the next /64 has attempts left.
-    expect((await signIn(shared, OWNER.password, "2001:db8:1:2::1")).status).toBe(
-      200,
-    );
+    expect(
+      (await signIn(shared, OWNER.password, "2001:db8:1:2::1")).status,
+    ).toBe(200);
   });
 
-  it(
-    "holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit",
-    async () => {
-      // One address past its own limit: ten counted, five refused uncounted.
-      for (let i = 0; i < 15; i++) {
-        const response = await signIn(account, "not the password", "192.0.2.1");
-        expect(response.status).toBe(i < 10 ? 401 : 429);
-      }
-      // Then ten from each further address until the account's window
-      // refuses one an address's own limit would still take. The server's
-      // own boot signed the owner in once, so the window takes 99 or 100
-      // counted failures here; had the five refusals counted, it would have
-      // closed after 95 at most.
-      let failures = 10;
-      let refused = false;
-      for (let a = 2; a <= 20 && !refused; a++) {
-        for (let i = 0; i < 10 && !refused; i++) {
-          const response = await signIn(
-            account,
-            "not the password",
-            `192.0.2.${String(a)}`,
-          );
-          if (response.status === 429) refused = true;
-          else {
-            expect(response.status).toBe(401);
-            failures++;
-          }
+  it("holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit", async () => {
+    // One address past its own limit: ten counted, five refused uncounted.
+    for (let i = 0; i < 15; i++) {
+      const response = await signIn(account, "not the password", "192.0.2.1");
+      expect(response.status).toBe(i < 10 ? 401 : 429);
+    }
+    // Then ten from each further address until the account's window
+    // refuses one an address's own limit would still take. The server's
+    // own boot signed the owner in once, so the window takes 99 or 100
+    // counted failures here; had the five refusals counted, it would have
+    // closed after 95 at most.
+    let failures = 10;
+    let refused = false;
+    for (let a = 2; a <= 20 && !refused; a++) {
+      for (let i = 0; i < 10 && !refused; i++) {
+        const response = await signIn(
+          account,
+          "not the password",
+          `192.0.2.${String(a)}`,
+        );
+        if (response.status === 429) refused = true;
+        else {
+          expect(response.status).toBe(401);
+          failures++;
         }
       }
-      expect(refused, "the account's window never closed").toBe(true);
-      expect(failures).toBeGreaterThanOrEqual(99);
-      expect(failures).toBeLessThanOrEqual(100);
-      const elsewhere = await signIn(account, OWNER.password, "198.51.100.1");
-      expect(elsewhere.status).toBe(429);
-      expect(Number(elsewhere.headers.get("retry-after"))).toBeGreaterThan(0);
-    },
-    120_000,
-  );
+    }
+    expect(refused, "the account's window never closed").toBe(true);
+    expect(failures).toBeGreaterThanOrEqual(99);
+    expect(failures).toBeLessThanOrEqual(100);
+    const elsewhere = await signIn(account, OWNER.password, "198.51.100.1");
+    expect(elsewhere.status).toBe(429);
+    expect(Number(elsewhere.headers.get("retry-after"))).toBeGreaterThan(0);
+  }, 120_000);
 });
 
 describe("device code lookups", () => {
-  it(
-    "hold every address together to a hundred in fifteen minutes, counting none an address made past its own limit",
-    async () => {
-      for (let i = 0; i < 15; i++) {
+  it("hold every address together to a hundred in fifteen minutes, counting none an address made past its own limit", async () => {
+    for (let i = 0; i < 15; i++) {
+      expect(
+        await enter(shared, `QQ${String(100000 + i)}`, "203.0.113.1"),
+      ).toContain(i < 10 ? "error=invalid_code" : "error=too_many_attempts");
+    }
+    for (let a = 2; a <= 10; a++) {
+      for (let i = 0; i < 10; i++) {
         expect(
-          await enter(shared, `QQ${String(100000 + i)}`, "203.0.113.1"),
-        ).toContain(i < 10 ? "error=invalid_code" : "error=too_many_attempts");
+          await enter(
+            shared,
+            `QQ${String(200000 + a * 100 + i)}`,
+            `203.0.113.${String(a)}`,
+          ),
+        ).toContain("error=invalid_code");
       }
-      for (let a = 2; a <= 10; a++) {
-        for (let i = 0; i < 10; i++) {
-          expect(
-            await enter(
-              shared,
-              `QQ${String(200000 + a * 100 + i)}`,
-              `203.0.113.${String(a)}`,
-            ),
-          ).toContain("error=invalid_code");
-        }
-      }
-      expect(await enter(shared, "QQ999999", "198.51.100.9")).toContain(
-        "error=too_many_attempts",
-      );
-    },
-    120_000,
-  );
+    }
+    expect(await enter(shared, "QQ999999", "198.51.100.9")).toContain(
+      "error=too_many_attempts",
+    );
+  }, 120_000);
 });

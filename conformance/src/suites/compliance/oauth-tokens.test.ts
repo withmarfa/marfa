@@ -62,7 +62,10 @@ async function post(
 ): Promise<{ status: number; body: Record<string, unknown> | null }> {
   const response = await fetch(`${server.apiUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      ...headers,
+    },
     body: new URLSearchParams(form),
   });
   const text = await response.text();
@@ -182,7 +185,13 @@ describe("the resource parameter", () => {
 
   it("is refused invalid_target when it names another server", async () => {
     const app = await registerApp(server, NOTES);
-    const { code, verifier } = await codeFor(server, origin, cookie, app, NOTES);
+    const { code, verifier } = await codeFor(
+      server,
+      origin,
+      cookie,
+      app,
+      NOTES,
+    );
     const refused = await token(server, {
       grant_type: "authorization_code",
       code,
@@ -244,7 +253,11 @@ describe("revocation", () => {
     expect(await grantedClients()).not.toContain(app.clientId);
     const asked = await sentTo(
       server,
-      await authorize(server, authorizeQuery(app.clientId, NOTES, pkce()), cookie),
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, NOTES, pkce()),
+        cookie,
+      ),
     );
     expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
   });
@@ -324,7 +337,13 @@ describe("userinfo", () => {
     expect(read.body.email).toBe("owner@example.test");
 
     const bare = await registerApp(server, `${NOTES} openid`);
-    const without = await connect(server, origin, cookie, bare, `${NOTES} openid`);
+    const without = await connect(
+      server,
+      origin,
+      cookie,
+      bare,
+      `${NOTES} openid`,
+    );
     const narrow = await userinfo(without.access_token);
     expect(narrow.status).toBe(200);
     expect(narrow.body.sub).toBe(read.body.sub);

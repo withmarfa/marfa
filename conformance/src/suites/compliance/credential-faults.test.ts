@@ -50,10 +50,7 @@ function clearsSession(response: Response): boolean {
 }
 
 /** Runs `during` with `table` moved aside, and puts it back. */
-async function without<T>(
-  table: string,
-  during: () => Promise<T>,
-): Promise<T> {
+async function without<T>(table: string, during: () => Promise<T>): Promise<T> {
   withInstanceDatabase(server.sqlitePath, (db) =>
     db.exec(`ALTER TABLE ${table} RENAME TO ${table}_aside`),
   );

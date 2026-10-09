@@ -226,7 +226,11 @@ describe("the request an app sends", () => {
     // The witness: the registered redirect URI is answered there.
     const registered = await sentTo(
       server,
-      await authorize(server, authorizeQuery(app.clientId, NOTES, pkce()), cookie),
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, NOTES, pkce()),
+        cookie,
+      ),
     );
     expect(registered?.pathname).toBe("/auth/authorize");
   });
@@ -250,7 +254,13 @@ describe("the code exchange", () => {
 
   it("exchanges a code once, and refuses it again with invalid_grant", async () => {
     const app = await registerApp(server, NOTES);
-    const { code, verifier } = await codeFor(server, origin, cookie, app, NOTES);
+    const { code, verifier } = await codeFor(
+      server,
+      origin,
+      cookie,
+      app,
+      NOTES,
+    );
     const form = {
       grant_type: "authorization_code",
       code,

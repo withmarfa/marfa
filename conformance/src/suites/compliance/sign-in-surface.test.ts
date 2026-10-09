@@ -386,7 +386,10 @@ describe("the pages a person reads at sign-in", () => {
 
     // A signature the instance did not make is told the same.
     const forged = new URL(authorize);
-    forged.searchParams.set("sig", "AAAA" + (forged.searchParams.get("sig") ?? "").slice(4));
+    forged.searchParams.set(
+      "sig",
+      "AAAA" + (forged.searchParams.get("sig") ?? "").slice(4),
+    );
     const unverified = await fetch(forged, { headers: { cookie } });
     expect(unverified.status).toBe(400);
     expect(await unverified.text()).toContain(

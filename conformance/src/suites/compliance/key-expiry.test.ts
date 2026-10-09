@@ -47,9 +47,9 @@ describe("a key past its expires_at", () => {
     });
     // The witness: before its expiry the key works and is listed.
     expect((await bearer.getCurrentKey()).status).toBe(200);
-    expect(
-      (await management.listKeys()).data.data.map((k) => k.id),
-    ).toContain(expiring.id);
+    expect((await management.listKeys()).data.data.map((k) => k.id)).toContain(
+      expiring.id,
+    );
 
     withInstanceDatabase(server.sqlitePath, (db) => {
       const stamped = db
