@@ -241,6 +241,18 @@ describe("the reference checks see what they are for", () => {
       }
     });
 
+    it("reads a reference wrapped onto the next line of a comment", () => {
+      for (const text of [
+        `// as the rule says (\`sample${md}\`\n// 35), so`,
+        `/// the copy (sample${md}\n/// 52): the write`,
+        ` * ${word}\n * 81 holds`,
+        `# see sample${md}\n# 7 for it`,
+        `see \`sample${md}\`\n12, the rule`,
+      ]) {
+        expect(numbered(text), text).toEqual([1]);
+      }
+    });
+
     it("names the line it is on", () => {
       expect(numbered(`First.\nSecond, sample${md} 2.\nThird.`)).toEqual([2]);
     });
@@ -254,7 +266,7 @@ describe("the reference checks see what they are for", () => {
         `sample${md}`,
         "RFC 8414 \u00a73.1",
         "the sample 5 times over",
-        `sample${md}\n5. A list item`,
+        `See sample${md}.\n\n5. A list item`,
       ]) {
         expect(numbered(text), text).toEqual([]);
       }

@@ -114,19 +114,34 @@ function numberedPatterns(chapters: readonly string[]): RegExp[] {
   ];
 }
 
+/** What opens a line of a comment, a list or a quotation, read as a gap. */
+const LINE_MARKER = /^\s*(?:\/\/[/!]?|\/?\*+|#+|--|>|<!--|-|\d+\.)?\s*/;
+
 /**
  * The lines of `text` that refer to a statement by number, 1-based. The
  * chapters are the ones the contract has, so a file that names another
- * Markdown file and a number is not read as a reference.
+ * Markdown file and a number is not read as a reference. A reference wrapped
+ * onto the next line is read too, with that line's comment marker taken off,
+ * and is named by the line it starts on.
  */
 export function numberedReferences(
   text: string,
   chapters: readonly string[] = chapterNames(),
 ): number[] {
   const patterns = numberedPatterns(chapters);
+  const refers = (line: string) =>
+    patterns.some((pattern) => pattern.test(line));
+  const lines = text.split("\n");
   const out: number[] = [];
-  text.split("\n").forEach((line, index) => {
-    if (patterns.some((pattern) => pattern.test(line))) out.push(index + 1);
+  lines.forEach((line, index) => {
+    const next = lines[index + 1];
+    if (refers(line)) {
+      out.push(index + 1);
+      return;
+    }
+    if (next === undefined || refers(next)) return;
+    const joined = `${line.trimEnd()} ${next.replace(LINE_MARKER, "")}`;
+    if (refers(joined)) out.push(index + 1);
   });
   return out;
 }
