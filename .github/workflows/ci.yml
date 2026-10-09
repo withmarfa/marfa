@@ -97,10 +97,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       # Prettier reads Markdown as well as code, and the classifier's test
-      # reads the whole tree, so a documentation change stops after these. A
-      # draft stops before the tests.
+      # and the contract's reference check read the whole tree, so a
+      # documentation change stops after these. A draft stops before the
+      # tests.
       - run: pnpm format:check
       - run: pnpm vitest run ci/ci-required.test.ts
+      - working-directory: conformance
+        run: pnpm exec vitest run --project generators src/utils/spec-citations.test.ts
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
         run: pnpm build
       - if: ${{ needs.changes.outputs.workspace != 'false' }}

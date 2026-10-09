@@ -577,7 +577,7 @@ describe("each job reads its own answer", () => {
     ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
-  it("CI (SQLite) checks formatting and these rules for any change and the rest only for the workspace", () => {
+  it("CI (SQLite) checks formatting, these rules and the contract's references for any change and the rest only for the workspace", () => {
     const steps = workflow("ci.yml").jobs["ci-sqlite"]?.steps ?? [];
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
@@ -585,8 +585,12 @@ describe("each job reads its own answer", () => {
     expect(steps[format + 1]).toEqual({
       run: "pnpm vitest run ci/ci-required.test.ts",
     });
+    expect(steps[format + 2]).toEqual({
+      "working-directory": "conformance",
+      run: "pnpm exec vitest run --project generators src/utils/spec-citations.test.ts",
+    });
     const guard = steps.at(-1);
-    const after = steps.slice(format + 2, -1);
+    const after = steps.slice(format + 3, -1);
     expect(after.map((step) => step.run ?? step.uses)).toEqual([
       "pnpm build",
       "pnpm typecheck",

@@ -10,7 +10,7 @@ This file is the standard every chapter is written to. `src/utils/spec-form.test
 
 The contract has two halves.
 
-**The server's half** says what the server answers over HTTP. The server is the source. Where the server contradicts its own OpenAPI document, the statement says so, and `findings.md` holds the detail.
+**The server's half** says what the server answers over HTTP. The server is the source. `pnpm check:statuses` holds what it answers to its OpenAPI document, so where the two disagree, one of them is fixed.
 
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
@@ -30,7 +30,6 @@ The contract has two halves.
 - `instance.md`: what an instance says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the server sends.
 - `coverage.md`: every published operation, with its fixture and status.
-- `findings.md`: where the server contradicts its own document.
 
 **The device's half** says what a device does: a client with a local working copy and a queue. No server is the source for it, so these chapters are. An implementation that disagrees with them is wrong.
 
@@ -99,12 +98,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 - **An ID is a name, not a summary.** It is never changed to follow a change in wording.
 - **An ID is never given to a different rule.** When a statement is removed, its ID goes with it.
 - **A reference is the ID in code font,** in a chapter, a code comment or a document: `` `housekeeping/run-unknown-name` ``. The ID is also the statement's heading, so a link reaches it.
-
-### Chapters still numbered
-
-Chapters move to this form one at a time. Until a chapter moves, references use its filename and statement number.
-
-When a chapter moves, `scripts/spec-ids.ts` moves every reference from its old numbers to its IDs. It stops and asks wherever one old statement became several. A numbered reference into a chapter that has moved fails `spec-citations.test.ts`.
+- **Never a number.** `src/utils/spec-citations.test.ts` reads every file in the repository and fails on an ID that names no statement, and on a statement referred to by a number, naming the file and the line.
 
 ## Words
 
@@ -123,7 +117,7 @@ When a chapter moves, `scripts/spec-ids.ts` moves every reference from its old n
 
 **The device's half** runs against a scripted server the fixture controls. A device must reach verdicts for failures the real server cannot be asked for, such as a dropped connection, a server at rest, a spent credential or a retry ceiling.
 
-Each device chapter lists what the real server cannot produce, and why. `src/suites/device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one.
+`device.md` lists what the real server cannot produce for the device's half, and why. `src/suites/device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one.
 
 ## Outside the fixtures
 

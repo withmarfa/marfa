@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   SPEC_DIR,
-  chapterIds,
+  chapterNames,
   isChapterName,
   readChapter,
   withoutDefinitions,
@@ -10,51 +11,10 @@ import {
 } from "./spec-statements.js";
 
 /**
- * References between the chapters and from the code to them, in both forms
- * a statement is cited: a chapter's name and a number while the chapter is
- * numbered, and its ID once it is not.
+ * References to the contract's statements, from the chapters and from
+ * everything else in the repository. A statement is referred to by its ID
+ * in code font, and by nothing else.
  */
-
-/**
- * The statement numbers `text` defines: its ordered-list items, and the
- * `## N.` headings `findings.md` uses instead.
- *
- * The files cite each other by chapter name and bare integer, so nothing in
- * a citation ties it to what it names. Renumber a file and every citation
- * still reads as a sentence while pointing somewhere else, or nowhere at
- * all. Neither the fixture checks nor any suite can see it: those resolve
- * to fixture files and test titles, and this is a reference between two
- * documents.
- */
-export function numbersIn(text: string): Set<number> {
-  const out = new Set<number>();
-  for (const match of text.matchAll(/^(?:## )?(\d+)\. /gm)) {
-    out.add(Number(match[1]));
-  }
-  return out;
-}
-
-/**
- * A citation and every statement number it names.
- *
- * One expression for the chapters and for the sources, because a citation
- * written in a chapter and the same citation written in a comment are the
- * same claim.
- *
- * A citation names as many statements as it lists, so a chapter name
- * followed by "1, 2 and 3" is three references rather than one, and every
- * number in the list is held to a statement that exists. A range is the
- * exception it cannot cover: "17 to 23" yields 17 and 23, and what sits
- * between them is whatever the writer meant. The tests of these checks are
- * inside the source walk, so none of them writes a chapter name in code
- * font followed by a number or an ID.
- *
- * The gap between the name and the first number is spaces on one line,
- * never a newline: a chapter name that ends a line above an ordered-list
- * item is not citing that item's number.
- */
-export const CITED_STATEMENTS =
-  /`([a-z][a-z-]*\.md)`[ \t]+((?:\d+(?:\s*(?:,|and|to)\s*)?)+)/g;
 
 /** A reference to an ID: one code span, `<chapter>/<slug>`. */
 const ID_REFERENCE = /`([a-z][a-z-]*)\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)`/g;
@@ -64,7 +24,7 @@ export interface SpecIndex {
   files: Map<string, string>;
   /** The chapters, by name without `.md`. */
   chapters: Map<string, Chapter>;
-  /** Every ID the ID-form chapters state. */
+  /** Every ID the chapters state. */
   ids: Set<string>;
 }
 
@@ -77,9 +37,9 @@ export function indexOf(
   for (const [file, text] of Object.entries(files)) {
     const stem = file.replace(/\.md$/, "");
     if (chapterStems !== undefined && !chapterStems.includes(stem)) continue;
-    const chapter = readChapter(stem, text);
+    const chapter = readChapter(text);
     chapters.set(stem, chapter);
-    for (const id of chapterIds(chapter)) ids.add(id);
+    for (const statement of chapter.statements) ids.add(statement.id);
   }
   return { files: new Map(Object.entries(files)), chapters, ids };
 }
@@ -103,19 +63,18 @@ function lineOf(text: string, offset: number): number {
 
 /** What one text cites, and which of it points at nothing. */
 export interface Checked {
-  /** How many references were read, numbered and ID together. */
+  /** How many references were read. */
   checked: number;
   problems: string[];
 }
 
 /**
- * Every statement reference in `text`, held to the statements that exist.
+ * Every ID reference in `text`, held to the statements that exist.
  *
- * A number into a chapter written in the ID form fails, because that number
- * does not exist there. An ID is read only where its chapter is written in
- * the ID form, because a code-font `a/b` is as often a path as a reference,
- * and only outside the places that define one when `definitions` is
- * `false`: a chapter's ID headings, and the fenced examples in `README.md`.
+ * A code-font `a/b` is read as a reference only where `a` is a chapter,
+ * because it is as often a path, and only outside the places that define
+ * one when `definitions` is `false`: a chapter's ID headings, and the fenced
+ * examples in `README.md`.
  */
 export function checkReferences(
   where: string,
@@ -125,31 +84,9 @@ export function checkReferences(
 ): Checked {
   const problems: string[] = [];
   let checked = 0;
-  for (const found of text.matchAll(CITED_STATEMENTS)) {
-    const target = found[1];
-    const line = lineOf(text, found.index);
-    if (!index.files.has(target)) {
-      problems.push(`${where} line ${String(line)}: ${target} (no such file)`);
-      checked += (found[2].match(/\d+/g) ?? []).length;
-      continue;
-    }
-    const chapter = index.chapters.get(target.replace(/\.md$/, ""));
-    const numbers = numbersIn(index.files.get(target) ?? "");
-    for (const raw of found[2].match(/\d+/g) ?? []) {
-      checked += 1;
-      if (numbers.has(Number(raw))) continue;
-      problems.push(
-        `${where} line ${String(line)}: ${target} ${raw}` +
-          (chapter?.form === "id"
-            ? " (the chapter states its rules by ID, so it has no such number)"
-            : ""),
-      );
-    }
-  }
   const scanned = options.definitions ? text : withoutDefinitions(text);
   for (const found of scanned.matchAll(ID_REFERENCE)) {
-    const chapter = index.chapters.get(found[1]);
-    if (chapter?.form !== "id" && chapter?.form !== "mixed") continue;
+    if (!index.chapters.has(found[1])) continue;
     checked += 1;
     const id = `${found[1]}/${found[2]}`;
     if (index.ids.has(id)) continue;
@@ -158,4 +95,71 @@ export function checkReferences(
     );
   }
   return { checked, problems };
+}
+
+/**
+ * The ways a statement used to be referred to by number: a chapter's file
+ * name and a number (`<chapter>.md 5`, in code font or not, perhaps with
+ * the word statement between them), a chapter's name and a number in
+ * parentheses, and the word statement and a number.
+ */
+function numberedPatterns(chapters: readonly string[]): RegExp[] {
+  const names = chapters.map((name) => name.replace(/-/g, "\\-")).join("|");
+  return [
+    new RegExp(
+      `\\b(?:${names})\\.md\`?(?:'s)?[ \\t]+(?:(?:statement|rule)s?[ \\t]+)?\\d`,
+    ),
+    new RegExp(`\\(\`?(?:${names})(?:\\.md)?\`?[ \\t]+\\d`),
+    /\bstatements?[ \t]+\d/i,
+  ];
+}
+
+/**
+ * The lines of `text` that refer to a statement by number, 1-based. The
+ * chapters are the ones the contract has, so a file that names another
+ * Markdown file and a number is not read as a reference.
+ */
+export function numberedReferences(
+  text: string,
+  chapters: readonly string[] = chapterNames(),
+): number[] {
+  const patterns = numberedPatterns(chapters);
+  const out: number[] = [];
+  text.split("\n").forEach((line, index) => {
+    if (patterns.some((pattern) => pattern.test(line))) out.push(index + 1);
+  });
+  return out;
+}
+
+/** The repository's root, from this file. */
+export const REPOSITORY_ROOT = resolve(SPEC_DIR, "..", "..");
+
+/**
+ * Every file Git tracks in the repository that reads as text, by path from
+ * its root. Read from Git rather than by walking the tree, so what a
+ * checkout ignores, such as dependencies, build output and other worktrees,
+ * is never read.
+ */
+export function trackedTextFiles(
+  root = REPOSITORY_ROOT,
+): { path: string; text: string }[] {
+  const listed = execFileSync("git", ["ls-files", "-z"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const out: { path: string; text: string }[] = [];
+  for (const path of listed.split("\0")) {
+    if (path === "") continue;
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(resolve(root, path));
+    } catch {
+      // Listed by Git and deleted in the working tree.
+      continue;
+    }
+    if (bytes.includes(0)) continue;
+    out.push({ path, text: bytes.toString("utf8") });
+  }
+  return out;
 }

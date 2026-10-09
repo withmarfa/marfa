@@ -2682,7 +2682,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         : undefined,
     ).toBe("trashed");
 
-    // Waiting as statement 35 means it: unanswered, or held behind a write
+    // Waiting as `queue-and-verdicts/waiting-over-answer` means it: unanswered, or held behind a write
     // ahead of it that is.
     const waiting = (await queueOf(device)).filter(
       (row) => row.verdict === null || row.verdict === "blocked",

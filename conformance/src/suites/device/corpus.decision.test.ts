@@ -4,10 +4,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureTitles } from "../../utils/fixture-titles.js";
 import {
-  citationsIn as idCitationsIn,
+  citationsIn,
   readChapter,
   statementText,
-  type Chapter,
 } from "../../utils/spec-statements.js";
 
 /**
@@ -27,95 +26,26 @@ const here = dirname(fileURLToPath(import.meta.url));
 const specDir = resolve(here, "../../../spec");
 const CHAPTERS = ["device.md", "queue-and-verdicts.md", "folders.md"];
 
-const SPAN = /`([^`]+)`/g;
-const CITED = /^(device\/[a-z0-9.-]+\.test\.ts)(?: › (.+))?$/;
-const CONTINUED = /^› (.+)$/;
-
 interface Statement {
   chapter: string;
-  /** A number while the chapter is numbered, an ID once it is not. */
-  number: string;
+  id: string;
   text: string;
 }
 
 function statements(chapter: string): Statement[] {
-  return read(chapter).found;
+  return read(chapter);
 }
 
-/**
- * A statement that goes on after a blank line, which this parser cannot read.
- *
- * The truncation is silent and the hole it leaves is worse than the one that
- * made it visible. A statement split into paragraphs with its citations in
- * the first one satisfies every check here — it has citations, and they
- * resolve — while whatever the later paragraphs claim is read by nothing.
- * `spec-citations.test.ts` does not cover it either: that one scans a chapter
- * whole and asks whether each citation resolves, never whether a statement
- * carries one.
- *
- * So the shape is refused rather than parsed. Every statement in the three
- * chapters is one paragraph, and a rule that needs two is a rule to split in
- * two. A chapter in the ID form has its shape held by `spec-form.test.ts`.
- */
-function orphanedContinuations(chapter: string): string[] {
-  return read(chapter).orphans;
-}
-
-function read(chapter: string): {
-  found: Statement[];
-  orphans: string[];
-  form: Chapter["form"];
-} {
+function read(chapter: string): Statement[] {
   return readText(chapter, readFileSync(resolve(specDir, chapter), "utf8"));
 }
 
-function readText(
-  chapter: string,
-  text: string,
-): { found: Statement[]; orphans: string[]; form: Chapter["form"] } {
-  const parsed = readChapter(chapter, text);
-  return {
-    found: parsed.statements.map((statement) => ({
-      chapter,
-      number: statement.key,
-      text: statementText(statement),
-    })),
-    orphans: parsed.orphans,
-    form: parsed.form,
-  };
-}
-
-/**
- * Every `file › title` a statement cites, expanding the `› title` shorthand.
- *
- * Read span by span rather than by splitting the sentence, because a test
- * title carries commas as readily as the prose around it does and a split
- * would cut one in half and report the statement as citing nothing.
- */
-function citationsIn(text: string): Array<{ file: string; title?: string }> {
-  const out: Array<{ file: string; title?: string }> = [];
-  let file: string | undefined;
-  SPAN.lastIndex = 0;
-  for (const span of text.matchAll(SPAN)) {
-    const cited = CITED.exec(span[1]);
-    if (cited) {
-      file = cited[1];
-      out.push({ file, title: cited[2] });
-      continue;
-    }
-    const continued = CONTINUED.exec(span[1]);
-    if (continued && file !== undefined)
-      out.push({ file, title: continued[1] });
-  }
-  return out;
-}
-
-function statementCitations(
-  statement: Statement,
-): Array<{ file: string; title?: string }> {
-  return /^\d+$/.test(statement.number)
-    ? citationsIn(statement.text)
-    : idCitationsIn(statement.text, true);
+function readText(chapter: string, text: string): Statement[] {
+  return readChapter(text).statements.map((statement) => ({
+    chapter,
+    id: statement.id,
+    text: statementText(statement),
+  }));
 }
 
 function titlesIn(file: string): string[] {
@@ -133,44 +63,24 @@ const fixtureFiles = readdirSync(here).filter(
 describe("separate rule metadata", () => {
   const cited = "`device/stop.test.ts › a stopped call`";
 
-  it("associates Tests after Reason with the immediately preceding rule", () => {
-    const parsed = readText(
-      "device.md",
-      `1. A rule.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
-    );
-    expect(parsed.found[0].text).toBe(`A rule. ${cited}`);
-    expect(parsed.orphans).toEqual([]);
-  });
-
-  it("does not associate Tests across a heading or unrelated paragraph", () => {
-    for (const boundary of ["## Another chapter", "An unrelated paragraph."]) {
-      const parsed = readText(
-        "device.md",
-        `1. A rule.\n\n${boundary}\n\n**Tests:** ${cited}\n`,
-      );
-      expect(parsed.found[0].text, boundary).toBe("A rule.");
-    }
-  });
-
-  it("reads an ID statement's citations from its Tests paragraph and not from its reason", () => {
-    const parsed = readText(
+  it("reads a statement's citations from its Tests paragraph and not from its reason", () => {
+    const found = readText(
       "device.md",
       `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
     );
-    expect(parsed.form).toBe("id");
-    expect(parsed.found).toEqual([
+    expect(found).toEqual([
       {
         chapter: "device.md",
-        number: "device/a-rule",
+        id: "device/a-rule",
         text: `When asked, the command MUST answer. ${cited}`,
       },
     ]);
-    expect(citationsIn(parsed.found[0].text)).toEqual([
+    expect(citationsIn(found[0].text)).toEqual([
       { file: "device/stop.test.ts", title: "a stopped call" },
     ]);
   });
 
-  it("counts CLI fixtures as evidence for an ID rule and resolves their titles", () => {
+  it("counts CLI fixtures as evidence for a rule and resolves their titles", () => {
     const title = titlesIn("cli/folder.test.ts")[0];
     expect(title).toBeDefined();
     const statement = readText(
@@ -182,19 +92,10 @@ describe("separate rule metadata", () => {
         "",
         `**Tests:** \`cli/folder.test.ts › ${title}\`.`,
       ].join("\n"),
-    ).found[0];
-    expect(statementCitations(statement)).toEqual([
+    )[0];
+    expect(citationsIn(statement.text)).toEqual([
       { file: "cli/folder.test.ts", title },
     ]);
-  });
-
-  it("still refuses an indented rule continuation after a blank line", () => {
-    const parsed = readText(
-      "device.md",
-      `1. A rule.\n\n  A second rule paragraph.\n\n**Tests:** ${cited}\n`,
-    );
-    expect(parsed.orphans).toEqual(["device.md 1: A second rule paragraph."]);
-    expect(parsed.found[0].text).toBe("A rule.");
   });
 });
 
@@ -204,50 +105,23 @@ describe("every device statement is asserted by something", () => {
       CHAPTERS.every((chapter) => existsSync(resolve(specDir, chapter))),
       "a device chapter is missing, so everything below is checking an empty set",
     ).toBe(true);
-    // Contiguous from 1, per chapter, rather than a count over the three.
-    // A loose floor lets most of a chapter fall out of the parse while every
-    // check below passes on whatever survived, and it lets a renumbering
-    // leave a gap nobody notices. A chapter in the ID form has no numbers to
-    // run from 1, so it is held to distinct IDs instead.
+    // Per chapter, rather than a count over the three: a loose floor lets
+    // most of a chapter fall out of the parse while every check below passes
+    // on whatever survived.
     for (const chapter of CHAPTERS) {
-      const parsed = read(chapter);
-      const keys = parsed.found.map((statement) => statement.number);
-      if (parsed.form === "id") {
-        expect(
-          keys.filter((key, index) => keys.indexOf(key) !== index),
-          `${chapter} states the same ID twice`,
-        ).toEqual([]);
-      } else {
-        const numbers = keys.map(Number);
-        expect(
-          numbers,
-          `${chapter} did not parse to a run of statements numbered from 1, so either the parse is reading part of the chapter or the chapter has a gap`,
-        ).toEqual(
-          Array.from({ length: numbers.length }, (_, index) => index + 1),
-        );
-      }
+      const ids = read(chapter).map((statement) => statement.id);
       expect(
-        keys.length,
-        `${chapter} parsed to ${String(keys.length)} statements, which is fewer than it carries`,
+        ids.filter((id, index) => ids.indexOf(id) !== index),
+        `${chapter} states the same ID twice`,
+      ).toEqual([]);
+      expect(
+        ids.length,
+        `${chapter} parsed to ${String(ids.length)} statements, which is fewer than it carries`,
       ).toBeGreaterThanOrEqual(15);
     }
   });
 
-  it("reads every statement whole", () => {
-    // The parse ends a statement at a blank line, so a statement written as
-    // two paragraphs is read as its first one. That passes every check here
-    // when the citations happen to sit in the first paragraph, and passes
-    // `spec-citations.test.ts` too, which scans a chapter whole and asks
-    // only whether each citation resolves. The later paragraphs would then
-    // be a rule nothing reads, reported by nothing.
-    const orphans = CHAPTERS.flatMap(orphanedContinuations);
-    expect(
-      orphans,
-      "a statement goes on past a blank line, so the parse reads part of it and every check below is about the part it read",
-    ).toEqual([]);
-  });
-
-  it("cites a fixture for every numbered statement", () => {
+  it("cites a fixture for every statement", () => {
     // A rule no fixture can assert yet names the issue that makes it
     // testable instead, which `spec-form.test.ts` holds to its one shape.
     const WAITING = / waiting on #\d+\.$/;
@@ -255,15 +129,15 @@ describe("every device statement is asserted by something", () => {
     const waiting = readText(
       "device.md",
       `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Tests:** waiting on #1.\n`,
-    ).found[0];
+    )[0];
     expect(WAITING.test(waiting.text), waiting.text).toBe(true);
     const uncited = allStatements
       .filter(
         (statement) =>
-          statementCitations(statement).length === 0 &&
+          citationsIn(statement.text).length === 0 &&
           !WAITING.test(statement.text),
       )
-      .map((statement) => `${statement.chapter} ${statement.number}`);
+      .map((statement) => `${statement.chapter} ${statement.id}`);
     expect(
       uncited,
       "a statement in a device chapter names no fixture, so it is a rule nothing checks and it reads exactly like a rule everything checks",
@@ -273,17 +147,17 @@ describe("every device statement is asserted by something", () => {
   it("cites only fixtures that exist, with titles that exist", () => {
     const unresolved: string[] = [];
     for (const statement of allStatements) {
-      for (const citation of statementCitations(statement)) {
+      for (const citation of citationsIn(statement.text)) {
         const titles = titlesIn(citation.file);
         if (titles.length === 0) {
           unresolved.push(
-            `${statement.chapter} ${statement.number}: ${citation.file} is missing`,
+            `${statement.chapter} ${statement.id}: ${citation.file} is missing`,
           );
           continue;
         }
         if (citation.title !== undefined && !titles.includes(citation.title)) {
           unresolved.push(
-            `${statement.chapter} ${statement.number}: ${citation.file} › ${citation.title}`,
+            `${statement.chapter} ${statement.id}: ${citation.file} › ${citation.title}`,
           );
         }
       }
@@ -350,7 +224,7 @@ describe("every device statement is asserted by something", () => {
     const CONTROLS = ["fidelity.test.ts", "scripted-server.test.ts"];
     const cited = new Set(
       allStatements.flatMap((statement) =>
-        statementCitations(statement).map(
+        citationsIn(statement.text).map(
           (citation) => `${citation.file} › ${citation.title ?? ""}`,
         ),
       ),
