@@ -824,3 +824,42 @@ jobs:
               exit 1
               ;;
           esac
+
+  # A failed nightly run opens an issue, or comments on the one that is open.
+  # Only a schedule reports, so no pull request run can open an issue.
+  report-failure:
+    name: Report a failed scheduled run
+    needs:
+      [
+        changes,
+        ci-sqlite,
+        core-checks,
+        core-checks-linux,
+        conformance-shards,
+        conformance-offline,
+        conformance-statuses,
+        conformance,
+        cli-scenarios,
+        restore-drill,
+        image,
+        types-freshness,
+        openapi-freshness,
+        version-fields,
+        clients-freshness,
+      ]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh
