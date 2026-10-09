@@ -50,7 +50,7 @@ When a claim submits a password outside the sign-in provider's length bounds, th
 
 When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.
 
-**Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`.
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› answers the setup routes in snake_case and the claim as the public claim does`.
 
 ### `instance-claim/claim-closed`
 
