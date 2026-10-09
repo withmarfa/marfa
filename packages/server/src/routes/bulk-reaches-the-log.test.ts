@@ -277,6 +277,31 @@ describe("POST /items/{id}/transition reaches the event log", () => {
       "trashed_with",
     );
   });
+
+  it("logs a state change and then a deletion for an archived item a transition moves into the bin, and nothing for a refused one", async () => {
+    const named = await note("archived first");
+    await request(ctx.app, "POST", `/items/${named}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "archived" },
+    });
+    const cursor = await logCursor();
+
+    const res = await request(ctx.app, "POST", `/items/${named}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "trashed" },
+    });
+    expect(res.status).toBe(200);
+    const again = await request(ctx.app, "POST", `/items/${named}/transition`, {
+      key: ctx.workingKey,
+      body: { state: "trashed" },
+    });
+    expect(again.status).not.toBe(200);
+
+    const types = (await logSince(cursor))
+      .filter((r) => r.item_id === named)
+      .map((r) => r.event_type);
+    expect(types).toEqual(["state_changed", "deleted"]);
+  });
 });
 
 describe("POST /items/bulk-actions reaches the event log", () => {
