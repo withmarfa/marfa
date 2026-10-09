@@ -206,7 +206,7 @@ mod tests {
         let root = std::env::temp_dir()
             .canonicalize()
             .unwrap()
-            .join(format!("067-1913-marfa-local-{}", std::process::id()));
+            .join(format!("marfa-local-stream-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = root.join("control.sock");

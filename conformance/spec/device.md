@@ -1526,11 +1526,17 @@ When a command that streams its answer and needs no credential, such as `blobs d
 
 ### `device/local-socket-needs-key`
 
-If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST refuse it `usage` before it sends a request.
+If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST refuse it `usage`.
 
-**Reason:** direct local authority carries no key, and these doors answer it `401`.
+**Reason:** direct local authority carries no key, and the operations these commands call answer it `401`.
 
 **Tests:** `device/contract.test.ts › refuses export, events and a delivery body under --socket before sending a request`, `cli/instance.test.ts › refuses export, events and a delivery body under the private socket`.
+
+### `device/local-socket-needs-key-not-sent`
+
+If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST NOT send a request.
+
+**Tests:** `device/contract.test.ts › refuses export, events and a delivery body under --socket before sending a request`.
 
 ### `device/redeliver-request`
 
