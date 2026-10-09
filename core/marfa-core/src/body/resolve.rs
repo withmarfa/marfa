@@ -419,7 +419,7 @@ pub(crate) fn resolve_reference(
         return Ok(Resolved::Unmatched);
     }
     let found = resolve(&typed.name)?;
-    // An id is read as an id alone (`folders.md` 11), so what follows it
+    // An id is read as an id alone (`folders/edge-id-read`), so what follows it
     // cannot make it name another item.
     if let Resolved::Found { id, .. } = &found
         && typed.raw != typed.name

@@ -635,7 +635,7 @@ function sentUpdates(
 }
 
 /** A queue without the folder's placements, for a fixture about the other
- *  writes a file makes (`folders.md` 19). */
+ *  writes a file makes (`folders/placement-create`). */
 function withoutPlacements(
   harness: FolderHarness,
   rows: QueuedWrite[],
@@ -647,7 +647,7 @@ function withoutPlacements(
 }
 
 /** The verdicts on writes of items, without the placements a push also
- *  sends (`folders.md` 19). */
+ *  sends (`folders/push-send-placement`). */
 function itemVerdicts(verdicts: DrainVerdict[]): DrainVerdict[] {
   return verdicts.filter((entry) => !entry.kind.endsWith("_edge"));
 }
@@ -8800,7 +8800,7 @@ describe("what frontmatter says", () => {
     });
     expect((await harness.folder.pull()).ok).toBe(true);
     // An edit whose values the file already shows: the version moves, and
-    // the file is not written again for its line alone (`folders.md` 24).
+    // the file is not written again for its line alone (`folders/version-only-pull`).
     edges.logItem(
       "item.updated",
       door!.update(id, { properties: { title: "T" }, version: 1 }),
@@ -13812,7 +13812,7 @@ describe("writing", () => {
     // It moves into a dot-led directory rather than being deleted and
     // rewritten, because the device, inode and birth time have to survive
     // for the arrival to be a rename rather than a new file
-    // (`folders.md` 13), and the walk does not enter a dot-led directory.
+    // (`folders/identity-rename`), and the walk does not enter a dot-led directory.
     const graceStarted = Date.now();
     mkdirSync(join(harness.dir, ".stash"), { recursive: true });
     renameSync(
@@ -15166,7 +15166,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
-    // path becomes a delete once the grace runs out (`folders.md` 21), so
+    // path becomes a delete once the grace runs out (`folders/delete-grace`), so
     // the absence is asserted after it: the grace is the folder's five
     // seconds, and nothing shorter can show a delete not being sent.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -15939,7 +15939,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 38).
+    // again (`folders/lost-row-edit-retried`).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
@@ -16522,7 +16522,7 @@ describe("a file that is not a document", () => {
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
     expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
-    // Its own write is not read back as a change (`folders.md` 20).
+    // Its own write is not read back as a change (`folders/write-no-echo`).
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;
@@ -17117,7 +17117,7 @@ describe("a file that is not a document", () => {
 });
 
 describe("folders on one Mac", () => {
-  /** Past the grace a missing file is journaled for (`folders.md` 21). */
+  /** Past the grace a missing file is journaled for (`folders/delete-grace`). */
   async function pastTheGrace(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 6_000));
   }
@@ -20862,6 +20862,16 @@ describe("what a folder never does to a person's text", () => {
   it("reports a settings file it cannot write, and goes on", async () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-unwritable", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000fa90",
+              properties: { title: "Independent", body: "work continues\n" },
+            },
+          },
+        ],
+      },
       events: [
         (): Answer =>
           copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
@@ -20880,6 +20890,7 @@ describe("what a folder never does to a person's text", () => {
     // A path no file can be written over, as a full disk refuses one.
     rmSync(settingsFile(harness));
     mkdirSync(settingsFile(harness));
+    expect(existsSync(join(harness.dir, "Independent.md"))).toBe(false);
     const pulled = await harness.folder.pull();
     expect(
       pulled.ok,
@@ -20890,6 +20901,10 @@ describe("what a folder never does to a person's text", () => {
       written: false,
       unwritten: expect.stringContaining("folder.yaml") as unknown,
     });
+    expect(pulled.value.written).toBe(1);
+    expect(readFileSync(join(harness.dir, "Independent.md"), "utf8")).toContain(
+      "work continues\n",
+    );
     // A push and a watch say so in words too.
     const said = await harness.folder.pushText();
     expect(said.ok && said.value).toContain(

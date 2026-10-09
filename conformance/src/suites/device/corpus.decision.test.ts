@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureTitles } from "../../utils/fixture-titles.js";
 import {
+  citationsIn as idCitationsIn,
   readChapter,
   statementText,
   type Chapter,
@@ -109,8 +110,16 @@ function citationsIn(text: string): Array<{ file: string; title?: string }> {
   return out;
 }
 
+function statementCitations(
+  statement: Statement,
+): Array<{ file: string; title?: string }> {
+  return /^\d+$/.test(statement.number)
+    ? citationsIn(statement.text)
+    : idCitationsIn(statement.text, true);
+}
+
 function titlesIn(file: string): string[] {
-  const path = resolve(here, file.replace(/^device\//, ""));
+  const path = resolve(here, "..", file);
   if (!existsSync(path)) return [];
   const text = readFileSync(path, "utf8");
   return fixtureTitles(text);
@@ -158,6 +167,24 @@ describe("separate rule metadata", () => {
     ]);
     expect(citationsIn(parsed.found[0].text)).toEqual([
       { file: "device/stop.test.ts", title: "a stopped call" },
+    ]);
+  });
+
+  it("counts CLI fixtures as evidence for an ID rule and resolves their titles", () => {
+    const title = titlesIn("cli/folder.test.ts")[0];
+    expect(title).toBeDefined();
+    const statement = readText(
+      "folders.md",
+      [
+        "### `folders/" + "sample-rule`",
+        "",
+        "The command MUST answer.",
+        "",
+        `**Tests:** \`cli/folder.test.ts › ${title}\`.`,
+      ].join("\n"),
+    ).found[0];
+    expect(statementCitations(statement)).toEqual([
+      { file: "cli/folder.test.ts", title },
     ]);
   });
 
@@ -233,7 +260,7 @@ describe("every device statement is asserted by something", () => {
     const uncited = allStatements
       .filter(
         (statement) =>
-          citationsIn(statement.text).length === 0 &&
+          statementCitations(statement).length === 0 &&
           !WAITING.test(statement.text),
       )
       .map((statement) => `${statement.chapter} ${statement.number}`);
@@ -246,7 +273,7 @@ describe("every device statement is asserted by something", () => {
   it("cites only fixtures that exist, with titles that exist", () => {
     const unresolved: string[] = [];
     for (const statement of allStatements) {
-      for (const citation of citationsIn(statement.text)) {
+      for (const citation of statementCitations(statement)) {
         const titles = titlesIn(citation.file);
         if (titles.length === 0) {
           unresolved.push(
@@ -323,7 +350,7 @@ describe("every device statement is asserted by something", () => {
     const CONTROLS = ["fidelity.test.ts", "scripted-server.test.ts"];
     const cited = new Set(
       allStatements.flatMap((statement) =>
-        citationsIn(statement.text).map(
+        statementCitations(statement).map(
           (citation) => `${citation.file} › ${citation.title ?? ""}`,
         ),
       ),

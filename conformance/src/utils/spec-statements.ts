@@ -244,6 +244,8 @@ export function withoutDefinitions(text: string): string {
 
 const CITATION_FILE =
   /^((?:correctness|compliance|device|sync)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
+const ID_CITATION_FILE =
+  /^((?:correctness|compliance|device|sync|cli)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
 const CITATION_CONTINUED = /^› (.+)$/;
 
 /**
@@ -258,12 +260,15 @@ const CITATION_CONTINUED = /^› (.+)$/;
  * would cut one in half. A paragraph is one text: pass a paragraph and not
  * a file.
  */
-export function citationsIn(text: string): { file: string; title?: string }[] {
+export function citationsIn(
+  text: string,
+  idForm = false,
+): { file: string; title?: string }[] {
   const out: { file: string; title?: string }[] = [];
   let file: string | undefined;
   let end = -1;
   for (const span of text.matchAll(/`([^`]+)`/g)) {
-    const cited = CITATION_FILE.exec(span[1]);
+    const cited = (idForm ? ID_CITATION_FILE : CITATION_FILE).exec(span[1]);
     const continued = CITATION_CONTINUED.exec(span[1]);
     if (cited) {
       file = cited[1];
@@ -286,7 +291,10 @@ export function citationsIn(text: string): { file: string; title?: string }[] {
 export function citationsInText(
   text: string,
 ): { file: string; title?: string }[] {
-  return text.split(/\n\s*\n/).flatMap((paragraph) => citationsIn(paragraph));
+  const idForm = text.split("\n").some((line) => ID_HEADING.test(line));
+  return text
+    .split(/\n\s*\n/)
+    .flatMap((paragraph) => citationsIn(paragraph, idForm));
 }
 
 /** Whether a file stem names a chapter, as opposed to the files that hold no statements. */

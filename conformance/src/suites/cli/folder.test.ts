@@ -1001,7 +1001,7 @@ describe("a folder round trip", () => {
   it("ends a folder's placement of an item whose file another folder took in, and no sooner", async () => {
     // The registry of a Mac of its own: the folders other scenarios made have
     // no directory left, and a folder it cannot read holds a missing file as
-    // possibly moved there (`folders.md` 43).
+    // possibly moved there (`folders/uncertain-move-deferred`).
     const shared = process.env.MARFA_FOLDER_REGISTRY;
     process.env.MARFA_FOLDER_REGISTRY = join(dir, "registry", "folders.json");
     try {

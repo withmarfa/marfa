@@ -77,14 +77,30 @@ const PACKAGES: &[&str] = &[
 ];
 
 pub struct Lists {
-    machine: Gitignore,
-    secrets: Gitignore,
-    include: Gitignore,
+    machine: Patterns,
+    secrets: Patterns,
+    include: Patterns,
     /// The include lines that name a dot-led name, which alone reach one.
-    dotted: Gitignore,
+    dotted: Patterns,
     /// Those dot-led names, so the walk enters only a directory one names.
-    dotted_names: Vec<GlobMatcher>,
-    ignore: Gitignore,
+    dotted_names: Vec<DotName>,
+    ignore: Patterns,
+}
+
+struct Patterns {
+    original: Gitignore,
+    folded: Gitignore,
+}
+
+struct DotName {
+    original: GlobMatcher,
+    folded: GlobMatcher,
+}
+
+impl DotName {
+    fn is_match(&self, name: &str) -> bool {
+        self.original.is_match(name) || self.folded.is_match(crate::names::folded(name))
+    }
 }
 
 impl Lists {
@@ -107,14 +123,18 @@ impl Lists {
             .filter(|line| !line.trim_start().starts_with('!'))
             .flat_map(|line| dot_names(line))
         {
-            dotted_names.push(
-                GlobBuilder::new(&name)
+            let compile = |pattern: &str| {
+                GlobBuilder::new(pattern)
                     .case_insensitive(true)
                     .literal_separator(true)
                     .build()
-                    .map_err(|error| refused("include", &name, &error.to_string()))?
-                    .compile_matcher(),
-            );
+                    .map(|glob| glob.compile_matcher())
+                    .map_err(|error| refused("include", &name, &error.to_string()))
+            };
+            dotted_names.push(DotName {
+                original: compile(&name)?,
+                folded: compile(&folded_pattern(&name))?,
+            });
         }
         Ok(Lists {
             machine: built("built-in", &owned(&[STATE, JUNK, SWAP].concat()))?,
@@ -143,13 +163,14 @@ impl Lists {
     /// with `/` between its names.
     pub fn takes(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
+        let folded = crate::names::folded(&path);
         if [&self.machine, &self.secrets, &self.ignore]
             .into_iter()
-            .any(|list| hit(list, &path, false))
+            .any(|list| hit(list, &path, &folded, false))
         {
             return false;
         }
-        if !self.include.is_empty() && !hit(&self.include, &path, false) {
+        if !self.include.original.is_empty() && !hit(&self.include, &path, &folded, false) {
             return false;
         }
         // Every dot-led directory on the way is one the walk enters, or a
@@ -164,19 +185,20 @@ impl Lists {
         {
             return false;
         }
-        !name.starts_with('.') || hit(&self.dotted, &path, false)
+        !name.starts_with('.') || hit(&self.dotted, &path, &folded, false)
     }
 
     pub(super) fn secret(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        hit(&self.secrets, &path, false)
+        hit(&self.secrets, &path, &crate::names::folded(&path), false)
     }
 
     /// A secret's name is refused file by file, so a package named like one is
     /// still reported.
     pub(super) fn enters(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        if hit(&self.machine, &path, true) || hit(&self.ignore, &path, true) {
+        let folded = crate::names::folded(&path);
+        if hit(&self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
             return false;
         }
         let name = path.rsplit('/').next().unwrap_or(&path);
@@ -184,24 +206,117 @@ impl Lists {
     }
 }
 
-fn hit(list: &Gitignore, path: &str, is_dir: bool) -> bool {
-    list.matched_path_or_any_parents(path, is_dir).is_ignore()
+fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
+    let (mut path, mut folded) = (Path::new(path), Path::new(folded));
+    loop {
+        // Resolve line order across both forms before walking to a parent:
+        // a direct match, including a negation, takes precedence over one there.
+        let matched = [
+            list.original.matched(path, is_dir),
+            list.folded.matched(folded, is_dir),
+        ]
+        .into_iter()
+        .filter_map(|matched| matched.inner().copied())
+        .max_by(|one, other| one.from().cmp(&other.from()));
+        if let Some(glob) = matched {
+            return !glob.is_whitelist();
+        }
+        let (Some(parent), Some(folded_parent)) = (path.parent(), folded.parent()) else {
+            return false;
+        };
+        (path, folded, is_dir) = (parent, folded_parent, true);
+    }
 }
 
-fn built(list: &str, lines: &[String]) -> Result<Gitignore> {
-    let mut builder = GitignoreBuilder::new("");
-    builder
-        .case_insensitive(true)
-        .map_err(|error| refused(list, "", &error.to_string()))?;
-    for line in lines {
-        let line: String = line.nfc().collect();
+fn built(list: &str, lines: &[String]) -> Result<Patterns> {
+    let (mut original, mut folded) = (GitignoreBuilder::new(""), GitignoreBuilder::new(""));
+    for builder in [&mut original, &mut folded] {
         builder
-            .add_line(None, &line)
-            .map_err(|error| refused(list, &line, &error.to_string()))?;
+            .case_insensitive(true)
+            .map_err(|error| refused(list, "", &error.to_string()))?;
     }
-    builder
-        .build()
-        .map_err(|error| refused(list, "", &error.to_string()))
+    for (index, line) in lines.iter().enumerate() {
+        let pattern: String = line.nfc().collect();
+        // Source metadata carries the line's ordinal in both matchers; fixed
+        // width makes path ordering also be numeric ordering on every target.
+        let source = std::path::PathBuf::from(format!("{index:020}"));
+        original
+            .add_line(Some(source.clone()), &pattern)
+            .map_err(|error| refused(list, line, &error.to_string()))?;
+        folded
+            .add_line(Some(source), &folded_pattern(&pattern))
+            .map_err(|error| refused(list, line, &error.to_string()))?;
+    }
+    Ok(Patterns {
+        original: original
+            .build()
+            .map_err(|error| refused(list, "", &error.to_string()))?,
+        folded: folded
+            .build()
+            .map_err(|error| refused(list, "", &error.to_string()))?,
+    })
+}
+
+fn folded_pattern(pattern: &str) -> String {
+    let mut result = String::new();
+    let mut literal = String::new();
+    let mut chars = pattern.chars().peekable();
+    let flush = |result: &mut String, literal: &mut String| {
+        result.push_str(&crate::names::folded(literal));
+        literal.clear();
+    };
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                if let Some(escaped) = chars.next() {
+                    // An unnecessary escape must not split a combining
+                    // sequence. Keep only escapes that protect pattern syntax
+                    // or whitespace from the gitignore parser.
+                    if matches!(
+                        escaped,
+                        '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '/' | '#' | '!'
+                    ) || escaped.is_whitespace()
+                    {
+                        literal.push('\\');
+                    }
+                    literal.push(escaped);
+                } else {
+                    literal.push('\\');
+                }
+            }
+            '[' => {
+                // Class endpoints are syntax, not case-foldable names. An
+                // initial ] is a member, including after a negation marker.
+                let mut rest = chars.clone();
+                let mut class = String::from("[");
+                if rest.peek().is_some_and(|ch| matches!(ch, '!' | '^')) {
+                    class.push(rest.next().unwrap());
+                }
+                let mut closed = false;
+                for (index, ch) in rest.by_ref().enumerate() {
+                    class.push(ch);
+                    if ch == ']' && index > 0 {
+                        closed = true;
+                        break;
+                    }
+                }
+                if closed {
+                    flush(&mut result, &mut literal);
+                    result.push_str(&class);
+                    chars = rest;
+                } else {
+                    literal.push('[');
+                }
+            }
+            '*' | '?' | '{' | '}' | ',' | '/' => {
+                flush(&mut result, &mut literal);
+                result.push(ch);
+            }
+            _ => literal.push(ch),
+        }
+    }
+    flush(&mut result, &mut literal);
+    result
 }
 
 fn refused(list: &str, line: &str, why: &str) -> CoreError {
@@ -394,6 +509,67 @@ mod tests {
         let bad = vec!["a{b".to_string()];
         assert!(Lists::new(&bad, &[]).is_err());
         assert!(Lists::new(&[], &bad).is_err());
+    }
+
+    #[test]
+    fn literal_folding_preserves_classes_and_escaped_metacharacters() {
+        for pattern in ["[A-z]CAFÉ.md", "[Z-a]CAFÉ.md"] {
+            let included = lists(&[pattern], &[]);
+            assert!(included.takes("_Cafe\u{301}.md"));
+            assert!(!included.takes("5Café.md"));
+        }
+        for (pattern, name) in [
+            ("[]A-Z]CAFÉ.md", "]café.md"),
+            ("[!A-Z]CAFÉ.md", "5café.md"),
+            ("[CAFÉ.md", "[café.md"),
+            (r"\[CAFÉ\].md", "[café].md"),
+            (r"\?CAFÉ.md", "?café.md"),
+            (r"\!CAFÉ.md", "!café.md"),
+            (r"\#CAFÉ.md", "#café.md"),
+            (r"\{CAFÉ\}.md", "{café}.md"),
+            (r"\\CAFÉ.md", "\\café.md"),
+            (r"CAFÉ.md\ ", "café.md "),
+            ("\\J\u{30c}.md", "ǰ.md"),
+            ("J\\\u{30c}.md", "ǰ.md"),
+            ("{CAFÉ,ÉTÉ}.md", "été.md"),
+        ] {
+            assert!(lists(&[pattern], &[]).takes(name), "{pattern:?}, {name:?}");
+        }
+        assert!(Lists::new(&["[z-a]".into()], &[]).is_err());
+        assert!(Lists::new(&[], &["[z-a]".into()]).is_err());
+    }
+
+    #[test]
+    fn wildcard_matching_keeps_the_original_name_alongside_its_folded_form() {
+        assert!(lists(&["??.md"], &[]).takes("İ.md"));
+        assert!(!lists(&[], &["??.md"]).takes("İ.md"));
+        let dotted = lists(&[".??/**"], &[]);
+        assert!(dotted.enters(".İ"));
+        assert!(dotted.takes(".İ/note.md"));
+    }
+
+    #[test]
+    fn line_order_is_shared_by_original_and_folded_matches() {
+        assert!(!lists(&["??.md", "!i\u{307}.md"], &[]).takes("İ.md"));
+        assert!(lists(&["!i\u{307}.md", "??.md"], &[]).takes("İ.md"));
+        assert!(lists(&[], &["??.md", "!i\u{307}.md"]).takes("İ.md"));
+        assert!(!lists(&[], &["!i\u{307}.md", "??.md"]).takes("İ.md"));
+
+        // More than ten lines distinguish numeric from unpadded string order.
+        let mut ignore = vec![""; 12];
+        ignore[2] = "??.md";
+        ignore[10] = "!i\u{307}.md";
+        assert!(lists(&[], &ignore).takes("İ.md"));
+        ignore.swap(2, 10);
+        assert!(!lists(&[], &ignore).takes("İ.md"));
+    }
+
+    #[test]
+    fn both_forms_match_the_path_before_considering_its_parents() {
+        assert!(!lists(&["!i\u{307}/keep.md", "??/"], &[]).takes("İ/keep.md"));
+        assert!(lists(&["i\u{307}/keep.md", "!??/"], &[]).takes("İ/keep.md"));
+        assert!(!lists(&[], &["i\u{307}/keep.md", "!??/"]).takes("İ/keep.md"));
+        assert!(lists(&[], &["!i\u{307}/keep.md", "??/"]).takes("İ/keep.md"));
     }
 
     #[cfg(target_os = "macos")]

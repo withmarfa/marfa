@@ -1788,7 +1788,7 @@ When a create carrying no natural key carries a null for a property its type doe
 
 ### `queue-and-verdicts/folder-gives-way`
 
-When a folder gives way to another machine's placement of a file (`folders.md` 19), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard.
+When a folder gives way to another machine's placement of a file (`folders/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard.
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 
