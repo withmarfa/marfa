@@ -1169,7 +1169,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 scope: {
                   type: "string",
                   description:
-                    "Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows, without `offline_access` if `grant_types` names neither `refresh_token` nor `authorization_code`.",
+                    "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use.",
                 },
                 token_endpoint_auth_method: {
                   type: "string",

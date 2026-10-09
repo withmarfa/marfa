@@ -21852,7 +21852,7 @@ export interface operations {
                     client_name?: string;
                     /** @description `web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`. */
                     application_type?: string;
-                    /** @description Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows, without `offline_access` if `grant_types` names neither `refresh_token` nor `authorization_code`. */
+                    /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
                     scope?: string;
                     /** @description How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. */
                     token_endpoint_auth_method?: string;

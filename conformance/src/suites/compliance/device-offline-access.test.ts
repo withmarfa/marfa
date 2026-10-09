@@ -24,6 +24,33 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 describe("offline_access on a device", () => {
+  it("refuses a registration naming offline_access for grant types that cannot refresh, and names refresh_token", async () => {
+    const register = (grantTypes: string[]) =>
+      fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "device-offline-access",
+          application_type: "native",
+          grant_types: grantTypes,
+          response_types: [],
+          token_endpoint_auth_method: "none",
+          scope: "core.note:read offline_access",
+        }),
+      });
+    const device = "urn:ietf:params:oauth:grant-type:device_code";
+    // The witness: with the refresh grant, the same registration is accepted.
+    expect((await register([device, "refresh_token"])).status).toBe(201);
+    const refused = await register([device]);
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_client_metadata");
+    expect(body.error_description).toEqual(
+      expect.stringContaining("refresh_token"),
+    );
+    expect(body.client_id).toBeUndefined();
+  });
+
   it("answers offline_access a refresh token, which exchanges, for a client registered for the refresh grant", async () => {
     const flow = await startDeviceFlow(server!, [
       "core.note:read",

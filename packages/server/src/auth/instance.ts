@@ -27,6 +27,7 @@ import {
   buildOauthProviderPlugin,
   buildOauthProjectionPlugin,
   makeTokenHasher,
+  refuseOfflineWithoutRefresh,
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
@@ -424,6 +425,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               // base path; the plugin's default `/device` would land beside
               // it rather than under it.
               verificationUri: "/auth/device",
+              onDeviceAuthRequest: refuseOfflineWithoutRefresh(options.storage),
             }),
           ]
         : []),

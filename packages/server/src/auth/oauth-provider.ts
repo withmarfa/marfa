@@ -810,20 +810,19 @@ export function clientMayRefresh(grantTypes: unknown): boolean {
  * Before-hook for `/oauth2/register`: settle the scope the client is
  * registered for, which the credential adapter stores and
  * `keepRequestedRegistrationScope` answers. The provider stores and answers
- * its whole allowlist whatever the request names.
+ * its whole allowlist whatever the request names, so a registration with no
+ * credential request to carry the settled scope fails rather than store it.
  *
- * A request naming no scope keeps that allowlist, less `offline_access` for a
- * client that may not refresh: the device code request refuses such a client
- * that scope (`offerDeviceScopes`), so a default holding it would register
- * the client for a scope it can never use.
+ * A client that may not refresh can never use `offline_access`: a request
+ * naming it is refused, and a request naming no scope keeps the allowlist
+ * less `offline_access`.
  */
 function settleRegistrationScope(
   ctx: HookCtxLite,
   allowed: ReadonlySet<string>,
 ): void {
-  const request = credentialRequest.getStore();
   const body = ctx.body;
-  if (!request || !body || typeof body !== "object") return;
+  if (!body || typeof body !== "object") return;
   const asked =
     typeof body.scope === "string"
       ? [...new Set(body.scope.split(" ").filter((s) => s.length > 0))]
@@ -834,11 +833,49 @@ function settleRegistrationScope(
         typeof g === "string" ? g.trim() : g,
       )
     : body.grant_types;
+  const mayRefresh = clientMayRefresh(grantTypes);
+  if (!mayRefresh && asked.includes("offline_access"))
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_client_metadata",
+      error_description: OFFLINE_WITHOUT_REFRESH,
+    });
+  const request = credentialRequest.getStore();
+  if (!request)
+    throw new Error(
+      "client registration ran outside a credential request, so its scope cannot be stored",
+    );
   if (asked.length > 0) request.registrationScopes = asked;
-  else if (!clientMayRefresh(grantTypes))
+  else if (!mayRefresh)
     request.registrationScopes = [...allowed].filter(
       (s) => s !== "offline_access",
     );
+}
+
+/** Why a client that may not refresh is refused `offline_access`. */
+const OFFLINE_WITHOUT_REFRESH =
+  "offline_access needs a refresh token, and this client may not use one: register refresh_token in grant_types to ask for it.";
+
+/**
+ * The device plugin's `onDeviceAuthRequest`, which it calls once the provider
+ * has authenticated the client and held the scopes to its ceiling, with the
+ * scopes joined by single spaces. Refuses `offline_access` to a client that
+ * may not refresh: the provider would approve the scope and issue an access
+ * token alone, and the client would sign the person in again when it ended.
+ * Registration keeps such a client from holding the scope, so this answers a
+ * client registered before it did.
+ */
+export function refuseOfflineWithoutRefresh(
+  storage: Storage,
+): (clientId: string, scope: string | undefined) => Promise<void> {
+  return async (clientId, scope) => {
+    if (!scope?.split(" ").includes("offline_access")) return;
+    const client = await storage.oauthProvider?.getClient(clientId);
+    if (client && !clientMayRefresh(client.grantTypes))
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_scope",
+        error_description: OFFLINE_WITHOUT_REFRESH,
+      });
+  };
 }
 
 /**
@@ -1878,11 +1915,6 @@ async function guardRefreshTokenGrant(
  * later screens offer. The widened view lives on the request, in the
  * credential adapter, and dies with it; the approval screen writes the scopes
  * the person ticked (`catchUpClientScopeCeiling`, `routes/auth-pages.ts`).
- *
- * It also refuses `offline_access` to a client that may not refresh. The
- * provider would approve the scope and issue an access token alone, and a
- * client told nothing would sign the person in again when it ends. A client
- * the store does not know is left to the provider's own refusal.
  */
 async function offerDeviceScopes(
   ctx: HookCtxLite,
@@ -1891,45 +1923,24 @@ async function offerDeviceScopes(
 ): Promise<void> {
   const asked = await readDeviceCodeRequest(ctx);
   if (!asked) return;
-  const { clientId, requested } = asked;
-  if (requested.includes("offline_access")) {
-    const client = await storage.oauthProvider?.getClient(clientId);
-    if (client && !clientMayRefresh(client.grantTypes)) {
-      throw new APIError("BAD_REQUEST", {
-        error: "invalid_scope",
-        error_description:
-          "offline_access needs a refresh token, and this client may not use one: register refresh_token in grant_types to ask for it.",
-      });
-    }
-  }
-  await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
+  await offerScopesBeyondCeiling(
+    storage,
+    asked.clientId,
+    asked.requested,
+    bundleScopes,
+  );
 }
 
 /** The fields of a device code request the client and its scope are read from. */
-const DEVICE_CODE_FIELDS = [
-  "client_id",
-  "scope",
-  "client_secret",
-  "client_assertion",
-  "client_assertion_type",
-] as const;
+const DEVICE_CODE_FIELDS = ["client_id", "scope", "client_assertion"] as const;
 
 /**
  * The client a device code request names and the scopes it asks for, read
  * as the provider and its device plugin read them, or undefined where the
- * hook cannot tell the client.
- *
- * A form field sent more than once counts as its one non-empty value, and
- * more than one non-empty value is refused by the plugin. The scope splits
- * on any run of whitespace. The client follows `resolvePresentedClientId`,
- * except that an assertion names the client in its `sub`, or else its `iss`,
- * which must match a `client_id` sent beside it. The hook reads that claim
- * unverified: the provider verifies the assertion before it issues a code,
- * so a forged one is refused either way.
- *
- * Every request the hook cannot tell the client of is one the provider
- * refuses on its own: a repeated field, an assertion naming no client or a
- * different one, or no client at all.
+ * hook cannot tell the client. A form field sent more than once counts as
+ * its one non-empty value, which is what the provider authenticates, and the
+ * scope splits on any run of whitespace. The client follows
+ * `resolvePresentedClientId`, so an assertion is "cannot tell".
  */
 async function readDeviceCodeRequest(
   ctx: HookCtxLite,
@@ -1951,36 +1962,16 @@ async function readDeviceCodeRequest(
       fields[field] = values[0];
     }
   }
-  const clientId =
-    fields.client_assertion !== undefined ||
-    fields.client_assertion_type !== undefined
-      ? assertedClientId(fields.client_assertion, fields.client_id)
-      : resolvePresentedClientId({ body: fields, headers: ctx.headers });
+  const clientId = resolvePresentedClientId({
+    body: fields,
+    headers: ctx.headers,
+  });
   if (clientId === undefined) return undefined;
   const requested = (fields.scope ?? "")
     .trim()
     .split(/\s+/)
     .filter((s) => s.length > 0);
   return { clientId, requested };
-}
-
-/** The client a JWT client assertion claims to be, as the provider reads it. */
-function assertedClientId(
-  assertion: string | undefined,
-  hint: string | undefined,
-): string | undefined {
-  try {
-    const payload: unknown = JSON.parse(
-      Buffer.from(assertion?.split(".")[1] ?? "", "base64url").toString(),
-    );
-    if (!payload || typeof payload !== "object") return undefined;
-    const claims = payload as { sub?: unknown; iss?: unknown };
-    const claimed = claims.sub ?? claims.iss;
-    if (typeof claimed !== "string" || claimed.length === 0) return undefined;
-    return hint === undefined || hint === claimed ? claimed : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**

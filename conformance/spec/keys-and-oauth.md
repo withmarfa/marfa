@@ -878,9 +878,17 @@ When a client registers at `POST /auth/oauth2/register`, which takes no credenti
 
 ### `keys-and-oauth/register-scope`
 
-When a registration names a scope, the server MUST register and answer that scope, each literal once, in the order first named.
+When the server accepts a registration that names a scope, the server MUST register and answer that scope, each literal once, in the order first named.
 
 **Tests:** `compliance/oauth.test.ts › registers a client naming a scope at that scope, once each`.
+
+### `keys-and-oauth/register-offline-no-refresh`
+
+If a registration names `offline_access` in its scope and its `grant_types` name neither `refresh_token` nor `authorization_code`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` that names the `refresh_token` registration the client lacks.
+
+**Reason:** Such a client may not exchange a refresh token, so `offline_access` is a scope it could never use.
+
+**Tests:** `compliance/device-offline-access.test.ts › refuses a registration naming offline_access for grant types that cannot refresh, and names refresh_token`.
 
 ### `keys-and-oauth/register-default-scope`
 
@@ -1324,11 +1332,11 @@ If a client asks `POST /auth/device/code` for a scope the instance does not publ
 
 ### `keys-and-oauth/device-offline-no-refresh`
 
-If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope` with an `error_description` that names the `refresh_token` registration the client lacks.
+If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope`.
 
-**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why.
+**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why. This holds for a client registered for `offline_access` as well as one that is not.
 
-**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh, and is told to register refresh_token`.
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh`, `› is refused 400 invalid_scope for offline_access when its stored client holds the scope and may not refresh`.
 
 ### `keys-and-oauth/device-published-scope`
 

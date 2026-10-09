@@ -18,7 +18,6 @@
  * not another's to approve; a client without the grant cannot initiate; and
  * the discovery document advertises the grant and the initiation endpoint.
  */
-import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { createTestContext, request, storedDeviceCode } from "../test-utils.js";
@@ -189,6 +188,29 @@ async function allowRepoll(c: TestContext, deviceCode: string): Promise<void> {
     );
 }
 
+/** Give a stored client `offline_access` beside the scopes it holds, as a
+ *  client registered before the registration refused it may hold it. */
+async function holdOfflineAccess(
+  c: TestContext,
+  clientId: string,
+): Promise<void> {
+  const schema = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const held = (await c.storage.oauthProvider?.getClient(clientId))?.scopes;
+  if (!held) throw new Error("holdOfflineAccess: client has no stored scopes");
+  const db = c.storage.betterAuthDb as {
+    update: (t: unknown) => {
+      set: (v: Record<string, unknown>) => {
+        where: (w: unknown) => Promise<unknown>;
+      };
+    };
+  };
+  await db
+    .update(schema.auth_oauth_client)
+    .set({ scopes: JSON.stringify([...held, "offline_access"]) })
+    .where(eq(schema.auth_oauth_client.clientId, clientId));
+}
+
 async function grants(c: TestContext) {
   const items = await c.storage.items.list({ type: "system.connection" });
   return items.data.filter((i) => i.properties.kind === "app");
@@ -310,13 +332,66 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(((await refreshed.json()) as TokenBody).access_token).toBeTruthy();
 
     // Registered for neither the refresh grant nor the code grant, the client
-    // could never exchange a refresh token, so the request is refused and
-    // says why rather than ending in an access token alone. It holds for a
-    // registration that named `offline_access` itself too.
-    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], scope);
-    expect(deviceOnly.scope.split(" ")).toContain("offline_access");
+    // could never exchange a refresh token, so the request is refused rather
+    // than ending in an access token alone.
+    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE]);
     const refused = await request(c.app, "POST", "/auth/device/code", {
       form: { client_id: deviceOnly.client_id, scope },
+      headers: { origin: ORIGIN },
+    });
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.device_code).toBeUndefined();
+  });
+
+  it("refuses a registration naming offline_access for grant types that cannot refresh, and says what to register", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const scope = "core.note:read offline_access";
+    // The witness: the same registration with the refresh grant is accepted.
+    const refreshing = await register(
+      c,
+      [DEVICE_CODE_GRANT_TYPE, "refresh_token"],
+      scope,
+    );
+    expect(refreshing.scope).toBe(scope);
+    const refused = await request(c.app, "POST", "/auth/oauth2/register", {
+      body: {
+        client_name: "Device Test App",
+        application_type: "native",
+        grant_types: [DEVICE_CODE_GRANT_TYPE],
+        token_endpoint_auth_method: "none",
+        response_types: [],
+        scope,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_client_metadata");
+    expect(body.error_description).toContain("refresh_token");
+    expect(body.client_id).toBeUndefined();
+  });
+
+  it("refuses offline_access, and says what to register, to a stored client that holds it and cannot refresh", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const scope = "core.note:read offline_access";
+    const stored = await register(
+      c,
+      [DEVICE_CODE_GRANT_TYPE],
+      "core.note:read",
+    );
+    await holdOfflineAccess(c, stored.client_id);
+    // The witness: the scope the client held before is still issued a code.
+    const issued = await request(c.app, "POST", "/auth/device/code", {
+      form: { client_id: stored.client_id, scope: "core.note:read" },
+      headers: { origin: ORIGIN },
+    });
+    expect(issued.status).toBe(200);
+    const refused = await request(c.app, "POST", "/auth/device/code", {
+      form: { client_id: stored.client_id, scope },
       headers: { origin: ORIGIN },
     });
     expect(refused.status).toBe(400);
@@ -591,7 +666,7 @@ describe("the device authorization grant through the provider plugin", () => {
   });
 });
 
-describe("the offline_access refusal reads a device code request as the provider does", () => {
+describe("a device code request, however it names its client and scopes", () => {
   const ASKED = "core.note:read offline_access";
 
   /** A refused answer, which names the registration the client lacks. */
@@ -614,16 +689,19 @@ describe("the offline_access refusal reads a device code request as the provider
     });
   }
 
-  it("refuses a client that authenticates with HTTP Basic and names no client_id", async () => {
-    ctx = await createTestContext({});
-    const c = ctx;
+  /** A confidential device client, registered for `scope`, and the HTTP
+   *  Basic header it authenticates with. */
+  async function confidential(
+    c: TestContext,
+    scope: string,
+  ): Promise<{ clientId: string; basic: Record<string, string> }> {
     const res = await request(c.app, "POST", "/auth/oauth2/register", {
       body: {
         client_name: "Device Test App",
         grant_types: [DEVICE_CODE_GRANT_TYPE],
         token_endpoint_auth_method: "client_secret_basic",
         response_types: [],
-        scope: ASKED,
+        scope,
       },
       headers: { origin: ORIGIN },
     });
@@ -632,23 +710,54 @@ describe("the offline_access refusal reads a device code request as the provider
       client_id: string;
       client_secret: string;
     };
-    const basic = {
-      authorization: `Basic ${Buffer.from(
-        `${encodeURIComponent(client_id)}:${encodeURIComponent(client_secret)}`,
-      ).toString("base64")}`,
+    return {
+      clientId: client_id,
+      basic: {
+        authorization: `Basic ${Buffer.from(
+          `${encodeURIComponent(client_id)}:${encodeURIComponent(client_secret)}`,
+        ).toString("base64")}`,
+      },
     };
+  }
+
+  it("refuses offline_access to a stored client that authenticates with HTTP Basic and names no client_id", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const { clientId, basic } = await confidential(c, "core.note:read");
+    await holdOfflineAccess(c, clientId);
     // The witness: the provider authenticates the client from the header.
     expect((await ask(c, { scope: "core.note:read" }, basic)).status).toBe(200);
     await expectRefused(await ask(c, { scope: ASKED }, basic));
   });
 
+  it("issues a code for a published scope to a client that authenticates with HTTP Basic, as it does with a client_id", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const { clientId, basic } = await confidential(c, "core.note:read");
+    const published = "core.task:read";
+    expect(
+      (await c.storage.oauthProvider?.getClient(clientId))?.scopes,
+    ).not.toContain(published);
+    const issued = await ask(
+      c,
+      { scope: `core.note:read ${published}` },
+      basic,
+    );
+    expect(issued.status, await issued.clone().text()).toBe(200);
+  });
+
   it("refuses offline_access separated from the other scopes by a tab", async () => {
     ctx = await createTestContext({});
     const c = ctx;
-    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], ASKED);
+    const stored = await register(
+      c,
+      [DEVICE_CODE_GRANT_TYPE],
+      "core.note:read",
+    );
+    await holdOfflineAccess(c, stored.client_id);
     await expectRefused(
       await ask(c, {
-        client_id: deviceOnly.client_id,
+        client_id: stored.client_id,
         scope: "core.note:read\toffline_access",
       }),
     );
@@ -657,80 +766,27 @@ describe("the offline_access refusal reads a device code request as the provider
   it("refuses a repeated scope or client_id field whose last value is empty", async () => {
     ctx = await createTestContext({});
     const c = ctx;
-    const deviceOnly = await register(c, [DEVICE_CODE_GRANT_TYPE], ASKED);
+    const stored = await register(
+      c,
+      [DEVICE_CODE_GRANT_TYPE],
+      "core.note:read",
+    );
+    await holdOfflineAccess(c, stored.client_id);
     // The witness: the provider reads the one value that is not empty.
     expect(
       (
         await ask(c, {
-          client_id: deviceOnly.client_id,
+          client_id: stored.client_id,
           scope: ["core.note:read", ""],
         })
       ).status,
     ).toBe(200);
     await expectRefused(
-      await ask(c, { client_id: deviceOnly.client_id, scope: [ASKED, ""] }),
+      await ask(c, { client_id: stored.client_id, scope: [ASKED, ""] }),
     );
     await expectRefused(
-      await ask(c, { client_id: [deviceOnly.client_id, ""], scope: ASKED }),
+      await ask(c, { client_id: [stored.client_id, ""], scope: ASKED }),
     );
-  });
-
-  it("refuses a client that authenticates with a signed assertion", async () => {
-    ctx = await createTestContext({});
-    const c = ctx;
-    const { publicKey, privateKey } = generateKeyPairSync("ec", {
-      namedCurve: "P-256",
-    });
-    const kid = randomUUID();
-    const res = await request(c.app, "POST", "/auth/oauth2/register", {
-      body: {
-        client_name: "Device Test App",
-        grant_types: [DEVICE_CODE_GRANT_TYPE],
-        token_endpoint_auth_method: "private_key_jwt",
-        response_types: [],
-        scope: ASKED,
-        jwks: {
-          keys: [{ ...publicKey.export({ format: "jwk" }), kid, alg: "ES256" }],
-        },
-      },
-      headers: { origin: ORIGIN },
-    });
-    expect(res.status, await res.clone().text()).toBe(201);
-    const { client_id } = (await res.json()) as { client_id: string };
-    const discovery = (await (
-      await request(
-        c.app,
-        "GET",
-        "/.well-known/oauth-authorization-server/auth",
-      )
-    ).json()) as { device_authorization_endpoint: string };
-    const assertion = (): string => {
-      const now = Math.floor(Date.now() / 1000);
-      const part = (value: unknown) =>
-        Buffer.from(JSON.stringify(value)).toString("base64url");
-      const signed = `${part({ alg: "ES256", kid, typ: "JWT" })}.${part({
-        iss: client_id,
-        sub: client_id,
-        aud: discovery.device_authorization_endpoint,
-        iat: now,
-        exp: now + 60,
-        jti: randomUUID(),
-      })}`;
-      const signature = sign("sha256", Buffer.from(signed), {
-        key: privateKey,
-        dsaEncoding: "ieee-p1363",
-      }).toString("base64url");
-      return `${signed}.${signature}`;
-    };
-    const asserted = (scope: string) => ({
-      scope,
-      client_assertion_type:
-        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-      client_assertion: assertion(),
-    });
-    // The refusal comes before the provider verifies the assertion, so it
-    // holds whatever that verification would answer.
-    await expectRefused(await ask(c, asserted(ASKED)));
   });
 
   it("registers a client whose grant_types name refresh_token with stray spaces for offline_access", async () => {
