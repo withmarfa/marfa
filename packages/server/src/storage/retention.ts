@@ -439,7 +439,8 @@ export class DcrClientCleaner {
 
 /**
  * Hard-deletes revoked ordinary API keys once their revocation is old
- * enough to stop being interesting. An instance a test suite mints against
+ * enough to stop being interesting, and keys that lapsed unrevoked once
+ * their expiry is as old. An instance a test suite mints against
  * revokes thousands of them a week, and nothing else bounds the table.
  *
  * Instance-wide and not configurable: revocation age is a property of the
@@ -463,7 +464,7 @@ export class RevokedKeyReaper {
     ).toISOString();
     const deleted = await runAuditedTransaction(
       this.storage,
-      () => this.storage.keys.deleteRevokedKeysOlderThan(cutoff),
+      () => this.storage.keys.deleteDeadKeysOlderThan(cutoff),
       (deleted) =>
         deleted > 0
           ? {

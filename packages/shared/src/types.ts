@@ -261,8 +261,8 @@ export interface ApiKey {
   id: string;
   label: string;
   /**
-   * The credential's own source, which no other unrevoked key holds as its
-   * own: what its writes are stamped with unless a write names one of
+   * The credential's own source, which no other key that is neither revoked
+   * nor expired holds as its own: what its writes are stamped with unless a write names one of
    * `sources`. Keys claiming it write under it too.
    */
   source: string;
@@ -319,8 +319,7 @@ export interface ApiKey {
   /**
    * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is
    * refused at the bearer gate exactly like a revoked key. `null` (or
-   * absent) means the key never expires, which is the shape of every key
-   * a door mints.
+   * absent) means the key never expires.
    */
   expires_at?: string | null;
   last_used_at: string | null;
@@ -341,6 +340,9 @@ export interface CreateKeyInput {
   profile_permissions?: Record<string, ProfilePermission>;
   /** Per-credential schema-enforcement override; see `ApiKey`. */
   enforcement_override?: EnforcementSettings;
+  /** When the key stops working, as a normalized UTC instant; see `ApiKey`.
+   *  Absent mints a key that never expires. */
+  expires_at?: string;
 }
 
 /**
@@ -366,6 +368,9 @@ export interface UpdateKeyInput {
   /** Per-credential schema-enforcement override; `null` clears it so the
    *  key inherits the instance config again. */
   enforcement_override?: EnforcementSettings | null;
+  /** Replaces the key's expiry with a normalized UTC instant; `null` clears
+   *  it so the key never expires. */
+  expires_at?: string | null;
 }
 
 // ---------------------------------------------------------------------------

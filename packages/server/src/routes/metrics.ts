@@ -41,7 +41,9 @@ const MetricsResponseSchema = z.object({
       registered: z.number().describe("Number of registered types."),
     })
     .describe("Built-in and registered type counts."),
-  keys: MetricCountSchema.describe("Number of unrevoked keys."),
+  keys: MetricCountSchema.describe(
+    "Number of keys that haven't been revoked or expired.",
+  ),
   webhooks: MetricCountSchema.describe("Number of webhook registrations."),
   uptime_seconds: z
     .number()

@@ -302,6 +302,81 @@ describe("inbound webhook endpoints", () => {
     expect((await post(ctx, made.path, "expired")).status).toBe(404);
   });
 
+  describe("on a registration whose key is no longer live", () => {
+    async function keyIdOf(connector: { key: string }): Promise<string> {
+      const current = await request(ctx.app, "GET", "/keys/current", {
+        key: connector.key,
+      });
+      return ((await current.json()) as { id: string }).id;
+    }
+
+    async function stampExpiry(keyId: string, at: string): Promise<void> {
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (query: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun("UPDATE api_keys SET expires_at = ? WHERE id = ?", [
+        at,
+        keyId,
+      ]);
+    }
+
+    async function makeAsOperator(
+      connector: { id: string },
+      body: Record<string, unknown> = {},
+    ): Promise<Response> {
+      return request(ctx.app, "POST", `/connectors/${connector.id}/endpoints`, {
+        key: ctx.managementKey,
+        body,
+      });
+    }
+
+    async function endpointCount(connector: { id: string }): Promise<number> {
+      const listed = await request(
+        ctx.app,
+        "GET",
+        `/connectors/${connector.id}/endpoints`,
+        { key: ctx.managementKey },
+      );
+      expect(listed.status).toBe(200);
+      return ((await listed.json()) as { data: unknown[] }).data.length;
+    }
+
+    it("refuses an endpoint once the key is revoked, naming why, and makes none", async () => {
+      const connector = await register(ctx);
+      // The witness: the same request, before the revoke, makes an endpoint.
+      const before = await makeAsOperator(connector);
+      expect(before.status).toBe(201);
+      expect(await endpointCount(connector)).toBe(1);
+
+      await ctx.storage.keys.revoke(await keyIdOf(connector));
+      const refused = await makeAsOperator(connector, { label: "late" });
+      expect(refused.status).toBe(409);
+      const body = (await refused.json()) as {
+        error: { code: string; message: string };
+      };
+      expect(body.error.code).toBe("conflict");
+      expect(body.error.message).toMatch(/revoked or past its expires_at/);
+      expect(await endpointCount(connector)).toBe(1);
+    });
+
+    it("refuses an endpoint once the key has expired, and makes none", async () => {
+      const connector = await register(ctx);
+      const keyId = await keyIdOf(connector);
+      await stampExpiry(keyId, new Date(Date.now() + 60_000).toISOString());
+      // The witness: a key with its expiry still ahead takes an endpoint.
+      expect((await makeAsOperator(connector)).status).toBe(201);
+
+      await stampExpiry(keyId, new Date(Date.now() - 1_000).toISOString());
+      const refused = await makeAsOperator(connector);
+      expect(refused.status).toBe(409);
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code,
+      ).toBe("conflict");
+      expect(await endpointCount(connector)).toBe(1);
+    });
+  });
+
   it("goes with its registration, and its deliveries with it", async () => {
     const connector = await register(ctx);
     const made = await endpoint(ctx, connector);

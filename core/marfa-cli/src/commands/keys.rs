@@ -23,7 +23,7 @@ pub enum KeysCommand {
     /// The key this call bears, without plaintext: what it holds and what it
     /// claims. Any key may read itself.
     Current,
-    /// Change a key's label, tier or permission maps. Needs `keys.manage` or direct owner/local authority.
+    /// Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct owner/local authority.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
     /// `keys.manage` or direct owner/local authority.
@@ -186,6 +186,8 @@ pub struct KeyCreateArgs {
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
+    #[command(flatten)]
+    pub expiry: ExpiryArgs,
 
     /// A key that holds nothing at all, asked for out loud.
     #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions"])]
@@ -221,6 +223,11 @@ pub struct KeyUpdateArgs {
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
+    #[command(flatten)]
+    pub expiry: ExpiryArgs,
+    /// Clear the key's expiry, so it never expires.
+    #[arg(long, conflicts_with_all = ["expires_in", "expires_at"])]
+    pub no_expiry: bool,
     /// Take every permission and every map from the key, so a key minted
     /// too wide is narrowed in place.
     #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions", "no_type_permissions", "no_extension_permissions", "no_edge_permissions", "no_metadata_permissions", "no_profile_permissions"])]
@@ -268,6 +275,92 @@ impl ClaimArgs {
     }
 }
 
+/// When a key stops working: a time from now, or a time of its own. The
+/// server holds the time to the future and to the expiry of the key that
+/// asks, so neither is checked here.
+#[derive(Debug, Default, Args)]
+pub struct ExpiryArgs {
+    /// Stop the key working this long from now: a whole number and a unit,
+    /// `s`, `m`, `h`, `d` or `w`, such as `90m` or `7d`. Measured on this
+    /// machine's clock.
+    #[arg(long, value_name = "DURATION", conflicts_with = "expires_at")]
+    pub expires_in: Option<String>,
+    /// Stop the key working at this time, as an RFC 3339 time such as
+    /// `2030-01-31T12:00:00Z`.
+    #[arg(long, value_name = "TIME")]
+    pub expires_at: Option<String>,
+}
+
+impl ExpiryArgs {
+    /// The `expires_at` the flags name, given the time now in seconds since
+    /// the Unix epoch.
+    pub fn instant(&self, now: u64) -> Result<Option<String>, CliError> {
+        if let Some(text) = &self.expires_in {
+            let seconds = parse_duration(text)?;
+            return Ok(Some(format_instant(now, seconds)?));
+        }
+        Ok(self.expires_at.clone())
+    }
+
+    fn apply(&self, body: &mut Map<String, Value>) -> Result<(), CliError> {
+        insert_opt(body, "expires_at", self.instant(unix_now())?);
+        Ok(())
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
+/// A whole number of seconds from a number and one unit: `s`, `m`, `h`, `d`
+/// or `w`. A week is seven days, and a day twenty-four hours.
+fn parse_duration(text: &str) -> Result<u64, CliError> {
+    let invalid = || {
+        CliError::Invalid(format!(
+            "--expires-in: `{text}` is not a duration; write a whole number and a unit, \
+             `s`, `m`, `h`, `d` or `w`, such as `90m` or `7d`"
+        ))
+    };
+    let unit = text.chars().last().ok_or_else(invalid)?;
+    let per_unit: u64 = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3_600,
+        'd' => 86_400,
+        'w' => 604_800,
+        _ => return Err(invalid()),
+    };
+    let digits = &text[..text.len() - 1];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let count: u64 = digits.parse().map_err(|_| invalid())?;
+    if count == 0 {
+        return Err(CliError::Invalid(
+            "--expires-in: a key cannot expire in zero time".into(),
+        ));
+    }
+    count
+        .checked_mul(per_unit)
+        .ok_or_else(|| CliError::Invalid(format!("--expires-in: `{text}` is too far ahead")))
+}
+
+/// The time `after` seconds past `now`, as `2030-01-31T12:00:00Z`.
+fn format_instant(now: u64, after: u64) -> Result<String, CliError> {
+    // Four-digit years only, the range the server accepts.
+    const LAST_SECOND_OF_9999: u64 = 253_402_300_799;
+    let at = now
+        .checked_add(after)
+        .filter(|at| *at <= LAST_SECOND_OF_9999)
+        .ok_or_else(|| CliError::Invalid("--expires-in: that is too far ahead".into()))?;
+    let instant = chrono::DateTime::from_timestamp(at as i64, 0)
+        .ok_or_else(|| CliError::Invalid("--expires-in: that is too far ahead".into()))?;
+    Ok(instant.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     body.insert("label".into(), Value::String(args.label.clone()));
@@ -282,6 +375,7 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
         "default_tier",
         args.default_tier.map(Tier::as_str),
     );
+    args.expiry.apply(&mut body)?;
     Ok(Request::post(&["keys"]).json(Value::Object(body)).minting())
 }
 
@@ -317,6 +411,10 @@ pub fn update_request(args: &KeyUpdateArgs) -> Result<Request, CliError> {
         "default_tier",
         args.default_tier.map(Tier::as_str),
     );
+    args.expiry.apply(&mut body)?;
+    if args.no_expiry {
+        body.insert("expires_at".into(), Value::Null);
+    }
     Ok(Request::patch(&["keys", &args.id]).json(Value::Object(body)))
 }
 

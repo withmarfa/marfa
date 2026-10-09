@@ -7,6 +7,7 @@ import {
   isNotNull,
   isNull,
   lt,
+  lte,
   or,
   inArray,
 } from "drizzle-orm";
@@ -96,10 +97,10 @@ function mapRow(row: typeof apiKeys.$inferSelect): StoredApiKey {
 }
 
 /** Rows that are neither revoked nor past their expiry. `expires_at` is
- *  NULL on every key a door mints, so the NULL branch keeps them live. The
+ *  NULL on a key minted without one, so the NULL branch keeps it live. The
  *  expiry arm is what stops a stamped row reading as active past its
  *  instant, since nothing revokes it on the way. */
-function notRevokedOrExpired(nowIso: string) {
+export function notRevokedOrExpired(nowIso: string) {
   return and(
     isNull(apiKeys.revoked_at),
     or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, nowIso)),
@@ -133,6 +134,7 @@ export class SqliteKeyStore implements KeyStore {
           ? null
           : JSON.stringify(input.enforcement_override),
       created_at: now,
+      expires_at: input.expires_at ?? null,
     };
     try {
       await this.db.insert(apiKeys).values(row).run();
@@ -165,9 +167,39 @@ export class SqliteKeyStore implements KeyStore {
         enforcement_override: input.enforcement_override,
       }),
       created_at: now,
-      expires_at: null,
+      expires_at: row.expires_at,
       last_used_at: null,
     };
+  }
+
+  async revokeLapsedHolders(source: string): Promise<string[]> {
+    const now = new Date().toISOString();
+    return this.db.transaction(async (tx) => {
+      const lapsed = await tx
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(
+          and(
+            eq(apiKeys.source, source),
+            isNull(apiKeys.revoked_at),
+            isNotNull(apiKeys.expires_at),
+            lte(apiKeys.expires_at, now),
+          ),
+        )
+        .all();
+      if (lapsed.length === 0) return [];
+      const ids = lapsed.map((key) => key.id);
+      await tx
+        .update(apiKeys)
+        .set({ revoked_at: now })
+        .where(inArray(apiKeys.id, ids))
+        .run();
+      await tx
+        .delete(outboundWebhooks)
+        .where(inArray(outboundWebhooks.key_id, ids))
+        .run();
+      return ids;
+    });
   }
 
   async list(): Promise<StoredApiKey[]> {
@@ -229,6 +261,8 @@ export class SqliteKeyStore implements KeyStore {
         input.enforcement_override === null
           ? null
           : JSON.stringify(input.enforcement_override);
+
+    if (input.expires_at !== undefined) patch.expires_at = input.expires_at;
 
     const [refreshed] = await this.db
       .update(apiKeys)
@@ -333,25 +367,38 @@ export class SqliteKeyStore implements KeyStore {
     return row?.total ?? 0;
   }
 
-  async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
+  async deleteDeadKeysOlderThan(cutoffIso: string): Promise<number> {
     return this.db.transaction(async (tx) => {
+      // Dead since before the cutoff: revoked then, or past its expiry then
+      // without ever being revoked.
       const candidates = await tx
         .select({ id: apiKeys.id })
         .from(apiKeys)
         .where(
-          and(isNotNull(apiKeys.revoked_at), lt(apiKeys.revoked_at, cutoffIso)),
+          or(
+            and(
+              isNotNull(apiKeys.revoked_at),
+              lt(apiKeys.revoked_at, cutoffIso),
+            ),
+            and(
+              isNull(apiKeys.revoked_at),
+              isNotNull(apiKeys.expires_at),
+              lt(apiKeys.expires_at, cutoffIso),
+            ),
+          ),
         )
         .orderBy(apiKeys.id)
         .limit(200);
       if (candidates.length === 0) return 0;
+      const ids = candidates.map((row) => row.id);
+      // A revoke removes a key's subscriptions; an expiry does not.
+      await tx
+        .delete(outboundWebhooks)
+        .where(inArray(outboundWebhooks.key_id, ids))
+        .run();
       const result = await tx
         .delete(apiKeys)
-        .where(
-          inArray(
-            apiKeys.id,
-            candidates.map((row) => row.id),
-          ),
-        )
+        .where(inArray(apiKeys.id, ids))
         .run();
       return result.rowsAffected;
     });

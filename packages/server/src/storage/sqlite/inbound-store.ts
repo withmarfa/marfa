@@ -22,6 +22,7 @@ import {
   inboundEndpoints,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { notRevokedOrExpired } from "./key-store.js";
 
 type EndpointRow = typeof inboundEndpoints.$inferSelect;
 type DeliveryRow = typeof inboundDeliveries.$inferSelect;
@@ -52,23 +53,41 @@ export class SqliteInboundStore implements InboundStore {
       duplicateHeader: string | null;
     },
     maxLive: number,
-  ): Promise<InboundEndpoint | "limit"> {
+  ): Promise<InboundEndpoint | "limit" | "key_dead"> {
     const id = generateId();
     const createdAt = new Date().toISOString();
-    // One statement, so two creates at once cannot both slip under the cap.
+    // One statement, so two creates at once cannot both slip under the cap,
+    // and none lands on a key that went dead between a check and the insert.
     const inserted = await this.db.all<EndpointRow>(sql`
       INSERT INTO inbound_endpoints
         (id, connector_id, token_hash, token_last4, label, duplicate_header, created_at, retired_at)
       SELECT ${id}, ${input.connectorId}, ${input.tokenHash}, ${input.tokenLast4},
              ${input.label}, ${input.duplicateHeader}, ${createdAt}, NULL
-      WHERE (
+      WHERE EXISTS (
+        SELECT 1 FROM connectors
+        JOIN api_keys ON api_keys.id = connectors.key_id
+        WHERE connectors.id = ${input.connectorId}
+          AND ${notRevokedOrExpired(createdAt)}
+      ) AND (
         SELECT COUNT(*) FROM inbound_endpoints
         WHERE connector_id = ${input.connectorId} AND retired_at IS NULL
       ) < ${maxLive}
       RETURNING *
     `);
     const row = inserted[0];
-    return row === undefined ? "limit" : toEndpoint(row);
+    if (row !== undefined) return toEndpoint(row);
+    const live = await this.db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .innerJoin(apiKeys, eq(apiKeys.id, connectors.key_id))
+      .where(
+        and(
+          eq(connectors.id, input.connectorId),
+          notRevokedOrExpired(createdAt),
+        ),
+      )
+      .get();
+    return live === undefined ? "key_dead" : "limit";
   }
 
   async listEndpoints(connectorId: string): Promise<InboundEndpoint[]> {
@@ -122,8 +141,7 @@ export class SqliteInboundStore implements InboundStore {
         and(
           eq(inboundEndpoints.token_hash, tokenHash),
           isNull(inboundEndpoints.retired_at),
-          isNull(apiKeys.revoked_at),
-          or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, now)),
+          notRevokedOrExpired(now),
         ),
       )
       .get();

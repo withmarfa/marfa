@@ -11,6 +11,7 @@ name = "marfa"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap.workspace = true
 keyring = "4"
 marfa-core.workspace = true

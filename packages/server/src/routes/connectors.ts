@@ -590,7 +590,7 @@ const createEndpointRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
       },
-      description: `- \`conflict\`: the connector already has ${String(MAX_LIVE_ENDPOINTS)} live endpoints. Retire one first.`,
+      description: `- \`conflict\`: the connector already has ${String(MAX_LIVE_ENDPOINTS)} live endpoints (retire one first), or its key is revoked or past its \`expires_at\`, so an address would never answer.`,
     },
   },
 });
@@ -931,6 +931,13 @@ export function connectorRoutes(storage: Storage) {
           },
           MAX_LIVE_ENDPOINTS,
         );
+        if (endpoint === "key_dead") {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            "The connector's key is revoked or past its expires_at, so an endpoint on it would never answer",
+            { key_id: connector.key_id },
+          );
+        }
         if (endpoint === "limit") {
           throw new MarfaError(
             ErrorCode.CONFLICT,

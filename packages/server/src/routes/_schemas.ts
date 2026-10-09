@@ -758,7 +758,7 @@ export const KEY_FIELD_TEXT = {
   id: "Unique identifier for the key.",
   label: "A name for the key, to tell it apart from your other keys.",
   source:
-    "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change.",
+    "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change.",
   sources:
     "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none.",
   permissions:
@@ -780,19 +780,13 @@ export const KEY_FIELD_TEXT = {
   enforcement_override:
     "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's.",
   created_at: "When the key was created, in UTC.",
+  expires_at:
+    "When the key stops working, in UTC, or `null` if it doesn't expire.",
   last_used_at:
     "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour.",
 } as const;
 
-/**
- * An API key as a create route answers it, on both doors that mint one.
- *
- * No `expires_at`: `CreateKeyInput` cannot carry an expiry and neither door
- * sets one, so every key either mints has none, and declaring the field
- * would promise a generated client a property that cannot arrive. It is
- * real on the read side, where `GET /keys` returns stored rows and a
- * stamped expiry does reach the caller, so the list schema keeps it.
- */
+/** An API key as the create route answers it. */
 export const KeyResponseSchema = z
   .object({
     id: z.string().describe(KEY_FIELD_TEXT.id),
@@ -831,6 +825,7 @@ export const KeyResponseSchema = z
       KEY_FIELD_TEXT.enforcement_override,
     ).optional(),
     created_at: z.string().describe(KEY_FIELD_TEXT.created_at),
+    expires_at: z.string().nullable().describe(KEY_FIELD_TEXT.expires_at),
     last_used_at: z.string().nullable().describe(KEY_FIELD_TEXT.last_used_at),
   })
   .describe("A new API key, with its plaintext `key`.")

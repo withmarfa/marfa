@@ -349,9 +349,8 @@ describe("key management", () => {
       expect(body.sources, door).toEqual([]);
       expect(body.edge_permissions, door).toEqual({});
     }
-    // A stored key is answered with its expiry, null on every key a door
-    // mints; the mint itself declares none.
-    for (const [door, body] of answers.slice(1)) {
+    // Every door answers the key's expiry, null where it has none.
+    for (const [door, body] of answers) {
       expect(body, `${door} left out \`expires_at\``).toHaveProperty(
         "expires_at",
       );
@@ -363,7 +362,7 @@ describe("key management", () => {
     const schemas = (await servedDocument()).components?.schemas as
       Record<string, { required?: string[] }> | undefined;
     expect(schemas?.KeyResponse?.required).toEqual(
-      expect.arrayContaining(filled),
+      expect.arrayContaining([...filled, "expires_at"]),
     );
     expect(schemas?.ApiKey?.required).toEqual(
       expect.arrayContaining([...filled, "expires_at"]),

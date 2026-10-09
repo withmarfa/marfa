@@ -36,7 +36,11 @@ import {
   authorityId,
 } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
-import type { Storage, StoredApiKey } from "../storage/interface.js";
+import {
+  normalizeTimeBound,
+  type Storage,
+  type StoredApiKey,
+} from "../storage/interface.js";
 import {
   EnforcementOverrideSchema,
   KEY_FIELD_TEXT,
@@ -156,12 +160,7 @@ const ApiKeySchema = z
       KEY_FIELD_TEXT.enforcement_override,
     ).optional(),
     created_at: z.string().describe(KEY_FIELD_TEXT.created_at),
-    expires_at: z
-      .string()
-      .nullable()
-      .describe(
-        "When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires.",
-      ),
+    expires_at: z.string().nullable().describe(KEY_FIELD_TEXT.expires_at),
     last_used_at: z.string().nullable().describe(KEY_FIELD_TEXT.last_used_at),
   })
   .describe(
@@ -213,7 +212,7 @@ const createKeyRoute = createRoute({
               z.string().trim().min(1, "source is required"),
               200,
             ).describe(
-              "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later.",
+              "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later.",
             ),
             sources: SourcesSchema.optional(),
             permissions: z
@@ -248,6 +247,12 @@ const createKeyRoute = createRoute({
             enforcement_override: EnforcementOverrideSchema.describe(
               "Enforcement levers for this key alone. Leave it out for none, so the key follows the instance's.",
             ).optional(),
+            expires_at: z
+              .string()
+              .optional()
+              .describe(
+                "When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`.",
+              ),
           }),
         },
       },
@@ -273,7 +278,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.",
+        "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist, more than 1,000 `sources`, or an `expires_at` that isn't a time or isn't in the future, or `source` or a claimed source starts with `oauth:`.",
     },
     401: {
       content: {
@@ -290,7 +295,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
     },
     409: {
       content: {
@@ -299,7 +304,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "- `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
+        "- `conflict`: another key that hasn't been revoked or expired already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
     },
   },
 });
@@ -474,6 +479,13 @@ const UpdateKeyBodySchema = z.strictObject({
     .describe(
       "Replaces the key's enforcement levers whole. `null` clears them.",
     ),
+  expires_at: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`.",
+    ),
   source: z
     .string()
     .optional()
@@ -519,7 +531,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
+        "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as an `expires_at` that isn't a time or isn't in the future, or a claimed source that starts with `oauth:`.",
     },
     401: {
       content: {
@@ -536,7 +548,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; it widens a key an app created, or you act through `keys.manage`, which only narrows; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app created or, through `keys.manage`, any key; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing.",
     },
     404: {
       content: {
@@ -773,6 +785,75 @@ function refuseWideningKey(
   }
 }
 
+/**
+ * An expiry as the instant it names, in UTC, refused where it is not a time
+ * or is not ahead of now.
+ *
+ * A key given an instant that has passed would be dead on arrival, and
+ * revoking is how a key is ended on purpose.
+ */
+function parseExpiry(value: string): string {
+  // A date alone, or a year, reads as midnight to the shared parser; an
+  // expiry names a moment.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid expires_at: expected an RFC 3339 timestamp",
+      { field: "expires_at", value },
+    );
+  }
+  const instant = normalizeTimeBound(value, "expires_at");
+  if (instant <= new Date().toISOString()) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid expires_at: it must be in the future",
+      { field: "expires_at", value },
+    );
+  }
+  return instant;
+}
+
+/**
+ * Refuse giving a key a longer life than the key that acts.
+ *
+ * A key that expires and may mint could otherwise outlast itself by minting
+ * a copy of what it holds with no expiry, or by moving its own. `null` is no
+ * expiry, which is the longest life there is. A caller with no expiry of its
+ * own, the owner and a signed-in app included, is held to nothing.
+ */
+function refuseLifeBeyondCaller(
+  caller: ApiKey | undefined,
+  requested: string | null | undefined,
+): void {
+  const limit = caller?.expires_at;
+  if (!limit || requested === undefined) return;
+  if (requested !== null && requested <= limit) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `This credential expires at ${limit}, so it cannot give a key a later expiry or none.`,
+    { expires_at: limit },
+  );
+}
+
+/**
+ * Refuse a change that lengthens the life of a key that can only be
+ * narrowed: one an app made, or any key changed through `keys.manage`.
+ * Shortening it, or giving an expiry to one that has none, narrows it.
+ */
+function refuseLongerLife(
+  existing: ApiKey,
+  requested: string | null | undefined,
+): void {
+  const held = existing.expires_at;
+  if (!held || requested === undefined) return;
+  if (requested !== null && requested <= held) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `This key may only be narrowed by this operation. It expires at ${held}. Shorten it, or create a key of your own.`,
+    { expires_at: held },
+  );
+}
+
 /** Everything, in the wildcard form, on one content family. */
 const EVERY_TYPE = { "*": "write" } as const;
 
@@ -788,6 +869,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     const requestedSources =
       body.sources === undefined ? undefined : [...new Set(body.sources)];
     assertUnreservedSources(requestedSources);
+    const requestedExpiry =
+      body.expires_at === undefined ? undefined : parseExpiry(body.expires_at);
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
     const grantItemId = await resolveGrantItemId(storage, c);
@@ -828,6 +911,7 @@ export function keyRoutes(storage: Storage, salt: string) {
               { required_scope: beyond },
             );
           refuseSourcesAboveCaller(callerKey, requestedSources);
+          refuseLifeBeyondCaller(callerKey, requestedExpiry);
           await refuseOwnSourceClaimedElsewhere(
             storage,
             callerKey,
@@ -838,6 +922,18 @@ export function keyRoutes(storage: Storage, salt: string) {
           body.permissions === undefined &&
           Object.values(requested).every((value) => value === undefined) &&
           requestedSources === undefined;
+        for (const lapsed of await storage.keys.revokeLapsedHolders(
+          body.source,
+        )) {
+          await storage.audit.log({
+            client_ip: c.get("clientIp") ?? null,
+            key_id: authorityId(c),
+            action: "key.revoke",
+            resource_type: "key",
+            resource_id: lapsed,
+            details: { reason: "expired", source: body.source },
+          });
+        }
         const creator = namesNoFamily ? callerKey : undefined;
         const seed = direct && namesNoFamily ? EVERY_TYPE : undefined;
         return storage.keys.create(
@@ -869,6 +965,7 @@ export function keyRoutes(storage: Storage, salt: string) {
               body.extension_permissions ??
               {},
             enforcement_override: body.enforcement_override,
+            expires_at: requestedExpiry ?? callerKey?.expires_at ?? undefined,
             oauth_client_id: fromApp
               ? callerGrant?.clientId
               : callerKey?.oauth_client_id,
@@ -941,6 +1038,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     const sources =
       body.sources === undefined ? undefined : [...new Set(body.sources)];
     assertUnreservedSources(sources);
+    const expiresAt =
+      body.expires_at == null ? body.expires_at : parseExpiry(body.expires_at);
     const updated = await runAuditedTransaction(
       storage,
       () =>
@@ -958,8 +1057,10 @@ export function keyRoutes(storage: Storage, salt: string) {
             profile_permissions: body.profile_permissions,
           };
           const permissions = body.permissions?.filter(isPermission);
-          if (existing.oauth_client_id !== undefined || manager)
+          if (existing.oauth_client_id !== undefined || manager) {
             refuseWideningKey(existing, requested, permissions, sources);
+            refuseLongerLife(existing, expiresAt);
+          }
           if (manager) requirePermission(c, "keys.manage");
           else if (!direct) {
             const key = requireAuth(c);
@@ -971,6 +1072,7 @@ export function keyRoutes(storage: Storage, salt: string) {
               );
             else refuseKeyReachAboveCreator(key, requested);
             refuseSourcesAboveCaller(key, sources);
+            refuseLifeBeyondCaller(key, expiresAt);
             const held =
               c.get("authType") === "oauth"
                 ? (c.get("oauthGrant")?.scopes ?? [])
@@ -990,6 +1092,7 @@ export function keyRoutes(storage: Storage, salt: string) {
             ...requested,
             permissions,
             enforcement_override: body.enforcement_override,
+            expires_at: expiresAt,
           };
         }),
       {

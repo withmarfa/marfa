@@ -3894,8 +3894,8 @@ Commands:
   list     List key metadata. Needs `keys.manage` or direct owner/local authority
   current  The key this call bears, without plaintext: what it holds and what it claims. Any key may
            read itself
-  update   Change a key's label, tier or permission maps. Needs `keys.manage` or direct owner/local
-           authority
+  update   Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct
+           owner/local authority
   revoke   Revoke a key; the next request bearing it is refused. Needs `keys.manage` or direct
            owner/local authority
   keep     Keep a key for this server in the operating system's keychain, and make this server the
@@ -3987,6 +3987,13 @@ Options:
           The tier a write under the key lands at when it names none
 
           [possible values: library, feed]
+
+      --expires-in <DURATION>
+          Stop the key working this long from now: a whole number and a unit, `s`, `m`, `h`, `d` or
+          `w`, such as `90m` or `7d`. Measured on this machine's clock
+
+      --expires-at <TIME>
+          Stop the key working at this time, as an RFC 3339 time such as `2030-01-31T12:00:00Z`
 
       --no-permissions
           A key that holds nothing at all, asked for out loud
@@ -4089,7 +4096,8 @@ Output:
 ### marfa keys update
 
 ```text
-Change a key's label, tier or permission maps. Needs `keys.manage` or direct owner/local authority
+Change a key's label, tier, expiry or permission maps. Needs `keys.manage` or direct owner/local
+authority
 
 Usage: marfa keys update [OPTIONS] <ID>
 
@@ -4153,6 +4161,16 @@ Options:
           The tier a write under the key lands at when it names none
 
           [possible values: library, feed]
+
+      --expires-in <DURATION>
+          Stop the key working this long from now: a whole number and a unit, `s`, `m`, `h`, `d` or
+          `w`, such as `90m` or `7d`. Measured on this machine's clock
+
+      --expires-at <TIME>
+          Stop the key working at this time, as an RFC 3339 time such as `2030-01-31T12:00:00Z`
+
+      --no-expiry
+          Clear the key's expiry, so it never expires
 
       --no-permissions
           Take every permission and every map from the key, so a key minted too wide is narrowed in

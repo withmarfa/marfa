@@ -307,6 +307,60 @@ describe("endpoints", () => {
     expect(codeOf(answer)).toBe("not_found");
   });
 
+  it("refuses an endpoint on a registration whose key is revoked or has expired, naming the key, and makes none", async () => {
+    const manager = getManagementClient();
+    const count = async (id: string): Promise<number> => {
+      const listed = await manager.listInboundEndpoints(id);
+      expect(listed.status).toBe(200);
+      return listed.data.data.length;
+    };
+    const registration = async (
+      label: string,
+      expiresAt?: string,
+    ): Promise<{ keyId: string; own: MarfaClient; id: string }> => {
+      const minted = await client.createKey({
+        label: `${ctx.runId} ${label}`,
+        source: `${ctx.source}-${label}`,
+        default_tier: "library",
+        ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+      });
+      expect(minted.status).toBe(201);
+      const own = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+      const registered = await own.registerConnector({
+        name: `${ctx.runId} ${label}`,
+      });
+      expect(registered.status).toBe(201);
+      // The witness: while the key is live, the manager makes an endpoint.
+      expect(
+        (await manager.createInboundEndpoint(registered.data.id)).status,
+      ).toBe(201);
+      return { keyId: minted.data.id, own, id: registered.data.id };
+    };
+
+    const revoked = await registration("endpoint-key-revoked");
+    expect((await client.revokeKey(revoked.keyId)).status).toBe(200);
+    const expiring = await registration(
+      "endpoint-key-expiring",
+      new Date(Date.now() + 5_000).toISOString(),
+    );
+    const deadline = Date.now() + 30_000;
+    while (
+      (await expiring.own.getCurrentKey()).status !== 401 &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect((await expiring.own.getCurrentKey()).status).toBe(401);
+
+    for (const dead of [revoked, expiring]) {
+      const refused = await manager.createInboundEndpoint(dead.id);
+      expect(refused.status).toBe(409);
+      expect(refused.error?.error.code).toBe("conflict");
+      expect(refused.error?.error.details?.key_id).toBe(dead.keyId);
+      expect(await count(dead.id)).toBe(1);
+    }
+  });
+
   it("goes with its registration, and its deliveries with it", async () => {
     const owner = await connector("endpoint-removed");
     const made = await endpoint(owner);

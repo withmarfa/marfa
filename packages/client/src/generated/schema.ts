@@ -3672,7 +3672,7 @@ export interface components {
             key: string;
             /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
-            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change. */
+            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
             source: string;
             /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
@@ -3704,6 +3704,8 @@ export interface components {
             enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
             /** @description When the key was created, in UTC. */
             created_at: string;
+            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
+            expires_at: string | null;
             /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
             last_used_at: string | null;
         };
@@ -3735,7 +3737,7 @@ export interface components {
             id: string;
             /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
-            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change. */
+            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
             source: string;
             /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
@@ -3767,7 +3769,7 @@ export interface components {
             enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
             /** @description When the key was created, in UTC. */
             created_at: string;
-            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires. */
+            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
             expires_at: string | null;
             /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
             last_used_at: string | null;
@@ -4060,7 +4062,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description Number of unrevoked keys. */
+        /** @description Number of keys that haven't been revoked or expired. */
         MetricCount: {
             /** @description Number of records. */
             total: number;
@@ -15301,7 +15303,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: the connector already has 10 live endpoints. Retire one first. */
+            /** @description - `conflict`: the connector already has 10 live endpoints (retire one first), or its key is revoked or past its `expires_at`, so an address would never answer. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18251,7 +18253,7 @@ export interface operations {
                 "application/json": {
                     /** @description A name for the key, to tell it apart from your other keys. */
                     label: string;
-                    /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later. */
+                    /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later. */
                     source: string;
                     /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any. */
                     sources?: string[];
@@ -18279,6 +18281,8 @@ export interface operations {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
                     enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
+                    /** @description When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`. */
+                    expires_at?: string;
                 };
             };
         };
@@ -18299,7 +18303,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.
-             *     - `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.
+             *     - `validation_error`: a field is invalid, such as a permission level that doesn't exist, more than 1,000 `sources`, or an `expires_at` that isn't a time or isn't in the future, or `source` or a claimed source starts with `oauth:`.
              */
             400: {
                 headers: {
@@ -18330,7 +18334,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18345,7 +18349,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead. */
+            /** @description - `conflict`: another key that hasn't been revoked or expired already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18789,6 +18793,8 @@ export interface operations {
                     permissions?: components["schemas"]["Permission"][];
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
+                    /** @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`. */
+                    expires_at?: string | null;
                     /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;
                 };
@@ -18811,7 +18817,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.
-             *     - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.
+             *     - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as an `expires_at` that isn't a time or isn't in the future, or a claimed source that starts with `oauth:`.
              */
             400: {
                 headers: {
@@ -18842,7 +18848,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; it widens a key an app created, or you act through `keys.manage`, which only narrows; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app created or, through `keys.manage`, any key; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

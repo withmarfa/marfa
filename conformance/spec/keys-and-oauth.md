@@ -148,7 +148,7 @@ The server MUST carry a key's plaintext `key` only in the answer to the mint tha
 
 ### `keys-and-oauth/own-source-unique`
 
-If a mint names as the new key's own `source` one that another unrevoked key holds as its own, then the server MUST answer `409 conflict` with `details.source` naming it.
+If a mint names as the new key's own `source` one that another key, neither revoked nor past its `expires_at`, holds as its own, then the server MUST answer `409 conflict` with `details.source` naming it.
 
 **Reason:** A key's own source is stamped on what it writes and is how a file of fixtures or a device tells its rows apart. Two keys share a source by claiming it instead.
 
@@ -300,6 +300,44 @@ When `marfa keys update` runs with one `--no-<map>` option, the command MUST emp
 
 **Tests:** `cli/instance.test.ts › empties one key permission map at a time and retains every other family`.
 
+### `keys-and-oauth/command-expires-in`
+
+When `marfa keys create` or `marfa keys update` runs with `--expires-in`, the command MUST send `expires_at` as the time on its own clock plus that duration.
+
+**Reason:** The duration is the command's, measured on its own clock; the server holds only the time it is sent.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-expires-at`
+
+When `marfa keys create` or `marfa keys update` runs with `--expires-at`, the command MUST send that time as `expires_at`, as it was written.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-no-expiry`
+
+When `marfa keys update` runs with `--no-expiry`, the command MUST send `expires_at` as `null`.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-expiry-duration`
+
+If `marfa keys create` or `marfa keys update` runs with an `--expires-in` that is not a whole number above zero and one of the units `s`, `m`, `h`, `d` or `w`, then the command MUST exit 1 with the code `invalid` and send nothing.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-expiry-conflict`
+
+If `marfa keys create` or `marfa keys update` runs with both `--expires-in` and `--expires-at`, then the command MUST exit 2 with the code `usage`.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
+### `keys-and-oauth/command-no-expiry-conflict`
+
+If `marfa keys update` runs with `--no-expiry` and with `--expires-in` or `--expires-at`, then the command MUST exit 2 with the code `usage`.
+
+**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
+
 ### `keys-and-oauth/command-revoked-key`
 
 When the server refuses a request the command sends under a revoked key, the command MUST exit 5 and report `unauthorized`.
@@ -308,13 +346,83 @@ When the server refuses a request the command sends under a revoked key, the com
 
 ## Expiry
 
-No operation stamps an expiry on a key, so `expires_at` is `null` on every key an operation mints. These rules hold for a key whose row carries one.
+A key's `expires_at` is when it stops working, or `null` where it never does. `POST /keys` and `PATCH /keys/{id}` may name it.
+
+### `keys-and-oauth/mint-expiry`
+
+When `POST /keys` names an `expires_at` ahead of now, the server MUST mint the key with that `expires_at`.
+
+**Tests:** `compliance/key-expiry.test.ts › is minted with the expiry named, and answers it in UTC on the mint, the listing and its own read`.
+
+### `keys-and-oauth/mint-no-expiry`
+
+When a caller that has no `expires_at` of its own sends `POST /keys` with no `expires_at`, the server MUST mint the key with an `expires_at` of `null`.
+
+**Reason:** A caller with an expiry of its own gives the key it mints that expiry (`keys-and-oauth/expiry-inherited`); every other key is minted to last until it is revoked.
+
+**Tests:** `compliance/key-expiry.test.ts › is minted with a null expiry where the caller has none and the body names none`.
+
+### `keys-and-oauth/expiry-utc`
+
+When `POST /keys` or `PATCH /keys/{id}` names an `expires_at`, the server MUST answer it in UTC at millisecond precision, as `YYYY-MM-DDTHH:mm:ss.sssZ`.
+
+**Tests:** `compliance/key-expiry.test.ts › is minted with the expiry named, and answers it in UTC on the mint, the listing and its own read`.
+
+### `keys-and-oauth/expiry-zoneless`
+
+When `POST /keys` or `PATCH /keys/{id}` names an `expires_at` date-time with no zone, the server MUST read it as UTC.
+
+**Tests:** `compliance/key-expiry.test.ts › reads an expires_at with no zone as UTC`.
+
+### `keys-and-oauth/expiry-invalid`
+
+If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` string that is not a timestamp with a date and a time, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
+
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+
+### `keys-and-oauth/expiry-range`
+
+If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` whose UTC year is outside 0000 to 9999, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
+
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+
+### `keys-and-oauth/expiry-past`
+
+If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` that is not ahead of the time of the request, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
+
+**Reason:** A key given a time that has passed is dead on arrival, and revoking is how a key is ended on purpose.
+
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+
+### `keys-and-oauth/expiry-refused-unchanged`
+
+If `PATCH /keys/{id}` is refused for its `expires_at`, then the server MUST leave the key's `expires_at` as it was.
+
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+
+### `keys-and-oauth/update-expiry`
+
+When `PATCH /keys/{id}` names an `expires_at` ahead of now, the server MUST replace the key's `expires_at` with it.
+
+**Tests:** `compliance/key-expiry.test.ts › replaces it, clears it with null, and leaves it as it was where the update names none`.
+
+### `keys-and-oauth/update-expiry-clear`
+
+When `PATCH /keys/{id}` names an `expires_at` of `null`, the server MUST clear the key's `expires_at`, so the key never expires.
+
+**Tests:** `compliance/key-expiry.test.ts › replaces it, clears it with null, and leaves it as it was where the update names none`.
+
+### `keys-and-oauth/update-expiry-omitted`
+
+When `PATCH /keys/{id}` names no `expires_at`, the server MUST leave the key's `expires_at` as it was.
+
+**Tests:** `compliance/key-expiry.test.ts › replaces it, clears it with null, and leaves it as it was where the update names none`.
 
 ### `keys-and-oauth/expired-refused`
 
 When a key is past its `expires_at`, the server MUST answer a request bearing it `401 unauthorized`.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› is refused 401 once the expiry it was minted with comes`.
 
 ### `keys-and-oauth/expired-unlisted`
 
@@ -322,17 +430,81 @@ When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`
 
 **Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
 
+### `keys-and-oauth/expired-source-free`
+
+When a mint names as the new key's own `source` one that only keys past their `expires_at` hold as their own, the server MUST mint the key.
+
+**Reason:** A key past its `expires_at` answers as unknown to a revoke, so nothing else could free its source for the key that replaces it.
+
+**Tests:** `compliance/key-expiry.test.ts › gives up its own source to the next mint, and holds it until then`.
+
+### `keys-and-oauth/expired-source-revoked`
+
+When a mint takes a `source` from keys past their `expires_at`, the server MUST record a `key.revoke` audit entry for each of those keys, with `resource_id` naming it.
+
+**Reason:** The mint revokes those keys, and their webhook subscriptions go with them, as with any revoke. A key's own source is held while it is not revoked.
+
+**Tests:** `compliance/key-expiry.test.ts › gives up its own source to the next mint, and holds it until then`.
+
 ### `keys-and-oauth/expired-unknown`
 
 When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST answer `404 api_key_not_found`, whoever the caller is.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
+**Reason:** A key whose time has passed cannot be given a new one; a new key is minted instead.
+
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› answers 404 api_key_not_found to an update that would clear its expiry, and stays past it`.
 
 ### `keys-and-oauth/expired-unchanged`
 
 When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST leave the key as it was, whoever the caller is.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› answers 404 api_key_not_found to an update that would clear its expiry, and stays past it`.
+
+## A key's life is held to its maker's
+
+### `keys-and-oauth/expiry-inherited`
+
+When a key that has an `expires_at` sends `POST /keys` with no `expires_at`, the server MUST mint the key with the sender's `expires_at`.
+
+**Reason:** A key that expires could otherwise outlast itself by minting a copy of what it holds that never expires.
+
+**Tests:** `compliance/key-expiry.test.ts › mints a key that expires when its own does where the body names none, and no later where it names one`.
+
+### `keys-and-oauth/expiry-mint-ceiling`
+
+If a key that has an `expires_at` sends `POST /keys` naming an `expires_at` later than its own, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/key-expiry.test.ts › mints a key that expires when its own does where the body names none, and no later where it names one`.
+
+### `keys-and-oauth/expiry-update-ceiling`
+
+If a key that has an `expires_at` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+
+**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to.
+
+**Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
+
+### `keys-and-oauth/expiry-manage-narrows`
+
+If a caller holding `keys.manage`, and not direct owner or local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
+
+**Reason:** `keys-and-oauth/manage-narrows-only` holds for a key's life as for its reach: a longer life is more access.
+
+**Tests:** `compliance/key-expiry.test.ts › is given an expiry or has it shortened, and is refused a later expiry or none`.
+
+### `keys-and-oauth/expiry-app-key-narrows`
+
+If `PATCH /keys/{id}` is sent for a key an app made that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`, whoever the caller is.
+
+**Reason:** `keys-and-oauth/app-key-narrows-only` holds for a key's life as for its reach.
+
+**Tests:** `compliance/key-expiry.test.ts › is shortened and never lengthened or cleared, whoever the caller is`.
+
+### `keys-and-oauth/expiry-owner-free`
+
+When direct owner or local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
+
+**Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made`.
 
 ## Authentication
 
@@ -398,7 +570,7 @@ The server MUST carry `permissions`, claimed `sources` and each of the five maps
 
 ### `keys-and-oauth/key-expires-field`
 
-The server MUST carry `expires_at` on `GET /keys`, `GET /keys/current` and the answer to `PATCH /keys/{id}`, `null` on every key an operation minted.
+The server MUST carry `expires_at` on `POST /keys`, `GET /keys`, `GET /keys/current` and the answer to `PATCH /keys/{id}`, `null` on a key that has none.
 
 **Tests:** `compliance/key-management.test.ts › every key answer carries its permissions and its maps, empty where it holds nothing`.
 
