@@ -4,8 +4,10 @@ import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
+  startDeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   authorize,
   authorizeQuery,
@@ -150,6 +152,44 @@ describe("a sign-in credential", () => {
     });
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await logged("auth.user.update")).toBe(before + 1);
+  });
+});
+
+describe("a grant made or ended without the person asking", () => {
+  it("is in the audit log when a device approval answers", async () => {
+    const before = await logged("auth.grant.created");
+    const flow = await startDeviceFlow(server, [NOTES]);
+    await flow.approve();
+    expect(await logged("auth.grant.created")).toBe(before + 1);
+  });
+
+  it("is in the audit log when the inactivity retirement retires a grant", async () => {
+    const app = await registerApp(server, NOTES);
+    const issued = await connect(server, origin, cookie, app, NOTES);
+    // A year is a long wait, so the grant is aged in place.
+    withInstanceDatabase(server.sqlitePath, (db) => {
+      const aged = db
+        .prepare(
+          `UPDATE items SET properties = json_set(properties, '$.granted_at', '2001-01-01T00:00:00.000Z', '$.last_used_at', '2001-01-01T00:00:00.000Z')
+           WHERE type = 'system.connection' AND json_extract(properties, '$.client_id') = ?`,
+        )
+        .run(app.clientId);
+      expect(aged.changes).toBe(1);
+    });
+    const before = await logged("auth.grant.retired");
+    const run = await fetch(
+      `${server.apiUrl}/housekeeping/grant-inactivity-retirement/run`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${server.managementKey}` },
+      },
+    );
+    expect(run.status, await run.clone().text()).toBe(200);
+    expect(await logged("auth.grant.retired")).toBe(before + 1);
+    const usable = await fetch(`${server.apiUrl}/items?limit=1`, {
+      headers: { authorization: `Bearer ${issued.access_token!}` },
+    });
+    expect(usable.status, "the retired grant's token still worked").toBe(401);
   });
 });
 

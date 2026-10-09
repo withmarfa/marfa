@@ -1444,6 +1444,10 @@ describe("a key's claims", () => {
       listed.data.data.find((k) => k.id === atCap.data.id)?.sources,
       "a refused update changed the key's claims",
     ).toHaveLength(1000);
+    expect(
+      listed.data.data.some((k) => k.source === `${ctx.source}-too-many`),
+      "a refused mint stored a key",
+    ).toBe(false);
   });
 
   it("a mint naming nothing takes the creator's claims", async () => {

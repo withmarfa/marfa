@@ -292,7 +292,7 @@ describe("a consent", () => {
 });
 
 describe("a grant's withdrawal", () => {
-  it("whose audit record cannot be committed answers 500 and leaves the grant and its tokens", async () => {
+  it("whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event", async () => {
     const cookie = await signIn(server, origin);
     const app = await registerApp(server, NOTES);
     const issued = await connect(server, origin, cookie, app, NOTES);
@@ -303,12 +303,37 @@ describe("a grant's withdrawal", () => {
         method: "DELETE",
         headers: { authorization: `Bearer ${server.managementKey}` },
       });
-    const refused = await without("audit_log", withdraw);
-    expect(refused.status).toBe(500);
-    expect(await grantFor(app.clientId)).toBe(grant);
-    expect(await itemsStatus(server, issued.access_token!)).toBe(200);
-    // The witness: with its log back, the same withdrawal takes effect.
-    expect((await withdraw()).status).toBe(204);
-    expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    const aboutGrant = (event: SseEvent) =>
+      (event.data as { item?: { id?: string } })?.item?.id === grant;
+    await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      const refused = await without("audit_log", withdraw);
+      expect(refused.status).toBe(500);
+      const marker = await sentinel();
+      const { events } = await collectUntil(
+        stream,
+        (seen) =>
+          seen.some(
+            (e) => (e.data as { item?: { id?: string } })?.item?.id === marker,
+          ),
+        "the sentinel note",
+      );
+      expect(
+        events.some(aboutGrant),
+        "a refused withdrawal was announced",
+      ).toBe(false);
+      expect(await grantFor(app.clientId)).toBe(grant);
+      expect(await itemsStatus(server, issued.access_token!)).toBe(200);
+
+      // The witness: with its log back, the same withdrawal takes effect and
+      // is announced on this stream.
+      expect((await withdraw()).status).toBe(204);
+      await collectUntil(
+        stream,
+        (seen) => seen.some(aboutGrant),
+        "the withdrawal",
+      );
+      expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    });
   });
 });

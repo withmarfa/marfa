@@ -1352,6 +1352,10 @@ describe("a key's own levers", () => {
       after.data.data.find((k) => k.id === holder.id)?.enforcement_override,
       "a refused update stored a lever",
     ).toBeUndefined();
+    expect(
+      after.data.data.some((k) => k.label === "levers-lacking"),
+      "a refused mint stored a key",
+    ).toBe(false);
   });
 
   it("refuses a mint or an update naming levers to a caller without config.manage", async () => {
