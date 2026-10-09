@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -391,10 +392,10 @@ fn limited(builder: &mut RegexBuilder) -> &mut RegexBuilder {
 /// the regex matches by character, as the pattern's literals already do.
 ///
 /// Case is ignored for ASCII letters, as globset ignores it, and for a class
-/// member outside ASCII by adding its other case where the name comparison
-/// folds the two together. The folded form carries the rest, its literals
-/// folded already, so a pattern matches what the name comparison
-/// (`names::same`) calls the same name and nothing more, negated or not.
+/// member by adding every character the name comparison folds with it. The
+/// folded form carries the rest, its literals folded already, so a pattern
+/// matches what the name comparison (`names::same`) calls the same name and
+/// nothing more, negated or not.
 fn by_character(bytes: &str) -> String {
     let source = bytes.strip_prefix("(?-u)").unwrap_or(bytes);
     let mut decoded = String::with_capacity(source.len());
@@ -433,8 +434,8 @@ fn by_character(bytes: &str) -> String {
 }
 
 /// The regex with each ASCII letter, alone or in a class, standing for both
-/// its cases, and each class holding the other case of its members outside
-/// ASCII that the name comparison folds with them.
+/// its cases, and each class holding every character the name comparison
+/// folds with one of its members.
 fn case_free(source: &str) -> String {
     let mut out = String::with_capacity(source.len() * 2);
     let mut chars = source.chars().peekable();
@@ -492,17 +493,10 @@ fn case_free(source: &str) -> String {
                         continue;
                     }
                     for ch in members.filter_map(char::from_u32) {
-                        let lower = single(ch.to_lowercase()).unwrap_or(ch);
-                        if lower != ch {
-                            both.push((lower, lower));
-                        }
-                        // Only where the comparison folds it back: `ſ`
-                        // uppercases to `S`, which folds to `s`, not `ſ`.
-                        if let Some(upper) = single(ch.to_uppercase())
-                            && upper != ch
-                            && single(upper.to_lowercase()) == Some(lower)
-                        {
-                            both.push((upper, upper));
+                        for &same in folded_with(ch) {
+                            if same != ch {
+                                both.push((same, same));
+                            }
                         }
                     }
                 }
@@ -531,15 +525,45 @@ fn case_free(source: &str) -> String {
     out
 }
 
-/// The single character a case mapping gives, if it gives one.
-fn single(mut mapped: impl Iterator<Item = char>) -> Option<char> {
-    match (mapped.next(), mapped.next()) {
-        (Some(one), None) => Some(one),
-        _ => None,
-    }
+/// Every character the name comparison folds as it folds `ch`, `ch` among
+/// them, or none where nothing else folds with it.
+fn folded_with(ch: char) -> &'static [char] {
+    // Read once from every cased character, so a letter more than one case
+    // step from another, such as `ß` and `ẞ` or the three forms of `ǅ`, is
+    // found as the comparison finds it.
+    static FOLDS: OnceLock<HashMap<String, Vec<char>>> = OnceLock::new();
+    let folds = FOLDS.get_or_init(|| {
+        let mut folds: HashMap<String, Vec<char>> = HashMap::new();
+        for cased in (0..=char::MAX as u32)
+            .filter_map(char::from_u32)
+            .filter(|ch| {
+                ch.to_lowercase().ne(std::iter::once(*ch))
+                    || ch.to_uppercase().ne(std::iter::once(*ch))
+            })
+        {
+            folds
+                .entry(crate::names::folded(&cased.to_string()))
+                .or_default()
+                .push(cased);
+        }
+        // The fold itself, where it is one character nothing maps from.
+        for (fold, members) in folds.iter_mut() {
+            let mut chars = fold.chars();
+            if let (Some(one), None) = (chars.next(), chars.next())
+                && !members.contains(&one)
+            {
+                members.push(one);
+            }
+        }
+        folds.retain(|_, members| members.len() > 1);
+        folds
+    });
+    folds
+        .get(&crate::names::folded(&ch.to_string()))
+        .map_or(&[], Vec::as_slice)
 }
 
-/// The widest class range whose members' other case a class holds.
+/// The widest class range whose members' folded companions a class holds.
 const FOLDED_RANGE_LIMIT: usize = 1024;
 
 fn class_member(out: &mut String, ch: char) {
@@ -889,6 +913,14 @@ mod tests {
         assert!(lists(&[], &["[!\u{e9}]*.md"]).takes("\u{c9}.md"));
         assert!(lists(&[], &["[!\u{c0}-\u{de}]x"]).takes("\u{e0}x"));
         assert!(!lists(&[], &["[!\u{c9}]*.md"]).takes("\u{e8}.md"));
+        // Letters whose other case is more than one step away.
+        assert!(lists(&[], &["[!\u{df}]x"]).takes("\u{1e9e}x"));
+        for name in ["\u{1c4}x", "\u{1c5}x", "\u{1c6}x"] {
+            assert!(lists(&[], &["[!\u{1c5}]x"]).takes(name), "{name:?}");
+            assert!(!lists(&[], &["[\u{1c5}]x"]).takes(name), "{name:?}");
+        }
+        assert!(lists(&[], &["[!\u{3b8}]x"]).takes("\u{3f4}x"));
+        assert!(lists(&[], &["[!\u{1f80}]x"]).takes("\u{1f88}x"));
     }
 
     #[test]
