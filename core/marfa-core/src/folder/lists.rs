@@ -154,21 +154,21 @@ impl Lists {
             .filter(|line| !line.trim_start().starts_with('!'))
             .flat_map(|line| dot_names(line))
         {
-            let compile = |pattern: &str, folded: bool| {
+            let compile = |pattern: &str| {
                 GlobBuilder::new(pattern)
                     .literal_separator(true)
                     .build()
                     .map_err(|error| error.to_string())
                     .and_then(|glob| {
-                        limited(&mut RegexBuilder::new(&by_character(glob.regex(), folded)))
+                        limited(&mut RegexBuilder::new(&by_character(glob.regex())))
                             .build()
                             .map_err(|error| error.to_string())
                     })
                     .map_err(|why| refused("include", &name, &why))
             };
             dotted_names.push(DotName {
-                original: compile(&name, false)?,
-                folded: compile(&folded_pattern(&name), true)?,
+                original: compile(&name)?,
+                folded: compile(&folded_pattern(&name))?,
             });
         }
         // Compiled once: every pass builds the folder's lists, and these
@@ -280,21 +280,31 @@ fn built(list: &str, lines: &[String]) -> Result<Patterns> {
     for (index, line) in lines.iter().enumerate() {
         let pattern: String = line.nfc().collect();
         let refuse = |why: String| refused(list, line, &why);
-        for (form, is_folded, (regexes, read)) in [
-            (pattern.clone(), false, &mut original),
-            (folded_pattern(&pattern), true, &mut folded),
+        for (form, (regexes, read)) in [
+            (pattern.clone(), &mut original),
+            (folded_pattern(&pattern), &mut folded),
         ] {
-            if let Some((regex, line)) = compiled(index, &form, is_folded).map_err(refuse)? {
+            if let Some((regex, line)) = compiled(index, &form).map_err(refuse)? {
                 regexes.push(regex);
                 read.push(line);
             }
         }
     }
     let set = |(regexes, lines): (Vec<String>, Vec<Line>)| {
-        limited_set(&mut RegexSetBuilder::new(&regexes))
+        // Each line is held to globset's limit on its own above, so the set
+        // is allowed that much for every line it holds.
+        let limit = (10 << 20) * regexes.len().max(1);
+        RegexSetBuilder::new(&regexes)
+            .dot_matches_new_line(true)
+            .size_limit(limit)
+            .dfa_size_limit(limit)
             .build()
             .map(|set| Lines { set, lines })
-            .map_err(|error| refused(list, "", &error.to_string()))
+            .map_err(|error| {
+                CoreError::Invalid(format!(
+                    "the folder's {list} list is too long to match: {error}"
+                ))
+            })
     };
     Ok(Patterns {
         original: set(original)?,
@@ -306,11 +316,7 @@ fn built(list: &str, lines: &[String]) -> Result<Patterns> {
 /// nothing, `!` negates, a leading `/` anchors it to the folder, a trailing
 /// `/` matches only a directory, and a line with no other `/` matches a name
 /// at any depth. Answers the line's regex and what else it says.
-fn compiled(
-    index: usize,
-    line: &str,
-    folded: bool,
-) -> std::result::Result<Option<(String, Line)>, String> {
+fn compiled(index: usize, line: &str) -> std::result::Result<Option<(String, Line)>, String> {
     if line.starts_with('#') {
         return Ok(None);
     }
@@ -354,7 +360,7 @@ fn compiled(
         .allow_unclosed_class(true)
         .build()
         .map_err(|error| error.kind().to_string())?;
-    let regex = by_character(glob.regex(), folded);
+    let regex = by_character(glob.regex());
     // Refused here, line by line, so the refusal names the line.
     limited(&mut RegexBuilder::new(&regex))
         .build()
@@ -378,24 +384,18 @@ fn limited(builder: &mut RegexBuilder) -> &mut RegexBuilder {
         .dfa_size_limit(10 << 20)
 }
 
-fn limited_set(builder: &mut RegexSetBuilder) -> &mut RegexSetBuilder {
-    builder
-        .dot_matches_new_line(true)
-        .size_limit(10 << 20)
-        .dfa_size_limit(10 << 20)
-}
-
 /// A glob's regex, read over characters. globset writes its regex over bytes,
 /// spelling each character outside ASCII as its UTF-8 bytes, so a class, a
 /// negated class or a `?` meets such a character as several bytes and cannot
 /// match it as one. Read again with those bytes as the characters they spell,
 /// the regex matches by character, as the pattern's literals already do.
 ///
-/// Case is ignored for ASCII letters alone, as globset ignores it. The folded
-/// form carries the rest: its literals are folded already, and `folded` adds
-/// to each class the lowercase of its members, so a pattern matches what the
-/// name comparison (`names::same`) calls the same name and nothing more.
-fn by_character(bytes: &str, folded: bool) -> String {
+/// Case is ignored for ASCII letters, as globset ignores it, and for a class
+/// member outside ASCII by adding its other case where the name comparison
+/// folds the two together. The folded form carries the rest, its literals
+/// folded already, so a pattern matches what the name comparison
+/// (`names::same`) calls the same name and nothing more, negated or not.
+fn by_character(bytes: &str) -> String {
     let source = bytes.strip_prefix("(?-u)").unwrap_or(bytes);
     let mut decoded = String::with_capacity(source.len());
     let mut pending: Vec<u8> = Vec::new();
@@ -429,12 +429,13 @@ fn by_character(bytes: &str, folded: bool) -> String {
         }
     }
     flush(&mut decoded, &mut pending);
-    ascii_case_free(&decoded, folded)
+    case_free(&decoded)
 }
 
 /// The regex with each ASCII letter, alone or in a class, standing for both
-/// its cases, and with `folded`, each class holding its members' lowercase.
-fn ascii_case_free(source: &str, folded: bool) -> String {
+/// its cases, and each class holding the other case of its members outside
+/// ASCII that the name comparison folds with them.
+fn case_free(source: &str) -> String {
     let mut out = String::with_capacity(source.len() * 2);
     let mut chars = source.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -483,21 +484,25 @@ fn ascii_case_free(source: &str, folded: bool) -> String {
                         }
                     }
                 }
-                if folded {
-                    for &(start, end) in &ranges {
-                        let members = (start as u32)..=(end as u32);
-                        // A range wider than a script's letters is not
-                        // walked: its lowercase is mostly itself.
-                        if members.clone().count() > FOLDED_RANGE_LIMIT {
-                            continue;
+                for &(start, end) in &ranges {
+                    let members = (start as u32)..=(end as u32);
+                    // A range wider than a script's letters is not walked:
+                    // its other case is mostly itself.
+                    if members.clone().count() > FOLDED_RANGE_LIMIT {
+                        continue;
+                    }
+                    for ch in members.filter_map(char::from_u32) {
+                        let lower = single(ch.to_lowercase()).unwrap_or(ch);
+                        if lower != ch {
+                            both.push((lower, lower));
                         }
-                        for ch in members.filter_map(char::from_u32) {
-                            let mut lower = ch.to_lowercase();
-                            if let (Some(one), None) = (lower.next(), lower.next())
-                                && one != ch
-                            {
-                                both.push((one, one));
-                            }
+                        // Only where the comparison folds it back: `ſ`
+                        // uppercases to `S`, which folds to `s`, not `ſ`.
+                        if let Some(upper) = single(ch.to_uppercase())
+                            && upper != ch
+                            && single(upper.to_lowercase()) == Some(lower)
+                        {
+                            both.push((upper, upper));
                         }
                     }
                 }
@@ -526,7 +531,15 @@ fn ascii_case_free(source: &str, folded: bool) -> String {
     out
 }
 
-/// The widest class range whose members' lowercase a folded class holds.
+/// The single character a case mapping gives, if it gives one.
+fn single(mut mapped: impl Iterator<Item = char>) -> Option<char> {
+    match (mapped.next(), mapped.next()) {
+        (Some(one), None) => Some(one),
+        _ => None,
+    }
+}
+
+/// The widest class range whose members' other case a class holds.
 const FOLDED_RANGE_LIMIT: usize = 1024;
 
 fn class_member(out: &mut String, ch: char) {
@@ -870,6 +883,20 @@ mod tests {
         assert!(!lists(&[], &["[a-c]*.MD"]).takes("B.md"));
         assert!(!lists(&[], &["[!a-c]*.md"]).takes("D.md"));
         assert!(lists(&[], &["[!a-c]*.md"]).takes("C.md"));
+        // A negated class outside ASCII, either case on either side.
+        assert!(lists(&[], &["[!\u{c9}]*.md"]).takes("\u{e9}.md"));
+        assert!(lists(&[], &["[!\u{c9}]*.md"]).takes("\u{c9}.md"));
+        assert!(lists(&[], &["[!\u{e9}]*.md"]).takes("\u{c9}.md"));
+        assert!(lists(&[], &["[!\u{c0}-\u{de}]x"]).takes("\u{e0}x"));
+        assert!(!lists(&[], &["[!\u{c9}]*.md"]).takes("\u{e8}.md"));
+    }
+
+    #[test]
+    fn a_long_list_compiles_when_each_of_its_lines_does() {
+        let long: Vec<String> = (0..4000).map(|i| format!("*cache{i}*")).collect();
+        let lists = Lists::new(&[], &long).unwrap();
+        assert!(!lists.takes("a/xcache3999y.md"));
+        assert!(lists.takes("a/notes.md"));
     }
 
     #[test]
