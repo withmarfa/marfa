@@ -8,6 +8,8 @@ import {
 import {
   authorize,
   authorizeQuery,
+  CALLBACK,
+  codeFor,
   connect,
   issuerOrigin,
   itemsStatus,
@@ -15,6 +17,7 @@ import {
   registerApp,
   sentTo,
   signIn,
+  token,
 } from "../../utils/signed-in.js";
 
 /**
@@ -213,5 +216,33 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, key.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect((await unrelatedClient.getCurrentKey()).status).toBe(200);
+  });
+});
+
+describe("a code whose grant is revoked", () => {
+  it("is refused invalid_grant when exchanged after the grant was revoked", async () => {
+    const { clientId, grant } = await approved();
+    const app = { clientId };
+    // A fresh code under the standing consent, answered without a screen.
+    const { code, verifier, silent } = await codeFor(
+      server,
+      origin,
+      cookie,
+      app,
+      SCOPE,
+    );
+    expect(silent).toBe(true);
+    const revoked = await revokeGrant(grant.id, server.managementKey);
+    expect(revoked.status).toBe(204);
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: CALLBACK,
+      code_verifier: verifier,
+      client_id: clientId,
+    });
+    expect(exchanged.status).toBe(400);
+    expect(exchanged.body.error).toBe("invalid_grant");
+    expect(exchanged.body.access_token).toBeUndefined();
   });
 });

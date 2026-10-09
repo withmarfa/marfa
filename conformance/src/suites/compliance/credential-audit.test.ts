@@ -100,7 +100,70 @@ describe("a credential change", () => {
   });
 });
 
+describe("a sign-in credential", () => {
+  it("is in the audit log when a client's registration answers", async () => {
+    const before = await logged("auth.oauthClient.create");
+    await registerApp(server, NOTES);
+    expect(await logged("auth.oauthClient.create")).toBe(before + 1);
+  });
+
+  it("is in the audit log when an authorization answers with a code", async () => {
+    const app = await registerApp(server, NOTES);
+    await codeFor(server, origin, cookie, app, NOTES);
+    const before = await logged("auth.verification.create");
+    await codeFor(server, origin, cookie, app, NOTES);
+    expect(await logged("auth.verification.create")).toBeGreaterThan(before);
+  });
+
+  it("is in the audit log when a password sign-in answers", async () => {
+    const before = await logged("auth.sign_in.success");
+    await signIn(server, origin);
+    expect(await logged("auth.sign_in.success")).toBe(before + 1);
+  });
+
+  it("is in the audit log when a password change answers", async () => {
+    const own = await signIn(server, origin);
+    const change = async (from: string, to: string) => {
+      const response = await fetch(`${server.apiUrl}/auth/change-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin, cookie: own },
+        body: JSON.stringify({ currentPassword: from, newPassword: to }),
+      });
+      await response.body?.cancel();
+      return response.status;
+    };
+    const before = await logged("owner.password.changed");
+    const next = `${OWNER.password} changed`;
+    expect(await change(OWNER.password, next)).toBe(200);
+    expect(await logged("owner.password.changed")).toBe(before + 1);
+    expect(await change(next, OWNER.password)).toBe(200);
+    // A password change ends every other session, the file's own included.
+    cookie = own;
+  });
+
+  it("is in the audit log when a profile change answers", async () => {
+    const before = await logged("auth.user.update");
+    const response = await fetch(`${server.apiUrl}/auth/update-user`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, cookie },
+      body: JSON.stringify({ name: "Audited Owner" }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await logged("auth.user.update")).toBe(before + 1);
+  });
+});
+
 describe("a security observation", () => {
+  it("is in the audit log when a request a standing consent covers answers with a code", async () => {
+    const app = await registerApp(server, NOTES);
+    await codeFor(server, origin, cookie, app, NOTES);
+    const before = await logged("auth.grant.reused");
+    expect((await codeFor(server, origin, cookie, app, NOTES)).silent).toBe(
+      true,
+    );
+    expect(await logged("auth.grant.reused")).toBe(before + 1);
+  });
+
   it("is in the audit log when the refusal of a failed sign-in answers", async () => {
     const before = await logged("auth.sign_in.failed");
     const failed = await fetch(`${server.apiUrl}/auth/sign-in/email`, {

@@ -149,3 +149,28 @@ describe("a device code", () => {
     expect(expired.body.access_token).toBeUndefined();
   });
 });
+
+describe("a device code whose grant is revoked", () => {
+  it("answers invalid_grant to a poll after the person's grant was revoked between the approval and the poll", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    await flow.approve();
+    const authorization = { authorization: `Bearer ${server!.workingKey}` };
+    const listed = await fetch(`${server!.apiUrl}/auth/grants`, {
+      headers: authorization,
+    });
+    const grant = (
+      (await listed.json()) as { data: { id: string; client_id: string }[] }
+    ).data.find((g) => g.client_id === flow.clientId);
+    // The witness: the approval made a grant to revoke.
+    expect(grant, "the approval made no grant").toBeDefined();
+    const revoked = await fetch(`${server!.apiUrl}/auth/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: authorization,
+    });
+    expect(revoked.status).toBe(204);
+    const polled = await flow.poll();
+    expect(polled.status).toBe(400);
+    expect(polled.body.error).toBe("invalid_grant");
+    expect(polled.body.access_token).toBeUndefined();
+  });
+});
