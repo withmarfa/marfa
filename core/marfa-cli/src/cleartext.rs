@@ -1,7 +1,6 @@
-//! A credential goes to a server in the clear only where the caller said so.
-//! The command warns once per address before it sends one over `http` to a
-//! host that is not this machine, and goes on: an owner's private network
-//! may already be encrypted below the address.
+//! Before the command sends a credential over `http` to a host that is not
+//! this machine, it warns once per address and goes on: an owner's private
+//! network may already be encrypted below the address.
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -17,8 +16,7 @@ thread_local! {
     static GUARDED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// The caller stated that plain `http` is intended, by `--allow-http` or
-/// `MARFA_ALLOW_HTTP`.
+/// Silences the warning for the rest of the run.
 pub fn allow() {
     ALLOWED.store(true, Ordering::Relaxed);
 }
@@ -49,8 +47,8 @@ pub fn is_loopback(url: &Url) -> bool {
     }
 }
 
-/// The origin and the warning for an address a credential must not go to
-/// unremarked; nothing for `https`, for this machine, or for what is no URL.
+/// The origin and the warning for a plain `http` address on another host;
+/// nothing for `https`, for this machine, or for what is no URL.
 fn notice(address: &str) -> Option<(String, String)> {
     let url = Url::parse(address).ok()?;
     if url.scheme() != "http" || is_loopback(&url) {
@@ -63,8 +61,8 @@ fn notice(address: &str) -> Option<(String, String)> {
     Some((origin, text))
 }
 
-/// Called before a credential, a device code or a refresh token is sent to
-/// `address`.
+/// Warns, once per origin, before a credential, a device code or a refresh
+/// token is sent to `address`.
 pub fn guard(address: &str) {
     #[cfg(test)]
     GUARDED.with(|guarded| guarded.borrow_mut().push(address.to_string()));
