@@ -829,7 +829,7 @@ export interface paths {
         };
         /**
          * List housekeeping jobs
-         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires instance.read.
+         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires instance.read.
          */
         get: operations["listHousekeeping"];
         put?: never;
@@ -3710,7 +3710,7 @@ export interface components {
             last_used_at: string | null;
         };
         /**
-         * @description A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access.
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping and bulk job status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints; and `blobs.manage` manages every blob.
          * @enum {string}
          */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
@@ -4049,7 +4049,7 @@ export interface components {
             created_at: string;
             /** @description The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping. */
             key_id: string | null;
-            /** @description What happened, such as `key.create` or `owner.created`. */
+            /** @description What happened, such as `key.create` or `owner.claimed`. */
             action: string;
             /** @description The kind of resource acted on, such as `key`. */
             resource_type: string;

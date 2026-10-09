@@ -567,8 +567,8 @@ pub struct UpdateArgs {
     /// The properties to write, as a JSON object. Whole values.
     #[arg(long, value_name = "JSON")]
     pub properties: String,
-    /// The version the edit was based on. Required: an update that names no
-    /// version overwrites whatever it finds.
+    /// The version the edit was based on. Required: the device refuses an
+    /// update that names no version, as the server does.
     #[arg(long)]
     pub version: Option<i64>,
     /// The natural key to move the row to. The server refuses one another

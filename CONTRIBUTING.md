@@ -8,6 +8,7 @@ Thanks for your interest in contributing to Marfa.
 git clone https://github.com/withmarfa/marfa.git
 cd marfa
 pnpm install
+pnpm build
 pnpm test
 ```
 

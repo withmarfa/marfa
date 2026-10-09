@@ -246,7 +246,7 @@ describe("every write names the version it read", () => {
     });
     expect(
       refused.ok,
-      "an update with no version was queued, and a write that names no version overwrites whatever it finds — the defect the folder rules were written against",
+      "an update with no version was queued, though the server refuses one",
     ).toBe(false);
     // Refused before it is sent rather than by the server, so the rule does
     // not depend on a server that might not refuse.

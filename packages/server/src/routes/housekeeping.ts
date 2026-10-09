@@ -125,7 +125,7 @@ const listHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "List housekeeping jobs",
   description:
-    "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires instance.read.",
+    "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires instance.read.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   responses: {

@@ -34,9 +34,8 @@ const instanceConfigShape = (strict: boolean) => ({
       "The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on.",
     ),
   // Retention overrides for the cleanup jobs. Each falls back to the
-  // instance env default when unset. `0` disables the job (matches
-  // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are
-  // rejected.
+  // instance's setting when unset, and `0` keeps everything, as the setting
+  // does.
   audit_retention_days: z
     .number()
     .int()
