@@ -260,6 +260,34 @@ When a key has authenticated a request, the server MUST answer its `last_used_at
 
 **Tests:** `compliance/key-last-used.test.ts › last_used_at is set after first use`, `› last_used_at is a valid ISO 8601 timestamp`, `› last_used_at appears in list response`.
 
+## The command's keys
+
+### `keys-and-oauth/command-mint-nothing`
+
+When `marfa keys create` runs with `--no-permissions`, the command MUST mint a key holding nothing in `permissions` and in each of the five maps.
+
+**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
+
+### `keys-and-oauth/command-update-nothing`
+
+When `marfa keys update` runs with `--no-permissions`, the command MUST name `permissions` and every map empty, so the key holds nothing in any of them.
+
+**Reason:** A key minted too wide is narrowed to nothing in place, rather than revoked and minted again.
+
+**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
+
+### `keys-and-oauth/command-update-one-map`
+
+When `marfa keys update` runs with one `--no-<map>` option, the command MUST empty that map and leave every other family as it was.
+
+**Tests:** `cli/instance.test.ts › empties one key permission map at a time and retains every other family`.
+
+### `keys-and-oauth/command-revoked-key`
+
+When the server refuses a request the command sends under a revoked key, the command MUST exit 5 and report `unauthorized`.
+
+**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
+
 ## Expiry
 
 No operation stamps an expiry on a key, so `expires_at` is `null` on every key an operation mints. These rules hold for a key whose row carries one.
@@ -454,7 +482,7 @@ If a working key's mint or update claims a source other than the caller's own `s
 
 ### `keys-and-oauth/claims-direct`
 
-When direct owner or local authority mints or updates a key, the server MUST grant any source outside the reserved prefix.
+When direct owner or local authority mints a key, or updates a key no app made, the server MUST grant any source outside the reserved prefix.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`, `› grants a source under any other prefix, connector: included`.
 
@@ -534,7 +562,7 @@ If a signed-in app mints or updates a key to hold reach its grant's scopes do no
 
 ### `keys-and-oauth/app-update-held`
 
-When a signed-in app updates a key within its reach to hold a permission its grant holds, the server MUST make the change.
+When a signed-in app updates a key no app made, within its reach, to hold a permission its grant holds, the server MUST make the change.
 
 **Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`.
 
@@ -798,9 +826,17 @@ When an authorization request naming `prompt=none` from nobody signed in names a
 
 ### `keys-and-oauth/code-exchange`
 
-When an app exchanges a code at `POST /auth/oauth2/token` with the verifier that matches its challenge, the server MUST answer `200` with a bearer `access_token`.
+When an app exchanges a code at `POST /auth/oauth2/token` with the verifier that matches its challenge, while the grant the code was issued under stands, the server MUST answer `200` with a bearer `access_token`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › exchanges a code once, and refuses it again with invalid_grant`.
+
+### `keys-and-oauth/code-grant-revoked`
+
+If an app exchanges a code after the grant it was issued under was revoked, then the server MUST answer `400 invalid_grant` and issue no token.
+
+**Reason:** With `offline_access` a code yields a refresh token that rotates without end, so a code that outlived its grant would turn a revocation back into a standing grant.
+
+**Tests:** `compliance/auth-grants.test.ts › is refused invalid_grant when exchanged after the grant was revoked`.
 
 ### `keys-and-oauth/code-once`
 
@@ -810,9 +846,17 @@ If an app exchanges a code a second time, then the server MUST answer `400 inval
 
 ### `keys-and-oauth/code-verifier`
 
-If an app exchanges a code with a verifier that does not match its challenge, then the server MUST answer `401 invalid_request` and issue no token.
+If an app exchanges a code with a verifier that does not match its challenge, then the server MUST answer `400 invalid_grant` and issue no token.
 
-**Tests:** `compliance/oauth-authorize.test.ts › refuses a code verifier that does not match the challenge 401 invalid_request, and issues no token`.
+**Reason:** RFC 7636 asks for `invalid_grant`, and a `401` is the answer RFC 6749 keeps for a client that failed to authenticate.
+
+**Tests:** `compliance/oauth-authorize.test.ts › refuses a code verifier that does not match the challenge 400 invalid_grant, and issues no token`.
+
+### `keys-and-oauth/code-verifier-missing`
+
+If an app exchanges a code issued with a challenge and sends no verifier, then the server MUST answer `400 invalid_request` and issue no token, whether or not the app authenticates with a secret.
+
+**Tests:** `compliance/oauth-authorize.test.ts › refuses a code issued with a challenge and exchanged with no verifier 400 invalid_request, whether or not the app sends a secret`.
 
 ### `keys-and-oauth/code-needs-browser`
 
@@ -1088,9 +1132,15 @@ When a client polls with a device code past its expiry, the server MUST answer `
 
 ### `keys-and-oauth/device-approved`
 
-When a client polls with a device code a person approved, as the code's first poll since or at least the interval after its previous one, the server MUST answer `200` with an access token for the scopes the person approved.
+When a client polls with a device code a person approved, as the code's first poll since or at least the interval after its previous one, while the grant the approval made stands, the server MUST answer `200` with an access token for the scopes the person approved.
 
 **Tests:** `compliance/device-grant.test.ts › answers the first poll after the approval, an interval after the last, with an access token for the approved scopes`.
+
+### `keys-and-oauth/device-grant-revoked`
+
+If a client polls with a device code a person approved after the grant the approval made was revoked, then the server MUST answer `400 invalid_grant`.
+
+**Tests:** `compliance/device-grant.test.ts › answers invalid_grant to a poll after the person's grant was revoked between the approval and the poll`.
 
 ### `keys-and-oauth/device-spent`
 
@@ -1356,6 +1406,12 @@ If `POST /auth/sign-out` cannot look its session up, then the server MUST answer
 
 **Tests:** `compliance/credential-faults.test.ts › that cannot look its session up answers 500 and clears no cookie, and a retry signs out`.
 
+### `keys-and-oauth/sign-out-delete-fault`
+
+If `POST /auth/sign-out` cannot delete its session, then the server MUST answer `500` and clear no cookie.
+
+**Tests:** `compliance/credential-faults.test.ts › that cannot delete its session answers 500 and clears no cookie, and a retry signs out`.
+
 ### `keys-and-oauth/sign-out-audit-fault`
 
 If the audit record of a browser session's end cannot be committed, then the server MUST answer `500` and leave the session signed in.
@@ -1378,11 +1434,67 @@ When a consent, a token issue or a grant's revocation answers success, the serve
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when a consent, a token and a grant's revocation answer`.
 
-### `keys-and-oauth/audit-observations`
+### `keys-and-oauth/audit-setup-proof`
 
-When the server refuses a failed sign-in or a replayed refresh token, or narrows an authorization request, the server MUST already hold the audit record of that observation, readable at `GET /audit`.
+When the private local command issues a setup code, or a browser exchanges one, the server MUST already hold its audit record, readable at `GET /audit`, as it answers.
 
-**Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`, `› is in the audit log when the refusal of a replayed refresh token answers`, `› is in the audit log when an authorization narrowed to what can be granted answers`.
+**Reason:** The owner claim the proof leads to is held by `instance-claim/concurrent-claim`.
+
+**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
+
+### `keys-and-oauth/audit-registration`
+
+When a client's registration answers `201`, the server MUST already hold its audit record, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a client's registration answers`.
+
+### `keys-and-oauth/audit-code`
+
+When an authorization answers with a code, the server MUST already hold the code's audit record, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when an authorization answers with a code`.
+
+### `keys-and-oauth/audit-sign-in`
+
+When a password sign-in answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password sign-in answers`.
+
+### `keys-and-oauth/audit-password-change`
+
+When the owner's password change answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password change answers`.
+
+### `keys-and-oauth/audit-profile-change`
+
+When a change to the owner's profile answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a profile change answers`.
+
+### `keys-and-oauth/audit-failed-sign-in`
+
+When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
+
+### `keys-and-oauth/audit-refresh-replay`
+
+When the server refuses a replayed refresh token, the server MUST already hold the audit record of the replay, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a replayed refresh token answers`.
+
+### `keys-and-oauth/audit-narrowed`
+
+When the server narrows an authorization request to what it can grant, the server MUST already hold the audit record of the narrowing, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when an authorization narrowed to what can be granted answers`.
+
+### `keys-and-oauth/audit-grant-reused`
+
+When an authorization a standing consent covers answers with a code, the server MUST already hold the audit record of the reused grant, readable at `GET /audit`.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a request a standing consent covers answers with a code`.
 
 ### `keys-and-oauth/audit-rollback`
 
@@ -1391,6 +1503,24 @@ If the audit record of a change to a key cannot be committed, then the server MU
 **Reason:** A change nobody can account for is undisclosed authority, so the change and its record are kept or lost together.
 
 **Tests:** `compliance/credential-faults.test.ts › refuses a key change whose audit record cannot be committed, and leaves the key as it was`.
+
+### `keys-and-oauth/audit-rollback-consent`
+
+If the audit record of a consent cannot be committed, then the server MUST answer `500`, record no grant and leave no standing consent.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed grants nothing and publishes no event`.
+
+### `keys-and-oauth/audit-rollback-event`
+
+If the audit record of a consent cannot be committed, then the server MUST publish no event for the grant it would have made.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed grants nothing and publishes no event`.
+
+### `keys-and-oauth/audit-rollback-withdrawal`
+
+If the audit record of a grant's withdrawal cannot be committed, then the server MUST answer `500` and leave the grant and its tokens standing.
+
+**Tests:** `compliance/credential-faults.test.ts › whose audit record cannot be committed answers 500 and leaves the grant and its tokens`.
 
 ### `keys-and-oauth/audit-unknown-outcome`
 
