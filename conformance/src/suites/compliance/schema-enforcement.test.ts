@@ -10,6 +10,7 @@ import type {
 } from "../../client/types.js";
 import {
   createTestContext,
+  getManagementClient,
   getOwnerClient,
   trackKey,
   trackItem,
@@ -1353,6 +1354,75 @@ describe("a key's own levers", () => {
     ).toBeUndefined();
   });
 
+  it("refuses a mint or an update naming levers to a caller without config.manage", async () => {
+    const lever = { strict_mode: { types: [] } };
+    const minter = await keyWith("levers-minter", {
+      permissions: ["keys.mint"],
+    });
+    // The witness: the same caller mints and changes a key when the body
+    // names no levers, so the refusals below are the levers'.
+    const plain = await minter.client.createKey({
+      label: "levers-plain",
+      source: `${ctx.source}-levers-plain`,
+      type_permissions: { "core.note": "write" },
+    });
+    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
+    trackKey(ctx, plain.data.id);
+    const relabeled = await minter.client.updateKey(plain.data.id, {
+      label: "levers-plain-relabeled",
+    });
+    expect(relabeled.status, JSON.stringify(relabeled.error)).toBe(200);
+
+    const refusals = [
+      await minter.client.createKey({
+        label: "levers-refused",
+        source: `${ctx.source}-levers-refused`,
+        type_permissions: { "core.note": "write" },
+        enforcement_override: lever,
+      }),
+      await minter.client.updateKey(plain.data.id, {
+        enforcement_override: lever,
+      }),
+      await minter.client.updateKey(plain.data.id, {
+        enforcement_override: null,
+      }),
+    ];
+    // A caller holding `keys.manage` is held to the same permission.
+    const managing = await getManagementClient().createKey({
+      label: "levers-manager",
+      source: `${ctx.source}-levers-manager`,
+      permissions: ["keys.manage"],
+    });
+    expect(managing.status, JSON.stringify(managing.error)).toBe(201);
+    trackKey(ctx, managing.data.id);
+    const manager = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: managing.data.key,
+    });
+    refusals.push(
+      await manager.updateKey(plain.data.id, {
+        enforcement_override: lever,
+      }),
+    );
+    for (const refused of refusals) {
+      expect(refused.status, JSON.stringify(refused.error)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.error?.error.details?.required_scope).toBe(
+        "config.manage",
+      );
+    }
+    const listed = await client.listKeys();
+    expect(
+      listed.data.data.find((k) => k.id === plain.data.id)
+        ?.enforcement_override,
+      "a refused update stored a lever",
+    ).toBeUndefined();
+    expect(
+      listed.data.data.some((k) => k.label === "levers-refused"),
+      "a refused mint stored a key",
+    ).toBe(false);
+  });
+
   it("is not taken from the creator by a mint naming none", async () => {
     const creator = await keyWith("levers-creator", {
       permissions: ["keys.mint"],
@@ -1372,7 +1442,7 @@ describe("a key's own levers", () => {
   });
 
   it(
-    "an app sets a key's levers looser than the instance's",
+    "an app holding config.manage sets a key's levers looser than the instance's, and one without it is refused",
     async () => {
       const server = await bootFreshServer("key-levers-app");
       try {
@@ -1418,6 +1488,32 @@ describe("a key's own levers", () => {
           (await loose.createItem(undeclared)).status,
           "an app could not set a key's levers looser than the instance's",
         ).toBe(201);
+
+        const unconfigured = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: await approvedAppToken(server, [
+            "core.note:write",
+            "keys.mint",
+          ]),
+        });
+        // The witness: the same app mints the key when it names no levers.
+        const allowed = await unconfigured.createKey({
+          label: "app-unconfigured-plain",
+          source: "app-unconfigured-plain",
+          type_permissions: { "core.note": "write" },
+        });
+        expect(allowed.status, JSON.stringify(allowed.error)).toBe(201);
+        const refused = await unconfigured.createKey({
+          label: "app-unconfigured",
+          source: "app-unconfigured",
+          type_permissions: { "core.note": "write" },
+          enforcement_override: { strict_mode: { types: [] } },
+        });
+        expect(refused.status, JSON.stringify(refused.error)).toBe(403);
+        expect(refused.error?.error.code).toBe("forbidden");
+        expect(refused.error?.error.details?.required_scope).toBe(
+          "config.manage",
+        );
       } finally {
         await server.stop();
       }

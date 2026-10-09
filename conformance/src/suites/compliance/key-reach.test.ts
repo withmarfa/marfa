@@ -295,4 +295,56 @@ describe("a key reaches only the keys it could have minted", () => {
     },
     2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
+
+  it(
+    "a signed-in app gives a key within its reach a permission its grant holds, and no other",
+    async () => {
+      const server = await bootFreshServer("key-reach-app-update");
+      try {
+        const token = await approvedAppToken(server, [
+          "core.note:read",
+          "keys.mint",
+          "audit.read",
+        ]);
+        const app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: token });
+        const working = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        // A key no app made, holding nothing the app does not, so the app
+        // reaches it and may give it what the app holds.
+        const target = await working.createKey({
+          label: "app-update-target",
+          source: "app-update-target",
+          type_permissions: { "core.note": "read" },
+          permissions: [],
+        });
+        expect(target.ok, JSON.stringify(target.error)).toBe(true);
+        expect(target.data.oauth_client_id).toBeUndefined();
+
+        const given = await app.updateKey(target.data.id, {
+          permissions: ["audit.read"],
+        });
+        expect(given.status, JSON.stringify(given.error)).toBe(200);
+        expect(given.data.permissions).toEqual(["audit.read"]);
+
+        const beyond = await app.updateKey(target.data.id, {
+          permissions: ["audit.read", "webhooks.manage"],
+        });
+        expect(beyond.status, JSON.stringify(beyond.error)).toBe(403);
+        expect(beyond.error?.error.code).toBe("forbidden");
+        expect(beyond.error?.error.details?.required_scope).toBe(
+          "webhooks.manage",
+        );
+        const listed = await working.listKeys();
+        expect(
+          listed.data.data.find((k) => k.id === target.data.id)?.permissions,
+          "a refused update changed the key",
+        ).toEqual(["audit.read"]);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });
