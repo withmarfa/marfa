@@ -41,7 +41,7 @@ Reading commands on an absent store, including `--reader` and `device changes`, 
 
 ## Claim and recover locally
 
-Run the command as the server's operating-system account, using the absolute path in `MARFA_CONTROL_SOCKET`:
+Run the CLI as the server's operating-system account, using the absolute path in `MARFA_CONTROL_SOCKET`:
 
 ```sh
 marfa --socket /run/marfa/control.sock setup open

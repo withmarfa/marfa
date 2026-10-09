@@ -5,7 +5,7 @@ The container recipe here runs the server with its database streamed off-site an
 ## What runs in the container
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
-- **The `marfa` command**, included at `/usr/local/bin/marfa`, for private setup, key administration and owner recovery. The image defaults to `/data/control/marfa.sock`.
+- **The CLI**, included at `/usr/local/bin/marfa`, for private setup, key administration and owner recovery. The image defaults to `/data/control/marfa.sock`.
 - **Litestream** (`litestream.yml`), a sidecar in the same container. `entrypoint.sh` restores the database from the bucket when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
 - **The blob folder is the server's own housekeeping.** Litestream carries the database only. The `blob-replicate` housekeeping job (listed at `GET /housekeeping`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
 
@@ -46,7 +46,7 @@ Without `S3_BUCKET` the container runs the server alone and says so in its log: 
 
 Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password, then sign in at `/auth/sign-in`. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
 
-The image includes the command. To create a single-use browser setup link from the running container:
+The image includes the CLI. To create a single-use browser setup link from the running container:
 
 ```bash
 docker exec marfa marfa --socket /data/control/marfa.sock setup open --no-browser

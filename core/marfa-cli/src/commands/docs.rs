@@ -219,7 +219,7 @@ impl Site {
     fn read(&self, path: &str, body: &mut ureq::Body) -> Result<String, CliError> {
         let cannot = |what: String| {
             CliError::Core(CoreError::Decoding(format!(
-                "the docs site at {} answered {path} with a body the command cannot read: {what}",
+                "the docs site at {} answered {path} with a body the CLI cannot read: {what}",
                 self.base
             )))
         };
