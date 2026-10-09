@@ -15,15 +15,12 @@ pub fn http(path: &Path) -> Result<marfa_core::http::Http, CliError> {
         .timeout_recv_response(Some(std::time::Duration::from_secs(90)))
         .timeout_recv_body(Some(std::time::Duration::from_secs(90)))
         .build();
-    let agent = ureq::Agent::with_parts(
-        config,
-        LocalConnector(path.to_owned()),
-        ureq::unversioned::resolver::DefaultResolver::default(),
-    );
-    Ok(marfa_core::http::Http::with_agent(
+    let path = path.to_owned();
+    Ok(marfa_core::http::Http::with_connector(
         "http://127.0.0.1",
         "",
-        agent,
+        config,
+        move || LocalConnector(path.clone()),
     )?)
 }
 
@@ -200,6 +197,39 @@ mod tests {
             .json(&Request::get(&["_control", "setup", "status"]))
             .unwrap();
         assert_eq!(result["claimed"], false);
+        serving.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_streamed_request_reaches_the_socket_without_authorization() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("067-1913-marfa-local-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("control.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let serving = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buffer = [0; 4096];
+            let size = socket.read(&mut buffer).unwrap();
+            let text = String::from_utf8_lossy(&buffer[..size]);
+            assert!(text.starts_with("GET /blobs/sha256:abc "), "{text}");
+            assert!(!text.to_lowercase().contains("authorization:"));
+            let body = "streamed bytes";
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{}",body.len(),marfa_core::contract::CONTRACT_VERSION,body).unwrap();
+        });
+        let (content_type, mut reader) = Remote::local(&path)
+            .unwrap()
+            .stream(&Request::get(&["blobs", "sha256:abc"]).streamed())
+            .unwrap();
+        let mut bytes = String::new();
+        reader.read_to_string(&mut bytes).unwrap();
+        assert_eq!(content_type, "application/octet-stream");
+        assert_eq!(bytes, "streamed bytes");
         serving.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

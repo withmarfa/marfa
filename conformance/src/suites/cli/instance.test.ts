@@ -713,6 +713,31 @@ describe("the instance from the terminal", () => {
     expect(managerRefused.envelope.error.server?.status).toBe(403);
   });
 
+  it("downloads a blob through the private socket, byte for byte", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const viaSocket = c.cli.viaSocket(socket!);
+
+    // Bytes that are not text, uploaded under the ordinary key, so the
+    // download below is the only thing the socket is asked to do.
+    const bytes = Buffer.alloc(4096);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = (i * 31 + 7) % 256;
+    const source = join(dir, "socket-blob.bin");
+    writeFileSync(source, bytes);
+    const uploaded = await c.cli.json<{ hash: string }>([
+      "blobs",
+      "upload",
+      source,
+    ]);
+
+    const out = join(dir, "socket-blob.out");
+    await viaSocket.json(["blobs", "download", uploaded.hash, "--output", out]);
+    expect(readFileSync(out).equals(bytes)).toBe(true);
+  });
+
   it("reaches management operations with named permissions and refuses a content key", async () => {
     const drift = await c.operator.json<{
       data: Array<{ id: string; item_count: number; removable: boolean }>;
