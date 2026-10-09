@@ -196,7 +196,9 @@ describe("claiming the one owner", () => {
     const start = Date.now();
     const expired = await local("/_control/setup/ticket", {});
     const live = await local("/_control/setup/ticket", {});
-    const deadline = expired.body.expiresAt as number;
+    expect(typeof expired.body.expires_at).toBe("string");
+    const deadline = Date.parse(expired.body.expires_at as string);
+    expect(Number.isNaN(deadline)).toBe(false);
     expect(deadline - start).toBeGreaterThanOrEqual(300_000);
     expect(deadline - start).toBeLessThan(301_000);
     const exchanged = await post(
@@ -312,7 +314,7 @@ describe("claiming the one owner", () => {
     ]);
     expect((await local("/_control/setup/status")).body).toMatchObject({
       claimed: true,
-      ownerId,
+      owner_id: ownerId,
     });
     expect(Number.isNaN(Date.parse(owner.created_at))).toBe(false);
     const login = await post("/auth/sign-in/email", OWNER, {
@@ -442,7 +444,7 @@ describe("claiming the one owner", () => {
     vi.stubEnv("MARFA_API_URL", server.url);
     expect((await local("/_control/setup/status")).body).toMatchObject({
       claimed: true,
-      ownerId,
+      owner_id: ownerId,
     });
     expect((await local("/_control/setup/code", {})).status).toBe(409);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
@@ -463,4 +465,77 @@ describe("claiming the one owner", () => {
       ).status,
     ).toBe(200);
   });
+});
+
+describe("claiming through the private socket", () => {
+  it(
+    "answers the setup routes in snake_case and the claim as the public claim does",
+    async () => {
+      const socketState = await mkdtemp(
+        join(tmpdir(), "marfa-owner-socket-conformance-"),
+      );
+      let booted = false;
+      try {
+        const socketServer = await bootUnclaimedServer({ state: socketState });
+        booted = true;
+        const control = (path: string, body?: unknown) =>
+          controlRequest(
+            socketServer.controlSocket,
+            path,
+            body === undefined ? {} : { method: "POST", body },
+          );
+        const before = await control("/_control/setup/status");
+        expect(before.status).toBe(200);
+        expect(Object.keys(before.body).sort()).toEqual([
+          "claimed",
+          "generation",
+          "owner_id",
+        ]);
+        expect(before.body.owner_id).toBeNull();
+        expect(typeof before.body.generation).toBe("string");
+        const ticket = await control("/_control/setup/ticket", {});
+        expect(ticket.status).toBe(200);
+        expect(Object.keys(ticket.body).sort()).toEqual([
+          "expires_at",
+          "ticket",
+          "url",
+        ]);
+        expect(ticket.body.expires_at).toBe(
+          new Date(Date.parse(ticket.body.expires_at as string)).toISOString(),
+        );
+        const claim = await control("/_control/setup/claim", {
+          email: "Socket.Owner@Example.test",
+          password: "correct horse battery",
+          name: "socket owner",
+        });
+        expect(claim.status).toBe(201);
+        expect(Object.keys(claim.body).sort()).toEqual([
+          "created_at",
+          "email",
+          "id",
+          "name",
+        ]);
+        expect(claim.body).toMatchObject({
+          email: "socket.owner@example.test",
+          name: "socket owner",
+        });
+        expect(typeof claim.body.id).toBe("string");
+        expect(typeof claim.body.created_at).toBe("string");
+        expect(Number.isNaN(Date.parse(claim.body.created_at as string))).toBe(
+          false,
+        );
+        await expectMatchesSchema("POST", "/owner", 201, claim.body);
+        const after = await control("/_control/setup/status");
+        expect(after.body).toMatchObject({
+          claimed: true,
+          owner_id: claim.body.id,
+        });
+        expect(after.body.generation).toBeNull();
+      } finally {
+        if (booted) await stopServer({ state: socketState });
+        await rm(socketState, { recursive: true, force: true });
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

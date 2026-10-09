@@ -5,20 +5,12 @@ import { directAuthorityOnly } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import type { OwnerRecord, Storage } from "../storage/interface.js";
+import type { Storage } from "../storage/interface.js";
 import { claimOwner } from "../auth/instance-claim.js";
 import { requireOwnerOrigin } from "../auth/owner-browser.js";
 import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
-const OwnerSchema = z
-  .object({
-    id: z.string().describe("Unique identifier for the owner."),
-    email: z.string().describe("Email address used to sign in."),
-    name: z.string().describe("Display name of the owner."),
-    created_at: z.string().describe("When the owner was created, in UTC."),
-  })
-  .describe("The single owner of the instance.")
-  .openapi("Owner");
+import { OwnerSchema, ownerWire } from "./owner-wire.js";
 const failure = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
   description: string,
@@ -110,14 +102,6 @@ const createOwnerRoute = createRoute({
     ),
   },
 });
-function wire(owner: OwnerRecord) {
-  return {
-    id: owner.id,
-    email: owner.email,
-    name: owner.name,
-    created_at: owner.createdAt.toISOString(),
-  };
-}
 export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   const router = createOpenAPIRouter<AppEnv>();
   router.use("*", async (c, next) => {
@@ -131,7 +115,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         ErrorCode.OWNER_NOT_FOUND,
         "The claimed owner's account is unavailable.",
       );
-    return c.json(wire(owner), 200);
+    return c.json(ownerWire(owner), 200);
   });
   router.openapi(createOwnerRoute, async (c) => {
     requireOwnerOrigin(auth, c.req.raw.headers, { allowNonBrowser: true });
@@ -149,7 +133,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
           : { kind: "session", token: token ?? "" },
     });
     deleteCookie(c, SETUP_COOKIE, { path: "/" });
-    return c.json(wire(owner), 201);
+    return c.json(ownerWire(owner), 201);
   });
   return router;
 }

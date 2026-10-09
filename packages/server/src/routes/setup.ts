@@ -17,6 +17,7 @@ import {
 } from "../auth/owner-browser.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
+import { ownerWire } from "./owner-wire.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import { setNoStore } from "./no-store.js";
 
@@ -121,15 +122,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
           : { kind: "session", token: token ?? "" },
     });
     deleteCookie(c, SETUP_COOKIE, { path: "/" });
-    return c.json(
-      {
-        id: owner.id,
-        email: owner.email,
-        name: owner.name,
-        created_at: owner.createdAt.toISOString(),
-      },
-      201,
-    );
+    return c.json(ownerWire(owner), 201);
   });
   return router;
 }
