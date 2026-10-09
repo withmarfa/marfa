@@ -1,11 +1,11 @@
 /**
- * `Full CI`, the check a ruleset waits on: the last job of `ci.yml`. On a
- * draft it is named `Draft CI`, so the required `Full CI` stays expected, and
- * blocks a merge, until the run that marking the pull request ready starts
- * has finished: a skipped job passes a required check, and a draft skips most
- * jobs. These tests hold that it exists once, under that name, waits for
- * every other job, and fails for a failed or a cancelled job and for nothing
- * else.
+ * `Full CI`, the check a ruleset waits on: the job of `ci.yml` that collects
+ * the rest. On a draft it is named `Draft CI`, so the required `Full CI`
+ * stays expected, and blocks a merge, until the run that marking the pull
+ * request ready starts has finished: a skipped job passes a required check,
+ * and a draft skips most jobs. These tests hold that it exists once, under
+ * that name, waits for every other job, and fails for a failed or a cancelled
+ * job and for nothing else.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";

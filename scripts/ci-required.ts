@@ -4,7 +4,7 @@
  * Each job in `ci.yml` and `core.yml` runs when this answers `true` for it
  * and is skipped otherwise, and a skipped job satisfies a required check
  * where a workflow filtered out by `paths` would leave it pending. `Full CI`,
- * the last job of `ci.yml`, waits for the rest and is what a ruleset
+ * the gate job of `ci.yml`, waits for the rest and is what a ruleset
  * requires. The nightly and a dispatch answer `true` for every job, and so
  * does a change that could not be read, so a skip only ever comes from a diff
  * that was read and classified.
