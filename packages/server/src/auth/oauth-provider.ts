@@ -900,9 +900,10 @@ function normalizeRevokeToken(raw: unknown): string | undefined {
  * `Authorization: Basic` beside a bare body `client_id` and never compares
  * the two, so a hook that read the body first would take the caller's word
  * over the credential the plugin verified. An assertion is answered with
- * undefined, since verifying
- * one is the plugin's job and nothing here should pretend to; the caller
- * treats that as "cannot tell" and does nothing.
+ * undefined, since verifying one is the plugin's job and nothing here should
+ * pretend to: the revoke hook treats that as "cannot tell" and does nothing,
+ * and the device code hook reads the assertion's claim itself
+ * (`readDeviceCodeRequest`).
  *
  * Exported for its test: the precedence is the security property, and the
  * shape that exercises it (a confidential client) is not one the store's
