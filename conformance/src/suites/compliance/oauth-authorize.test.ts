@@ -237,7 +237,7 @@ describe("the request an app sends", () => {
 });
 
 describe("the code exchange", () => {
-  it("refuses a code verifier that does not match the challenge 401 invalid_request, and issues no token", async () => {
+  it("refuses a code verifier that does not match the challenge 400 invalid_grant, and issues no token", async () => {
     const app = await registerApp(server, NOTES);
     const { code } = await codeFor(server, origin, cookie, app, NOTES);
     const refused = await token(server, {
@@ -247,9 +247,32 @@ describe("the code exchange", () => {
       code_verifier: pkce().verifier,
       client_id: app.clientId,
     });
-    expect(refused.status, JSON.stringify(refused.body)).toBe(401);
-    expect(refused.body.error).toBe("invalid_request");
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(refused.body.error).toBe("invalid_grant");
     expect(refused.body.access_token).toBeUndefined();
+  });
+
+  it("refuses a code issued with a challenge and exchanged with no verifier 400 invalid_request, whether or not the app sends a secret", async () => {
+    const open = await registerApp(server, NOTES);
+    const secret = await registerApp(server, NOTES, {
+      token_endpoint_auth_method: "client_secret_basic",
+    });
+    for (const app of [open, secret]) {
+      const { code } = await codeFor(server, origin, cookie, app, NOTES);
+      const refused = await token(
+        server,
+        {
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: CALLBACK,
+          client_id: app.clientId,
+        },
+        app,
+      );
+      expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+      expect(refused.body.error).toBe("invalid_request");
+      expect(refused.body.access_token).toBeUndefined();
+    }
   });
 
   it("exchanges a code once, and refuses it again with invalid_grant", async () => {

@@ -638,6 +638,15 @@ export function buildOauthProjectionPlugin(opts: {
             return Promise.resolve();
           }),
         },
+        {
+          // The provider answers a PKCE failure at the token endpoint `401`,
+          // a status RFC 6749 keeps for a client that failed to
+          // authenticate. See `answerPkceRefusal`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            Promise.resolve(answerPkceRefusal(ctx)),
+          ),
+        },
         ...(refreshHasher
           ? [
               {
@@ -970,6 +979,51 @@ function answerDeadTokenRevoked(ctx: HookCtxLite): Response | undefined {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+// ---------------------------------------------------------------------------
+// PKCE refusal (after-hook)
+// ---------------------------------------------------------------------------
+
+/** The provider's description of a verifier that does not match. Read
+ *  because the provider gives this refusal and the others one status and one
+ *  code; the dependency is pinned exactly, and a fixture holds the answer. */
+const PKCE_MISMATCH = "code verification failed";
+
+/**
+ * After-hook for `/oauth2/token` with `grant_type=authorization_code`:
+ * answer the provider's `401 invalid_request` PKCE refusals as RFC 7636
+ * §4.6 and RFC 6749 §5.2 have them. A verifier that does not match its
+ * challenge is `400 invalid_grant`; a verifier missing where the code was
+ * issued with a challenge, or sent where it was not, is `400
+ * invalid_request`. A client that may retry or re-authenticate on a `401`
+ * would read either as its credentials failing.
+ */
+function answerPkceRefusal(ctx: HookCtxLite): Response | undefined {
+  if (requestedGrantType(ctx) !== "authorization_code") return undefined;
+  const returned = ctx.context?.returned as
+    | {
+        statusCode?: unknown;
+        body?: { error?: unknown; error_description?: unknown };
+      }
+    | null
+    | undefined;
+  if (returned?.statusCode !== 401) return undefined;
+  if (returned.body?.error !== "invalid_request") return undefined;
+  const mismatch = returned.body.error_description === PKCE_MISMATCH;
+  return new Response(
+    JSON.stringify({
+      error: mismatch ? "invalid_grant" : "invalid_request",
+      error_description: returned.body.error_description,
+    }),
+    {
+      status: 400,
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      },
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
