@@ -1,9 +1,13 @@
 import "dotenv/config";
 import { defineConfig } from "vitest/config";
+import WeightedShards from "./src/utils/shard-sequencer.js";
 
 export default defineConfig({
   test: {
     fileParallelism: false,
+    // `--shard` splits a project's files by the time they take, which
+    // Vitest's own split by path does not.
+    sequence: { sequencer: WeightedShards },
     projects: [
       {
         test: {

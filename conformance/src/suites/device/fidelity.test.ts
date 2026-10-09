@@ -397,7 +397,7 @@ describe("the scripted answers match the server's", () => {
   });
 
   it("holds the scripted folder door's decisions to the server's", async () => {
-    // A folder fixture's server decides with `FolderDoor` (`folders.test.ts`),
+    // A folder fixture's server decides with `FolderDoor` (`folders.shared.ts`),
     // and so does a queue fixture about an edit behind an edit
     // (`queue.test.ts`), so each decision it makes is made here by both, on
     // the same request, and has to come out the same: a door that decided

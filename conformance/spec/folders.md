@@ -434,13 +434,13 @@ When a new document omits a property named by the defaults, a device MUST fill t
 
 When a new document omits its `tags` line, a device MUST use the default tags.
 
-**Tests:** `device/folders.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
+**Tests:** `device/folders-frontmatter.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
 ### `folders/default-explicit-tags`
 
 When a new document names tags explicitly, including an empty list, a device MUST use those tags instead of default tags.
 
-**Tests:** `device/folders.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
+**Tests:** `device/folders-frontmatter.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
 ### `folders/default-body`
 
@@ -488,7 +488,7 @@ When files in different folders are scanned, a device MUST keep each folder's qu
 
 When the command lists the machine's folders, a device MUST include every registered folder's directory and `system.folder` ID.
 
-**Tests:** `device/folders.test.ts › lists the folders on the Mac in one registry`.
+**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`.
 
 ### `folders/empty-directory`
 
@@ -726,25 +726,25 @@ When a folder placement falls inside a package, a device MUST NOT write its file
 
 When a folder scan cannot read a directory or an entry’s details, a device MUST report that directory as `unreadable`.
 
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders-identity.test.ts › holds the files of a directory whose entries cannot be read`.
 
 ### `folders/unreadable-directory-scan-continues`
 
 When a folder scan cannot read a directory or an entry’s details, a device MUST continue scanning other directories.
 
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders-identity.test.ts › holds the files of a directory whose entries cannot be read`.
 
 ### `folders/unreadable-bindings`
 
 When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST count it as `unreached`.
 
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders-identity.test.ts › holds the files of a directory whose entries cannot be read`.
 
 ### `folders/unreadable-no-deletion`
 
 When a folder scan cannot reach a bound file inside an unreadable directory, a device MUST NOT journal its deletion.
 
-**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders.test.ts › holds the files of a directory whose entries cannot be read`.
+**Tests:** `device/folders.test.ts › holds the files of a directory it cannot read, and goes on with the rest`, `device/folders-identity.test.ts › holds the files of a directory whose entries cannot be read`.
 
 ### `folders/unreadable-pull`
 
@@ -768,7 +768,7 @@ When a device makes a file name from an item's title, a device MUST replace `/`,
 
 When a device makes a file name from an item's title, a device MUST replace each control character with a space.
 
-**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
+**Tests:** `device/folders-placement.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › replaces separators and controls, trims hidden names, and names a dot-only title untitled`.
 
 ### `folders/title-trimming`
 
@@ -780,7 +780,7 @@ When a device makes a file name from a nonblank item title, a device MUST trim s
 
 When a generated file name would exceed 255 bytes of UTF-8, a device MUST shorten its stem at a character boundary to fit within 255 bytes, retaining any numbering suffix and an extension of at most 32 bytes including its dot.
 
-**Tests:** `device/folders.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
+**Tests:** `device/folders-placement.test.ts › names a new item's file from its title, cut to the longest name a file system takes`, `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
 
 ### `folders/name-long-ending`
 
@@ -840,19 +840,19 @@ When `.marfa/folder.yaml` changes during a folder watch, a device MUST submit th
 
 When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST leave the file unsent.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/binary-outside-search-skipped-count`
 
 When an unbound non-document file has no type held by a folder’s search and no document embeds it, a device MUST count the file as `skipped`.
 
-**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders.test.ts › leaves a file outside its search alone`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/embedded-outside-search`
 
 When a document in a folder embeds a file outside the folder’s search, a device MUST admit that file as the document’s attachment.
 
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`, `device/folders.test.ts › writes an embedded file where its link says`, `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
 ### `folders/document-outside-search`
 
@@ -878,7 +878,7 @@ When a folder document’s accepted type is outside the folder’s search, a dev
 
 When a device reads a Markdown file, a device MUST interpret `type`, `tier`, `tags`, `state`, and `occurred_at` as the item's own fields rather than properties.
 
-**Tests:** `device/folders.test.ts › reads type, tags, tier and state as the item's own`, `device/folders.test.ts › sets a new item's own time, from a date or from a date and time`.
+**Tests:** `device/folders-frontmatter.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-frontmatter.test.ts › sets a new item's own time, from a date or from a date and time`.
 
 ### `folders/property-lines`
 
@@ -890,13 +890,13 @@ When a Markdown frontmatter line names neither an own field, metadata line, nor 
 
 When a device reads or writes a document, a device MUST use the type's resolved `body_field` as the body property, falling back to `body`.
 
-**Tests:** `device/folders.test.ts › takes body and title from the type's display hints`, `device/folders.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
 
 ### `folders/title-property`
 
 When a device derives a document title from its filename or a filename from its title, a device MUST use the type's resolved `title_field`, falling back to `title`.
 
-**Tests:** `device/folders.test.ts › takes body and title from the type's display hints`, `device/folders.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/folders-frontmatter.test.ts › takes body and title from the type's display hints`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
 
 ### `folders/body-over-line`
 
@@ -908,175 +908,175 @@ When a document has a frontmatter line for its current body property, a device M
 
 When a held type declares properties reserved for document own fields, metadata, or edge lines, a device MUST list those type/property pairs in the pull's `uncarried` report.
 
-**Tests:** `device/folders.test.ts › reports a type that declares a property no file can carry, and keeps it`.
+**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`.
 
 ### `folders/uncarried-preserve`
 
 When a document is edited, a device MUST preserve item properties that cannot be carried as document properties.
 
-**Tests:** `device/folders.test.ts › reports a type that declares a property no file can carry, and keeps it`.
+**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`.
 
 ### `folders/write-own-fields`
 
 When a device renders a new Markdown file, a device MUST write `type` and `tier`, tags when present, and `state: archived` when the item is archived.
 
-**Tests:** `device/folders.test.ts › reads type, tags, tier and state as the item's own`, `device/folders.test.ts › keeps an archived item's file with its state in the frontmatter`.
+**Tests:** `device/folders-frontmatter.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-frontmatter.test.ts › keeps an archived item's file with its state in the frontmatter`.
 
 ### `folders/own-field-order`
 
 When a device renders a new Markdown file, a device MUST place own-field lines before the item properties, ordered `type`, `tier`, `tags`, `state`, and `occurred_at` for those present.
 
-**Tests:** `device/folders.test.ts › keeps an archived item's file with its state in the frontmatter`, `device/folders-contract-a.test.ts › writes own fields in order before properties including an explicit time`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps an archived item's file with its state in the frontmatter`, `device/folders-contract-a.test.ts › writes own fields in order before properties including an explicit time`.
 
 ### `folders/current-replaces-properties`
 
 When a file names the copy's current item version, a device MUST send its properties as a replacement, clearing properties whose lines were removed.
 
-**Tests:** `device/folders.test.ts › clears a property whose line was taken out of a versioned file`.
+**Tests:** `device/folders-frontmatter.test.ts › clears a property whose line was taken out of a versioned file`.
 
 ### `folders/current-after-own-write`
 
 When a file's own edit lands before its version line is rewritten, a device MUST treat its next edit as current if the previously scanned content agrees with the item.
 
-**Tests:** `device/folders.test.ts › sends a save right after its own edit lands as current`.
+**Tests:** `device/folders-frontmatter.test.ts › sends a save right after its own edit lands as current`.
 
 ### `folders/current-after-unshown-change`
 
 When the copy moves to a version that changes nothing shown by the file and no file edit waits, a device MUST treat the file's next own-field edit as current.
 
-**Tests:** `device/folders.test.ts › takes an own-field change after a version step no file shows`.
+**Tests:** `device/folders-frontmatter.test.ts › takes an own-field change after a version step no file shows`.
 
 ### `folders/current-own-delta`
 
 When a current file is saved, a device MUST send only own-field changes relative to the own-field lines it last wrote.
 
-**Tests:** `device/folders.test.ts › takes an own-field change after a version step no file shows`, `device/folders.test.ts › sends nothing for a save that only reformats the frontmatter`.
+**Tests:** `device/folders-frontmatter.test.ts › takes an own-field change after a version step no file shows`, `device/folders-frontmatter.test.ts › sends nothing for a save that only reformats the frontmatter`.
 
 ### `folders/missing-tags-clears`
 
 When a current file loses a `tags` line previously written by the device at that version, a device MUST remove those tags from the item.
 
-**Tests:** `device/folders.test.ts › takes a versioned file's missing tags line as no tags, and a lineless file's as no change`.
+**Tests:** `device/folders-frontmatter.test.ts › takes a versioned file's missing tags line as no tags, and a lineless file's as no change`.
 
 ### `folders/missing-state-active`
 
 When a current file loses a `state: archived` line previously written by the device at that version, a device MUST restore the item to active.
 
-**Tests:** `device/folders.test.ts › keeps an archived item's file with its state in the frontmatter`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps an archived item's file with its state in the frontmatter`.
 
 ### `folders/unwritten-own-fields`
 
 When a file omits own-field lines the device never wrote into it, a device MUST leave those own fields unchanged.
 
-**Tests:** `device/folders.test.ts › reads a file the folder never wrote own lines into as leaving them as they are`, `device/folders.test.ts › takes a versioned file's missing tags line as no tags, and a lineless file's as no change`.
+**Tests:** `device/folders-frontmatter.test.ts › reads a file the folder never wrote own lines into as leaving them as they are`, `device/folders-frontmatter.test.ts › takes a versioned file's missing tags line as no tags, and a lineless file's as no change`.
 
 ### `folders/behind-no-own-change`
 
 When a file's version line is missing, ahead of the copy, or behind the copy for reasons other than its own accepted edit, a device MUST NOT send its own-field changes.
 
-**Tests:** `device/folders.test.ts › sends no own-field change from an old buffer, and flags the lines it would have changed`, `device/folders.test.ts › reads a quoted version line as the version, and a removed one as no version`.
+**Tests:** `device/folders-frontmatter.test.ts › sends no own-field change from an old buffer, and flags the lines it would have changed`, `device/folders-frontmatter.test.ts › reads a quoted version line as the version, and a removed one as no version`.
 
 ### `folders/behind-flags-lines`
 
 When a file behind the copy differs in own-field lines, a device MUST flag it `behind` naming the lines it did not send.
 
-**Tests:** `device/folders.test.ts › sends no own-field change from an old buffer, and flags the lines it would have changed`, `device/folders.test.ts › sends no time from a file behind the item, and flags the line`.
+**Tests:** `device/folders-frontmatter.test.ts › sends no own-field change from an old buffer, and flags the lines it would have changed`, `device/folders-frontmatter.test.ts › sends no time from a file behind the item, and flags the line`.
 
 ### `folders/old-buffer-tags`
 
 When an old buffer would reverse tags received from another device at the same item version, a device MUST NOT send that tag change.
 
-**Tests:** `device/folders.test.ts › leaves a tag and an archive made elsewhere alone when an old buffer is saved`, `device/folders.test.ts › sends no tag change from an old buffer however many tag writes came at one version`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves a tag and an archive made elsewhere alone when an old buffer is saved`, `device/folders-frontmatter.test.ts › sends no tag change from an old buffer however many tag writes came at one version`.
 
 ### `folders/old-buffer-state`
 
 When an old buffer would reverse an archive or restore received from another device, a device MUST NOT send that state change.
 
-**Tests:** `device/folders.test.ts › leaves a tag and an archive made elsewhere alone when an old buffer is saved`, `device/folders.test.ts › does not re-archive from a buffer written before a restore elsewhere`, `device/folders.test.ts › does not re-archive from the buffer of an archive restored elsewhere`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves a tag and an archive made elsewhere alone when an old buffer is saved`, `device/folders-frontmatter.test.ts › does not re-archive from a buffer written before a restore elsewhere`, `device/folders-frontmatter.test.ts › does not re-archive from the buffer of an archive restored elsewhere`.
 
 ### `folders/own-tag-reversal`
 
 When a person adds and then removes a tag through the same file at one item version, a device MUST send both changes.
 
-**Tests:** `device/folders.test.ts › sends a tag the person adds and then takes out again at one version`.
+**Tests:** `device/folders-frontmatter.test.ts › sends a tag the person adds and then takes out again at one version`.
 
 ### `folders/successive-saves`
 
 When several property saves of one file are scanned before a drain, a device MUST preserve their order so the last save determines the resulting properties.
 
-**Tests:** `device/folders.test.ts › keeps every save of three scanned before one drain`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps every save of three scanned before one drain`.
 
 ### `folders/presentation-no-write`
 
 When a save changes only accepted presentation of a document's values, a device MUST NOT queue an item edit.
 
-**Tests:** `device/folders.test.ts › sends nothing for a save that only reformats the frontmatter`, `device/folders.test.ts › preserves frontmatter bytes through metadata, remote edits and presentation-only saves`.
+**Tests:** `device/folders-frontmatter.test.ts › sends nothing for a save that only reformats the frontmatter`, `device/folders.test.ts › preserves frontmatter bytes through metadata, remote edits and presentation-only saves`.
 
 ### `folders/version-spelling`
 
 When a document version line is a quoted integer or decimal spelling of a positive integer, a device MUST interpret it as that version.
 
-**Tests:** `device/folders.test.ts › reads a quoted version line as the version, and a removed one as no version`.
+**Tests:** `device/folders-frontmatter.test.ts › reads a quoted version line as the version, and a removed one as no version`.
 
 ### `folders/time-normalization`
 
 When a document names `occurred_at`, a device MUST interpret its date or date-and-time by the server's time rules, including UTC for a value without an offset.
 
-**Tests:** `device/folders.test.ts › sets a new item's own time, from a date or from a date and time`, `cli/folder.test.ts › sets an item's own time from a file's occurred_at line, and writes it back as typed`.
+**Tests:** `device/folders-frontmatter.test.ts › sets a new item's own time, from a date or from a date and time`, `cli/folder.test.ts › sets an item's own time from a file's occurred_at line, and writes it back as typed`.
 
 ### `folders/time-equivalent-no-write`
 
 When a save only changes the spelling of an equivalent `occurred_at`, a device MUST NOT send an item edit for it.
 
-**Tests:** `device/folders.test.ts › sends an edit of the line, and nothing for another spelling of the same time`, `device/folders.test.ts › follows a time changed elsewhere, and keeps a line in another spelling of the same time`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an edit of the line, and nothing for another spelling of the same time`, `device/folders-frontmatter.test.ts › follows a time changed elsewhere, and keeps a line in another spelling of the same time`.
 
 ### `folders/time-current-edit`
 
 When a current file changes its `occurred_at` value, a device MUST send the changed item time outside `properties`.
 
-**Tests:** `device/folders.test.ts › sends an edit of the line, and nothing for another spelling of the same time`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an edit of the line, and nothing for another spelling of the same time`.
 
 ### `folders/time-omitted-keeps`
 
 When a file omits its `occurred_at` line, a device MUST leave the item's time unchanged.
 
-**Tests:** `device/folders.test.ts › sends an edit of the line, and nothing for another spelling of the same time`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an edit of the line, and nothing for another spelling of the same time`.
 
 ### `folders/time-null-empty`
 
 When a file has a null `occurred_at` line, a device MUST treat it as no requested time.
 
-**Tests:** `device/folders.test.ts › takes a blank line as no time, and leaves it blank`.
+**Tests:** `device/folders-frontmatter.test.ts › takes a blank line as no time, and leaves it blank`.
 
 ### `folders/time-null-preserved`
 
 When an item has no explicit time to render over a null `occurred_at` line, a device MUST preserve the blank line.
 
-**Tests:** `device/folders.test.ts › takes a blank line as no time, and leaves it blank`.
+**Tests:** `device/folders-frontmatter.test.ts › takes a blank line as no time, and leaves it blank`.
 
 ### `folders/time-render`
 
 When an item's time differs from its creation time or a file already carries a non-null `occurred_at` value, a device MUST render the item's time in that line.
 
-**Tests:** `device/folders.test.ts › writes the line for an item whose time is its own, and none for one never set`, `device/folders.test.ts › follows a time changed elsewhere, and keeps a line in another spelling of the same time`.
+**Tests:** `device/folders-frontmatter.test.ts › writes the line for an item whose time is its own, and none for one never set`, `device/folders-frontmatter.test.ts › follows a time changed elsewhere, and keeps a line in another spelling of the same time`.
 
 ### `folders/time-invalid`
 
 If a non-null `occurred_at` value is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
 
-**Tests:** `device/folders.test.ts › flags a line that is no time, and sends nothing for the file`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a line that is no time, and sends nothing for the file`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/own-field-validation`
 
 If frontmatter names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
 
-**Tests:** `device/folders.test.ts › reads own-field lines in each form a file can hold them`, `device/folders.test.ts › holds a file whose frontmatter does not parse`.
+**Tests:** `device/folders-frontmatter.test.ts › reads own-field lines in each form a file can hold them`, `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
 ### `folders/tag-state-forms`
 
 When a document uses comma-separated text or null for tags, or null for state, a device MUST interpret them respectively as the named tags, no tags, or active.
 
-**Tests:** `device/folders.test.ts › reads own-field lines in each form a file can hold them`.
+**Tests:** `device/folders-frontmatter.test.ts › reads own-field lines in each form a file can hold them`.
 
 ### `folders/preserve-source`
 
@@ -1198,67 +1198,67 @@ When a device rewrites a Markdown document that opened with a byte-order mark, a
 
 When a current document changes its `type` line to another document type, a device MUST send the item edit with the new type and `retype: true`.
 
-**Tests:** `device/folders.test.ts › retypes an item whose frontmatter changes its type`.
+**Tests:** `device/folders-frontmatter.test.ts › retypes an item whose frontmatter changes its type`.
 
 ### `folders/retype-new-body`
 
 When retyping a document changes its body property, a device MUST use a nonempty frontmatter value for the new body property, or the document body if none is provided.
 
-**Tests:** `device/folders.test.ts › keeps both body fields' text when a retype moves the body to another`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps both body fields' text when a retype moves the body to another`.
 
 ### `folders/retype-old-body`
 
 When retyping a document changes its body property, a device MUST preserve the old body property's text.
 
-**Tests:** `device/folders.test.ts › keeps both body fields' text when a retype moves the body to another`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps both body fields' text when a retype moves the body to another`.
 
 ### `folders/retype-unsuited`
 
 If a document names an unknown type or a file type, then a device MUST refuse its creation or retype locally.
 
-**Tests:** `device/folders.test.ts › refuses a type no document can be, before sending anything`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses a type no document can be, before sending anything`.
 
 ### `folders/refused-edit-kept`
 
 When the server refuses a document edit, tag change, or state change, a device MUST preserve the person's file.
 
-**Tests:** `device/folders.test.ts › flags a refused retype and keeps the file`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
 
 ### `folders/refused-edit-report`
 
 When a document write is refused, a device MUST flag the held file `refused` with the server's code and message.
 
-**Tests:** `device/folders.test.ts › flags a refused retype and keeps the file`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
 
 ### `folders/refused-edit-follow`
 
 When a held file is renamed, reformatted, or changed without replacing its refused change, a device MUST retain the refusal on that file.
 
-**Tests:** `device/folders.test.ts › through a rename before the drain`, `device/folders.test.ts › through a rename after the refusal`, `device/folders.test.ts › through a save that only reformats it before the drain`, `device/folders.test.ts › through a later save that only adds a tag`, `device/folders.test.ts › through a later save that only edits the body, where a tag was refused`.
+**Tests:** `device/folders-frontmatter.test.ts › through a rename before the drain`, `device/folders-frontmatter.test.ts › through a rename after the refusal`, `device/folders-frontmatter.test.ts › through a save that only reformats it before the drain`, `device/folders-frontmatter.test.ts › through a later save that only adds a tag`, `device/folders-frontmatter.test.ts › through a later save that only edits the body, where a tag was refused`.
 
 ### `folders/refused-edit-no-repeat`
 
 While a refused document remains unchanged, a device MUST NOT send the same change again.
 
-**Tests:** `device/folders.test.ts › flags a refused retype and keeps the file`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a refused retype and keeps the file`.
 
 ### `folders/refused-edit-replaced`
 
 When a later save lands an edit replacing a refused edit, a device MUST release the file's refusal hold.
 
-**Tests:** `device/folders.test.ts › lets a file go once a later save lands after a refused one`.
+**Tests:** `device/folders-frontmatter.test.ts › lets a file go once a later save lands after a refused one`.
 
 ### `folders/refused-tag-mended`
 
 When a file stops carrying a refused tag and its replacement tag lands, a device MUST clear the refused-tag hold.
 
-**Tests:** `device/folders.test.ts › sends a mended tag from a file whose edit landed beside the refused one`.
+**Tests:** `device/folders-frontmatter.test.ts › sends a mended tag from a file whose edit landed beside the refused one`.
 
 ### `folders/refused-edit-version`
 
 When a document edit is refused, a device MUST base the next edit on the file's version unless an earlier accepted edit already consumed that version.
 
-**Tests:** `device/folders.test.ts › sends a save after a refused edit as behind, keeping what another machine changed or added`, `device/folders.test.ts › keeps the line a landed edit spent when a later edit from the same buffer is refused`.
+**Tests:** `device/folders-placement.test.ts › sends a save after a refused edit as behind, keeping what another machine changed or added`, `device/folders-placement.test.ts › keeps the line a landed edit spent when a later edit from the same buffer is refused`.
 
 ### `folders/refused-own-field-replaced`
 
@@ -1302,67 +1302,67 @@ When a document's refused tag or property name or tag count is corrected, a devi
 
 If Markdown frontmatter is malformed, has a non-text key, duplicates a key, or uses a YAML merge key, then a device MUST flag the file `unreadable`.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/unreadable-no-write`
 
 While a document is unreadable, a device MUST NOT send an item create or edit for it.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/unreadable-preserve`
 
 While a bound document is unreadable, a device MUST preserve its bytes during pull.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
 ### `folders/unreadable-report`
 
 While a bound document is unreadable, a device MUST report its path and reason in the pull's `flagged` entries.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
 ### `folders/unreadable-rename`
 
 When an unreadable document moves and its identity or readable `marfa_id` establishes the same item, a device MUST retain that item binding.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`, `device/folders.test.ts › keeps an unreadable file's item when it moves with no identity`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`, `device/folders-frontmatter.test.ts › keeps an unreadable file's item when it moves with no identity`.
 
 ### `folders/unreadable-repaired`
 
 When an unreadable document is repaired, a device MUST process its edit normally.
 
-**Tests:** `device/folders.test.ts › holds a file whose frontmatter does not parse`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
 ### `folders/encoding-flag`
 
 If a document is not UTF-8 text or contains a NUL byte, then a device MUST flag it `encoding` with the reason.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/encoding-no-send`
 
 While a document is held for encoding, a device MUST NOT send its content.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/encoding-preserve`
 
 While a document is held for encoding, a device MUST preserve its bytes during pull.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/encoding-status`
 
 While a document is held for encoding, the command MUST list it as `held` in `folders status`.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/encoding-repaired`
 
 When a document is saved as UTF-8 without NUL bytes, a device MUST admit its content.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/file-bytes-not-document`
 
@@ -1376,115 +1376,115 @@ When a non-document file contains bytes that are not valid UTF-8 or include NUL,
 
 When a pull writes a Markdown file, a device MUST write `marfa_version` naming the item version rendered.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`.
+**Tests:** `device/folders-placement.test.ts › bases a stale file's edit on the version written in it`.
 
 ### `folders/version-stale-merge`
 
 When a file names an older version not consumed by its accepted edits, a device MUST send the property edit as a merge based on that version, including a version the copy never held.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › merges a file whose line names a version the copy skipped against that line`, `device/folders.test.ts › merges a file behind the copy, clearing nothing its lines left out`.
+**Tests:** `device/folders-placement.test.ts › bases a stale file's edit on the version written in it`, `device/folders-placement.test.ts › merges a file whose line names a version the copy skipped against that line`, `device/folders-placement.test.ts › merges a file behind the copy, clearing nothing its lines left out`.
 
 ### `folders/version-absent-merge`
 
 When a document edit has no usable version line, a device MUST send its properties as a merge rather than a replacement.
 
-**Tests:** `device/folders.test.ts › merges an edit from a file with no version line`, `device/folders.test.ts › reads a quoted version line as the version, and a removed one as no version`.
+**Tests:** `device/folders-frontmatter.test.ts › merges an edit from a file with no version line`, `device/folders-frontmatter.test.ts › reads a quoted version line as the version, and a removed one as no version`.
 
 ### `folders/version-consumed`
 
 When an earlier accepted edit consumed a file's version line, a device MUST base the next edit from that line on the copy's current version.
 
-**Tests:** `device/folders.test.ts › bases a stale file's edit on the version written in it`, `device/folders.test.ts › keeps a line an edit spent spent after the pull rewrites it`.
+**Tests:** `device/folders-placement.test.ts › bases a stale file's edit on the version written in it`, `device/folders-placement.test.ts › keeps a line an edit spent spent after the pull rewrites it`.
 
 ### `folders/version-rewrite-waiting`
 
 When a pull rewrites a file over its waiting edit and that edit later lands, a device MUST treat the rewritten line as consumed by the accepted edit.
 
-**Tests:** `device/folders.test.ts › keeps the line a pull wrote over a waiting edit spent, once that edit lands`, `device/folders.test.ts › keeps a line spent where a pull writes the file over the edit that spent it`.
+**Tests:** `device/folders-placement.test.ts › keeps the line a pull wrote over a waiting edit spent, once that edit lands`, `device/folders-placement.test.ts › keeps a line spent where a pull writes the file over the edit that spent it`.
 
 ### `folders/version-rewrite-refused`
 
 When a pull rewrites a file over a waiting edit that is then refused, a device MUST base the next edit from that rewritten file on its version line.
 
-**Tests:** `device/folders.test.ts › takes back the line a pull wrote over a waiting edit when that edit is refused`.
+**Tests:** `device/folders-placement.test.ts › takes back the line a pull wrote over a waiting edit when that edit is refused`.
 
 ### `folders/version-answered-unchanged`
 
 When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit was accepted or conflicted, a device MUST base the next edit from that newer buffer on its own version line.
 
-**Tests:** `device/folders.test.ts › lifts no answered edit's line when a pull writes over a waiting one, a conflicted edit's included`.
+**Tests:** `device/folders-placement.test.ts › lifts no answered edit's line when a pull writes over a waiting one, a conflicted edit's included`.
 
 ### `folders/version-dead-unchanged`
 
 When a pull writes a newer version line over a waiting edit that is then refused after an earlier edit died, a device MUST base the next edit from that newer buffer on its own version line.
 
-**Tests:** `device/folders.test.ts › lifts no dead edit's line when a pull writes over a later waiting one`.
+**Tests:** `device/folders-placement.test.ts › lifts no dead edit's line when a pull writes over a later waiting one`.
 
 ### `folders/version-external-write`
 
 When a write queued outside the file lands after a pull rewrote the file over it, a device MUST base the next file edit on the copy's current version.
 
-**Tests:** `device/folders.test.ts › keeps the line a pull wrote over an edit queued outside the file spent, once that edit lands`.
+**Tests:** `device/folders-placement.test.ts › keeps the line a pull wrote over an edit queued outside the file spent, once that edit lands`.
 
 ### `folders/version-dead-consumed`
 
 When an edit dies after exhausting retries, a device MUST base another edit from that same buffer on the copy's current version.
 
-**Tests:** `device/folders.test.ts › keeps a dead edit's line spent, since the server may have taken it`.
+**Tests:** `device/folders-placement.test.ts › keeps a dead edit's line spent, since the server may have taken it`.
 
 ### `folders/version-dead-refused`
 
 When a released dead edit is explicitly refused and no accepted edit has used its version line, a device MUST base the next edit from that buffer on the buffer's version line.
 
-**Tests:** `device/folders.test.ts › takes back a dead edit's line once, released, the server refuses it`.
+**Tests:** `device/folders-placement.test.ts › takes back a dead edit's line once, released, the server refuses it`.
 
 ### `folders/version-only-save`
 
 When a save changes only `marfa_version`, a device MUST NOT send an item edit.
 
-**Tests:** `device/folders.test.ts › sends nothing for a save that changes only the version line`.
+**Tests:** `device/folders-placement.test.ts › sends nothing for a save that changes only the version line`.
 
 ### `folders/version-ancestor-missing`
 
 When the server no longer holds the file edit's ancestor version, a device MUST retry the edit as a property merge on the copy's current version.
 
-**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
+**Tests:** `device/folders-placement.test.ts › sends over a thinned version as a merge, and says so`.
 
 ### `folders/version-rebased-count`
 
 When a folder edit is resent after its ancestor version is unavailable, a device MUST count that resend as `rebased`.
 
-**Tests:** `device/folders.test.ts › sends over a thinned version as a merge, and says so`.
+**Tests:** `device/folders-placement.test.ts › sends over a thinned version as a merge, and says so`.
 
 ### `folders/version-rebased-words`
 
 When a push or watch resends an edit because its ancestor version is unavailable, the command MUST say that it was resent on the version the copy holds.
 
-**Tests:** `device/folders.test.ts › says in words that an edit went over a thinned version`, `device/folders.test.ts › says while watching that an edit went over a thinned version`.
+**Tests:** `device/folders-placement.test.ts › says in words that an edit went over a thinned version`, `device/folders-placement.test.ts › says while watching that an edit went over a thinned version`.
 
 ### `folders/version-rebase-limit`
 
 When an edit resent after an unavailable ancestor is blocked for another unavailable ancestor, a device MUST leave it blocked until another pass.
 
-**Tests:** `device/folders.test.ts › stops at one resend where the server no longer holds the version the copy holds either`.
+**Tests:** `device/folders-placement.test.ts › stops at one resend where the server no longer holds the version the copy holds either`.
 
 ### `folders/version-only-pull`
 
 When a remote version change alters nothing rendered in the file, a device MUST leave the file's bytes unchanged.
 
-**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`.
+**Tests:** `device/folders-placement.test.ts › does not rewrite a file for its version line alone`.
 
 ### `folders/version-own-edit-landed`
 
 When the file's own edit lands and the file remains unchanged since scan, a device MUST update its version line to the accepted version.
 
-**Tests:** `device/folders.test.ts › does not rewrite a file for its version line alone`, `device/folders.test.ts › writes the line into a file saved without one, once its edit lands`.
+**Tests:** `device/folders-placement.test.ts › does not rewrite a file for its version line alone`, `device/folders-placement.test.ts › writes the line into a file saved without one, once its edit lands`.
 
 ### `folders/version-own-edit-after-pull`
 
 When a file's own edit lands after a pull wrote the file while it waited, a device MUST update the version line again to the accepted version.
 
-**Tests:** `device/folders.test.ts › rewrites the line once its own edit lands, where a pull wrote the file while that edit waited`.
+**Tests:** `device/folders-placement.test.ts › rewrites the line once its own edit lands, where a pull wrote the file while that edit waited`.
 
 ### `folders/version-unknown-base`
 
@@ -1504,271 +1504,271 @@ When a device sends a document edit, a device MUST omit `marfa_version` from ite
 
 When a changed file names a newly registered edge type and the server is reachable, a device MUST read the line as an edge rather than a property.
 
-**Tests:** `device/folders.test.ts › learns an edge type the server registers, and reads its line as an edge`, `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
+**Tests:** `device/folders-frontmatter.test.ts › learns an edge type the server registers, and reads its line as an edge`, `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 
 ### `folders/edge-target-hydration`
 
 When a new edge type is written at its target, a device MUST refresh the folder slice to hold that type whole at the next push.
 
-**Tests:** `device/folders.test.ts › learns an edge type the server registers, and reads its line as an edge`.
+**Tests:** `device/folders-frontmatter.test.ts › learns an edge type the server registers, and reads its line as an edge`.
 
 ### `folders/edge-title-outside-folder`
 
 When a document writes an edge to a readable item outside the folder search, a device MUST render that target by title where the name is unambiguous.
 
-**Tests:** `device/folders.test.ts › writes and reads back by title a link to an item with no file on this Mac`.
+**Tests:** `device/folders-frontmatter.test.ts › writes and reads back by title a link to an item with no file on this Mac`.
 
 ### `folders/edge-pin-held`
 
 While at least one document line names an item outside the slice, a device MUST retain the pin it made for that item.
 
-**Tests:** `device/folders.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
 
 ### `folders/edge-pin-release`
 
 When no file binding or edge line requires an item pinned by the folder, a device MUST release the folder's pin.
 
-**Tests:** `device/folders.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
 
 ### `folders/edge-pin-other-owner`
 
 When an edge line is removed, a device MUST retain a pin for its target that the folder did not create.
 
-**Tests:** `device/folders.test.ts › holds a pin while a line names its row, and lets go only a pin it made`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`.
 
 ### `folders/edge-writing-end`
 
 When rendering an edge, a device MUST write its frontmatter line only at the end named by the edge type's `written_at`, using its forward name at the source or reverse name at the target.
 
-**Tests:** `device/folders.test.ts › writes an edge in one file only`, `device/folders.test.ts › writes parent-of as child-of in the child`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`, `device/folders-frontmatter.test.ts › writes parent-of as child-of in the child`.
 
 ### `folders/edge-file-fallback`
 
 When an edge's designated writing end cannot carry frontmatter, a device MUST write the edge at the other document end under its name there.
 
-**Tests:** `device/folders.test.ts › writes attached-to in the attachment's file, and has-attachment in an image's host`.
+**Tests:** `device/folders-frontmatter.test.ts › writes attached-to in the attachment's file, and has-attachment in an image's host`.
 
 ### `folders/edge-unknown-writer`
 
 When the copy cannot determine whether an edge's designated writing end carries frontmatter, a device MUST preserve a typed reverse line at the other end.
 
-**Tests:** `device/folders.test.ts › keeps a typed has-attachment to an image the copy does not hold`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps a typed has-attachment to an image the copy does not hold`.
 
 ### `folders/edge-title-format`
 
 When a target has one unambiguous title that link syntax can represent, a device MUST render an edge target as `[[title]]`.
 
-**Tests:** `device/folders.test.ts › writes an edge in one file only`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`.
 
 ### `folders/edge-id-format`
 
 When a target title is ambiguous or cannot be represented in link syntax, a device MUST render the edge target as `[[id]]`.
 
-**Tests:** `device/folders.test.ts › writes the id form where a name is repeated`, `device/folders.test.ts › writes by id a title a link cannot hold`.
+**Tests:** `device/folders-frontmatter.test.ts › writes the id form where a name is repeated`, `device/folders-frontmatter.test.ts › writes by id a title a link cannot hold`.
 
 ### `folders/edge-id-read`
 
 When an edge line names a readable item by ID, optionally followed by a heading or alias, a device MUST resolve that ID even if the item has no file in the folder.
 
-**Tests:** `device/folders.test.ts › resolves a target written by id`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves a target written by id`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
 ### `folders/edge-filename-read`
 
 When an edge line uniquely names a bound file by filename, a device MUST resolve it to that file's item.
 
-**Tests:** `device/folders.test.ts › resolves a name by its file's name, and keeps it as typed`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves a name by its file's name, and keeps it as typed`.
 
 ### `folders/edge-alias`
 
 When an edge line unambiguously names a target with an alias or heading, a device MUST resolve the name before `|` or `#`.
 
-**Tests:** `device/folders.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
 ### `folders/edge-deduplicate-target`
 
 When several names in one edge line resolve to the same item, a device MUST treat them as one target.
 
-**Tests:** `device/folders.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
 ### `folders/edge-name-syntax-ambiguity`
 
 If an edge-line target resolves as its full text to one item and as a name with a heading or alias to a different item, then a device MUST flag the line `edges` instead of choosing a target.
 
-**Tests:** `device/folders.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
 
 ### `folders/edge-name-unmatched`
 
 If a typed edge target matches no readable item, then a device MUST flag the file `edges` with the unmatched name.
 
-**Tests:** `device/folders.test.ts › flags an unmatched name and leaves it as typed`.
+**Tests:** `device/folders-frontmatter.test.ts › flags an unmatched name and leaves it as typed`.
 
 ### `folders/edge-name-ambiguous`
 
 If a typed edge target matches more than one readable item, then a device MUST flag the file `edges` with the ambiguity.
 
-**Tests:** `device/folders.test.ts › flags an ambiguous name and leaves it as typed`, `device/fidelity.test.ts › matches the name lookup a folder asks the server for a typed name`.
+**Tests:** `device/folders-frontmatter.test.ts › flags an ambiguous name and leaves it as typed`, `device/fidelity.test.ts › matches the name lookup a folder asks the server for a typed name`.
 
 ### `folders/edge-name-kept`
 
 When an edge line already resolves to its item, a device MUST preserve the typed target through a pull that rewrites the file.
 
-**Tests:** `device/folders.test.ts › resolves a name by its file's name, and keeps it as typed`, `device/folders.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves a name by its file's name, and keeps it as typed`, `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
 
 ### `folders/edge-new-namesake`
 
 When another item takes an existing edge target's name, a device MUST retain the existing edge target.
 
-**Tests:** `device/folders.test.ts › leaves an existing link unchanged when a same-named item appears`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves an existing link unchanged when a same-named item appears`.
 
 ### `folders/edge-lookup-waits`
 
 When name lookup cannot reach a server, a device MUST flag the unresolved edge name as waiting for lookup.
 
-**Tests:** `device/folders.test.ts › waits for the server to resolve a name, and resolves it at the next pass that reaches it`.
+**Tests:** `device/folders-frontmatter.test.ts › waits for the server to resolve a name, and resolves it at the next pass that reaches it`.
 
 ### `folders/edge-lookup-retries`
 
 When the server becomes reachable after a name lookup waited, a device MUST retry that lookup at the next scan.
 
-**Tests:** `device/folders.test.ts › waits for the server to resolve a name, and resolves it at the next pass that reaches it`.
+**Tests:** `device/folders-frontmatter.test.ts › waits for the server to resolve a name, and resolves it at the next pass that reaches it`.
 
 ### `folders/edge-lookup-refused`
 
 When the server refuses a name lookup, a device MUST flag only the affected file with the refusal.
 
-**Tests:** `device/folders.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
+**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
 
 ### `folders/edge-lookup-no-repeat`
 
 While a file with a refused name lookup is unchanged, a device MUST NOT repeat that lookup.
 
-**Tests:** `device/folders.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
+**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
 
 ### `folders/edge-lookup-page-limit`
 
 When the fifth lookup page for a title property and spelling says more matches follow, a device MUST flag the name as exceeding the five-page lookup limit.
 
-**Tests:** `device/folders.test.ts › flags a name more common than the lookup reads`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup reads`.
 
 ### `folders/edge-lookup-states`
 
 When resolving an edge target by name, a device MUST consider archived items and exclude trashed items.
 
-**Tests:** `device/folders.test.ts › counts an archived match only the server holds, and none in the bin`.
+**Tests:** `device/folders-frontmatter.test.ts › counts an archived match only the server holds, and none in the bin`.
 
 ### `folders/edge-lookup-title-field`
 
 When resolving an edge target by title, a device MUST match the property that its type uses as the title.
 
-**Tests:** `device/folders.test.ts › matches a title only in the property its type keeps it in`.
+**Tests:** `device/folders-frontmatter.test.ts › matches a title only in the property its type keeps it in`.
 
 ### `folders/edge-line-removal`
 
 When a document removes a previously rendered edge line, a device MUST delete the edge that line represented.
 
-**Tests:** `device/folders.test.ts › removes the edge whose line was taken out`.
+**Tests:** `device/folders-frontmatter.test.ts › removes the edge whose line was taken out`.
 
 ### `folders/edge-unshown-kept`
 
 When an edge has arrived from elsewhere but has not appeared in the file, a device MUST preserve it when processing that file.
 
-**Tests:** `device/folders.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folders/edge-line-invalid-keeps-type`
 
 If an edge line has an unresolved target, names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type unchanged.
 
-**Tests:** `device/folders.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders.test.ts › flags an in-folder line and a line naming its own item`.
+**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`.
 
 ### `folders/edge-line-invalid-report`
 
 If an edge line is invalid, then a device MUST flag the file `edges` with the reason.
 
-**Tests:** `device/folders.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-contract-extra-c.test.ts › leaves an invalid bare edge line untouched while a valid link queues its edge`.
+**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-contract-extra-c.test.ts › leaves an invalid bare edge line untouched while a valid link queues its edge`.
 
 ### `folders/edge-line-no-item-edit`
 
 When a save changes only edge lines, a device MUST NOT send an item-property edit for those changes.
 
-**Tests:** `device/folders.test.ts › removes the edge whose line was taken out`, `device/folders.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › removes the edge whose line was taken out`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`.
 
 ### `folders/edge-replace-one`
 
 When a line changes the target of an end that holds one edge, a device MUST move the existing edge's other end in one write.
 
-**Tests:** `device/folders.test.ts › replaces a one-target edge's target in one step`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
+**Tests:** `device/folders-frontmatter.test.ts › replaces a one-target edge's target in one step`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
 
 ### `folders/edge-replace-keeps-properties`
 
 When a line moves an existing edge's other end, a device MUST preserve that edge's ID and properties.
 
-**Tests:** `device/folders.test.ts › replaces a one-target edge's target in one step`.
+**Tests:** `device/folders-frontmatter.test.ts › replaces a one-target edge's target in one step`.
 
 ### `folders/edge-replace-unshown-refused`
 
 When a line names a new target but the existing edge at that end has not appeared in the file, a device MUST flag the file.
 
-**Tests:** `device/folders.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folders/edge-replace-unshown-kept`
 
 When a line names a new target but the existing edge at that end has not appeared in the file, a device MUST leave that edge unchanged.
 
-**Tests:** `device/folders.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folders/edge-delete-already-gone`
 
 When an edge deletion is answered `edge_not_found`, a device MUST treat the requested removal as complete.
 
-**Tests:** `device/folders.test.ts › takes a delete of an edge already gone as done`.
+**Tests:** `device/folders-frontmatter.test.ts › takes a delete of an edge already gone as done`.
 
 ### `folders/edge-move-refused`
 
 When the server refuses an edge move, a device MUST retain the old edge in its working copy.
 
-**Tests:** `device/folders.test.ts › keeps the old edge where the replace is refused`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps the old edge where the replace is refused`.
 
 ### `folders/edge-move-refusal-holds`
 
 When the server refuses an edge move, a device MUST hold the document with the server's refusal reason.
 
-**Tests:** `device/folders.test.ts › keeps the old edge where the replace is refused`, `device/folders.test.ts › holds a file whose move a plain device drain saw refused`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps the old edge where the replace is refused`, `device/folders-frontmatter.test.ts › holds a file whose move a plain device drain saw refused`.
 
 ### `folders/edge-refusal-next-move`
 
 When a later edit replaces a refused edge move, a device MUST move from the edge's last accepted position.
 
-**Tests:** `device/folders.test.ts › keeps the old edge where the replace is refused`.
+**Tests:** `device/folders-frontmatter.test.ts › keeps the old edge where the replace is refused`.
 
 ### `folders/edge-move-gone-create`
 
 When an edge move is answered that the edge is gone, a device MUST create the edge the document line now requests.
 
-**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`, `device/folders.test.ts › makes the edge a gone move's line asks for at the next drain, where the first one stops`.
+**Tests:** `device/folders-frontmatter.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`, `device/folders-frontmatter.test.ts › makes the edge a gone move's line asks for at the next drain, where the first one stops`.
 
 ### `folders/edge-move-gone-properties`
 
 When an edge move is answered that the edge is gone, a device MUST preserve the former edge's properties in the replacement edge it creates for the document line.
 
-**Tests:** `device/folders.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`.
+**Tests:** `device/folders-frontmatter.test.ts › makes the edge a line asks for where its move finds the edge deleted elsewhere`.
 
 ### `folders/edge-move-waits-create`
 
 When a line moves an edge to an item whose create is queued, a device MUST wait for that item create before sending the move.
 
-**Tests:** `device/folders.test.ts › waits for the create of the item its line now names before it moves the edge`.
+**Tests:** `device/folders-frontmatter.test.ts › waits for the create of the item its line now names before it moves the edge`.
 
 ### `folders/edge-move-dead-keeps`
 
 When an edge move dies after its retries, a device MUST retain the accepted server edge.
 
-**Tests:** `device/folders.test.ts › leaves the server's edge whole where a move dies after its retries`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves the server's edge whole where a move dies after its retries`.
 
 ### `folders/edge-create-refusal-holds`
 
 When the server refuses an edge create from a document line, a device MUST report the refusal beside any unresolved-name flag for that file.
 
-**Tests:** `device/folders.test.ts › holds a file whose line's edge is refused, and says it beside a name it cannot resolve`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a file whose line's edge is refused, and says it beside a name it cannot resolve`.
 
 ### `folders/edge-catalog-boundaries`
 
@@ -1808,7 +1808,7 @@ When a Markdown body links to another item, a device MUST create a `references` 
 
 When a Markdown body already represents an edge as a link or embed, a device MUST NOT repeat it as a frontmatter edge line.
 
-**Tests:** `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`, `device/folders.test.ts › lists under has-attachment only what the body does not embed`, `device/folders.test.ts › resolves body links by title and nested filename without repeating references on pull`.
+**Tests:** `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`, `device/folders-frontmatter.test.ts › lists under has-attachment only what the body does not embed`, `device/folders-frontmatter.test.ts › resolves body links by title and nested filename without repeating references on pull`.
 
 ### `folders/body-unlinked-edge-line`
 
@@ -1820,229 +1820,229 @@ When a `references` edge has no matching body link, a device MUST render it as a
 
 When a Markdown body link names an ID, title, filename, or bound file path with an optional extension, heading, or alias, a device MUST resolve the linked item by the same name rules as frontmatter edge lines.
 
-**Tests:** `device/folders.test.ts › resolves body links by title and nested filename without repeating references on pull`, `device/folders.test.ts › reports ambiguous body links including whole names with heading or alias marks`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves body links by title and nested filename without repeating references on pull`, `device/folders-frontmatter.test.ts › reports ambiguous body links including whole names with heading or alias marks`.
 
 ### `folders/body-link-ambiguity`
 
 When a body-link name is ambiguous, including between its full text and its heading or alias interpretation, a device MUST report the ambiguity without choosing a target.
 
-**Tests:** `device/folders.test.ts › reports ambiguous body links including whole names with heading or alias marks`, `device/folders.test.ts › does not choose between existing references answering to the same body name`.
+**Tests:** `device/folders-frontmatter.test.ts › reports ambiguous body links including whole names with heading or alias marks`, `device/folders-frontmatter.test.ts › does not choose between existing references answering to the same body name`.
 
 ### `folders/body-code-comments`
 
 When a body link occurs in Markdown code, an HTML comment, or an Obsidian `%%` comment, a device MUST treat it as text.
 
-**Tests:** `device/folders.test.ts › ignores body links in code and comments while sending visible links`, `device/folders.test.ts › keeps visible references and removes code-only references with %s`.
+**Tests:** `device/folders-frontmatter.test.ts › ignores body links in code and comments while sending visible links`, `device/folders-frontmatter.test.ts › keeps visible references and removes code-only references with %s`.
 
 ### `folders/body-local-heading`
 
 When a body link names only a heading in the same document, a device MUST ignore it for edge creation.
 
-**Tests:** `device/folders.test.ts › resolves body links by title and nested filename without repeating references on pull`, `device/folders.test.ts › ignores body links in code and comments while sending visible links`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves body links by title and nested filename without repeating references on pull`, `device/folders-frontmatter.test.ts › ignores body links in code and comments while sending visible links`.
 
 ### `folders/body-note-embed`
 
 When a Markdown body embeds a document rather than a file item, a device MUST treat that embed as text.
 
-**Tests:** `device/folders.test.ts › reads an embed of a note, even one with a dot in its name, as text`, `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed of a note, even one with a dot in its name, as text`, `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`.
 
 ### `folders/body-lookup-retry`
 
 When a body-link lookup cannot reach the server, a device MUST retry it at the next pass that reaches the server.
 
-**Tests:** `device/folders.test.ts › waits for body link lookups and retries them when the server returns`.
+**Tests:** `device/folders-frontmatter.test.ts › waits for body link lookups and retries them when the server returns`.
 
 ### `folders/body-missing-report`
 
 When a body link resolves to no item, a device MUST flag its document with the link text and reason.
 
-**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
+**Tests:** `device/folders-frontmatter.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
 
 ### `folders/body-unresolved-keeps-edges`
 
 While a body link is unresolved, a device MUST retain the document's existing references until every link resolves.
 
-**Tests:** `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
+**Tests:** `device/folders-frontmatter.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
 
 ### `folders/embed-edge`
 
 When a Markdown body embeds a local file, a device MUST create an `attached-to` edge from the file item to the document item.
 
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/embed-edge-removal`
 
 When a document removes an embed, a device MUST delete that attachment edge.
 
-**Tests:** `device/folders.test.ts › removes the edge when the embed is taken out`, `device/folders.test.ts › removes the edge of an embed taken out between two scans before a push`.
+**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`, `device/folders-frontmatter.test.ts › removes the edge of an embed taken out between two scans before a push`.
 
 ### `folders/embed-file-kept`
 
 When a document removes an embed, a device MUST retain the embedded file on disk.
 
-**Tests:** `device/folders.test.ts › removes the edge when the embed is taken out`.
+**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`.
 
 ### `folders/embed-markdown-only`
 
 When a raw-text document contains embed syntax, a device MUST NOT create an attachment edge for that syntax.
 
-**Tests:** `device/folders.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders.test.ts › writes no file a .txt file's text embeds`.
+**Tests:** `device/folders-frontmatter.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders-frontmatter.test.ts › writes no file a .txt file's text embeds`.
 
 ### `folders/embed-raw-no-file`
 
 When a raw-text document contains embed syntax, a device MUST NOT materialize a file for that syntax.
 
-**Tests:** `device/folders.test.ts › writes no file a .txt file's text embeds`.
+**Tests:** `device/folders-frontmatter.test.ts › writes no file a .txt file's text embeds`.
 
 ### `folders/embed-code-comments`
 
 When embed syntax occurs in a code span, fenced code block, indented code block or comment, a device MUST treat it as text, including code nested inside lists or quotes.
 
-**Tests:** `device/folders.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders-contract-extra-c.test.ts › ignores embeds in list fences and indented code while reading a normal list paragraph`.
+**Tests:** `device/folders-frontmatter.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders-contract-extra-c.test.ts › ignores embeds in list fences and indented code while reading a normal list paragraph`.
 
 ### `folders/embed-path`
 
 When a Markdown embed names a path, a device MUST resolve it relative to the embedding document's directory, or the folder root for a leading `/`.
 
-**Tests:** `device/folders.test.ts › reads an embed's path as Obsidian reads one`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
 ### `folders/embed-path-escapes`
 
 When resolving an embed path, a device MUST decode percent escapes and remove its query or fragment.
 
-**Tests:** `device/folders.test.ts › reads an embed's path as Obsidian reads one`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
 ### `folders/embed-address`
 
 When an embed names an address beginning with `https://`, `//`, or `#`, a device MUST NOT treat it as a local file.
 
-**Tests:** `device/folders.test.ts › reads an embed's path as Obsidian reads one`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
 ### `folders/embed-path-case`
 
 When an embed path differs only in case from the matching file, a device MUST retain the file's own spelling.
 
-**Tests:** `device/folders.test.ts › reads an embed's path whatever its case, and keeps the file's own name`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed's path whatever its case, and keeps the file's own name`.
 
 ### `folders/embed-wiki-name`
 
 When `![[name]]` names a file, a device MUST prefer the root-relative path, then a matching path suffix at a directory boundary ordered by the embedding directory, shallowest depth, and path.
 
-**Tests:** `device/folders.test.ts › reads an embed by name as Obsidian resolves a name`.
+**Tests:** `device/folders-frontmatter.test.ts › reads an embed by name as Obsidian resolves a name`.
 
 ### `folders/embed-upload`
 
 When a document embeds an admissible file, a device MUST upload that file before creating its file item regardless of the search's admitted file types.
 
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/embed-held`
 
 While a document embeds a readable active or archived file item, a device MUST retain its file regardless of the folder search's type and state restrictions.
 
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`, `device/folders.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
 
 ### `folders/embed-path-placement`
 
 When a pull materializes a path embed, a device MUST place its file where the document's link names it.
 
-**Tests:** `device/folders.test.ts › writes an embedded file where its link says`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an embedded file where its link says`.
 
 ### `folders/embed-name-placement`
 
 When a pull materializes a name embed, a device MUST use an existing matching placement or file path, otherwise place a bare name beside the embedding document or a name containing a directory at the folder root.
 
-**Tests:** `device/folders.test.ts › writes an embedded file where its link says`, `device/folders.test.ts › writes a file embedded by name where its placement already answers to the name`, `device/folders.test.ts › writes a file embedded by name where another embed's path names it`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › writes a file embedded by name where its placement already answers to the name`, `device/folders-frontmatter.test.ts › writes a file embedded by name where another embed's path names it`.
 
 ### `folders/embed-placement-follows`
 
 When an embed determines a file's path, a device MUST update that file's `in-folder` placement to the path.
 
-**Tests:** `device/folders.test.ts › writes an embedded file where its link says`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an embedded file where its link says`.
 
 ### `folders/embed-renamed`
 
 When an embedded file is renamed so its old link no longer names it, a device MUST preserve the file's item and attachment edge at its new name.
 
-**Tests:** `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
 ### `folders/embed-renamed-report`
 
 When an embedded file is renamed so its old link no longer names it, a device MUST report the broken embed.
 
-**Tests:** `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
 ### `folders/embed-unresolved-line`
 
 When a renamed attachment no longer resolves from its body embed, a device MUST render its `has-attachment` line.
 
-**Tests:** `device/folders.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
 ### `folders/embed-attachment-hydration`
 
 When a folder search admits document types, a device MUST hold `attached-to` edges whole.
 
-**Tests:** `device/folders.test.ts › holds attachments whole only where its search holds a document`.
+**Tests:** `device/folders-frontmatter.test.ts › holds attachments whole only where its search holds a document`.
 
 ### `folders/embed-trashed-line`
 
 When an embedded item is trashed or its ability to carry frontmatter is unknown, a device MUST NOT repeat its attachment edge under `has-attachment`.
 
-**Tests:** `device/folders.test.ts › lists a trashed embedded file under has-attachment no more than a held one`.
+**Tests:** `device/folders-frontmatter.test.ts › lists a trashed embedded file under has-attachment no more than a held one`.
 
 ### `folders/embed-outside`
 
 When an embed path leads outside the folder, a device MUST report the embed in `embeds`.
 
-**Tests:** `device/folders.test.ts › reports an embed pointing outside the folder`.
+**Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
 ### `folders/embed-outside-no-write`
 
 When an embed path leads outside the folder, a device MUST NOT read or write the file it names.
 
-**Tests:** `device/folders.test.ts › reports an embed pointing outside the folder`.
+**Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
 ### `folders/embed-two-paths`
 
 When one attachment is embedded at different paths, a device MUST write it at the first path in path order.
 
-**Tests:** `device/folders.test.ts › writes an item embedded at two paths at the first, and reports the other`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an item embedded at two paths at the first, and reports the other`.
 
 ### `folders/embed-two-paths-report`
 
 When one attachment is embedded at different paths, a device MUST report each embed naming another path.
 
-**Tests:** `device/folders.test.ts › writes an item embedded at two paths at the first, and reports the other`.
+**Tests:** `device/folders-frontmatter.test.ts › writes an item embedded at two paths at the first, and reports the other`.
 
 ### `folders/embed-unresolved-keeps-edges`
 
 While an embed names a missing file or has an invalid raw-space path, a device MUST retain the document's existing attachment edges.
 
-**Tests:** `device/folders.test.ts › removes no attachment while an embed names nothing, and removes it once none does`.
+**Tests:** `device/folders-frontmatter.test.ts › removes no attachment while an embed names nothing, and removes it once none does`.
 
 ### `folders/embed-unreadable-target`
 
 When an embed names no attachment the key can read, a device MUST report the embed.
 
-**Tests:** `device/folders.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
+**Tests:** `device/folders-frontmatter.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
 
 ### `folders/embed-unreadable-no-write`
 
 When an embed names no attachment the key can read, a device MUST NOT write a file for it.
 
-**Tests:** `device/folders.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
+**Tests:** `device/folders-frontmatter.test.ts › reports an embed of a file the key cannot read, and writes nothing for it`.
 
 ### `folders/embed-ambiguous-target`
 
 When an embed name matches two attachments, a device MUST report the ambiguity.
 
-**Tests:** `device/folders.test.ts › writes nothing for a name two attachments share, and says so`.
+**Tests:** `device/folders-frontmatter.test.ts › writes nothing for a name two attachments share, and says so`.
 
 ### `folders/embed-ambiguous-no-write`
 
 When an embed name matches two attachments, a device MUST NOT write a file for it.
 
-**Tests:** `device/folders.test.ts › writes nothing for a name two attachments share, and says so`.
+**Tests:** `device/folders-frontmatter.test.ts › writes nothing for a name two attachments share, and says so`.
 
 ### `folders/body-self-link`
 
@@ -2074,205 +2074,205 @@ When an embedded file needs uploading, a device MUST leave its size-limit decisi
 
 When a file has a `.md` or `.markdown` extension in any letter case, a device MUST read its Markdown metadata.
 
-**Tests:** `device/folders.test.ts › reads the id of a Markdown file whatever the case of its extension`.
+**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`.
 
 ### `folders/id-rename`
 
 When a Markdown file moves with its `marfa_id` line intact and no stronger binding identifies another item, a device MUST retain the named item.
 
-**Tests:** `device/folders.test.ts › follows a rename by the id the file carries, and sends no edit of the item for it`.
+**Tests:** `device/folders-identity.test.ts › follows a rename by the id the file carries, and sends no edit of the item for it`.
 
 ### `folders/id-missing-binding`
 
 When a bound file is saved without its `marfa_id` line, a device MUST retain its item by its existing identity or path binding.
 
-**Tests:** `device/folders.test.ts › keeps the item when a save drops the id line`, `device/folders.test.ts › keeps a binding for every file after a swap that also edits both`.
+**Tests:** `device/folders-identity.test.ts › keeps the item when a save drops the id line`, `device/folders-identity.test.ts › keeps a binding for every file after a swap that also edits both`.
 
 ### `folders/id-minted`
 
 When an unbound document has no usable item ID, a device MUST create it under a newly minted ID without a natural key or version.
 
-**Tests:** `device/folders.test.ts › creates a file under the device's id and writes the id back once it lands`.
+**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`.
 
 ### `folders/id-after-create`
 
 When a document's create lands and its bytes have not changed since scan, a device MUST write the accepted `marfa_id` into the file.
 
-**Tests:** `device/folders.test.ts › creates a file under the device's id and writes the id back once it lands`.
+**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`.
 
 ### `folders/id-before-create`
 
 While a document's create is unanswered, a device MUST preserve its existing file bytes.
 
-**Tests:** `device/folders.test.ts › creates a file under the device's id and writes the id back once it lands`.
+**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`.
 
 ### `folders/id-concurrent-save`
 
 When a file changes after scan, a device MUST preserve the later save rather than writing metadata over it.
 
-**Tests:** `device/folders.test.ts › does not write back into a file changed since its scan`.
+**Tests:** `device/folders-identity.test.ts › does not write back into a file changed since its scan`.
 
 ### `folders/id-not-property`
 
 When a device sends a document create or edit, a device MUST omit `marfa_id` from the item properties.
 
-**Tests:** `device/folders.test.ts › keeps its id line out of what it sends the server`.
+**Tests:** `device/folders-identity.test.ts › keeps its id line out of what it sends the server`.
 
 ### `folders/id-removal-no-edit`
 
 When a save only removes `marfa_id`, a device MUST NOT send an item edit.
 
-**Tests:** `device/folders.test.ts › sends nothing for a save that only drops the id line`.
+**Tests:** `device/folders-identity.test.ts › sends nothing for a save that only drops the id line`.
 
 ### `folders/id-removal-restored`
 
 When a save only removes `marfa_id`, a device MUST restore the ID line at the next pull.
 
-**Tests:** `device/folders.test.ts › sends nothing for a save that only drops the id line`.
+**Tests:** `device/folders-identity.test.ts › sends nothing for a save that only drops the id line`.
 
 ### `folders/id-checkout`
 
 When an unbound Markdown file names an existing document in the copy, a device MUST send its changes to that item rather than creating another.
 
-**Tests:** `device/folders.test.ts › sends a checked-out file's edits to the item its id names, and nothing for one in step`.
+**Tests:** `device/folders-identity.test.ts › sends a checked-out file's edits to the item its id names, and nothing for one in step`.
 
 ### `folders/id-vacated-path`
 
 When a renamed file leaves its old path to a newly created file in the same scan, a device MUST create a separate item for the new file.
 
-**Tests:** `device/folders.test.ts › does not write a new file's body onto the item whose name it took`.
+**Tests:** `device/folders-identity.test.ts › does not write a new file's body onto the item whose name it took`.
 
 ### `folders/atomic-editor-save`
 
 When an editor replaces a bound file at the same path, a device MUST treat its changed content as an edit of the same item.
 
-**Tests:** `device/folders.test.ts › keeps an agent's whole-file rewrite the same item`.
+**Tests:** `device/folders-identity.test.ts › keeps an agent's whole-file rewrite the same item`.
 
 ### `folders/atomic-editor-unchanged`
 
 When an editor replaces a bound file with equivalent content at the same path, a device MUST NOT create or edit an item for the replacement.
 
-**Tests:** `device/folders.test.ts › keeps an unchanged rewrite the same item`.
+**Tests:** `device/folders-identity.test.ts › keeps an unchanged rewrite the same item`.
 
 ### `folders/atomic-editor-follow`
 
 When an editor replaces a bound file at the same path and then renames it, a device MUST follow the replacement as the same item.
 
-**Tests:** `device/folders.test.ts › keeps an unchanged rewrite the same item`.
+**Tests:** `device/folders-identity.test.ts › keeps an unchanged rewrite the same item`.
 
 ### `folders/copy-binding-precedence`
 
 When files in one folder claim the same item ID, a device MUST prefer the file identified by the existing binding.
 
-**Tests:** `device/folders.test.ts › keeps the id with the file its binding names`, `device/folders.test.ts › keeps the id with the original an editor saved without its line, over a copy carrying it`.
+**Tests:** `device/folders-identity.test.ts › keeps the id with the file its binding names`, `device/folders-identity.test.ts › keeps the id with the original an editor saved without its line, over a copy carrying it`.
 
 ### `folders/copy-older-precedence`
 
 When unbound files claim the same item ID and have distinct birth times, a device MUST prefer the file with the earlier birth time.
 
-**Tests:** `device/folders.test.ts › keeps the id with the older of two unbound files that carry it`.
+**Tests:** `device/folders-identity.test.ts › keeps the id with the older of two unbound files that carry it`.
 
 ### `folders/copy-new-item`
 
 When a file copies another file's item ID, a device MUST create a separate item for the copy under a fresh ID.
 
-**Tests:** `device/folders.test.ts › makes a copy a new item with a fresh id`.
+**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`.
 
 ### `folders/copy-write-id`
 
 When a copied document's create lands, a device MUST write the fresh ID into the copy.
 
-**Tests:** `device/folders.test.ts › makes a copy a new item with a fresh id`.
+**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`.
 
 ### `folders/copy-binding-kept`
 
 While a copy still carries its original's ID line after its own create lands, a device MUST retain the copy's own binding even if the original file disappears.
 
-**Tests:** `device/folders.test.ts › keeps a copy its own item once the original goes, before its id line is rewritten`.
+**Tests:** `device/folders-identity.test.ts › keeps a copy its own item once the original goes, before its id line is rewritten`.
 
 ### `folders/id-unknown-new`
 
 When an unbound document names an ID absent from the copy, a device MUST replace that ID with a fresh document ID on creation.
 
-**Tests:** `device/folders.test.ts › gives a fresh id to a file whose id names nothing`.
+**Tests:** `device/folders-identity.test.ts › gives a fresh id to a file whose id names nothing`.
 
 ### `folders/id-system-ignored`
 
 When an unbound document names a `system.*` item as its ID, a device MUST create a separate document item.
 
-**Tests:** `device/folders.test.ts › reads no id from a file naming the folder's own settings`.
+**Tests:** `device/folders-identity.test.ts › reads no id from a file naming the folder's own settings`.
 
 ### `folders/id-file-item-ignored`
 
 When an unbound document names a file item as its ID, a device MUST create a separate document item.
 
-**Tests:** `device/folders.test.ts › reads no id from a .txt file or from a document naming a file item`.
+**Tests:** `device/folders-identity.test.ts › reads no id from a .txt file or from a document naming a file item`.
 
 ### `folders/raw-text-body`
 
 When a file has a `.txt` extension in any letter case, a device MUST treat its complete text as the document body without reading or writing frontmatter.
 
-**Tests:** `device/folders.test.ts › reads a .txt file that opens with a --- block as a body`, `device/folders.test.ts › reads a .txt file whatever the case of its extension`, `device/folders.test.ts › follows a rename by device, inode and birth time`.
+**Tests:** `device/folders-identity.test.ts › reads a .txt file that opens with a --- block as a body`, `device/folders-identity.test.ts › reads a .txt file whatever the case of its extension`, `device/folders-identity.test.ts › follows a rename by device, inode and birth time`.
 
 ### `folders/identity-rename`
 
 When a file's unique filesystem identity survives a rename, a device MUST retain the same item.
 
-**Tests:** `device/folders.test.ts › follows a rename by device, inode and birth time`.
+**Tests:** `device/folders-identity.test.ts › follows a rename by device, inode and birth time`.
 
 ### `folders/identity-unusable`
 
 When an unbound file has no unique usable filesystem identity, a device MUST treat it as new rather than infer a rename from another missing file.
 
-**Tests:** `device/folders.test.ts › treats a file with no usable identity as new rather than guessing`.
+**Tests:** `device/folders-identity.test.ts › treats a file with no usable identity as new rather than guessing`.
 
 ### `folders/identity-admitted-files`
 
 When deciding whether file identities are unique, a device MUST consider only files the folder admits.
 
-**Tests:** `device/folders.test.ts › resolves identity over the files it holds, not every file in the tree`.
+**Tests:** `device/folders-identity.test.ts › resolves identity over the files it holds, not every file in the tree`.
 
 ### `folders/identity-equivalent-save`
 
 When a bound file is replaced with the same bytes and then renamed, a device MUST retain its item.
 
-**Tests:** `device/folders.test.ts › follows the rename of a file saved again with the same bytes`.
+**Tests:** `device/folders-identity.test.ts › follows the rename of a file saved again with the same bytes`.
 
 ### `folders/identity-unread-rename`
 
 When a renamed bound file has empty or unreadable bytes, a device MUST retain its item at the renamed path.
 
-**Tests:** `device/folders.test.ts › keeps a renamed file's item while its bytes are %s`.
+**Tests:** `device/folders-placement.test.ts › keeps a renamed file's item while its bytes are %s`.
 
 ### `folders/identity-unread-replacement`
 
 When an unreadable renamed file leaves a replacement at its previous path, a device MUST preserve the renamed file's ownership of its item.
 
-**Tests:** `device/folders.test.ts › keeps unread rename ownership over a replacement at the old path: %s`.
+**Tests:** `device/folders-placement.test.ts › keeps unread rename ownership over a replacement at the old path: %s`.
 
 ### `folders/identity-placement-bytes`
 
 When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the search, a device MUST bind it to that item.
 
-**Tests:** `device/folders.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders.test.ts › takes back an empty text file rendered from a missing body`.
+**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
 ### `folders/identity-takeback-search`
 
 When a file matches the old placement and bytes of an item the search no longer holds, a device MUST create a new item for that file.
 
-**Tests:** `device/folders.test.ts › takes back by placement and bytes only an item its search holds`.
+**Tests:** `device/folders-placement.test.ts › takes back by placement and bytes only an item its search holds`.
 
 ### `folders/identity-takeback-peer`
 
 When another folder has taken in an item, a device MUST NOT take back that item for a copy at its former placement.
 
-**Tests:** `device/folders.test.ts › takes no file back by its bytes for an item another folder on the Mac took in`.
+**Tests:** `device/folders-one-mac.test.ts › takes no file back by its bytes for an item another folder on the Mac took in`.
 
 ### `folders/watch-file-equivalence`
 
 When equivalent new files are present at startup or arrive while watching, a device MUST create equivalent item types and content.
 
-**Tests:** `device/folders.test.ts › binds the same file to the same item whether it was present at start or arrived while running`.
+**Tests:** `device/folders-identity.test.ts › binds the same file to the same item whether it was present at start or arrived while running`.
 
 ### `folders/copy-birth-tie`
 
@@ -2304,79 +2304,79 @@ When an unbound raw-text or binary file at an item's placement contains differen
 
 When an item has an `in-folder` edge to the folder, a device MUST place its file at the edge's root-relative `path`.
 
-**Tests:** `device/folders.test.ts › places an item where its in-folder edge says, on every Mac`.
+**Tests:** `device/folders-placement.test.ts › places an item where its in-folder edge says, on every Mac`.
 
 ### `folders/placement-edge-type`
 
 When another edge points to the folder's item, a device MUST NOT treat it as placement.
 
-**Tests:** `device/folders.test.ts › reads no other edge to the folder as a placement`.
+**Tests:** `device/folders-placement.test.ts › reads no other edge to the folder as a placement`.
 
 ### `folders/placement-remote-move`
 
 When another device changes an item's placement path, a device MUST move the file to that path at the next pull.
 
-**Tests:** `device/folders.test.ts › places an item where its in-folder edge says, on every Mac`.
+**Tests:** `device/folders-placement.test.ts › places an item where its in-folder edge says, on every Mac`.
 
 ### `folders/placement-first-type`
 
 When a newly encountered item has no placement, a device MUST derive its path from its title under the most specific first-placement type or ancestor, or the root if none matches.
 
-**Tests:** `device/folders.test.ts › places a new item from elsewhere under its type's first placement`, `device/folders.test.ts › places a new item under the most specific first placement naming its type`.
+**Tests:** `device/folders-placement.test.ts › places a new item from elsewhere under its type's first placement`, `device/folders-placement.test.ts › places a new item under the most specific first placement naming its type`.
 
 ### `folders/placement-create`
 
 When a device gives an unplaced item a file, a device MUST create the item's `in-folder` edge with that path.
 
-**Tests:** `device/folders.test.ts › places a new item from elsewhere under its type's first placement`, `device/folders.test.ts › writes the in-folder edge for a file made in the folder`, `device/folders.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`.
+**Tests:** `device/folders-placement.test.ts › places a new item from elsewhere under its type's first placement`, `device/folders-placement.test.ts › writes the in-folder edge for a file made in the folder`, `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`.
 
 ### `folders/placement-checkout`
 
 When a checked-out document is first bound, a device MUST place its item where the file sits.
 
-**Tests:** `device/folders.test.ts › places a checked-out file where it sits`.
+**Tests:** `device/folders-placement.test.ts › places a checked-out file where it sits`.
 
 ### `folders/placement-rename-only`
 
 When a file is renamed without a content change, a device MUST send only its placement change.
 
-**Tests:** `device/folders.test.ts › sends only the placement for a rename`.
+**Tests:** `device/folders-placement.test.ts › sends only the placement for a rename`.
 
 ### `folders/placement-not-document`
 
 When a device renders a file, a device MUST omit its `in-folder` edge from frontmatter and body links.
 
-**Tests:** `device/folders.test.ts › writes the in-folder edge for a file made in the folder`.
+**Tests:** `device/folders-placement.test.ts › writes the in-folder edge for a file made in the folder`.
 
 ### `folders/placement-give-way-duplicate`
 
 When another device's existing placement causes this device's placement create to be refused as a duplicate, a device MUST follow the accepted placement.
 
-**Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/fidelity.test.ts › matches the refusal of a second placement of one item in one folder`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/fidelity.test.ts › matches the refusal of a second placement of one item in one folder`.
 
 ### `folders/placement-give-way-stale`
 
 When another device's accepted placement causes this device's move to be refused as stale, a device MUST follow the accepted placement.
 
-**Tests:** `device/folders.test.ts › follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`.
 
 ### `folders/placement-give-way-count`
 
 When a device gives way to another device's placement, a device MUST count the result as `gave_way`.
 
-**Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders.test.ts › follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`.
 
 ### `folders/placement-give-way-queue`
 
 When a device gives way to another device's placement, a device MUST remove its obsolete refused or blocked placement writes from the queue.
 
-**Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders.test.ts › follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`.
 
 ### `folders/placement-newer-copy`
 
 When a device gives way to another machine's placement, a device MUST retain a newer placement already held in its working copy instead of replacing it with the older placement read from the server.
 
-**Tests:** `device/folders.test.ts › follows a move it heard of after the read it gives way from`.
+**Tests:** `device/folders-placement.test.ts › follows a move it heard of after the read it gives way from`.
 
 ### `folders/placement-give-way-atomic`
 
@@ -2396,103 +2396,103 @@ When a placement read during giving way finds an edge missing from the server, a
 
 When several items claim one path, a device MUST rank existing placements by creation time and then edge ID, ahead of unplaced items.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › gives a contested path to a placed item before an unplaced one, and to a file already there before a new one`, `device/folders.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`, `device/folders-contract-extra-c.test.ts › orders equal-time placement collisions by edge ID`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders-placement.test.ts › gives a contested path to a placed item before an unplaced one, and to a file already there before a new one`, `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`, `device/folders-contract-extra-c.test.ts › orders equal-time placement collisions by edge ID`.
 
 ### `folders/placement-collision-number`
 
 When an item cannot keep a contested path, a device MUST use the first available numbered sibling name after removing any existing number suffix.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › counts the free number past a file on disk, a path another item is placed at, and its own file`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders-placement.test.ts › counts the free number past a file on disk, a path another item is placed at, and its own file`.
 
 ### `folders/placement-collision-free`
 
 When choosing a numbered sibling path, a device MUST exclude paths occupied by other files or reserved by other placements while allowing the item's own file.
 
-**Tests:** `device/folders.test.ts › counts the free number past a file on disk, a path another item is placed at, and its own file`.
+**Tests:** `device/folders-placement.test.ts › counts the free number past a file on disk, a path another item is placed at, and its own file`.
 
 ### `folders/placement-collision-count`
 
 When a pull assigns a numbered sibling path, a device MUST count the item as `beside`.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
 
 ### `folders/placement-collision-write`
 
 When a pull assigns a numbered sibling path, a device MUST move the item's placement edge to that path.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
 
 ### `folders/placement-settles`
 
 When devices have received the same accepted placements and settled path conflicts, a device MUST stop sending unchanged placements.
 
-**Tests:** `device/folders.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
+**Tests:** `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
 
 ### `folders/placement-outside`
 
 When a placement is excluded by the folder lists, is inside a package, contains `..` or escapes through a symbolic link, a device MUST count it `outside`.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › does not walk into a package`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`, `device/folders.test.ts › does not walk into a package`.
 
 ### `folders/placement-outside-no-write`
 
 When a placement is excluded by the folder lists, contains `..`, or escapes through a symbolic link, a device MUST NOT write the file at that path.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
 
 ### `folders/placement-outside-edge-kept`
 
 When a placement is outside the paths the folder writes, a device MUST leave the edge's path unchanged.
 
-**Tests:** `device/folders.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
+**Tests:** `device/folders-placement.test.ts › places a file whose placement another item holds beside it, and writes none where its placement is unsafe`.
 
 ### `folders/placement-unsuited`
 
 When a placement extension would change a document into a non-document or a file item into another MIME type, a device MUST count it `unsuited`.
 
-**Tests:** `device/folders.test.ts › writes no file where its placement would make it another kind of file`.
+**Tests:** `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`.
 
 ### `folders/placement-unsuited-no-write`
 
 When a placement would make a file another kind of item, a device MUST NOT write the file at that path.
 
-**Tests:** `device/folders.test.ts › writes no file where its placement would make it another kind of file`.
+**Tests:** `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`.
 
 ### `folders/placement-filesystem-failure`
 
 When the filesystem refuses a placement, a device MUST count the affected item `unwritten`.
 
-**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
+**Tests:** `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
 
 ### `folders/placement-filesystem-keeps`
 
 When the filesystem refuses a placement, a device MUST retain the file at its previous path.
 
-**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
+**Tests:** `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
 
 ### `folders/placement-filesystem-continues`
 
 When the filesystem refuses one placement, a device MUST continue processing other files.
 
-**Tests:** `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
+**Tests:** `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`.
 
 ### `folders/placement-refusal-no-repeat`
 
 While a refused placement's path, settings, key ID, grant, and prior placement remain unchanged, a device MUST NOT resend that placement.
 
-**Tests:** `device/folders.test.ts › sends a placement the server refused once, until the settings or the key change`, `device/folders.test.ts › takes a key it could not read when a placement was refused as unchanged, and does not send the placement again`.
+**Tests:** `device/folders-placement.test.ts › sends a placement the server refused once, until the settings or the key change`, `device/folders-placement.test.ts › takes a key it could not read when a placement was refused as unchanged, and does not send the placement again`.
 
 ### `folders/placement-refusal-new-path`
 
 When a file moves after its placement was refused, a device MUST try the new path.
 
-**Tests:** `device/folders.test.ts › sends a placement the server refused once, until the settings or the key change`.
+**Tests:** `device/folders-placement.test.ts › sends a placement the server refused once, until the settings or the key change`.
 
 ### `folders/placement-key-push`
 
 When a push holds a refused placement, a device MUST reread the key's current grant before deciding whether to retry.
 
-**Tests:** `device/folders.test.ts › sends a refused placement again once the key's grant is restored, and not while the key cannot be read`.
+**Tests:** `device/folders-placement.test.ts › sends a refused placement again once the key's grant is restored, and not while the key cannot be read`.
 
 ### `folders/placement-key-watch`
 
@@ -2506,61 +2506,61 @@ While a watch holds refused placements, a device MUST limit key rereads, includi
 
 When a watch observes that the placement grant has been restored, a device MUST retry the refused placement.
 
-**Tests:** `device/folders.test.ts › sends a refused placement again while watching, once the key's grant is restored, reading the key at most once a minute`.
+**Tests:** `device/folders-placement.test.ts › sends a refused placement again while watching, once the key's grant is restored, reading the key at most once a minute`.
 
 ### `folders/placement-key-unreadable`
 
 When the key cannot be read, a device MUST treat it as unchanged for retrying refused placements.
 
-**Tests:** `device/folders.test.ts › sends a refused placement again once the key's grant is restored, and not while the key cannot be read`, `device/folders.test.ts › takes a key it could not read when a placement was refused as unchanged, and does not send the placement again`.
+**Tests:** `device/folders-placement.test.ts › sends a refused placement again once the key's grant is restored, and not while the key cannot be read`, `device/folders-placement.test.ts › takes a key it could not read when a placement was refused as unchanged, and does not send the placement again`.
 
 ### `folders/placement-refusal-cleared`
 
 When a later placement for an item lands, a device MUST release that item's earlier placement refusal.
 
-**Tests:** `device/folders.test.ts › follows another Mac's move of an item whose move it was refused`, `device/folders.test.ts › sends a refused move again once a later placement of the item lands`.
+**Tests:** `device/folders-placement.test.ts › follows another Mac's move of an item whose move it was refused`, `device/folders-placement.test.ts › sends a refused move again once a later placement of the item lands`.
 
 ### `folders/purged-placement-refusal`
 
 When a refused placement belongs to an item no longer held in the working copy, a device MUST stop reporting that placement as refused.
 
-**Tests:** `device/folders.test.ts › lets go of a refused placement once its item is purged`.
+**Tests:** `device/folders-identity.test.ts › lets go of a refused placement once its item is purged`.
 
 ### `folders/placement-refused-file-kept`
 
 While a file's placement move is refused, a device MUST leave the file at the person's chosen path.
 
-**Tests:** `device/folders.test.ts › keeps a file where the person moved it when the server refuses the move`.
+**Tests:** `device/folders-placement.test.ts › keeps a file where the person moved it when the server refuses the move`.
 
 ### `folders/placement-unplaced-count`
 
 When a pull holds refused placements, a device MUST report their count as `unplaced`.
 
-**Tests:** `device/folders.test.ts › sends a placement the server refused once, until the settings or the key change`.
+**Tests:** `device/folders-placement.test.ts › sends a placement the server refused once, until the settings or the key change`.
 
 ### `folders/placement-watch-notice`
 
 While a refused-placement count is unchanged, the command MUST NOT repeat its watch notice for each eventful pass.
 
-**Tests:** `device/folders.test.ts › says the placements it holds back once while watching`.
+**Tests:** `device/folders-placement.test.ts › says the placements it holds back once while watching`.
 
 ### `folders/placement-add-permission`
 
 If a key lacks `edge.in-folder:write`, then the command MUST refuse `folders add` naming that permission.
 
-**Tests:** `device/folders.test.ts › names the permission a key without in-folder write lacks, when it is added`, `device/fidelity.test.ts › matches the key a folder asks about when it is added`.
+**Tests:** `device/folders-placement.test.ts › names the permission a key without in-folder write lacks, when it is added`, `device/fidelity.test.ts › matches the key a folder asks about when it is added`.
 
 ### `folders/placement-add-cleanup`
 
 When `folders add` is refused for lacking placement permission, a device MUST remove the directory it created for the failed add.
 
-**Tests:** `device/folders.test.ts › names the permission a key without in-folder write lacks, when it is added`.
+**Tests:** `device/folders-placement.test.ts › names the permission a key without in-folder write lacks, when it is added`.
 
 ### `folders/placement-not-membership`
 
 When evaluating folder membership, a device MUST use the search independently of whether an item has a placement edge to the folder.
 
-**Tests:** `device/folders.test.ts › does not let placement decide what it holds`.
+**Tests:** `device/folders-placement.test.ts › does not let placement decide what it holds`.
 
 ### `folders/placement-current-path`
 
@@ -2602,7 +2602,7 @@ When `GET /keys/current` answers `403 forbidden` for a credential that is not a 
 
 When a watch cannot read the current key, a device MUST suppress repeated key requests across successive passes.
 
-**Tests:** `device/folders.test.ts › asks a key it could not read again at most once a minute while watching`.
+**Tests:** `device/folders-placement.test.ts › asks a key it could not read again at most once a minute while watching`.
 
 ## Ending a placement
 
@@ -2610,19 +2610,19 @@ When a watch cannot read the current key, a device MUST suppress repeated key re
 
 When a file leaves a folder because its item was trashed or left the search's states, a device MUST delete that folder's `in-folder` edge for the item.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+**Tests:** `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders-identity.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `device/folders.test.ts › lets a paused file whose item left by state go when the removal is put back, rather than journaling it again`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
 
 ### `folders/placement-end-transfer`
 
 When a file transfers to another folder on the machine and its original folder's search no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
+**Tests:** `device/folders-one-mac.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
 
 ### `folders/placement-end-delete`
 
 When a scan sends a missing file's item deletion or finds its item already trashed, a device MUST delete that folder's `in-folder` edge for the item.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file the person deleted`, `device/folders-contract-c-retry.test.ts › ends the placement of a missing file already trashed on another device`.
+**Tests:** `device/folders-identity.test.ts › ends a folder's placement of an item whose file the person deleted`, `device/folders-contract-c-retry.test.ts › ends the placement of a missing file already trashed on another device`.
 
 ### `folders/placement-last-binding`
 
@@ -2634,61 +2634,61 @@ While another file in the folder remains bound to an item, a device MUST NOT end
 
 If ending a departing file's placement fails locally, then a device MUST retain the file's binding so a later pass can retry ending the placement.
 
-**Tests:** `device/folders.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders.test.ts › leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace`.
+**Tests:** `device/folders-identity.test.ts › keeps the file and the placement where ending the placement fails, and ends it at the next push`, `device/folders-identity.test.ts › keeps the binding of a deleted file where ending its placement fails, and ends it at the next push`, `device/folders-one-mac.test.ts › leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace`.
 
 ### `folders/placement-purge-no-delete`
 
 When an item's purge removes its placement from the working copy, a device MUST NOT send a separate deletion of that placement.
 
-**Tests:** `device/folders.test.ts › sends nothing to end the placement of a purged item, which the purge took with it`.
+**Tests:** `device/folders-identity.test.ts › sends nothing to end the placement of a purged item, which the purge took with it`.
 
 ### `folders/placement-held-transfer`
 
 When a file moves to a folder that does not hold its item but its original folder's search still holds the item, a device MUST retain the original folder's placement.
 
-**Tests:** `device/folders.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
+**Tests:** `device/folders-one-mac.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
 
 ### `folders/placement-unmatched-kept`
 
 While a folder retains an item's file as `unmatched`, a device MUST retain that folder's placement of the item.
 
-**Tests:** `device/folders.test.ts › keeps a folder's placement of an item whose file stays where it is`.
+**Tests:** `device/folders-identity.test.ts › keeps a folder's placement of an item whose file stays where it is`.
 
 ### `folders/placement-restore-new`
 
 When a folder's search holds an item again after its placement ended, a device MUST place the item using the current first-placement setting or title as for a new item.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+**Tests:** `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
 
 ### `folders/placement-end-count`
 
 When a pull queues the end of a placement, a device MUST count that end in the pull report's `ended` field.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
+**Tests:** `device/folders-one-mac.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`, `device/folders-identity.test.ts › ends a folder's placement of an item that leaves by state, and places it again when it returns`, `cli/folder.test.ts › ends a folder's placement of an item put in the bin, and places it again on restore`.
 
 ### `folders/placement-end-same-push`
 
 When a folder sync's pull ends a placement, a device MUST send that end in the same sync unless `folders/push-server-unavailable`, `folders/push-credential-stopped` or `folders/push-undelivered` prevents a further drain.
 
-**Tests:** `device/folders.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`.
+**Tests:** `device/folders-one-mac.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `device/folders-identity.test.ts › ends a folder's placement of an item that is trashed, and places it again on restore`.
 
 ### `folders/placement-end-already-gone`
 
 When the server answers a placement's deletion with `edge_not_found`, a device MUST treat that placement as ended.
 
-**Tests:** `device/folders.test.ts › takes the end of a placement another machine ended first as done`.
+**Tests:** `device/folders-identity.test.ts › takes the end of a placement another machine ended first as done`.
 
 ### `folders/placement-end-refused-queue`
 
 When the server refuses a placement's deletion for the key's grant, a device MUST retain the refused deletion in the queue.
 
-**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
+**Tests:** `device/folders-identity.test.ts › asks once for the end of a placement the server refuses, and reports it`.
 
 ### `folders/placement-end-refused-once`
 
 While a refused placement deletion remains in the queue, a device MUST NOT queue another deletion of the same placement.
 
-**Tests:** `device/folders.test.ts › asks once for the end of a placement the server refuses, and reports it`.
+**Tests:** `device/folders-identity.test.ts › asks once for the end of a placement the server refuses, and reports it`.
 
 ## File writes and recovery
 
@@ -2696,73 +2696,73 @@ While a refused placement deletion remains in the queue, a device MUST NOT queue
 
 When a scan follows a device's own file write, a device MUST NOT treat that write as a user create or edit.
 
-**Tests:** `device/folders.test.ts › does not read its own writes back as changes`.
+**Tests:** `device/folders-placement.test.ts › does not read its own writes back as changes`.
 
 ### `folders/write-whole`
 
 When a device writes a document, file item, settings file or file transferred from another folder, a device MUST publish complete bytes or leave the previous file intact.
 
-**Tests:** `device/folders.test.ts › writes a file whole beside it and renames it over, so a failed write leaves the old one`, `device/folders.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`, `device/folders.test.ts › keeps its settings file its own when a crash cuts off writing it`, `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
+**Tests:** `device/folders-identity.test.ts › writes a file whole beside it and renames it over, so a failed write leaves the old one`, `device/folders-one-mac.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`, `device/folders-identity.test.ts › keeps its settings file its own when a crash cuts off writing it`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
 
 ### `folders/write-attributes`
 
 When a device replaces an existing file, a device MUST retain its supported extended attributes.
 
-**Tests:** `device/folders.test.ts › writes a file whole beside it and renames it over, so a failed write leaves the old one`.
+**Tests:** `device/folders-identity.test.ts › writes a file whole beside it and renames it over, so a failed write leaves the old one`.
 
 ### `folders/write-crash-no-edit`
 
 When a file write crashes before its new bytes land, a device MUST NOT send the previous file content as a user edit during recovery.
 
-**Tests:** `device/folders.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`, `device/folders.test.ts › restores a styled file's agreement after a pull crashes before landing`.
+**Tests:** `device/folders-identity.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`, `device/folders-identity.test.ts › restores a styled file's agreement after a pull crashes before landing`.
 
 ### `folders/write-crash-new-no-delete`
 
 When a new file write crashes before the file lands, a device MUST NOT journal that absent file as a user deletion.
 
-**Tests:** `device/folders.test.ts › journals no delete for a new file a crash cut off writing`.
+**Tests:** `device/folders-identity.test.ts › journals no delete for a new file a crash cut off writing`.
 
 ### `folders/write-crash-status`
 
 When a write crashes before replacing an unchanged existing file, the command MUST report that file as `in_step` during recovery.
 
-**Tests:** `device/folders.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`.
 
 ### `folders/write-crash-temporary-cleanup`
 
 When a crashed writer is no longer running, a device MUST remove its abandoned temporary files at the next scan.
 
-**Tests:** `device/folders.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file a crash cut off writing as its own, and sends nothing for it`.
 
 ### `folders/write-crash-take-in`
 
 When taking in another folder's file crashes before landing, a device MUST preserve the source file without journaling a deletion.
 
-**Tests:** `device/folders.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`.
+**Tests:** `device/folders-one-mac.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`.
 
 ### `folders/write-crash-settings`
 
 When a settings-file write crashes before landing, a device MUST retain the old file as its own prior write rather than send it as an edit.
 
-**Tests:** `device/folders.test.ts › keeps its settings file its own when a crash cuts off writing it`.
+**Tests:** `device/folders-identity.test.ts › keeps its settings file its own when a crash cuts off writing it`.
 
 ### `folders/write-editor-race`
 
 When a person changes a file before a pull's final check, a device MUST preserve that save instead of overwriting, removing, or letting go of the file.
 
-**Tests:** `device/folders.test.ts › leaves a file it would take away or rewrite where the person saved it meanwhile`, `device/folders.test.ts › leaves the file a move would take away where the person saved it meanwhile`, `device/folders.test.ts › leaves a file it let go where the person saved it meanwhile`.
+**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it meanwhile`, `device/folders-placement.test.ts › leaves the file a move would take away where the person saved it meanwhile`, `device/folders-one-mac.test.ts › leaves a file it let go where the person saved it meanwhile`.
 
 ### `folders/write-new-target-race`
 
 When a file appears after an absent target was checked, a device MUST leave the appearing file untouched.
 
-**Tests:** `device/folders.test.ts › keeps a file that appears after an absent landing target was checked`.
+**Tests:** `device/folders-identity.test.ts › keeps a file that appears after an absent landing target was checked`.
 
 ### `folders/write-failure-binding`
 
 When a replacement landing fails, a device MUST retain the previous item's binding and deletion journal at that path.
 
-**Tests:** `device/folders.test.ts › restores another item's binding and journal when a landing fails`.
+**Tests:** `device/folders-placement.test.ts › restores another item's binding and journal when a landing fails`.
 
 ### `folders/write-render-report`
 
@@ -2780,13 +2780,13 @@ When one document cannot be rendered safely, a device MUST continue writing othe
 
 When a settings file cannot be written, a device MUST report `settings.unwritten`.
 
-**Tests:** `device/folders.test.ts › reports a settings file it cannot write, and goes on`.
+**Tests:** `device/folders-identity.test.ts › reports a settings file it cannot write, and goes on`.
 
 ### `folders/write-settings-continues`
 
 When a settings file cannot be written, a device MUST continue the folder pass.
 
-**Tests:** `device/folders.test.ts › reports a settings file it cannot write, and goes on`.
+**Tests:** `device/folders-identity.test.ts › reports a settings file it cannot write, and goes on`.
 
 ### `folders/write-permissions`
 
@@ -2838,103 +2838,103 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 When a file returns at its own path or a new name within the rename grace, a device MUST cancel its journaled deletion.
 
-**Tests:** `device/folders.test.ts › takes the old path out of the journal when the file comes back under a new name`, `device/folders.test.ts › takes a file out of the journal when it comes back under its own name`, `device/folders.test.ts › defers a delete past the rename grace`.
+**Tests:** `device/folders-placement.test.ts › takes the old path out of the journal when the file comes back under a new name`, `device/folders-placement.test.ts › takes a file out of the journal when it comes back under its own name`, `device/folders-placement.test.ts › defers a delete past the rename grace`.
 
 ### `folders/delete-remote-revives`
 
 When another device changes a deleted item in content its file shows during the rename grace, a device MUST restore the file from the changed item.
 
-**Tests:** `device/folders.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
 
 ### `folders/delete-revived-cancels`
 
 When a deleted file is revived by a visible remote change, a device MUST cancel its journaled deletion.
 
-**Tests:** `device/folders.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
 
 ### `folders/delete-revived-count`
 
 When a deleted file is revived by a visible remote change, a device MUST count it `revived`.
 
-**Tests:** `device/folders.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`.
 
 ### `folders/delete-unshown-change`
 
 When a deleted item advances in version without changing content its file shows, a device MUST retain the journaled deletion.
 
-**Tests:** `device/folders.test.ts › sends a person's delete of a file whose item moved on elsewhere in nothing the file shows`, `device/folders.test.ts › keeps a deleted raw-text file gone after a version step even when its body looks like YAML`.
+**Tests:** `device/folders-identity.test.ts › sends a person's delete of a file whose item moved on elsewhere in nothing the file shows`, `device/folders-identity.test.ts › keeps a deleted raw-text file gone after a version step even when its body looks like YAML`.
 
 ### `folders/delete-path-reused`
 
 When another item takes a deleted file's path, a device MUST retain the original item's journaled deletion.
 
-**Tests:** `device/folders.test.ts › keeps a person's journaled delete when another item is placed at its path`.
+**Tests:** `device/folders-placement.test.ts › keeps a person's journaled delete when another item is placed at its path`.
 
 ### `folders/delete-left-by-state`
 
 When a locally deleted item leaves the folder search by state during the grace, a device MUST send its deletion after the grace.
 
-**Tests:** `device/folders.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
+**Tests:** `device/folders-identity.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
 
 ### `folders/delete-already-trashed`
 
 When a locally deleted item is already trashed, a device MUST NOT send another item deletion.
 
-**Tests:** `device/folders.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
+**Tests:** `device/folders-identity.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
 
 ### `folders/delete-at-startup`
 
 When a tracked file is absent at startup, a device MUST journal its deletion as it would a file removed while running.
 
-**Tests:** `device/folders.test.ts › journals a delete that happened while it was not running`.
+**Tests:** `device/folders-placement.test.ts › journals a delete that happened while it was not running`.
 
 ### `folders/root-gone-no-delete`
 
 While the folder directory is missing or replaced by another directory, a device MUST NOT trash its items because the original files cannot be read.
 
-**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`, `device/folders.test.ts › reads, writes and trashes nothing in a copy put in its directory's place`.
+**Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`, `device/folders-identity.test.ts › reads, writes and trashes nothing in a copy put in its directory's place`.
 
 ### `folders/root-gone-watch`
 
 While the folder directory is missing, the command MUST report that the directory cannot be found.
 
-**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
+**Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folders/root-gone-watch-continues`
 
 While the folder directory is missing, the command MUST keep the watch running.
 
-**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
+**Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folders/root-return-watch`
 
 When the folder directory returns, a device MUST resume the running watch's work.
 
-**Tests:** `device/folders.test.ts › trashes nothing while its directory is gone, and says so`.
+**Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folders/root-no-recreate`
 
 When the root directory disappears during a pull, a device MUST NOT recreate it.
 
-**Tests:** `device/folders.test.ts › does not make its directory anew when it goes away during a pull`.
+**Tests:** `device/folders-identity.test.ts › does not make its directory anew when it goes away during a pull`.
 
 ### `folders/root-write-count`
 
 When the root directory disappears before a file write, a device MUST count the blocked write `unwritten`.
 
-**Tests:** `device/folders.test.ts › does not make its directory anew when it goes away during a pull`.
+**Tests:** `device/folders-identity.test.ts › does not make its directory anew when it goes away during a pull`.
 
 ### `folders/walk-directory-gone`
 
 When a directory disappears during the walk, a device MUST report it in `directories` with flag `gone`.
 
-**Tests:** `device/folders.test.ts › journals no missing file in a pass a directory went away from while it was walked`.
+**Tests:** `device/folders-identity.test.ts › journals no missing file in a pass a directory went away from while it was walked`.
 
 ### `folders/walk-gone-no-journal`
 
 When a directory disappears during the walk, a device MUST NOT journal missing files from that incomplete walk.
 
-**Tests:** `device/folders.test.ts › journals no missing file in a pass a directory went away from while it was walked`.
+**Tests:** `device/folders-identity.test.ts › journals no missing file in a pass a directory went away from while it was walked`.
 
 ### `folders/root-gone-scan-report`
 
@@ -2994,31 +2994,31 @@ When a pull encounters files already deleted locally, a device MUST exclude thos
 
 When a catch-up has applied an item's purge, its file's path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
+**Tests:** `device/folders-identity.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
 
 ### `folders/purged-file-count`
 
 When a pull removes a purged item's file, a device MUST count that file in both `removed` and `purged`.
 
-**Tests:** `device/folders.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
+**Tests:** `device/folders-identity.test.ts › removes a purged item's file where its bytes are the folder's own, and says so`.
 
 ### `folders/purged-edit-preserve`
 
 When a purged item's file has changed since the device last wrote it, a device MUST preserve that file during a pull.
 
-**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
+**Tests:** `device/folders-identity.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
 
 ### `folders/purged-edit-count`
 
 When a pull preserves a purged item's changed file, a device MUST count that file as `kept`.
 
-**Tests:** `device/folders.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
+**Tests:** `device/folders-identity.test.ts › keeps a purged item's file the person changed since the folder wrote it, and says so`.
 
 ### `folders/purged-removal-report`
 
 When `folders pull` or `folders watch` reports removed files, the command MUST distinguish files removed because their items were purged from files removed because their items were trashed or left by state.
 
-**Tests:** `device/folders.test.ts › says in words that a purged item's file was removed`, `device/folders.test.ts › says while watching that a purged item's file was removed`.
+**Tests:** `device/folders-identity.test.ts › says in words that a purged item's file was removed`, `device/folders-identity.test.ts › says while watching that a purged item's file was removed`.
 
 ## Paths, links and files
 
@@ -3026,7 +3026,7 @@ When `folders pull` or `folders watch` reports removed files, the command MUST d
 
 When a device reads a folder placement path, a device MUST resolve the path from the folder root after discarding leading separators, empty components and `.` components.
 
-**Tests:** `device/folders.test.ts › reads a placement path with a leading separator from the folder's root`.
+**Tests:** `device/folders-placement.test.ts › reads a placement path with a leading separator from the folder's root`.
 
 ### `folders/parent-component-refused`
 
@@ -3086,13 +3086,13 @@ When a folder document removes a body link, a device MUST NOT delete an edge of 
 
 While a folder document contains an unresolved body link, a device MUST defer every `references` edge removal from that document.
 
-**Tests:** `device/folders.test.ts › removes no edge at all when a link in the body names nothing`, `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`.
+**Tests:** `device/folders.test.ts › removes no edge at all when a link in the body names nothing`, `device/folders-frontmatter.test.ts › reports missing body links and preserves removals until all links resolve`.
 
 ### `folders/deferred-removals-retried`
 
 When every remaining body link in a folder document resolves after reference removals were deferred, a device MUST queue the deferred removals.
 
-**Tests:** `device/folders.test.ts › removes no edge at all when a link in the body names nothing`, `device/folders.test.ts › remembers a link it stood down over, so a later removal still lands`, `device/folders.test.ts › reports missing body links and preserves removals until all links resolve`.
+**Tests:** `device/folders.test.ts › removes no edge at all when a link in the body names nothing`, `device/folders.test.ts › remembers a link it stood down over, so a later removal still lands`, `device/folders-frontmatter.test.ts › reports missing body links and preserves removals until all links resolve`.
 
 ### `folders/body-reference-not-repeated`
 
@@ -3116,13 +3116,13 @@ When a folder pull encounters a file at an item’s placement whose bytes it can
 
 When an unbound folder item’s placement already holds exactly its rendered bytes, a device MUST bind the existing file to that item.
 
-**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders.test.ts › takes back an empty text file rendered from a missing body`.
+**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
 ### `folders/rendered-file-adopted-bytes-unchanged`
 
 When an unbound folder item’s placement already holds exactly its rendered bytes, a device MUST NOT rewrite the existing file.
 
-**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders.test.ts › takes back an empty text file rendered from a missing body`.
+**Tests:** `device/folders.test.ts › takes back a file of its own the mapping had lost`, `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
 ### `folders/unowned-file-admitted`
 
@@ -3146,223 +3146,223 @@ When an item starts matching a folder’s search through a tag, property, state,
 
 When an item is trashed or leaves the states held by a folder's search, its file is not required by an embedding document, its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-**Tests:** `device/folders.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders.test.ts › removes the file of an item that leaves by state`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
 
 ### `folders/departed-binding-released`
 
 When a folder pull removes a departed item’s file, a device MUST release the file’s binding.
 
-**Tests:** `device/folders.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders.test.ts › removes the file of an item that leaves by state`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
 
 ### `folders/departed-item-not-deleted`
 
 When a folder pull removes a departed item’s file, a device MUST NOT queue deletion of the item.
 
-**Tests:** `device/folders.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders.test.ts › removes the file of an item that leaves by state`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
 
 ### `folders/restored-file-written`
 
 When a trashed item is restored into a folder’s search, a device MUST write its file at the next pull.
 
-**Tests:** `device/folders.test.ts › removes a trashed item's file and brings it back on restore`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`.
 
 ### `folders/missing-departure-not-pulled`
 
 When a departed folder item’s file is already missing from disk, a device MUST leave its deletion for the scan rather than count it as removed by the pull.
 
-**Tests:** `device/folders.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
+**Tests:** `device/folders-identity.test.ts › sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere`.
 
 ### `folders/returned-file-journal-cleared`
 
 When a folder pull removes a departed item’s file that returned after its deletion was journaled, a device MUST clear that journal entry.
 
-**Tests:** `device/folders.test.ts › takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete`.
 
 ### `folders/returned-item-not-deleted`
 
 When a folder pull removes a departed item’s file that returned after its deletion was journaled, a device MUST NOT queue deletion of the item.
 
-**Tests:** `device/folders.test.ts › takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete`.
+**Tests:** `device/folders-identity.test.ts › takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete`.
 
 ### `folders/departed-edited-file-kept`
 
 When a departed folder item’s file contains bytes changed since the folder wrote it, a device MUST preserve the file.
 
-**Tests:** `device/folders.test.ts › keeps a file the person changed after its item left, and says so`, `device/folders.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › keeps a file the person changed after its item left, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folders/departed-edited-file-kept-kept-count`
 
 When a departed folder item’s file contains bytes changed since the folder wrote it, a device MUST count the file as `kept`.
 
-**Tests:** `device/folders.test.ts › keeps a file the person changed after its item left, and says so`, `device/folders.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › keeps a file the person changed after its item left, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folders/departed-unreadable-file`
 
 When a folder pull cannot read a departed item’s file to verify its bytes, a device MUST preserve the file.
 
-**Tests:** `device/folders.test.ts › holds the file of an item that leaves by state where it cannot be read, and does not call it kept`.
+**Tests:** `device/folders-identity.test.ts › holds the file of an item that leaves by state where it cannot be read, and does not call it kept`.
 
 ### `folders/departed-unreadable-file-unwritten-count`
 
 When a folder pull cannot read a departed item’s file to verify its bytes, a device MUST count the item as `unwritten` rather than `kept`.
 
-**Tests:** `device/folders.test.ts › holds the file of an item that leaves by state where it cannot be read, and does not call it kept`.
+**Tests:** `device/folders-identity.test.ts › holds the file of an item that leaves by state where it cannot be read, and does not call it kept`.
 
 ### `folders/unmatched-file-kept`
 
 When an item leaves a folder’s search for a reason other than its state or purge and no other folder takes its file, a device MUST retain the bound file.
 
-**Tests:** `device/folders.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-kept-unmatched-count`
 
 When an item leaves a folder’s search for a reason other than its state or purge and no other folder takes its file, a device MUST count the file as `unmatched`.
 
-**Tests:** `device/folders.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-edits`
 
 When a bound folder file’s item no longer matches the search, a device MUST continue sending edits to that item.
 
-**Tests:** `device/folders.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
+**Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it`.
 
 ### `folders/unmatched-file-updated`
 
 When a bound unmatched folder item changes, a device MUST keep its existing file current under the same preservation rules as a search member’s file.
 
-**Tests:** `device/folders.test.ts › keeps an unmatched file current, so its second edit keeps another device's change`.
+**Tests:** `device/folders-identity.test.ts › keeps an unmatched file current, so its second edit keeps another device's change`.
 
 ### `folders/replaced-binding-unpinned`
 
 When another item takes a bound folder file’s path, a device MUST release the old item’s binding pin unless another file or edge still requires it.
 
-**Tests:** `device/folders.test.ts › lets go of the pin of an item whose file's path another item takes`.
+**Tests:** `device/folders-identity.test.ts › lets go of the pin of an item whose file's path another item takes`.
 
 ### `folders/embedded-archive-kept`
 
 When an embedded file item becomes archived outside the folder’s search, a device MUST keep its file while a document still embeds it.
 
-**Tests:** `device/folders.test.ts › sends an embedded file with its file`, `device/folders.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › keeps an embedded file archived elsewhere where its search holds active items only`.
 
 ### `folders/binary-created`
 
 When a nonempty non-document file is admitted by a folder’s search or an embed, a device MUST create a file item typed from its MIME type whose create waits for the bytes’ upload.
 
-**Tests:** `device/folders.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders.test.ts › sends an embedded file with its file`.
+**Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
 
 ### `folders/binary-edited`
 
 When the bytes of a bound file item change in a folder, a device MUST queue an upload followed by an item update naming the new bytes regardless of the file’s extension.
 
-**Tests:** `device/folders.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders.test.ts › sends an edited file item named like a document as bytes`.
+**Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-placement.test.ts › sends an edited file item named like a document as bytes`.
 
 ### `folders/binary-title-preserved`
 
 When a bound folder file item is renamed and its title differs from its old file name, a device MUST retain the item’s title.
 
-**Tests:** `device/folders.test.ts › keeps a title somebody set when the file moves`.
+**Tests:** `device/folders-placement.test.ts › keeps a title somebody set when the file moves`.
 
 ### `folders/blob-file-written`
 
 When a folder pull can obtain a file item’s bytes, a device MUST write those bytes as the file.
 
-**Tests:** `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
+**Tests:** `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
 
 ### `folders/blob-absent`
 
 When a folder pull cannot obtain a file item’s bytes for an environmental or local read failure, a device MUST report the item as `absent`.
 
-**Tests:** `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
+**Tests:** `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-placement.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
 
 ### `folders/blob-absent-no-placeholder`
 
 When a folder pull cannot obtain a file item’s bytes for an environmental or local read failure, a device MUST NOT write a placeholder file.
 
-**Tests:** `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
+**Tests:** `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-placement.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
 
 ### `folders/blob-retry`
 
 When a later folder pull can obtain bytes previously reported as absent, a device MUST retry writing the file.
 
-**Tests:** `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › keeps the file of an item whose new bytes cannot be had`, `device/folders.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
+**Tests:** `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-placement.test.ts › keeps the file of an item whose new bytes cannot be had`, `device/folders-placement.test.ts › counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give`.
 
 ### `folders/old-blob-file-kept`
 
 When a folder pull cannot obtain a file item’s changed bytes, a device MUST preserve the previous file’s bytes.
 
-**Tests:** `device/folders.test.ts › keeps the file of an item whose new bytes cannot be had`.
+**Tests:** `device/folders-placement.test.ts › keeps the file of an item whose new bytes cannot be had`.
 
 ### `folders/blob-credential-refused`
 
 When the server refuses the credential while a folder pull fetches file bytes, a device MUST fail the pull rather than count each file as absent.
 
-**Tests:** `device/folders.test.ts › ends a pull whose credential is refused, rather than counting each file absent`.
+**Tests:** `device/folders-placement.test.ts › ends a pull whose credential is refused, rather than counting each file absent`.
 
 ### `folders/blob-cache-released`
 
 When a folder file holds its item’s bytes and no pending upload needs them, a device MUST release any duplicate copy of those bytes kept beside the working copy.
 
-**Tests:** `device/folders.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
+**Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
 
 ### `folders/nonfile-blob-document`
 
 When an item outside the file types carries `blob_ref`, a device MUST render it as a document rather than writing the referenced blob as its file.
 
-**Tests:** `device/folders.test.ts › writes an item carrying a blob_ref outside the file types as a document`.
+**Tests:** `device/folders-placement.test.ts › writes an item carrying a blob_ref outside the file types as a document`.
 
 ### `folders/lost-row-file-kept`
 
 When a folder file’s create is refused and the copy loses the row, a device MUST preserve the person’s file.
 
-**Tests:** `device/folders.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folders/lost-row-edit-retried`
 
 When the person changes or moves a folder file whose row the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
 
-**Tests:** `device/folders.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders.test.ts › queues a file whose row the copy lost again once it moves`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › queues a file whose row the copy lost again once it moves`.
 
 ### `folders/lost-row-unchanged-held`
 
 While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
 
-**Tests:** `device/folders.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folders/lost-create-not-repeated`
 
 While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST NOT queue another create.
 
-**Tests:** `device/folders.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folders/lost-row-binding-ownership`
 
 When a live file has taken a lost file’s former path, a device MUST preserve the live file’s binding.
 
-**Tests:** `device/folders.test.ts › keeps a live file's binding when it takes a lost file's old name`, `device/folders.test.ts › keeps a live file's binding when it takes a lost file's old name, across a push`.
+**Tests:** `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name`, `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name, across a push`.
 
 ### `folders/lost-file-requeued`
 
 When a live file has taken a lost file’s former path, a device MUST requeue the lost file as a new item.
 
-**Tests:** `device/folders.test.ts › keeps a live file's binding when it takes a lost file's old name`, `device/folders.test.ts › keeps a live file's binding when it takes a lost file's old name, across a push`.
+**Tests:** `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name`, `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name, across a push`.
 
 ### `folders/lost-row-watch-notice`
 
 While a folder file stays bound to a row the copy no longer holds, the command MUST say its lost-row watch notice only once.
 
-**Tests:** `device/folders.test.ts › says in words when a file is bound to an item that is gone, once while watching`.
+**Tests:** `device/folders-identity.test.ts › says in words when a file is bound to an item that is gone, once while watching`.
 
 ### `folders/own-conflict-file-kept`
 
 When a folder save conflicts with the same device’s earlier save, a device MUST preserve the file’s newer bytes rather than overwrite them with the item’s earlier value.
 
-**Tests:** `device/folders.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
+**Tests:** `device/folders-placement.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
 
 ### `folders/own-conflict-retried`
 
 When a folder file’s newer save was set aside against the same device’s earlier save, a device MUST submit the retained bytes at the next scan as an edit based on the item’s current version.
 
-**Tests:** `device/folders.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
+**Tests:** `device/folders-placement.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
 
 ## Keeping up and other folders
 
@@ -3436,7 +3436,7 @@ When a folder watch hydration receives an answer no retry can change, the comman
 
 When a folder is added, a device MUST list its resolved directory, followed `system.folder` and store identity in the machine’s folder registry.
 
-**Tests:** `device/folders.test.ts › lists the folders on the Mac in one registry`, `device/folders.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`.
+**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`, `device/folders-one-mac.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`.
 
 ### `folders/registry-independent-stores`
 
@@ -3448,199 +3448,199 @@ When several folders are registered on one machine, a device MUST keep each fold
 
 A device MUST keep the folder registry at `MARFA_FOLDER_REGISTRY` when set, otherwise in `folders.json` under the machine’s application data directory.
 
-**Tests:** `device/folders.test.ts › keeps its registry under the home by default`.
+**Tests:** `device/folders-one-mac.test.ts › keeps its registry under the home by default`.
 
 ### `folders/registry-restored`
 
 When a registered folder performs a pass after its registry entry disappears or its directory moves, a device MUST register the folder’s current directory again.
 
-**Tests:** `device/folders.test.ts › lists a folder again where the registry lost it, a watch included`, `device/folders.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder again where the registry lost it, a watch included`, `device/folders-one-mac.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
 
 ### `folders/nested-folder-refused`
 
 When adding a folder would enclose or fall inside another listed folder, a device MUST refuse the add.
 
-**Tests:** `device/folders.test.ts › refuses a folder inside another, and walks past a folder inside it`.
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`.
 
 ### `folders/nested-folder-not-scanned`
 
 When a folder scan encounters a directory holding another folder’s `.marfa/` state, a device MUST exclude that directory’s contents from admission.
 
-**Tests:** `device/folders.test.ts › refuses a folder inside another, and walks past a folder inside it`, `device/folders.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`, `device/folders-one-mac.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
 
 ### `folders/nested-bound-file-held`
 
 When a bound file’s directory becomes another folder, a device MUST preserve the original binding.
 
-**Tests:** `device/folders.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
+**Tests:** `device/folders-one-mac.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
 
 ### `folders/nested-bound-file-held-unreached-count`
 
 When a bound file’s directory becomes another folder, a device MUST count the file as `unreached`.
 
-**Tests:** `device/folders.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
+**Tests:** `device/folders-one-mac.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
 
 ### `folders/nested-no-deletion`
 
 When a bound file’s directory becomes another folder, a device MUST NOT journal the file’s deletion.
 
-**Tests:** `device/folders.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
+**Tests:** `device/folders-one-mac.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
 
 ### `folders/remove-waiting-refused`
 
 When a confirmed folder has unanswered or blocked queued writes, a device MUST refuse to remove its state.
 
-**Tests:** `device/folders.test.ts › refuses to remove a folder with a blocked write`.
+**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder with a blocked write`.
 
 ### `folders/registry-one-directory`
 
 When the same resolved directory is registered through another spelling or for another `system.folder`, a device MUST retain only its current registry entry.
 
-**Tests:** `device/folders.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
 
 ### `folders/registry-removed-state`
 
 When a registry read finds a readable directory whose folder state was removed, a device MUST remove that directory’s registry entry.
 
-**Tests:** `device/folders.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
 
 ### `folders/registry-missing-kept`
 
 When a registry read finds a listed folder missing or unreadable, a device MUST retain its entry.
 
-**Tests:** `device/folders.test.ts › holds a delete while a listed folder is missing, until it lists itself again`, `device/folders.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, until it lists itself again`, `device/folders-one-mac.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`.
 
 ### `folders/registry-unreadable-deletes-held`
 
 When the machine’s registry cannot be read or disappears during a folder pass, a device MUST defer deletion of missing files whose move cannot be ruled out.
 
-**Tests:** `device/folders.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`, `device/folders.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`, `device/folders-one-mac.test.ts › holds a delete for a pass when the registry it was listed in is gone, and lists itself again`.
 
 ### `folders/registry-invalid-replaced-on-add`
 
 When a folder is added and the registry’s existing contents cannot be parsed, a device MUST replace the registry with a valid entry for that folder.
 
-**Tests:** `device/folders.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folders/one-folder-worker`
 
 While a process holds a folder for work, the command MUST refuse another working command on that folder with `reading_handle` before changing local or server state.
 
-**Tests:** `device/folders.test.ts › refuses to remove a folder a watch holds`, `device/folders.test.ts › lets one process work a folder at a time, and answers its status beside it`.
+**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder a watch holds`, `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
 
 ### `folders/status-beside-watch`
 
 While another process watches a folder, the command MUST answer `folders status` without acquiring the folder’s working handle.
 
-**Tests:** `device/folders.test.ts › lets one process work a folder at a time, and answers its status beside it`.
+**Tests:** `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
 
 ### `folders/cross-folder-copy`
 
 When a file’s ID already appears in another folder and the receiving folder already binds that item or its search excludes the item, a device MUST admit the arriving file as a new item.
 
-**Tests:** `device/folders.test.ts › tells a copy into another folder from a move`.
+**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folders/cross-folder-member-adopted`
 
 When a file arrives with an ID held by the receiving folder’s search and that folder has no file for the item, a device MUST bind the arriving file to the existing item.
 
-**Tests:** `device/folders.test.ts › takes a copy into a folder that holds the item and has no file of it as the item's file`.
+**Tests:** `device/folders-one-mac.test.ts › takes a copy into a folder that holds the item and has no file of it as the item's file`.
 
 ### `folders/cross-folder-item-read`
 
 When a file arrives with an ID held only by another folder’s copy and no file elsewhere still carries it, a device MUST read and pin the item from the server before binding it as the same item.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`, `device/folders.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`, `device/folders.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/cross-folder-hidden-item`
 
 When the server will not show the item named by a moved file’s ID, a device MUST admit the file as a new item.
 
-**Tests:** `device/folders.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`.
+**Tests:** `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`.
 
 ### `folders/saved-back-binding`
 
 When a file is saved back at a path whose binding remains after another folder took its file, a device MUST treat it as the bound item until that binding is released.
 
-**Tests:** `device/folders.test.ts › keeps a file saved back where another folder took the item's file from as the item's while its binding lasts`.
+**Tests:** `device/folders-one-mac.test.ts › keeps a file saved back where another folder took the item's file from as the item's while its binding lasts`.
 
 ### `folders/moved-file-not-trashed`
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`, `device/folders.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
 
 ### `folders/moved-file-not-trashed-item-preserved`
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`, `device/folders.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
 
 ### `folders/moved-file-count`
 
 When a scan identifies a missing folder file as moved to another registered folder, a device MUST count it as `moved_away`.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
 ### `folders/peer-owned-bytes-not-move`
 
 When another folder’s equal bytes belong to a different item, a device MUST NOT identify that file as the missing file’s move.
 
-**Tests:** `device/folders.test.ts › does not take another folder's file with the same bytes for a moved one`.
+**Tests:** `device/folders-one-mac.test.ts › does not take another folder's file with the same bytes for a moved one`.
 
 ### `folders/both-folders-copy`
 
 When two folder searches both hold an item and each folder has its own bound file, a device MUST NOT interpret either file as the other’s move.
 
-**Tests:** `device/folders.test.ts › tells a copy into another folder from a move`.
+**Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folders/missing-file-trashed`
 
 When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST queue deletion of its item.
 
-**Tests:** `device/folders.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
 
 ### `folders/missing-file-trashed-path-reported`
 
 When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST name the path in the scan report’s `trashed`.
 
-**Tests:** `device/folders.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
 
 ### `folders/missing-file-said`
 
 When a missing folder file is trashed after no other folder holds it, the command MUST say that no folder on the machine holds the file.
 
-**Tests:** `device/folders.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
 
 ### `folders/uncertain-move-deferred`
 
 When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST defer its deletion.
 
-**Tests:** `device/folders.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders.test.ts › holds a delete while another folder cannot be read whole`, `device/folders.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folders/uncertain-move-deferred-unsure-reported`
 
 When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST name the uncertainty in `unsure`.
 
-**Tests:** `device/folders.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders.test.ts › holds a delete while another folder cannot be read whole`, `device/folders.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folders/moved-arrival-bytes`
 
 When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
 
-**Tests:** `device/folders.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
 
 ### `folders/moved-awaiting-peer`
 
 When a folder item’s moved file is present in another folder but not bound there yet, a device MUST count the item as `elsewhere`.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
 ### `folders/moved-awaiting-peer-no-replacement`
 
 When a folder item’s moved file is present in another folder but not bound there yet, a device MUST NOT write a replacement file.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
 ## Taking in another folder’s file
 
@@ -3648,157 +3648,157 @@ When a folder item’s moved file is present in another folder but not bound the
 
 When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s search holds that item without a file, a device MUST take that file into its placement.
 
-**Tests:** `device/folders.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/take-in-file-taken-count`
 
 When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s search holds that item without a file, a device MUST count the file as `taken`.
 
-**Tests:** `device/folders.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/take-in-edited-source-kept`
 
 When another folder’s let-go file was edited since that folder last read it, a device MUST leave the source file for its own folder to send.
 
-**Tests:** `device/folders.test.ts › does not take in a let-go file edited since its folder last read it`.
+**Tests:** `device/folders-one-mac.test.ts › does not take in a let-go file edited since its folder last read it`.
 
 ### `folders/take-in-state-excluded`
 
 When an item left another folder by state, a device MUST NOT take in that folder’s file as a non-state departure.
 
-**Tests:** `device/folders.test.ts › does not take in the file of an item that left its folder by state`.
+**Tests:** `device/folders-one-mac.test.ts › does not take in the file of an item that left its folder by state`.
 
 ### `folders/take-in-destination-kept`
 
 When a file appears at the destination before a move-in lands, a device MUST preserve the destination file.
 
-**Tests:** `device/folders.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
 
 ### `folders/take-in-destination-kept-unwritten-count`
 
 When a file appears at the destination before a move-in lands, a device MUST report the refused placement as `unwritten`.
 
-**Tests:** `device/folders.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
 
 ### `folders/take-in-refused-source-kept`
 
 When a move-in cannot land because its destination became occupied, a device MUST retain the source file at its original path.
 
-**Tests:** `device/folders.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both files when a destination appears just before a move-in (%s)`.
 
 ### `folders/take-in-binding-kept`
 
 When a move-in is refused because its destination became occupied, a device MUST preserve the destination’s previous binding through that pull’s departure cleanup.
 
-**Tests:** `device/folders.test.ts › keeps both files when a destination appears just before a move-in (%s)`, `device/folders.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
+**Tests:** `device/folders-one-mac.test.ts › keeps both files when a destination appears just before a move-in (%s)`, `device/folders-one-mac.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
 ### `folders/take-in-journal-ownership`
 
 When a folder adopts matching destination bytes or takes in another folder’s file, a device MUST clear the arriving item’s journal entry.
 
-**Tests:** `device/folders.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
+**Tests:** `device/folders-one-mac.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
 ### `folders/take-in-previous-journal-kept`
 
 When a folder adopts matching destination bytes or takes in another folder’s file, a device MUST preserve any previous owner’s deletion journal entry.
 
-**Tests:** `device/folders.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
+**Tests:** `device/folders-one-mac.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
 ### `folders/take-in-copy-fallback`
 
 When a move-in fails across volumes or because a readable regular source has positively confirmed immutable protection, a device MUST try a copy with the same absent-target no-replace guarantee.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`, `device/folders.test.ts › preserves a source across copy publication failures (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`, `device/folders-one-mac.test.ts › preserves a source across copy publication failures (%s)`.
 
 ### `folders/take-in-denial-no-fallback`
 
 When a move-in fails with an ordinary permission denial and immutable protection is not confirmed, a device MUST refuse the move rather than copy the source.
 
-**Tests:** `device/folders.test.ts › refuses an ordinary source removal denial instead of copying`.
+**Tests:** `device/folders-one-mac.test.ts › refuses an ordinary source removal denial instead of copying`.
 
 ### `folders/take-in-copy-metadata`
 
 When a move-in uses a copy, a device MUST preserve the source’s permissions and applicable extended attributes, including Finder tags and quarantine.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/take-in-copy-refusal`
 
 When a move-in copy cannot preserve an attribute, verify the complete bytes or confirm unchanged regular-file identity before publication, a device MUST refuse publication.
 
-**Tests:** `device/folders.test.ts › preserves a source across copy publication failures (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › preserves a source across copy publication failures (%s)`.
 
 ### `folders/take-in-copy-refusal-source-preserved`
 
 When a move-in copy cannot preserve an attribute, verify the complete bytes or confirm unchanged regular-file identity before publication, a device MUST preserve the source.
 
-**Tests:** `device/folders.test.ts › preserves a source across copy publication failures (%s)`.
+**Tests:** `device/folders-one-mac.test.ts › preserves a source across copy publication failures (%s)`.
 
 ### `folders/take-in-copy-source-protection`
 
 When a move-in uses a copy because the source is immutable, a device MUST leave the source’s protection unchanged.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/take-in-destination-unprotected`
 
 When a move-in uses a copy because the source is immutable, a device MUST NOT apply immutable protection to the destination.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/take-in-source-retained`
 
 When a successful move-in copy cannot remove its source, a device MUST leave the source’s binding and journal intact.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-reported`
 
 When a copied source remains in its original folder because removal is denied, a device MUST retain the file’s unmatched status.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-reported-unwritten-count`
 
 When a copied source remains in its original folder because removal is denied, a device MUST report the file as `unwritten`.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-reported-bytes-preserved`
 
 When a copied source remains in its original folder because removal is denied, a device MUST NOT rewrite the file.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-later-removal`
 
 When removal of a retained copied source becomes possible and its identity and bytes still belong to the original folder, a device MUST remove the source.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-item-preserved`
 
 When removal of a retained copied source becomes possible and its identity and bytes still belong to the original folder, a device MUST NOT trash the item.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/retained-source-edit-kept`
 
 When the person edits a retained copied source before its removal becomes possible, a device MUST preserve the edit for that source folder to send.
 
-**Tests:** `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/let-go-existing-peer`
 
 When another registered folder already holds its own file for an item this folder no longer holds, a device MUST remove this folder’s unchanged owned file.
 
-**Tests:** `device/folders.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/let-go-existing-peer-let-go-count`
 
 When another registered folder already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
 
-**Tests:** `device/folders.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/unmatched-missing-not-rewritten`
 
@@ -3810,13 +3810,13 @@ When a bound unmatched file is missing from disk, a device MUST leave the missin
 
 When two folder searches hold one item, a device MUST keep each folder’s bound file editable through that folder’s own queue.
 
-**Tests:** `device/folders.test.ts › keeps two folders' files for one item editable`.
+**Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`.
 
 ### `folders/two-folders-delete`
 
 When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other folder’s file as a move.
 
-**Tests:** `device/folders.test.ts › keeps two folders' files for one item editable`, `device/folders.test.ts › trashes a file item deleted where both folders hold it`.
+**Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`, `device/folders-one-mac.test.ts › trashes a file item deleted where both folders hold it`.
 
 ## Pulls and pushes
 
@@ -3824,55 +3824,55 @@ When the person deletes either of two files whose folders both hold the item, a 
 
 If an item leaves the working copy before a pull writes its file, then a device MUST NOT write a file for that item.
 
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
 
 ### `folders/pull-gone-item-binding`
 
 If an item leaves the working copy before a pull writes its file, then a device MUST NOT bind a file to that item.
 
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
 
 ### `folders/pull-gone-item-placement`
 
 If an item leaves the working copy before a pull queues its placement, then a device MUST NOT queue a placement for that item.
 
-**Tests:** `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+**Tests:** `device/folders-identity.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
 
 ### `folders/pull-gone-item-continue`
 
 If an item leaves the working copy during a pull, then a device MUST continue the pull without failing solely because that item is gone.
 
-**Tests:** `device/folders.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`, `device/folders.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`, `device/folders-identity.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
 
 ### `folders/pull-retry-copy`
 
 When the working copy changes under a pull, a device MUST restart the pull from a fresh read of the copy, making at most three attempts in total.
 
-**Tests:** `device/folders.test.ts › pulls again where the copy changes under the pull`, `device/folders-contract-c.test.ts › retries a changed copy three times in total and succeeds on the third stable read`.
+**Tests:** `device/folders-identity.test.ts › pulls again where the copy changes under the pull`, `device/folders-contract-c.test.ts › retries a changed copy three times in total and succeeds on the third stable read`.
 
 ### `folders/pull-retry-counts`
 
 When a pull restarts after its working copy changes, a device MUST include completed file writes, rewrites, moves, revivals, placements, placement ends, removals, purged-file removals, transfers in and transfers out from earlier attempts in its final report.
 
-**Tests:** `device/folders.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains transfer-%s counts across a restart`.
+**Tests:** `device/folders-identity.test.ts › counts what an attempt wrote before the copy changed under it`, `device/folders-contract-c.test.ts › counts files and placements from before a restarted pull exactly once`, `device/folders-contract-c-retry.test.ts › retains rewrite and move counts across a restart`, `device/folders-contract-c-retry.test.ts › retains revival counts across a restart`, `device/folders-contract-c-retry.test.ts › retains removal, purge and placement-end counts across a restart`, `device/folders-contract-c-retry.test.ts › retains transfer-%s counts across a restart`.
 
 ### `folders/watch-copy-change-notice`
 
 When the working copy keeps changing under consecutive `folders watch` passes, the command MUST report the condition once for that run of passes.
 
-**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
+**Tests:** `device/folders-identity.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
 
 ### `folders/watch-copy-change-retry`
 
 When a watch pass exhausts its pull attempts because the working copy keeps changing, a device MUST continue watching and retry the pull in the next pass.
 
-**Tests:** `device/folders.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
+**Tests:** `device/folders-identity.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
 
 ### `folders/pull-flagged-items`
 
 When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another folder.
 
-**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders.test.ts › writes no file where its placement would make it another kind of file`, `device/folders.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
+**Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folders/report-distinct-items`
 
@@ -3884,7 +3884,7 @@ When `folders push` or `folders watch` reports items held back by a pull, the co
 
 When a pull counts an item as `elsewhere` because its file is moving to another folder on the machine, a device MUST NOT include the item in the pull report's `flagged` entries.
 
-**Tests:** `device/folders.test.ts › does not trash a file moved to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
 ### `folders/push-send-placement`
 
@@ -4006,19 +4006,19 @@ When owned folder files eligible for removal after their items depart exceed the
 
 When a paused disk removal is confirmed, a device MUST check other folders for each missing file.
 
-**Tests:** `device/folders.test.ts › looks for a paused removal's files in the other folders before confirming it`.
+**Tests:** `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 
 ### `folders/confirm-moves-first-moved-count`
 
 When a paused disk removal is confirmed, a device MUST count a file found moved as `moved`.
 
-**Tests:** `device/folders.test.ts › looks for a paused removal's files in the other folders before confirming it`.
+**Tests:** `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 
 ### `folders/confirm-moves-first-item-preserved`
 
 When a paused disk removal is confirmed, a device MUST NOT trash an item whose file was found moved.
 
-**Tests:** `device/folders.test.ts › looks for a paused removal's files in the other folders before confirming it`.
+**Tests:** `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 
 ### `folders/confirm-returned-file`
 
@@ -4042,7 +4042,7 @@ When a paused disk removal is confirmed but an unavailable peer folder prevents 
 
 When a paused disk removal is confirmed and a missing file is found in no other folder, a device MUST queue deletion of the item for the next push.
 
-**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders.test.ts › looks for a paused removal's files in the other folders before confirming it`.
+**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 
 ### `folders/confirm-pull-removes`
 
@@ -4186,7 +4186,7 @@ When a new folder document’s frontmatter cannot be parsed or names a refused o
 
 When a new folder document is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
 
-**Tests:** `device/folders.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
+**Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
 ### `folders/status-outside`
 
@@ -4302,7 +4302,7 @@ When the filesystem refuses a folder pull’s executable-permission change, a de
 
 Where a device runs on macOS, when a folder pull makes an existing file runnable, a device MUST apply quarantine before enabling execution.
 
-**Tests:** `device/folders.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
+**Tests:** `device/folders-identity.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
 
 ### `folders/quarantine-failure-new-file`
 
@@ -4326,13 +4326,13 @@ Where a device runs on macOS, when quarantine marking fails before making an exi
 
 Where a device runs on macOS, when a folder pull writes a file item from server bytes, a device MUST apply `com.apple.quarantine` before the file lands.
 
-**Tests:** `device/folders.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
+**Tests:** `device/folders-identity.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
 
 ### `folders/document-not-quarantined`
 
 Where a device runs on macOS, when a folder pull renders a document, a device MUST NOT mark the document with download quarantine.
 
-**Tests:** `device/folders.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
+**Tests:** `device/folders-identity.test.ts › gives each file a pull writes from the server's bytes the quarantine mark on macOS`.
 
 ### `folders/busy-watch-progress`
 
@@ -4362,13 +4362,13 @@ When a non-document file changes within the folder watch’s 250-millisecond set
 
 When a non-document file is renamed while its bytes are still settling, a device MUST preserve the file’s item identity at its renamed path.
 
-**Tests:** `device/folders.test.ts › keeps the item of a renamed file that is still settling (replacement %s)`.
+**Tests:** `device/folders-placement.test.ts › keeps the item of a renamed file that is still settling (replacement %s)`.
 
 ### `folders/settling-rename-identity-bytes-not-read`
 
 When a non-document file is renamed while its bytes are still settling, a device MUST NOT read the changing bytes.
 
-**Tests:** `device/folders.test.ts › keeps the item of a renamed file that is still settling (replacement %s)`.
+**Tests:** `device/folders-placement.test.ts › keeps the item of a renamed file that is still settling (replacement %s)`.
 
 ### `folders/still-changing-notice`
 

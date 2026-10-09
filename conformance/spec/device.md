@@ -1276,7 +1276,7 @@ When a device is asked again for bytes it keeps, a device MUST answer them witho
 
 When bytes a device kept have been taken away from beside the store, a device MUST fetch them again the next time they are asked for.
 
-**Tests:** `device/folders.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
+**Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
 
 ### `device/upload-copied`
 
@@ -2114,7 +2114,7 @@ A device MUST answer a read of either catalog from its copy alone, with no serve
 
 A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`): its label and parent as declared, its fields with those it inherits, each naming the type that declares it and a field declared again nearer the type taking the place of the one above, and the display hints of the nearest type that declares any, taken whole.
 
-**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
+**Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes the display hints of the nearest type that declares any, whole, as the server resolves them`.
 
 ### `device/catalog-edge-type-read`
 

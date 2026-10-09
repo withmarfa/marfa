@@ -101,9 +101,9 @@ cd conformance
 pnpm test:generators
 ```
 
-It needs no server, and CI runs it as a step of the conformance job before
-booting anything — so a change to a spec chapter, a fixture title or a
-statement can be green locally and red in CI without it.
+It needs no server, and CI runs it as a job of its own, `Conformance offline
+lane`, so a change to a spec chapter, a fixture title or a statement can be
+green locally and red in CI without it.
 
 ## Releases
 

@@ -308,7 +308,7 @@ While the write a write follows has no verdict, or is `blocked` with the reason 
 
 **Reason:** sent beside an edit that had no answer, an edit would go on the version both were queued against, and a body sent under its key is never moved afterwards; a delete would put the row in the bin before the edits ahead of it reached it. A credential refusal can hide the answer to a write the server already committed, so the write behind it keeps its body unsent until that answer arrives.
 
-**Tests:** `device/queue.test.ts › holds an edit behind one that went out unanswered, and sends it on that answer`, `› holds an edit behind one the server failed to answer, even one queued while that was blocked`, `› sends a delete of a row only once the edits of it ahead are answered`, `› holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer`, `› holds an edit behind a dead one released and sent again without an answer`, `device/grant-recovery.test.ts › holds a later edit while an earlier receipt lacks a grant after catch-up to %s`, `device/edge-replay.test.ts › keeps an edge receipt safe with grant blocked $grantBlocked and catch-up version $caughtUpVersion`, `device/folders.test.ts › holds a file's second move behind its first, which had no answer, though the bytes between them are refused`, `› holds a file's move behind an edit of its bytes that waits on their upload`, `› holds a file's move behind an edit of its bytes that cannot be opened for now`, `device/classification.test.ts › holds a write behind a create blocked with another for a source its key does not claim`.
+**Tests:** `device/queue.test.ts › holds an edit behind one that went out unanswered, and sends it on that answer`, `› holds an edit behind one the server failed to answer, even one queued while that was blocked`, `› sends a delete of a row only once the edits of it ahead are answered`, `› holds a second metadata replace, and a restore, behind the write of the row ahead that had no answer`, `› holds an edit behind a dead one released and sent again without an answer`, `device/grant-recovery.test.ts › holds a later edit while an earlier receipt lacks a grant after catch-up to %s`, `device/edge-replay.test.ts › keeps an edge receipt safe with grant blocked $grantBlocked and catch-up version $caughtUpVersion`, `device/folders-placement.test.ts › holds a file's second move behind its first, which had no answer, though the bytes between them are refused`, `› holds a file's move behind an edit of its bytes that waits on their upload`, `› holds a file's move behind an edit of its bytes that cannot be opened for now`, `device/classification.test.ts › holds a write behind a create blocked with another for a source its key does not claim`.
 
 ### `queue-and-verdicts/answer-frees-follower`
 
@@ -444,13 +444,13 @@ A device MUST count in a drain's `undelivered` the write an environmental failur
 
 A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held or a refused credential parked.
 
-**Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/queue.test.ts › refuses an upload whose bytes are no longer held`, `device/folders.test.ts › folder rebase accounts for writes refused in its later pass`.
+**Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/queue.test.ts › refuses an upload whose bytes are no longer held`, `device/folders-placement.test.ts › folder rebase accounts for writes refused in its later pass`.
 
 ### `queue-and-verdicts/count-unmade`
 
 A device MUST count in a drain's `unmade` each write whose request the device could not make.
 
-**Tests:** `device/folders.test.ts › folder rebase accounts for every unmade request`.
+**Tests:** `device/folders-placement.test.ts › folder rebase accounts for every unmade request`.
 
 ### `queue-and-verdicts/counts-account-for-pass`
 
@@ -1310,7 +1310,7 @@ When this device's edit of a row is answered `accepted` or `merged` at version N
 
 **Reason:** the row at N is then exactly what the later edit was made against: the version it read with the earlier edit laid over it. The version is the one the earlier edit was answered with, not the one the server holds when the later edit goes, so a change another device makes between the two sends is merged or conflicted as N says.
 
-**Tests:** `device/queue.test.ts › sends a second edit of a row on the version the first was answered with`, `› rebases a chain of three edits one answer at a time`, `› sends an edit on the answer to one merged over another device's write where that write left what it carries alone`, `› sends an edit on the answer to one the server answered merged, where the collision left what it carries alone`, `› sends each of three edits on the answer ahead of it, the first merged over another device's write`, `› sends an edit made after a catch-up on the version the edit ahead of it was answered with`, `› leaves a change another device makes between two edits for the server to merge or conflict`, `› sends the edit made after one said to be read on that one's answer`, `device/folders.test.ts › sends a file edited twice before a push as two edits, not a conflict with itself`, `› keeps a line spent where a pull writes the file over the edit that spent it`.
+**Tests:** `device/queue.test.ts › sends a second edit of a row on the version the first was answered with`, `› rebases a chain of three edits one answer at a time`, `› sends an edit on the answer to one merged over another device's write where that write left what it carries alone`, `› sends an edit on the answer to one the server answered merged, where the collision left what it carries alone`, `› sends each of three edits on the answer ahead of it, the first merged over another device's write`, `› sends an edit made after a catch-up on the version the edit ahead of it was answered with`, `› leaves a change another device makes between two edits for the server to merge or conflict`, `› sends the edit made after one said to be read on that one's answer`, `device/folders-placement.test.ts › sends a file edited twice before a push as two edits, not a conflict with itself`, `› keeps a line spent where a pull writes the file over the edit that spent it`.
 
 ### `queue-and-verdicts/edit-not-on-unheld-answer`
 
@@ -1386,7 +1386,7 @@ When a caller queues an update said to be read at a version above 0 and earlier 
 
 **Reason:** the server then merges it against that version (`versions/merge-stale`): a property only this edit changed lands, one only the other write changed stands, and one both changed goes as its merge policy says.
 
-**Tests:** `device/queue.test.ts › sends an edit on the earlier version it says it read, where the copy has caught up since`, `› keeps both where another device changed the property an edit said it read`, `device/folders.test.ts › bases a stale file's edit on the version written in it`.
+**Tests:** `device/queue.test.ts › sends an edit on the earlier version it says it read, where the copy has caught up since`, `› keeps both where another device changed the property an edit said it read`, `device/folders-placement.test.ts › bases a stale file's edit on the version written in it`.
 
 ### `queue-and-verdicts/as-read-bounds`
 
@@ -1424,7 +1424,7 @@ When the write ahead of an update said to be read at an earlier version is answe
 
 When a caller queues an update that sends its properties whole, a device MUST send it with `properties_mode` `replace` (`items/update-replace`).
 
-**Tests:** `device/queue.test.ts › sends an edit's properties whole, and shows what it cleared`, `device/folders.test.ts › clears a property whose line was taken out of a versioned file`, `device/fidelity.test.ts › holds the scripted folder door's whole-properties edits, moves and lifecycle to the server's`.
+**Tests:** `device/queue.test.ts › sends an edit's properties whole, and shows what it cleared`, `device/folders-frontmatter.test.ts › clears a property whose line was taken out of a versioned file`, `device/fidelity.test.ts › holds the scripted folder door's whole-properties edits, moves and lifecycle to the server's`.
 
 ### `queue-and-verdicts/whole-shows-clear`
 
@@ -1440,7 +1440,7 @@ When a device moves an update that sends its properties whole onto the answer to
 
 **Reason:** a property dropped from a whole edit is one it clears, so a second move keeps what the first answer landed.
 
-**Tests:** `device/queue.test.ts › moves a whole edit onto each answer ahead of it, keeping what each landed`, `device/folders.test.ts › sends a file saved twice as two edits where another machine retitled the note meanwhile`, `device/folders.test.ts › keeps every save of three scanned before one drain`.
+**Tests:** `device/queue.test.ts › moves a whole edit onto each answer ahead of it, keeping what each landed`, `device/folders-placement.test.ts › sends a file saved twice as two edits where another machine retitled the note meanwhile`, `device/folders-frontmatter.test.ts › keeps every save of three scanned before one drain`.
 
 ## An edit that moves a row
 
@@ -1792,7 +1792,7 @@ When a folder gives way to another machine's placement of a file (`folders/place
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 
-**Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`.
 
 ## A restore of a row the copy does not hold
 
