@@ -267,6 +267,8 @@ describe("the reference checks see what they are for", () => {
         "RFC 8414 \u00a73.1",
         "the sample 5 times over",
         `See sample${md}.\n\n5. A list item`,
+        `Read sample${md}\n5. A list item`,
+        `Read sample${md}\n- 5 items`,
       ]) {
         expect(numbered(text), text).toEqual([]);
       }

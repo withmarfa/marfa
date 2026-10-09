@@ -114,8 +114,11 @@ function numberedPatterns(chapters: readonly string[]): RegExp[] {
   ];
 }
 
-/** What opens a line of a comment, a list or a quotation, read as a gap. */
-const LINE_MARKER = /^\s*(?:\/\/[/!]?|\/?\*+|#+|--|>|<!--|-|\d+\.)?\s*/;
+/** What opens a line of a comment, read as a gap. */
+const LINE_MARKER = /^\s*(?:\/\/[/!]?|\/?\*+|#+|--|<!--)?\s*/;
+
+/** A list item, whose number or mark is the list's, not a statement's. */
+const LIST_ITEM = /^(?:\d+[.)]|[-+])\s/;
 
 /**
  * The lines of `text` that refer to a statement by number, 1-based. The
@@ -140,7 +143,9 @@ export function numberedReferences(
       return;
     }
     if (next === undefined || refers(next)) return;
-    const joined = `${line.trimEnd()} ${next.replace(LINE_MARKER, "")}`;
+    const continued = next.replace(LINE_MARKER, "");
+    if (LIST_ITEM.test(continued)) return;
+    const joined = `${line.trimEnd()} ${continued}`;
     if (refers(joined)) out.push(index + 1);
   });
   return out;
