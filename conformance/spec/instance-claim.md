@@ -52,6 +52,20 @@ When valid setup proof claims an unclaimed instance with valid owner details, th
 
 **Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› answers the setup routes in snake_case and the claim as the public claim does`.
 
+### `instance-claim/status-fields`
+
+When the private local command reads the claim status, the server MUST answer `claimed`, `owner_id` and `generation`.
+
+**Reason:** `owner_id` is `null` while the instance is unclaimed. Every field in an answer is snake_case, so a script reading the status finds the same names the public owner answer uses.
+
+**Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› creates exactly one owner and requires owner sign-in to read it`, `› keeps a completed claim and recovered password through restart`.
+
+### `instance-claim/ticket-fields`
+
+When the private local command requests browser setup, the server MUST answer the handoff `ticket`, its setup `url`, and `expires_at` as an ISO 8601 instant in UTC.
+
+**Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› expires a handoff after five minutes while its exchanged setup session remains usable`.
+
 ### `instance-claim/claim-closed`
 
 While an instance has a completed owner claim, the server MUST refuse another claim or setup-code issuance with `409 owner_exists`.
