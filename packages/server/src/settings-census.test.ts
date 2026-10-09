@@ -49,6 +49,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
   MARFA_API_KEY: "the credential a client or the conformance run holds",
   MARFA_API_URL: "the server a client names, read by the command",
   MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the command",
+  MARFA_ALLOW_HTTP:
+    "states that a credential may go over plain http, read by the command",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:
