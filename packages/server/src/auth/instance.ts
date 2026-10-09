@@ -26,8 +26,10 @@ import type { Storage } from "../storage/interface.js";
 import {
   buildOauthProviderPlugin,
   buildOauthProjectionPlugin,
+  makeTokenHasher,
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
+import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
 import { buildSignInThrottlePlugin } from "./sign-in-throttle.js";
 import { errorMessage } from "../error-text.js";
@@ -310,8 +312,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // different one than the signer used would fail open.
   const signingSecret = options.secret;
 
+  const drizzle = drizzleAdapter(options.db, { provider: "sqlite", schema });
   const credentialAdapter = withIdempotentConsent(
-    drizzleAdapter(options.db, { provider: "sqlite", schema }),
+    options.apiKeySalt
+      ? withHashedDeviceCodes(drizzle, makeTokenHasher(options.apiKeySalt))
+      : drizzle,
   );
   const instance = betterAuth({
     baseURL: options.baseURL,
@@ -384,8 +389,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // `disableJwtPlugin: true` is set — which forces id_tokens to
       // HS256 with the client_secret, breaking public PKCE clients that
       // have no secret. Auto-generates an RSA key pair on first use,
-      // stored in `auth_jwks`.
-      jwt(),
+      // stored in `auth_jwks`. Those keys sign ID tokens only: no browser
+      // session answer carries a token signed with them.
+      jwt({ disableSettingJwtHeader: true }),
       // The per-account limit on password sign-in; see `sign-in-throttle.ts`.
       ...(options.storage ? [buildSignInThrottlePlugin(options.storage)] : []),
       ...(options.storage && options.apiKeySalt
@@ -796,6 +802,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         await changeOwnerPassword(options.storage, facade, request.headers, {
           currentPassword: body.currentPassword,
           password: body.newPassword,
+          clientAddress,
         });
         const current = await facade.getSession(request.headers, {
           readOnly: true,
@@ -807,14 +814,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       }
       const browserSessionPaths = new Set([
         "/get-session",
-        "/list-sessions",
         "/sign-out",
         "/revoke-session",
         "/revoke-sessions",
         "/revoke-other-sessions",
-        "/update-user",
-        "/change-email",
-        "/delete-user",
         "/oauth2/authorize",
         "/oauth2/consent",
         "/oauth2/end-session",
@@ -829,13 +832,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       if (
         options.storage &&
         [
-          "/list-sessions",
           "/revoke-session",
           "/revoke-sessions",
           "/revoke-other-sessions",
-          "/update-user",
-          "/change-email",
-          "/delete-user",
         ].includes(path)
       ) {
         await requireOwnerSession(options.storage, facade, request.headers, {

@@ -129,17 +129,33 @@ describe("a device code", () => {
     expect(denied.body.access_token).toBeUndefined();
   });
 
+  it("is held by the server as something other than the code it issued, and still polls", async () => {
+    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+    withInstanceDatabase(server!.sqlitePath, (db) => {
+      // The witness: the code's row is there, found by its client.
+      const rows = db
+        .prepare(
+          "SELECT device_code FROM auth_oauth_device_code WHERE client_id = ?",
+        )
+        .all(flow.clientId) as { device_code: string }[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.device_code).not.toBe(flow.deviceCode);
+    });
+    expect((await flow.poll()).body.error).toBe("authorization_pending");
+  });
+
   it("answers expired_token to a poll of a code past its expiry", async () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     // The witness: the code is answered on its state before it ages.
     expect((await flow.poll()).body.error).toBe("authorization_pending");
-    // Ten minutes is a long wait, so the code is aged in place.
+    // Ten minutes is a long wait, so the code is aged in place, found by the
+    // client this flow registered for itself.
     withInstanceDatabase(server!.sqlitePath, (db) => {
       const aged = db
         .prepare(
-          "UPDATE auth_oauth_device_code SET expires_at = 1 WHERE device_code = ?",
+          "UPDATE auth_oauth_device_code SET expires_at = 1 WHERE client_id = ?",
         )
-        .run(flow.deviceCode);
+        .run(flow.clientId);
       expect(aged.changes).toBe(1);
     });
     await waitOut(flow.interval);

@@ -45,6 +45,7 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
     await changeOwnerPassword(storage, auth, c.req.raw.headers, {
       currentPassword: body.currentPassword,
       password: body.password,
+      clientAddress: c.var.clientIp ?? null,
     });
     return c.html(
       renderAuthLayout({

@@ -18,7 +18,6 @@ import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
 } from "../openapi-finalize.js";
-import { FENCED_PLUGIN_ENDPOINTS } from "./oauth-plugin-fence.js";
 import { createTestContext, createUnclaimedTestApp } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -132,20 +131,6 @@ function declaredDoors(): Set<string> {
 }
 
 /**
- * The plugin management endpoints `oauthPluginFenceRoutes` refuses, derived
- * from the fence's own list rather than restated: it is already paired with
- * a test that holds it to what the plugin registers.
- */
-function fencedDoors(): Set<string> {
-  const out = new Set<string>();
-  for (const path of FENCED_PLUGIN_ENDPOINTS) {
-    out.add(`ALL /auth${path}`);
-    out.add(`ALL /auth${path}/`);
-  }
-  return out;
-}
-
-/**
  * Doors with no declaration to read, each with what it is.
  *
  * Open on purpose, all of them: a credential cannot be a precondition for
@@ -194,7 +179,7 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/static/password-toggle.js": "a script those pages load",
   "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/*":
-    "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself",
+    "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself; every other path answers 404",
   "POST /auth/*": "the same catch-all",
   "GET /blobs/:hash/fetch":
     "the target of an instance-served blob link, gated by the signature in its query rather than a bearer",
@@ -325,7 +310,6 @@ describe("the credential gate", () => {
     // Positive control: the walk is over a table that has to have filled.
     expect(served.size).toBeGreaterThan(100);
     const guarded = guardedDoors();
-    const fenced = fencedDoors();
     const unclassified: string[] = [];
     for (const door of served) {
       // The global middleware mounts, which are not doors: nothing is
@@ -341,7 +325,6 @@ describe("the credential gate", () => {
       )
         continue;
       if (guarded.has(door)) continue;
-      if (fenced.has(door)) continue;
       if (door in OPEN_DOORS) continue;
       if (door in CREDENTIAL_IN_HANDLER) continue;
       unclassified.push(door);
@@ -354,7 +337,6 @@ describe("the credential gate", () => {
     const stale = [
       ...Object.keys(OPEN_DOORS),
       ...Object.keys(CREDENTIAL_IN_HANDLER),
-      ...fencedDoors(),
     ].filter((door) => !served.has(door));
     expect(stale.sort()).toEqual([]);
   });

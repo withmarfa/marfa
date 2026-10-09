@@ -90,7 +90,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       .run();
   }
 
-  async findDeviceCodeGrantKey(deviceCode: string): Promise<{
+  async findDeviceCodeGrantKey(deviceCodeDigest: string): Promise<{
     clientId: string;
     userId: string;
     hasConsent: boolean;
@@ -126,7 +126,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
        AND json_extract(i.properties, '$.status') = 'active'
        AND json_extract(i.properties, '$.client_id') = COALESCE(d.oauth_client_id, d.client_id)
        AND json_extract(i.properties, '$.user_id') = d.user_id
-      WHERE d.device_code = ${deviceCode}
+      WHERE d.device_code = ${deviceCodeDigest}
         AND d.status = 'approved'
       LIMIT 1
     `);
@@ -140,7 +140,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   async findDeviceCodeRequest(
-    deviceCode: string,
+    deviceCodeDigest: string,
   ): Promise<{ clientId: string; scopes: string[] } | null> {
     const rows = await this.db
       .select({
@@ -149,7 +149,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         scope: auth_oauth_device_code.scope,
       })
       .from(auth_oauth_device_code)
-      .where(eq(auth_oauth_device_code.deviceCode, deviceCode))
+      .where(eq(auth_oauth_device_code.deviceCode, deviceCodeDigest))
       .limit(1);
     const row = rows[0];
     if (!row) return null;

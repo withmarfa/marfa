@@ -376,7 +376,8 @@ export interface OauthProviderOptions {
  * symmetric so a token-in-hand can be resolved to its `auth_oauth_access_token`
  * row by computing the same hash and looking up by primary key.
  */
-function makeTokenHasher(salt: string) {
+/** The digest an opaque token or a device code is stored as. */
+export function makeTokenHasher(salt: string) {
   return (token: string): string =>
     createHmac("sha256", salt).update(token).digest("hex");
 }
@@ -698,7 +699,7 @@ export function buildOauthProjectionPlugin(opts: {
           // the user has revoked must not redeem. See `guardDeviceCodeGrant`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            guardDeviceCodeGrant(ctx, storage, bundleScopes),
+            guardDeviceCodeGrant(ctx, storage, bundleScopes, refreshHasher),
           ),
         },
         ...(acceptedResources
@@ -1882,12 +1883,15 @@ async function guardDeviceCodeGrant(
   ctx: HookCtxLite,
   storage: Storage,
   bundleScopes: Set<string>,
+  hash: ((code: string) => string) | undefined,
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
   if (requestedGrantType(ctx) !== DEVICE_CODE_GRANT_TYPE) return;
-  const code = body.device_code;
-  if (typeof code !== "string" || code.length === 0) return;
+  const held = body.device_code;
+  if (typeof held !== "string" || held.length === 0 || !hash) return;
+  // Stored as its digest (`hashed-device-code-adapter.ts`).
+  const code = hash(held);
   try {
     const asked = await storage.oauthProvider?.findDeviceCodeRequest(code);
     if (asked)

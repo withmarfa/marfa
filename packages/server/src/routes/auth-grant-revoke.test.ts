@@ -25,6 +25,7 @@ import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   request,
+  storedDeviceCode,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 
@@ -198,7 +199,12 @@ async function deviceCodeRow(
   const rows = await db
     .select()
     .from(schemaModule.auth_oauth_device_code)
-    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+    .where(
+      eq(
+        schemaModule.auth_oauth_device_code.deviceCode,
+        storedDeviceCode(deviceCode),
+      ),
+    );
   return rows[0] ?? null;
 }
 
@@ -223,7 +229,12 @@ async function approveCodeDirectly(
   await db
     .update(schemaModule.auth_oauth_device_code)
     .set({ status: "approved", userId: authUserId })
-    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+    .where(
+      eq(
+        schemaModule.auth_oauth_device_code.deviceCode,
+        storedDeviceCode(deviceCode),
+      ),
+    );
 }
 
 /** The plugin holds a poller to its interval, and a poll stamps the row.
@@ -236,7 +247,12 @@ async function allowRepoll(c: TestContext, deviceCode: string): Promise<void> {
   await db
     .update(schemaModule.auth_oauth_device_code)
     .set({ lastPolledAt: null })
-    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+    .where(
+      eq(
+        schemaModule.auth_oauth_device_code.deviceCode,
+        storedDeviceCode(deviceCode),
+      ),
+    );
 }
 
 function approveDeviceFlow(

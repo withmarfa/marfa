@@ -272,7 +272,7 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
  * `POST /admin/oauth2/create-client`, both writing `auth_oauth_client.scopes`
  * directly through Better Auth's adapter. They never call Marfa's store, so
  * no scan of this tree reaches them. Neither is served any more: both are
- * fenced from the wire in `routes/oauth-plugin-fence.ts`, whose own test
+ * fenced from the wire in `routes/auth-fence.ts`, whose own test
  * holds that list to what the plugin registers. The point of naming them
  * here is still that "every writer is covered" would be false for the
  * in-process path, and a guard that overstates its reach is worse than one

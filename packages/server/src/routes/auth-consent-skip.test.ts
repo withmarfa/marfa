@@ -406,7 +406,7 @@ describe("GET /auth/authorize (consent skip) — harness", () => {
     // whether or not the route forwards a usable origin. The check is a
     // library-wide middleware, so any plugin endpoint the catch-all serves
     // shows it; the consent endpoint itself is fenced from the wire (see
-    // `routes/oauth-plugin-fence.ts`) and answers 404 before the check.
+    // `routes/auth-fence.ts`) and answers 404 before the check.
     const res = await request(
       ctx.app,
       "POST",

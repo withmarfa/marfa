@@ -1132,6 +1132,14 @@ When a client asks `POST /auth/device/code` for a scope it may be granted, the s
 
 **Tests:** `compliance/device-grant.test.ts › is issued with its codes, where to enter it, ten minutes to live and a five-second interval`.
 
+### `keys-and-oauth/device-code-at-rest`
+
+The server MUST NOT hold a device code it issued as the code itself.
+
+**Reason:** Whoever presents the code once the person approves is handed the tokens, so a copy of the server's database must not be enough to present it. Access and refresh tokens are held the same way.
+
+**Tests:** `compliance/device-grant.test.ts › is held by the server as something other than the code it issued, and still polls`.
+
 ### `keys-and-oauth/device-unpublished-scope`
 
 If a client asks `POST /auth/device/code` for a scope the instance does not publish, then the server MUST answer `400 invalid_scope`.
@@ -1276,6 +1284,20 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
+### `keys-and-oauth/password-change-counted`
+
+The server MUST count each password change from an address as a password sign-in attempt at the owner's account, for `keys-and-oauth/sign-in-address-limit` and `keys-and-oauth/sign-in-account-limit`.
+
+**Reason:** A password change checks the current password as a sign-in does, so a guess counts the same wherever it is made.
+
+**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
+
+### `keys-and-oauth/password-change-limit`
+
+If a sign-in limit holds an address at the owner's account, then the server MUST answer that address's password change `429` with `Retry-After`, before it judges the current password.
+
+**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
+
 ### `keys-and-oauth/device-lookup-address-limit`
 
 If one address has looked device codes up ten times in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup with `error=too_many_attempts` before the code is looked up.
@@ -1289,6 +1311,26 @@ If every address together has made a hundred counted device code lookups in fift
 **Reason:** A sweep tries each code once, so a count per code never fires. A lookup one address makes past its own limit is not counted here.
 
 **Tests:** `compliance/sign-in-limits.test.ts › hold every address together to a hundred in fifteen minutes, counting none an address made past its own limit`.
+
+## The sign-in library's routes
+
+The sign-in surface is served through a library that offers more routes than Marfa uses.
+
+### `keys-and-oauth/auth-other-paths`
+
+If a request names a path under `/auth/` that the sign-in surface does not serve, with or without a trailing slash, then the server MUST answer `404 not_found`.
+
+**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the browser session and its revocations, the owner's password change, `/auth/jwks`, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, session and account listings, a password check and a signed session token, answers as a path nothing serves.
+
+**Tests:** `compliance/sign-in-library-routes.test.ts › answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner`.
+
+### `keys-and-oauth/session-no-token`
+
+When `GET /auth/get-session` answers a signed-in browser, the server MUST NOT send a `set-auth-jwt` header.
+
+**Reason:** The key set at `/auth/jwks` signs ID tokens and nothing else.
+
+**Tests:** `compliance/sign-in-library-routes.test.ts › answer the browser session with no signed token`.
 
 ## What the sign-in pages say
 
@@ -1538,12 +1580,6 @@ When the owner's password change answers `200`, the server MUST already hold its
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password change answers`.
 
-### `keys-and-oauth/audit-profile-change`
-
-When a change to the owner's profile answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
-
-**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a profile change answers`.
-
 ### `keys-and-oauth/audit-device-approval`
 
 When a person's approval of a device code answers, the server MUST already hold the audit record of the grant it made, readable at `GET /audit`.
@@ -1563,6 +1599,12 @@ When the inactivity retirement retires a grant, the server MUST already hold the
 When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
+
+### `keys-and-oauth/audit-failed-password-change`
+
+When the server refuses the owner's password change for its current password or for a sign-in limit, the server MUST already hold the audit record of the refusal, readable at `GET /audit`.
+
+**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
 
 ### `keys-and-oauth/audit-refresh-replay`
 

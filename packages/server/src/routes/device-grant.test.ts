@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, storedDeviceCode } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // Every case boots a server, registers a client, signs a person up and in
@@ -169,7 +169,12 @@ async function allowRepoll(c: TestContext, deviceCode: string): Promise<void> {
   await db
     .update(schema.auth_oauth_device_code)
     .set({ lastPolledAt: null })
-    .where(eq(schema.auth_oauth_device_code.deviceCode, deviceCode));
+    .where(
+      eq(
+        schema.auth_oauth_device_code.deviceCode,
+        storedDeviceCode(deviceCode),
+      ),
+    );
 }
 
 async function grants(c: TestContext) {
@@ -481,7 +486,12 @@ describe("the device authorization grant through the provider plugin", () => {
     await db
       .update(schema.auth_oauth_device_code)
       .set({ userId: "foreign-owner" })
-      .where(eq(schema.auth_oauth_device_code.deviceCode, init.device_code));
+      .where(
+        eq(
+          schema.auth_oauth_device_code.deviceCode,
+          storedDeviceCode(init.device_code),
+        ),
+      );
 
     const other = await openConsent(c, init.user_code, cookieB);
     expect(other.status).toBe(302);
