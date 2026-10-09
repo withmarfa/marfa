@@ -93,6 +93,9 @@ interface HookCtxLite {
   /** The request headers; read for a client that authenticates with HTTP
    *  Basic rather than a `client_id` in the body. */
   headers?: Headers | null;
+  /** The request as it arrived; read for a form field sent more than once,
+   *  which the parsed `body` holds only the last value of. */
+  request?: Request;
   /** Set by the same before-hook when the presented token was already
    *  nothing this server would accept before the plugin ran. */
   revokedTokenWasDead?: boolean;
@@ -415,9 +418,10 @@ export function buildOauthProviderPlugin(
     // ----- Scope grammar -----
     // The allowlist. The plugin's registration validates a requested `scope`
     // against `clientRegistrationAllowedScopes`; the registration adapter
-    // stores the scope a request names, and this whole set only for a request
-    // that names none. Custom types registered at runtime require a server
-    // restart to surface here.
+    // stores the scope a request names, and this whole set for a request that
+    // names none, less `offline_access` for a client that may not refresh
+    // (`settleRegistrationScope`). Custom types registered at runtime require
+    // a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above carries the runtime namespace roots, but the
@@ -624,8 +628,8 @@ export function buildOauthProjectionPlugin(opts: {
     hooks: {
       after: [
         {
-          // Registration answers and stores the scope the client asked
-          // for. See `keepRequestedRegistrationScope`.
+          // Registration answers the scope it stored. See
+          // `keepRequestedRegistrationScope`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
             Promise.resolve(keepRequestedRegistrationScope(ctx)),
@@ -660,6 +664,15 @@ export function buildOauthProjectionPlugin(opts: {
           : []),
       ],
       before: [
+        {
+          // What registration stores and answers. See
+          // `settleRegistrationScope`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
+          handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            settleRegistrationScope(ctx, liveScopes);
+            return Promise.resolve();
+          }),
+        },
         {
           // Narrows the requested scope set on the authorize endpoint so a
           // scope the server cannot grant costs the requester that scope
@@ -773,13 +786,102 @@ export function buildOauthProjectionPlugin(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic registration (after-hook)
+// Dynamic registration (before-hook and after-hook)
 // ---------------------------------------------------------------------------
 
 /**
- * Match the registration response to the requested scope stored by the adapter.
- * The provider otherwise answers with its whole registration allowlist.
- * A request naming no scope retains that default.
+ * Whether a client may exchange a refresh token, by the provider's own rule
+ * (`clientAllowsGrant`, which the package does not export): `grant_types`
+ * naming `refresh_token` or `authorization_code`, and a registration that
+ * names none registers `authorization_code`. Only such a client is issued a
+ * refresh token for `offline_access`.
+ */
+export function clientMayRefresh(grantTypes: unknown): boolean {
+  const named =
+    Array.isArray(grantTypes) && grantTypes.length > 0
+      ? grantTypes
+      : ["authorization_code"];
+  return (
+    named.includes("refresh_token") || named.includes("authorization_code")
+  );
+}
+
+/**
+ * Before-hook for `/oauth2/register`: settle the scope the client is
+ * registered for, which the credential adapter stores and
+ * `keepRequestedRegistrationScope` answers. The provider stores and answers
+ * its whole allowlist whatever the request names, so a registration with no
+ * credential request to carry the settled scope fails rather than store it.
+ *
+ * A client that may not refresh can never use `offline_access`: a request
+ * naming it is refused, and a request naming no scope keeps the allowlist
+ * less `offline_access`.
+ */
+function settleRegistrationScope(
+  ctx: HookCtxLite,
+  allowed: ReadonlySet<string>,
+): void {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  const asked =
+    typeof body.scope === "string"
+      ? [...new Set(body.scope.split(" ").filter((s) => s.length > 0))]
+      : [];
+  // The provider's schema trims each grant type before it stores them.
+  const grantTypes = Array.isArray(body.grant_types)
+    ? body.grant_types.map((g: unknown) =>
+        typeof g === "string" ? g.trim() : g,
+      )
+    : body.grant_types;
+  const mayRefresh = clientMayRefresh(grantTypes);
+  if (!mayRefresh && asked.includes("offline_access"))
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_client_metadata",
+      error_description: OFFLINE_WITHOUT_REFRESH,
+    });
+  const request = credentialRequest.getStore();
+  if (!request)
+    throw new Error(
+      "client registration ran outside a credential request, so its scope cannot be stored",
+    );
+  if (asked.length > 0) request.registrationScopes = asked;
+  else if (!mayRefresh)
+    request.registrationScopes = [...allowed].filter(
+      (s) => s !== "offline_access",
+    );
+}
+
+/** Why a client that may not refresh is refused `offline_access`. */
+const OFFLINE_WITHOUT_REFRESH =
+  "offline_access needs a refresh token, and this client may not use one: register refresh_token in grant_types to ask for it.";
+
+/**
+ * The device plugin's `onDeviceAuthRequest`, which it calls once the provider
+ * has authenticated the client and held the scopes to its ceiling, with the
+ * scopes joined by single spaces. Refuses `offline_access` to a client that
+ * may not refresh: the provider would approve the scope and issue an access
+ * token alone, and the client would sign the person in again when it ended.
+ * Registration keeps such a client from holding the scope, so this answers a
+ * client registered before it did.
+ */
+export function refuseOfflineWithoutRefresh(
+  storage: Storage,
+): (clientId: string, scope: string | undefined) => Promise<void> {
+  return async (clientId, scope) => {
+    if (!scope?.split(/\s+/).includes("offline_access")) return;
+    const client = await storage.oauthProvider?.getClient(clientId);
+    if (client && !clientMayRefresh(client.grantTypes))
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_scope",
+        error_description: OFFLINE_WITHOUT_REFRESH,
+      });
+  };
+}
+
+/**
+ * Match the registration response to the scope `settleRegistrationScope`
+ * settled, which the adapter stored. The provider otherwise answers with its
+ * whole registration allowlist, which stands where nothing was settled.
  */
 function keepRequestedRegistrationScope(
   ctx: HookCtxLite,
@@ -796,11 +898,9 @@ function keepRequestedRegistrationScope(
   const kept = { ...registered };
   delete kept.backchannel_logout_uri;
   delete kept.backchannel_logout_session_required;
-  const asked = ctx.body?.scope;
-  if (typeof asked !== "string") return kept;
-  const requested = [...new Set(asked.split(" ").filter((s) => s.length > 0))];
-  if (requested.length === 0) return kept;
-  return { ...kept, scope: requested.join(" ") };
+  const settled = credentialRequest.getStore()?.registrationScopes;
+  if (!settled) return kept;
+  return { ...kept, scope: settled.join(" ") };
 }
 
 // ---------------------------------------------------------------------------
@@ -830,21 +930,23 @@ function normalizeRevokeToken(raw: unknown): string | undefined {
 }
 
 /**
- * The client a revoke request authenticates as, in the plugin's own order
- * of precedence: a client assertion first, then HTTP Basic, then the
- * `client_id` in the body. The order matters because the body field is not
- * an authentication attempt: the plugin admits `Authorization: Basic` beside
- * a bare body `client_id` and never compares the two, so a hook that read
- * the body first would take the caller's word over the credential the
- * plugin verified. An assertion is answered with undefined, since verifying
- * one is the plugin's job and nothing here should pretend to; the caller
- * treats that as "cannot tell" and does nothing.
+ * The client a revoke or device code request authenticates as, in the
+ * plugin's own order of precedence: a client assertion first, then HTTP
+ * Basic, then the `client_id` in the body. The order matters because the
+ * body field is not an authentication attempt: the plugin admits
+ * `Authorization: Basic` beside a bare body `client_id` and never compares
+ * the two, so a hook that read the body first would take the caller's word
+ * over the credential the plugin verified. An assertion is answered with
+ * undefined, since verifying one is the plugin's job and nothing here should
+ * pretend to: the revoke hook treats that as "cannot tell" and does nothing,
+ * and the device code hook reads the assertion's claim itself
+ * (`readDeviceCodeRequest`).
  *
  * Exported for its test: the precedence is the security property, and the
  * shape that exercises it (a confidential client) is not one the store's
  * public-only registration mints.
  */
-export function resolveRevokeClientId(input: {
+export function resolvePresentedClientId(input: {
   body: Record<string, unknown> | undefined;
   headers: Headers | null | undefined;
 }): string | undefined {
@@ -931,7 +1033,7 @@ async function resolveClientRevoke(
     const request = credentialRequest.getStore();
     if (
       request &&
-      resolveRevokeClientId({ body, headers: ctx.headers }) === row.clientId
+      resolvePresentedClientId({ body, headers: ctx.headers }) === row.clientId
     ) {
       request.revoke = { clientId: row.clientId, userId: row.userId };
     } else if (request) {
@@ -1819,16 +1921,57 @@ async function offerDeviceScopes(
   storage: Storage,
   bundleScopes: Set<string>,
 ): Promise<void> {
+  const asked = await readDeviceCodeRequest(ctx);
+  if (!asked) return;
+  await offerScopesBeyondCeiling(
+    storage,
+    asked.clientId,
+    asked.requested,
+    bundleScopes,
+  );
+}
+
+/** The fields of a device code request the client and its scope are read from. */
+const DEVICE_CODE_FIELDS = ["client_id", "scope", "client_assertion"] as const;
+
+/**
+ * The client a device code request names and the scopes it asks for, read
+ * as the provider and its device plugin read them, or undefined where the
+ * hook cannot tell the client. A form field sent more than once counts as
+ * its one non-empty value, which is what the provider authenticates, and the
+ * scope splits on any run of whitespace. The client follows
+ * `resolvePresentedClientId`, so an assertion is "cannot tell".
+ */
+async function readDeviceCodeRequest(
+  ctx: HookCtxLite,
+): Promise<{ clientId: string; requested: string[] } | undefined> {
   const body = ctx.body;
-  if (!body || typeof body !== "object") return;
-  const clientId = body.client_id;
-  const rawScope = body.scope;
-  if (typeof clientId !== "string" || clientId.length === 0) return;
-  const requested =
-    typeof rawScope === "string"
-      ? rawScope.split(" ").filter((s) => s.length > 0)
-      : [];
-  await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
+  if (!body || typeof body !== "object") return undefined;
+  const fields: Record<string, string | undefined> = {};
+  for (const field of DEVICE_CODE_FIELDS) {
+    const value = body[field];
+    fields[field] =
+      typeof value === "string" && value.length > 0 ? value : undefined;
+  }
+  const contentType = ctx.request?.headers.get("content-type") ?? "";
+  if (ctx.request && /application\/x-www-form-urlencoded/i.test(contentType)) {
+    const form = new URLSearchParams(await ctx.request.clone().text());
+    for (const field of DEVICE_CODE_FIELDS) {
+      const values = form.getAll(field).filter((v) => v.length > 0);
+      if (values.length > 1) return undefined;
+      fields[field] = values[0];
+    }
+  }
+  const clientId = resolvePresentedClientId({
+    body: fields,
+    headers: ctx.headers,
+  });
+  if (clientId === undefined) return undefined;
+  const requested = (fields.scope ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((s) => s.length > 0);
+  return { clientId, requested };
 }
 
 /**

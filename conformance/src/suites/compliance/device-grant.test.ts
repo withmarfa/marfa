@@ -110,6 +110,57 @@ describe("a device code", () => {
     expect(body.device_code).toBeUndefined();
   });
 
+  it("is refused 400 invalid_scope for offline_access when its client may not refresh", async () => {
+    // The witness: the same scope without `offline_access` is issued a code.
+    expect((await ask("core.note:read")).status).toBe(200);
+    const refused = await ask("core.note:read offline_access");
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.device_code).toBeUndefined();
+  });
+
+  it("is refused 400 invalid_scope for offline_access when its stored client holds the scope and may not refresh", async () => {
+    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "device-grant",
+        application_type: "native",
+        grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+        scope: "core.note:read",
+      }),
+    });
+    expect(registered.status).toBe(201);
+    const { client_id } = (await registered.json()) as { client_id: string };
+    // A client the registration did not refuse `offline_access` holds it in
+    // its stored scope, which a registration can no longer give it.
+    withInstanceDatabase(server!.sqlitePath, (db) => {
+      const held = db
+        .prepare("UPDATE auth_oauth_client SET scopes = ? WHERE client_id = ?")
+        .run(JSON.stringify(["core.note:read", "offline_access"]), client_id);
+      expect(held.changes).toBe(1);
+    });
+    const ask = (scope: string) =>
+      fetch(`${server!.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id, scope }),
+      });
+    // The witness: the client is issued a code for the scope it held before.
+    expect((await ask("core.note:read")).status).toBe(200);
+    const refused = await ask("core.note:read offline_access");
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_scope");
+    expect(body.error_description).toEqual(
+      expect.stringContaining("refresh_token"),
+    );
+    expect(body.device_code).toBeUndefined();
+  });
+
   it("answers slow_down to a poll sooner than the interval after the previous one", async () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     // The witness: the code's first poll is answered on its state.

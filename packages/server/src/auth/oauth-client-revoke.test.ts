@@ -31,7 +31,7 @@ import { itemWrites } from "../storage/item-writes.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
 import { consentLockDepth, withConsentLock } from "./consent-lock.js";
-import { resolveRevokeClientId } from "./oauth-provider.js";
+import { resolvePresentedClientId } from "./oauth-provider.js";
 
 import type { InStatement } from "@libsql/client";
 const acknowledgment = vi.hoisted(() => ({
@@ -757,7 +757,7 @@ describe("a token carrying no reference_id", () => {
   });
 });
 
-describe("resolveRevokeClientId follows the plugin's precedence", () => {
+describe("resolvePresentedClientId follows the plugin's precedence", () => {
   const basic = (clientId: string) =>
     new Headers({
       authorization: `Basic ${Buffer.from(`${clientId}:secret`).toString("base64")}`,
@@ -765,7 +765,7 @@ describe("resolveRevokeClientId follows the plugin's precedence", () => {
 
   it("takes the Basic credential over a body client_id, so the body cannot speak for the credential", () => {
     expect(
-      resolveRevokeClientId({
+      resolvePresentedClientId({
         body: { client_id: "victim", token: "x" },
         headers: basic("attacker"),
       }),
@@ -774,19 +774,19 @@ describe("resolveRevokeClientId follows the plugin's precedence", () => {
 
   it("falls back to the body for a public client", () => {
     expect(
-      resolveRevokeClientId({
+      resolvePresentedClientId({
         body: { client_id: "public-app" },
         headers: new Headers(),
       }),
     ).toBe("public-app");
     expect(
-      resolveRevokeClientId({ body: {}, headers: undefined }),
+      resolvePresentedClientId({ body: {}, headers: undefined }),
     ).toBeUndefined();
   });
 
   it("answers undefined for an assertion, whose verification is the plugin's", () => {
     expect(
-      resolveRevokeClientId({
+      resolvePresentedClientId({
         body: { client_id: "jwt-client", client_assertion: "eyJ..." },
         headers: undefined,
       }),
@@ -797,7 +797,7 @@ describe("resolveRevokeClientId follows the plugin's precedence", () => {
     const headers = new Headers({
       authorization: `Basic ${Buffer.from("my%20app+id:s").toString("base64")}`,
     });
-    expect(resolveRevokeClientId({ body: {}, headers })).toBe("my app id");
+    expect(resolvePresentedClientId({ body: {}, headers })).toBe("my app id");
   });
 });
 

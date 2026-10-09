@@ -13,6 +13,7 @@ interface CredentialRequest {
   clientIp: string | null;
   revoke?: { clientId: string; userId: string };
   phase?: CredentialPersistencePhase;
+  /** The scope a registration stores, settled by its before-hook. */
   registrationScopes?: string[];
   email?: string;
   verifiedPasswordHash?: string;
@@ -25,10 +26,7 @@ export const credentialRequest = new AsyncLocalStorage<CredentialRequest>();
 
 /** Own every provider operation and withhold its answer until persistence settles. */
 export async function withCredentialRequest<T>(
-  input: Pick<
-    CredentialRequest,
-    "path" | "clientIp" | "phase" | "registrationScopes" | "email"
-  >,
+  input: Pick<CredentialRequest, "path" | "clientIp" | "phase" | "email">,
   work: () => Promise<T>,
 ): Promise<T> {
   const scope: CredentialRequest = {

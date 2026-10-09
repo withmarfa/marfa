@@ -585,6 +585,8 @@ export interface DevicePoll {
 export interface DeviceFlow {
   /** The client the app registered for itself. */
   clientId: string;
+  /** The scope the registration answered. The registration names no scope. */
+  registeredScope: string;
   /** Seconds a poller must leave between polls, as the initiation answered. */
   interval: number;
   /** One poll of the token door, as an app makes it: no credential. */
@@ -605,10 +607,17 @@ export interface DeviceFlow {
  * Without explicit scopes it requests content and seven permissions, every
  * permission but `instance.read`, `instance.maintain`, `connectors.manage`,
  * `blobs.manage` and `keys.manage`, which a fixture names when it needs them.
+ * The app registers the device grant and the refresh grant, no redirect URI
+ * and no response type, unless `options` names others.
  */
 export async function startDeviceFlow(
   server: FreshServer,
   scopes?: readonly string[],
+  options: {
+    grantTypes?: readonly string[];
+    redirectUris?: readonly string[];
+    responseTypes?: readonly string[];
+  } = {},
 ): Promise<DeviceFlow> {
   const owner = TEST_OWNER;
 
@@ -627,15 +636,18 @@ export async function startDeviceFlow(
       body: JSON.stringify({
         client_name: "conformance",
         application_type: "native",
-        grant_types: [
+        grant_types: options.grantTypes ?? [
           "urn:ietf:params:oauth:grant-type:device_code",
           "refresh_token",
         ],
-        response_types: [],
+        response_types: options.responseTypes ?? [],
+        ...(options.redirectUris === undefined
+          ? {}
+          : { redirect_uris: options.redirectUris }),
         token_endpoint_auth_method: "none",
       }),
     })
-  ).json()) as { client_id: string };
+  ).json()) as { client_id: string; scope: string };
 
   const code = (await (
     await fetch(discovery.device_authorization_endpoint, {
@@ -688,6 +700,7 @@ export async function startDeviceFlow(
 
   return {
     clientId: registered.client_id,
+    registeredScope: registered.scope,
     interval: code.interval,
     deviceCode: code.device_code,
     async poll() {
@@ -707,10 +720,17 @@ export async function startDeviceFlow(
     },
     async approve() {
       const cookie = await ownerSession();
+      // Redirects are not followed, so a refusal, such as the per-address
+      // lookup limit, fails here rather than as a pending poll later.
       const consent = await fetch(
         `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
-        { headers: { cookie } },
+        { headers: { cookie }, redirect: "manual" },
       );
+      if (consent.status !== 200) {
+        throw new Error(
+          `the consent screen was refused: ${String(consent.status)} ${consent.headers.get("location") ?? ""}`,
+        );
+      }
       const html = await consent.text();
       const form = new URLSearchParams({
         user_code: code.user_code,
@@ -725,6 +745,7 @@ export async function startDeviceFlow(
       }
       const approved = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
+        redirect: "manual",
         headers: {
           cookie,
           origin,
@@ -742,6 +763,7 @@ export async function startDeviceFlow(
       const cookie = await ownerSession();
       const denied = await fetch(`${origin}/auth/device/consent`, {
         method: "POST",
+        redirect: "manual",
         headers: {
           cookie,
           origin,

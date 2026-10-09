@@ -21844,7 +21844,7 @@ export interface operations {
                 "application/json": {
                     /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
                     redirect_uris?: string[];
-                    /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. */
+                    /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`. */
                     grant_types?: string[];
                     /** @description The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`. */
                     response_types?: string[];
@@ -21852,7 +21852,7 @@ export interface operations {
                     client_name?: string;
                     /** @description `web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`. */
                     application_type?: string;
-                    /** @description Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows. */
+                    /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
                     scope?: string;
                     /** @description How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. */
                     token_endpoint_auth_method?: string;
@@ -21878,7 +21878,7 @@ export interface operations {
                         client_secret?: string;
                         /** @description When the client was registered, in seconds since the Unix epoch. */
                         client_id_issued_at?: number;
-                        /** @description Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows. */
+                        /** @description Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token. */
                         scope?: string;
                         /** @description The redirect URIs, as registered. */
                         redirect_uris?: string[];

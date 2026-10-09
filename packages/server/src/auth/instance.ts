@@ -27,6 +27,7 @@ import {
   buildOauthProviderPlugin,
   buildOauthProjectionPlugin,
   makeTokenHasher,
+  refuseOfflineWithoutRefresh,
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
@@ -424,6 +425,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               // base path; the plugin's default `/device` would land beside
               // it rather than under it.
               verificationUri: "/auth/device",
+              onDeviceAuthRequest: refuseOfflineWithoutRefresh(options.storage),
             }),
           ]
         : []),
@@ -852,10 +854,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
             )
           : undefined;
       let body: Record<string, unknown> | undefined;
-      if (
-        request.method === "POST" &&
-        ["/oauth2/register", "/sign-in/email"].includes(path)
-      ) {
+      if (request.method === "POST" && path === "/sign-in/email") {
         try {
           const copy = request.clone();
           body = request.headers
@@ -867,16 +866,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           /* The provider owns malformed-body responses. */
         }
       }
-      const registrationScopes =
-        path === "/oauth2/register" && typeof body?.scope === "string"
-          ? [...new Set(body.scope.split(" ").filter(Boolean))]
-          : undefined;
       return withCredentialRequest(
         {
           path,
           clientIp: clientAddress,
           phase,
-          ...(registrationScopes?.length ? { registrationScopes } : {}),
           email: typeof body?.email === "string" ? body.email : undefined,
         },
         async () => {

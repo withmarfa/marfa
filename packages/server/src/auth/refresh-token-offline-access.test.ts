@@ -2,24 +2,15 @@
  * `offline_access` decides whether a grant gets a refresh token, and both
  * token-issuing paths have to answer that the same way.
  *
- * The library issues a refresh token only when the grant's scopes carry
- * `offline_access`, and its rotation lives inside the same call: rotating
- * revokes the presented token and links the replacement into the family, so
- * a replayed token is detectable and the whole chain can be terminated.
- *
- * Marfa's device route writes its own token rows at the terminal token step
- * rather than going through the library, and it used to mint a refresh token
- * for every approved grant. A device refresh token minted without
- * `offline_access` was therefore never eligible for rotation: presenting it
- * returned a fresh access token and left the row untouched, indefinitely.
- * Nothing could make it stale, so the replay defense never had anything to
- * fire on and the credential lasted until someone deleted the row by hand.
- * The grants that behavior reached are the least-watched ones there are —
- * a device is signed in once and left alone.
- *
- * The two paths now agree: no `offline_access`, no refresh token. With it,
- * a device refresh token rotates and its replay poisons the family, which
- * is what the authorization-code path has always done.
+ * The provider issues a refresh token only when the grant's scopes carry
+ * `offline_access` and the client may refresh, and its rotation lives inside
+ * the same call: rotating revokes the presented token and links the
+ * replacement into the family, so a replayed token is detectable and the
+ * whole chain can be terminated. The device grant reaches the same issuance
+ * through the provider's device extension, so with one client registered for
+ * both grants the two paths must agree: no `offline_access`, no refresh
+ * token; with it, a device refresh token rotates and its replay poisons the
+ * family, as an authorization-code one does.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
