@@ -1516,6 +1516,22 @@ If the selected private socket cannot be reached safely, then the command MUST f
 
 **Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
 
+### `device/local-socket-streamed`
+
+When a command given `--socket PATH` streams its answer, the command MUST send that request through the socket and to no other address.
+
+**Reason:** a streamed answer is read on its own connection, which has to reach the private socket as every other request does.
+
+**Tests:** `cli/instance.test.ts › downloads a blob through the private socket, byte for byte`, `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`.
+
+### `device/local-socket-needs-key`
+
+If the server answers `401` to a request that a command sent through `--socket PATH`, then the command MUST fail with exit `5`, saying the operation needs a key, which `--socket` does not carry.
+
+**Reason:** direct local authority carries no key, so the `401` is not an expired or wrong key, and the usual advice to sign in again would mislead.
+
+**Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
+
 ### `device/redeliver-request`
 
 When `webhooks redeliver <id> <delivery_id>` runs, the command MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.

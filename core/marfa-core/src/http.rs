@@ -55,6 +55,9 @@ pub fn origin_of(url: &str) -> Result<String, CoreError> {
 #[derive(Clone)]
 pub struct Http {
     agent: Agent,
+    /// Builds the agent a streamed call runs on, from that call's refusal
+    /// deadline, over the same connector as `agent`.
+    stream_agent: StreamAgent,
     base: Url,
     authorization: Arc<RwLock<String>>,
     renew: Arc<OnceLock<Renew>>,
@@ -64,6 +67,8 @@ pub struct Http {
     let_go: Arc<AtomicBool>,
     view: Option<String>,
 }
+
+type StreamAgent = Arc<dyn Fn(Arc<RwLock<Option<std::time::Instant>>>) -> Agent + Send + Sync>;
 
 /// Handed the refused bearer, so a caller that keeps the credential elsewhere
 /// can tell whether another process has rotated it already.
@@ -87,13 +92,13 @@ enum Budget {
 #[derive(Debug)]
 struct RefusalDeadline(Arc<RwLock<Option<std::time::Instant>>>);
 
-impl Connector<Box<dyn Transport>> for RefusalDeadline {
-    type Out = RefusalTransport;
+impl<T: Transport> Connector<T> for RefusalDeadline {
+    type Out = RefusalTransport<T>;
 
     fn connect(
         &self,
         _: &ConnectionDetails,
-        transport: Option<Box<dyn Transport>>,
+        transport: Option<T>,
     ) -> Result<Option<Self::Out>, ureq::Error> {
         Ok(transport.map(|transport| RefusalTransport {
             transport,
@@ -103,12 +108,12 @@ impl Connector<Box<dyn Transport>> for RefusalDeadline {
 }
 
 #[derive(Debug)]
-struct RefusalTransport {
-    transport: Box<dyn Transport>,
+struct RefusalTransport<T> {
+    transport: T,
     deadline: Arc<RwLock<Option<std::time::Instant>>>,
 }
 
-impl Transport for RefusalTransport {
+impl<T: Transport> Transport for RefusalTransport<T> {
     fn buffers(&mut self) -> &mut dyn Buffers {
         self.transport.buffers()
     }
@@ -288,23 +293,43 @@ impl Http {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let agent: Agent = Agent::config_builder()
+        let config = Agent::config_builder()
             .tls_config(tls)
             .http_status_as_error(false)
             .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(recv_response))
             .timeout_recv_body(Some(recv_body))
-            .build()
-            .into();
-        Self::with_agent(url, key, agent)
+            .build();
+        Self::with_connector(url, key, config, DefaultConnector::default)
     }
 
-    /// Uses a caller-supplied transport, retaining the contract and response checks.
-    pub fn with_agent(url: &str, key: &str, agent: Agent) -> Result<Http, CoreError> {
+    /// Reaches the server through a caller-supplied connector, retaining the
+    /// contract and response checks. `connector` builds one for the agent of
+    /// whole reads and one for each streamed call, so a streamed call reaches
+    /// the same place as every other.
+    pub fn with_connector<C: Connector>(
+        url: &str,
+        key: &str,
+        config: ureq::config::Config,
+        connector: impl Fn() -> C + Send + Sync + 'static,
+    ) -> Result<Http, CoreError> {
         let base = base_of(url)?;
+        let agent = Agent::with_parts(
+            config.clone(),
+            connector(),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+        );
+        let stream_agent: StreamAgent = Arc::new(move |deadline| {
+            Agent::with_parts(
+                config.clone(),
+                connector().chain(RefusalDeadline(deadline)),
+                ureq::unversioned::resolver::DefaultResolver::default(),
+            )
+        });
         Ok(Http {
             agent,
+            stream_agent,
             base,
             authorization: Arc::new(RwLock::new(format!("Bearer {key}"))),
             renew: Arc::new(OnceLock::new()),
@@ -989,11 +1014,7 @@ impl Http {
         match budget {
             Budget::Whole => self.agent.run(request),
             Budget::Stream(deadline) => {
-                let agent = Agent::with_parts(
-                    self.agent.config().clone(),
-                    DefaultConnector::default().chain(RefusalDeadline(deadline)),
-                    ureq::unversioned::resolver::DefaultResolver::default(),
-                );
+                let agent = (self.stream_agent)(deadline);
                 agent.run(
                     agent
                         .configure_request(request)

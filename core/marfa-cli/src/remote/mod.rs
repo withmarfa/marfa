@@ -494,7 +494,7 @@ impl Remote {
     }
 
     pub fn json(&self, request: &Request) -> Result<Value, CliError> {
-        read_json(self.call(request)?, request)
+        self.read_json(self.call(request)?, request)
     }
 
     /// `contract` is taken from the header, never the body: a body claiming
@@ -529,7 +529,48 @@ impl Remote {
     fn describe(&self, request: &Request) -> Result<(Value, Option<String>), CliError> {
         let reply = self.send(request, false)?;
         let served = reply.contract.clone();
-        Ok((read_json(reply, request)?, served))
+        Ok((self.read_json(reply, request)?, served))
+    }
+
+    /// The server's refusal as an error. Direct local authority carries no
+    /// key, so a `401` through the socket is not a spent or wrong key, and
+    /// signing in again would not help: the message says what is missing.
+    fn refusal(&self, status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
+        let mut error = refused(status, text, retry_after_seconds);
+        if self.local
+            && let CliError::Refused {
+                status: 401,
+                message,
+                ..
+            } = &mut error
+        {
+            *message = "this operation needs a key or a token, which --socket does not carry; run it without --socket".into();
+        }
+        error
+    }
+
+    fn read_json(&self, reply: Reply, request: &Request) -> Result<Value, CliError> {
+        let text = match reply.body {
+            ReplyBody::Text(text) => text,
+            ReplyBody::Stream(_) => {
+                return Err(CliError::Invalid(format!(
+                    "{} was sent as a stream and read as JSON",
+                    request.path()
+                )));
+            }
+        };
+        if !(200..300).contains(&reply.status) {
+            return Err(self.refusal(reply.status, &text, reply.retry_after_seconds));
+        }
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text).map_err(|error| {
+            CliError::Core(marfa_core::CoreError::Decoding(format!(
+                "{}: {error}",
+                request.path()
+            )))
+        })
     }
 
     pub fn stream(&self, request: &Request) -> Result<(String, Box<dyn Read + Send>), CliError> {
@@ -546,7 +587,9 @@ impl Remote {
             ReplyBody::Stream(reader) => {
                 Ok((reply.content_type, Box::new(Watched::new(reader, idle))))
             }
-            ReplyBody::Text(text) => Err(refused(reply.status, &text, reply.retry_after_seconds)),
+            ReplyBody::Text(text) => {
+                Err(self.refusal(reply.status, &text, reply.retry_after_seconds))
+            }
         }
     }
 }
@@ -610,30 +653,6 @@ impl Read for Watched {
         self.at += n;
         Ok(n)
     }
-}
-
-fn read_json(reply: Reply, request: &Request) -> Result<Value, CliError> {
-    let text = match reply.body {
-        ReplyBody::Text(text) => text,
-        ReplyBody::Stream(_) => {
-            return Err(CliError::Invalid(format!(
-                "{} was sent as a stream and read as JSON",
-                request.path()
-            )));
-        }
-    };
-    if !(200..300).contains(&reply.status) {
-        return Err(refused(reply.status, &text, reply.retry_after_seconds));
-    }
-    if text.trim().is_empty() {
-        return Ok(Value::Null);
-    }
-    serde_json::from_str(&text).map_err(|error| {
-        CliError::Core(marfa_core::CoreError::Decoding(format!(
-            "{}: {error}",
-            request.path()
-        )))
-    })
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
