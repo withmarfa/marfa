@@ -783,7 +783,7 @@ export function buildOauthProjectionPlugin(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic registration (after-hook)
+// Dynamic registration (before-hook and after-hook)
 // ---------------------------------------------------------------------------
 
 /**
@@ -811,8 +811,8 @@ export function clientMayRefresh(grantTypes: unknown): boolean {
  *
  * A request naming no scope keeps that allowlist, less `offline_access` for a
  * client that may not refresh: the device code request refuses such a client
- * that scope (`offerDeviceScopes`), so a default holding it would leave the
- * client refused a scope it never chose.
+ * that scope (`offerDeviceScopes`), so a default holding it would register
+ * the client for a scope it can never use.
  */
 function settleRegistrationScope(
   ctx: HookCtxLite,

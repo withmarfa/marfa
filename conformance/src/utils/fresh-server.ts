@@ -585,7 +585,7 @@ export interface DevicePoll {
 export interface DeviceFlow {
   /** The client the app registered for itself. */
   clientId: string;
-  /** The scope the registration answered, which named none. */
+  /** The scope the registration answered. The registration names no scope. */
   registeredScope: string;
   /** Seconds a poller must leave between polls, as the initiation answered. */
   interval: number;

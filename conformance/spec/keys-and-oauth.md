@@ -886,7 +886,7 @@ When a registration names a scope, the server MUST register and answer that scop
 
 When a registration names no scope, the server MUST register the client for every scope the instance allows, every scope its discovery documents publish among them, except `offline_access` for a client whose `grant_types` name neither `refresh_token` nor `authorization_code`.
 
-**Reason:** Such a client may not exchange a refresh token, and `keys-and-oauth/device-offline-no-refresh` refuses it `offline_access`, so a default that held the scope would leave the client refused a scope it never chose.
+**Reason:** Such a client may not exchange a refresh token, and `keys-and-oauth/device-offline-no-refresh` refuses it `offline_access`, so a default that held the scope would register the client for a scope it can never use.
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/device-grant.test.ts › registers a client that may not refresh, naming no scope, for every scope but offline_access, and answers its device flow an access token alone`.
 
@@ -1104,9 +1104,9 @@ If a request to `POST /auth/oauth2/token` names a grant type the server does not
 
 ### `keys-and-oauth/refresh-offline`
 
-When the server issues tokens for an authorization that asked for `offline_access` to a client whose `grant_types` name `refresh_token` or `authorization_code`, the server MUST issue a refresh token beside the access token.
+When the server issues tokens to a client whose `grant_types` name `refresh_token` or `authorization_code`, for an authorization that asked for `offline_access`, the server MUST issue a refresh token beside the access token.
 
-**Reason:** `grant_types` names the grants a client uses at the token endpoint (RFC 7591), so only such a client may exchange a refresh token. A client that uses the authorization code grant may refresh what that grant issues.
+**Reason:** `grant_types` names the grants a client uses at the token endpoint (RFC 7591), so a client may exchange a refresh token only where it names `refresh_token`, or names `authorization_code` and refreshes what that grant issues.
 
 **Tests:** `compliance/oauth-tokens.test.ts › are issued only to an authorization that asked for offline_access`, `compliance/device-grant.test.ts › answers offline_access a refresh token, which exchanges, for a client registered for the refresh grant`.
 
