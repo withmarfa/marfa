@@ -182,7 +182,7 @@ describe("scripts/report-nightly-failure.sh", () => {
   const JOBS = JSON.stringify({
     jobs: [
       { name: "Classify changes", conclusion: "success" },
-      { name: "Conformance shard (device 2/4)", conclusion: "failure" },
+      { name: "Core checks (Linux)", conclusion: "failure" },
       { name: "CLI scenarios", conclusion: "failure" },
       { name: "Conformance statuses", conclusion: "skipped" },
       { name: "Report a failed night", conclusion: null },
@@ -265,7 +265,7 @@ describe("scripts/report-nightly-failure.sh", () => {
       "https://github.com/withmarfa/marfa/actions/runs/424242",
     );
     expect(result.body).toContain("0123456789abcdef0123456789abcdef01234567");
-    expect(result.body).toContain("- Conformance shard (device 2/4)");
+    expect(result.body).toContain("- Core checks (Linux)");
     expect(result.body).toContain("- CLI scenarios");
     // Only a job that failed is named.
     expect(result.body).not.toContain("Classify changes");
