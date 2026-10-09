@@ -54,3 +54,19 @@ Software-consumed values live in Infisical, never in a file here. A local `.infi
 ## Notes and logs
 
 Session notes and logs are written outside this repository, where the session prompt says. `_trash/` and `_archive/` at the root are never committed.
+
+## Code Review Rules
+
+Report only a real problem: one that breaks the issue's acceptance criteria, a rule written in this file (quote it) or correctness, and say how it fails: the input, state or step, and what goes wrong. If you cannot say how it fails, it is not a finding. Leave formatting, lint and anything CI catches to CI, and skip any convention that is not written down. Check the whole tree, not only the diff, and name each finding by the check it breaks.
+
+- **Done.** The acceptance criteria are met, new behavior has a test that was seen failing first, and what the pull request claims is true. A test that asserts absence has a witness: the same path with the condition removed produces the thing.
+- **True.** A comment, doc, instruction file or contract statement the change touches or leaves untrue is a finding, fixed in the same change. New prose follows the standard under Writing for its kind. A claim of completeness ("all callers updated") is checked by searching, not accepted.
+- **Nothing left behind.** Dead code, shims, old names and references to removed things.
+- **Every path.** A permission, check or interpretation of a value holds at every door, including one the change adds, and in every copy of the logic: the server and the working copy, a fallback, a retry. Nothing is exempted by a name or field someone else controls.
+- **Check and write are one step.** A decision is made on the state the write commits, with no wait, retry or asynchronous boundary between. Intent kept for a retry is captured, unchangeable, when it is sent, and announcements follow the order the writes were admitted.
+- **Report only what is known.** Success, absence, completeness and current authority are claimed only on evidence that proves them: a refusal does not prove a write never committed, an old receipt does not prove present access, a partial snapshot is not a full inventory. A failure is not cleared by an unrelated operation.
+- **Keep what people made.** A refused, failed or uncertain write is kept where the person can get it back, never dropped or rolled over newer work. Clean-up acts only on what it proved gone, and an edit keeps every byte it did not mean to change.
+- **Real conditions.** Real clocks and dates, number ranges across languages and SQLite, runtime limits, slow or absent peers, untidy input, other platforms and file systems. One bad item, slow peer or hiccup stays contained and never takes down the batch, the folder or the job.
+- **Flaky tests.** An unexplained flaky test is a finding: reproduce it, or say exactly why it cannot recur.
+
+Mark a finding blocking when it changes how Marfa behaves or breaks a criterion or rule, and a quick fix when it is a name, a stale reference or a wrong count. Keep a problem that was there before the change apart from findings against it, and list it only if it is clearly wrong and would keep coming up.
