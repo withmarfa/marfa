@@ -24,7 +24,7 @@ If an item write or a listing filter names a well-formed type identifier nothing
 
 ### `types/id-reserved-scope-root`
 
-If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `content`, `metadata`, `edge`, `profile` or `space`, then the server MUST refuse it as `types/id-malformed` refuses an identifier the grammar refuses.
+If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors`, `blobs`, `content`, `metadata`, `edge`, `profile` or `space`, then the server MUST refuse it as `types/id-malformed` refuses an identifier the grammar refuses.
 
 **Reason:** each heads a permission or scope family, so a type under it could be written and never granted.
 
