@@ -257,6 +257,7 @@ describe("the code exchange", () => {
     const secret = await registerApp(server, NOTES, {
       token_endpoint_auth_method: "client_secret_basic",
     });
+    expect(secret.clientSecret, "the app was given no secret").toBeDefined();
     for (const app of [open, secret]) {
       const { code } = await codeFor(server, origin, cookie, app, NOTES);
       const refused = await token(
