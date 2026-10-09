@@ -4,8 +4,13 @@
  *
  *   tsx scripts/check-statuses.ts [--state <dir>] [--url <origin>] [--complete]
  *
+ * Or, for a run split over shards, after the logs each kept have been
+ * gathered, with no server:
+ *
+ *   tsx scripts/check-statuses.ts --shards <dir> [--complete]
+ *
  * The document is fetched from the server that wrote the log, so the two
- * describe one process. The observed table it prints is the record of what
+ * describe one process; a shard keeps the one its server served. The observed table it prints is the record of what
  * the fixtures reach. Exit 1 names every status with no declaration, every
  * refusal code a declared status does not list, and every served route the
  * document leaves out without a reason. `--complete` is for
@@ -23,10 +28,12 @@ import {
   unreachedDebt,
 } from "../src/utils/status-declarations.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
+import { readShards } from "../src/utils/shard-logs.js";
 
 interface Args {
   state: string;
   url?: string;
+  shards?: string;
   complete: boolean;
 }
 
@@ -36,6 +43,7 @@ function parseArgs(argv: string[]): Args {
     const arg = argv[i];
     if (arg === "--state") args.state = resolve(argv[++i] ?? "");
     else if (arg === "--url") args.url = argv[++i];
+    else if (arg === "--shards") args.shards = resolve(argv[++i] ?? "");
     else if (arg === "--complete") args.complete = true;
     else throw new Error(`unexpected argument: ${arg ?? ""}`);
   }
@@ -43,46 +51,67 @@ function parseArgs(argv: string[]): Args {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const logPath = resolve(args.state, "server.log");
-const envPath = resolve(args.state, "env");
 
-if (!existsSync(logPath)) {
-  throw new Error(
-    `no server log at ${logPath}; check:statuses reads the log of the server the suite drove, so it runs after a suite and before marfa:down`,
-  );
+async function read(): Promise<{
+  logs: string[];
+  document: Parameters<typeof reportStatuses>[1];
+  where: string;
+}> {
+  if (args.shards !== undefined) {
+    const { logs, document, shards } = readShards(args.shards);
+    return {
+      logs,
+      document: document as Parameters<typeof reportStatuses>[1],
+      where: `${args.shards} (${String(shards)} shards)`,
+    };
+  }
+  const logPath = resolve(args.state, "server.log");
+  const envPath = resolve(args.state, "env");
+
+  if (!existsSync(logPath)) {
+    throw new Error(
+      `no server log at ${logPath}; check:statuses reads the log of the server the suite drove, so it runs after a suite and before marfa:down`,
+    );
+  }
+
+  const url =
+    args.url ??
+    process.env.MARFA_API_URL ??
+    (existsSync(envPath)
+      ? parseEnvFile(readFileSync(envPath, "utf8")).MARFA_API_URL
+      : undefined);
+  if (!url) {
+    throw new Error(
+      "no server URL: pass --url, set MARFA_API_URL, or point --state at a state directory holding an env file",
+    );
+  }
+
+  const response = await fetch(`${url}/openapi.json`);
+  if (!response.ok) {
+    throw new Error(
+      `GET ${url}/openapi.json answered ${String(response.status)}; the document has to come from the server that wrote the log`,
+    );
+  }
+  const document = (await response.json()) as Parameters<
+    typeof reportStatuses
+  >[1];
+
+  const freshLogs = resolve(args.state, FRESH_SERVER_LOGS);
+  return {
+    logs: [
+      logPath,
+      ...(existsSync(freshLogs)
+        ? readdirSync(freshLogs)
+            .filter((name) => name.endsWith(".log"))
+            .map((name) => resolve(freshLogs, name))
+        : []),
+    ],
+    document,
+    where: logPath,
+  };
 }
 
-const url =
-  args.url ??
-  process.env.MARFA_API_URL ??
-  (existsSync(envPath)
-    ? parseEnvFile(readFileSync(envPath, "utf8")).MARFA_API_URL
-    : undefined);
-if (!url) {
-  throw new Error(
-    "no server URL: pass --url, set MARFA_API_URL, or point --state at a state directory holding an env file",
-  );
-}
-
-const response = await fetch(`${url}/openapi.json`);
-if (!response.ok) {
-  throw new Error(
-    `GET ${url}/openapi.json answered ${String(response.status)}; the document has to come from the server that wrote the log`,
-  );
-}
-const document = (await response.json()) as Parameters<
-  typeof reportStatuses
->[1];
-
-const freshLogs = resolve(args.state, FRESH_SERVER_LOGS);
-const logs = [
-  logPath,
-  ...(existsSync(freshLogs)
-    ? readdirSync(freshLogs)
-        .filter((name) => name.endsWith(".log"))
-        .map((name) => resolve(freshLogs, name))
-    : []),
-];
+const { logs, document, where } = await read();
 const lines = logs.flatMap((path) =>
   parseRequestLines(readFileSync(path, "utf8")),
 );
@@ -91,7 +120,7 @@ const report = reportStatuses(lines, document);
 // An empty log passes every comparison there is, so say what was read.
 if (report.lines === 0) {
   throw new Error(
-    `${logPath} holds no request lines, so nothing was checked. Run a suite against this server first.`,
+    `${where} holds no request lines, so nothing was checked. Run a suite against this server first.`,
   );
 }
 
