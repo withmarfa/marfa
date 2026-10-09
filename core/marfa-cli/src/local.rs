@@ -201,26 +201,63 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn a_streamed_request_reaches_the_socket_without_authorization() {
+    /// A private socket that answers one request. `answer` is handed the
+    /// request head, read to its blank line, and returns the status line,
+    /// content type and body to send. A connection that never comes fails
+    /// the serving thread after five seconds rather than hanging the test.
+    fn serve_once(
+        label: &str,
+        answer: impl FnOnce(&str) -> (&'static str, &'static str, &'static str) + Send + 'static,
+    ) -> (PathBuf, PathBuf, std::thread::JoinHandle<()>) {
         let root = std::env::temp_dir()
             .canonicalize()
             .unwrap()
-            .join(format!("marfa-local-stream-{}", std::process::id()));
+            .join(format!("marfa-local-{label}-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = root.join("control.sock");
         let listener = UnixListener::bind(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        listener.set_nonblocking(true).unwrap();
         let serving = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            let mut buffer = [0; 4096];
-            let size = socket.read(&mut buffer).unwrap();
-            let text = String::from_utf8_lossy(&buffer[..size]);
-            assert!(text.starts_with("GET /blobs/sha256:abc "), "{text}");
-            assert!(!text.to_lowercase().contains("authorization:"));
-            let body = "streamed bytes";
-            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{}",body.len(),marfa_core::contract::CONTRACT_VERSION,body).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "no request reached the socket"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut head = Vec::new();
+            let mut buffer = [0; 1024];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                let size = socket.read(&mut buffer).unwrap();
+                assert!(size > 0, "the request ended before its head did");
+                head.extend_from_slice(&buffer[..size]);
+            }
+            let head = String::from_utf8_lossy(&head).to_string();
+            assert!(!head.to_lowercase().contains("authorization:"), "{head}");
+            let (status, content_type, body) = answer(&head);
+            write!(socket,"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{body}",body.len(),marfa_core::contract::CONTRACT_VERSION).unwrap();
+        });
+        (root, path, serving)
+    }
+
+    #[test]
+    fn a_streamed_request_reaches_the_socket_without_authorization() {
+        let (root, path, serving) = serve_once("stream", |head| {
+            assert!(head.starts_with("GET /blobs/sha256:abc "), "{head}");
+            ("200 OK", "application/octet-stream", "streamed bytes")
         });
         let (content_type, mut reader) = Remote::local(&path)
             .unwrap()
@@ -232,6 +269,53 @@ mod tests {
         assert_eq!(bytes, "streamed bytes");
         serving.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    const UNAUTHORIZED: &str =
+        r#"{"error":{"code":"unauthorized","message":"Authentication required"}}"#;
+
+    fn assert_needs_a_key(error: CliError) {
+        match error {
+            CliError::Refused {
+                status: 401,
+                ref code,
+                ref message,
+                ..
+            } => {
+                assert_eq!(code, "unauthorized");
+                assert!(
+                    message.starts_with(
+                        "this operation needs a key or a token, which --socket does not carry"
+                    ),
+                    "{message}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(error.exit(), crate::error::Exit::Credential);
+    }
+
+    #[test]
+    fn a_401_through_the_socket_says_the_operation_needs_a_key() {
+        for streamed in [false, true] {
+            let (root, path, serving) = serve_once("refused", |_| {
+                ("401 Unauthorized", "application/json", UNAUTHORIZED)
+            });
+            let remote = Remote::local(&path).unwrap();
+            let request = if streamed {
+                Request::get(&["export"]).streamed()
+            } else {
+                Request::get(&["items"])
+            };
+            let error = if streamed {
+                remote.stream(&request).err().unwrap()
+            } else {
+                remote.json(&request).unwrap_err()
+            };
+            assert_needs_a_key(error);
+            serving.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     fn input_timeout() -> NextTimeout {

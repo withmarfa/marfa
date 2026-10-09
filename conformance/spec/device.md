@@ -1522,21 +1522,15 @@ When a command given `--socket PATH` streams its answer, the command MUST send t
 
 **Reason:** a streamed answer is read on its own connection, which has to reach the private socket as every other request does.
 
-**Tests:** `cli/instance.test.ts › downloads a blob through the private socket, byte for byte`.
+**Tests:** `cli/instance.test.ts › downloads a blob through the private socket, byte for byte`, `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`.
 
 ### `device/local-socket-needs-key`
 
-If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST refuse it `usage`.
+If the server answers `401` to a request that a command sent through `--socket PATH`, then the command MUST fail with exit `5`, saying the operation needs a key, which `--socket` does not carry.
 
-**Reason:** direct local authority carries no key, and the operations these commands call answer it `401`.
+**Reason:** direct local authority carries no key, so the `401` is not an expired or wrong key, and the usual advice to sign in again would mislead.
 
-**Tests:** `device/contract.test.ts › refuses export, events and a delivery body under --socket before sending a request`, `cli/instance.test.ts › refuses export, events and a delivery body under the private socket`.
-
-### `device/local-socket-needs-key-not-sent`
-
-If `export`, `events` or `connectors deliveries body` is given `--socket PATH`, then the command MUST NOT send a request.
-
-**Tests:** `device/contract.test.ts › refuses export, events and a delivery body under --socket before sending a request`.
+**Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
 
 ### `device/redeliver-request`
 

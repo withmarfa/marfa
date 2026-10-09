@@ -135,11 +135,19 @@ async function scriptItems(
 }
 
 function refusal(stderr: string): {
-  error: { code: string; server: { status: number } | null };
+  error: {
+    code: string;
+    message: string;
+    server: { status: number } | null;
+  };
   exit: number;
 } {
   return JSON.parse(stderr) as {
-    error: { code: string; server: { status: number } | null };
+    error: {
+      code: string;
+      message: string;
+      server: { status: number } | null;
+    };
     exit: number;
   };
 }
@@ -532,11 +540,11 @@ describe("the contract the binary was built for", () => {
     expect(server.requests).toEqual([]);
   });
 
-  it("refuses export, events and a delivery body under --socket before sending a request", async () => {
+  it("explains a 401 through --socket as an operation that needs a key, with the credential exit", async () => {
     const socket = await PrivateSocket.start();
     try {
-      // Witness: a streamed command that the socket does serve connects to
-      // it, so a count of zero below means the command did not try.
+      // Witness: a socket that answers 200 serves a streamed download and a
+      // plain read, so what follows is the 401 and not the command line.
       const out = join(socket.dir, "blob.out");
       const served = await marfa([
         "--json",
@@ -550,24 +558,36 @@ describe("the contract the binary was built for", () => {
       ]);
       expect(served.code, served.stderr).toBe(0);
       expect(readFileSync(out, "utf8")).toBe("streamed bytes");
-      expect(socket.connections).toBeGreaterThan(0);
+      const listed = await marfa([
+        "--json",
+        "--socket",
+        socket.path,
+        "items",
+        "list",
+      ]);
+      expect(listed.code, listed.stderr).toBe(0);
 
+      socket.denies = true;
       for (const args of [
         ["export"],
         ["events"],
         ["connectors", "deliveries", "body", ID, ID],
+        ["blobs", "download", HASH, "--output", out],
+        ["items", "list"],
       ]) {
         const label = args.join(" ");
-        const before = socket.connections;
+        const before = socket.requests;
         const refused = await marfa([
           "--json",
           "--socket",
           socket.path,
           ...args,
         ]);
-        expect(refused.code, `${label}: ${refused.stderr}`).toBe(2);
-        expect(refusal(refused.stderr).error.code, label).toBe("usage");
-        expect(socket.connections, label).toBe(before);
+        expect(refused.code, `${label}: ${refused.stderr}`).toBe(5);
+        const { error } = refusal(refused.stderr);
+        expect(error.code, label).toBe("unauthorized");
+        expect(error.message, label).toContain(NEEDS_A_KEY);
+        expect(socket.requests, label).toBeGreaterThan(before);
       }
     } finally {
       await socket.stop();
@@ -575,13 +595,18 @@ describe("the contract the binary was built for", () => {
   });
 });
 
+const NEEDS_A_KEY =
+  "this operation needs a key or a token, which --socket does not carry; run it without --socket";
+
 /**
- * A server on a Unix socket of its own, which answers a blob download and
- * counts the connections made to it. The directory is short because macOS
- * caps a socket path, and private because the binary refuses any other.
+ * A server on a Unix socket of its own. It answers a blob download and a
+ * list of items, or `401` to everything once `denies` is set, and counts the
+ * requests made to it. The directory is short because macOS caps a socket
+ * path, and private because the binary refuses any other.
  */
 class PrivateSocket {
-  connections = 0;
+  requests = 0;
+  denies = false;
 
   private constructor(
     readonly dir: string,
@@ -592,30 +617,49 @@ class PrivateSocket {
   static async start(): Promise<PrivateSocket> {
     const dir = mkdtempSync(join(realpathSync(tmpdir()), "m-"));
     const path = join(dir, "s");
+    // Built below, once the server it counts for exists.
+    const holder: { socket?: PrivateSocket } = {};
     const server = createServer((request, response) => {
-      if (request.method === "GET" && request.url?.startsWith("/blobs/")) {
+      const socket = holder.socket!;
+      socket.requests += 1;
+      const named = { [CONTRACT_HEADER]: BUILT_FOR };
+      if (socket.denies) {
+        response.writeHead(401, {
+          "content-type": "application/json",
+          ...named,
+        });
+        response.end(
+          JSON.stringify({
+            error: { code: "unauthorized", message: "Authentication required" },
+          }),
+        );
+      } else if (request.url?.startsWith("/blobs/")) {
         response.writeHead(200, {
           "content-type": "application/octet-stream",
-          [CONTRACT_HEADER]: BUILT_FOR,
+          ...named,
         });
         response.end("streamed bytes");
-        return;
+      } else if (request.url?.startsWith("/items")) {
+        response.writeHead(200, {
+          "content-type": "application/json",
+          ...named,
+        });
+        response.end(JSON.stringify({ data: [], next_cursor: null }));
+      } else {
+        response.writeHead(501, named).end();
       }
-      response.writeHead(501).end();
     });
-    const socket = new PrivateSocket(dir, path, server);
-    server.on("connection", () => {
-      socket.connections += 1;
-    });
+    holder.socket = new PrivateSocket(dir, path, server);
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(path, resolve);
     });
     chmodSync(path, 0o600);
-    return socket;
+    return holder.socket;
   }
 
   async stop(): Promise<void> {
+    this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     rmSync(this.dir, { recursive: true, force: true });
   }

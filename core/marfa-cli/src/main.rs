@@ -258,8 +258,9 @@ fn usage(
     Some(CliError::Usage(message))
 }
 
-/// What `--socket` refuses about a command, before anything is sent: the
-/// commands with no use for it, and the ones that need a key it does not carry.
+/// What `--socket` refuses about a command before anything is sent: the
+/// commands that have no use for it. A command whose operation needs a key
+/// is sent, and the server's `401` says so.
 fn socket_refusal(command: &Command) -> Option<CliError> {
     if matches!(
         command,
@@ -271,21 +272,6 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
     ) {
         return Some(CliError::Usage(
             "this command does not support --socket".into(),
-        ));
-    }
-    if matches!(
-        command,
-        Command::Export(_)
-            | Command::Events(_)
-            | Command::Connectors {
-                command: connectors::ConnectorsCommand::Deliveries {
-                    command: connectors::DeliveriesCommand::Body { .. }
-                }
-            }
-    ) {
-        return Some(CliError::Usage(
-            "this command needs a key or a token, which --socket does not carry; run it without --socket"
-                .into(),
         ));
     }
     None
@@ -432,27 +418,32 @@ mod tests {
     }
 
     #[test]
-    fn socket_authority_is_refused_for_commands_that_need_a_key() {
+    fn socket_authority_is_refused_for_commands_it_has_no_use_for() {
         let command = |words: &[&str]| {
             let mut argv = vec!["marfa", "--socket", "/marfa-test-missing/control.sock"];
             argv.extend_from_slice(words);
             Cli::try_parse_from(argv).unwrap().command
         };
         for words in [
-            &["export"][..],
-            &["events"],
-            &["connectors", "deliveries", "body", "id", "delivery"],
+            &["login"][..],
+            &["logout"],
+            &["device", "status"],
+            &["folders", "list"],
+            &["docs", "topics"],
         ] {
             assert!(
-                matches!(socket_refusal(&command(words)), Some(CliError::Usage(ref message)) if message.starts_with("this command needs a key or a token")),
+                matches!(socket_refusal(&command(words)), Some(CliError::Usage(ref message)) if message == "this command does not support --socket"),
                 "{words:?}"
             );
         }
-        // Witness: the neighbors of those commands are not refused.
+        // Witness: commands that need a key, or are streamed, are sent.
         for words in [
-            &["connectors", "deliveries", "list", "id"][..],
-            &["connectors", "list"],
+            &["export"][..],
+            &["events"],
+            &["items", "list"],
+            &["connectors", "deliveries", "body", "id", "delivery"],
             &["blobs", "download", "sha256:abc"],
+            &["connectors", "list"],
         ] {
             assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }

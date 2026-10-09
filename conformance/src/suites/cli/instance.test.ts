@@ -738,7 +738,7 @@ describe("the instance from the terminal", () => {
     expect(readFileSync(out).equals(bytes)).toBe(true);
   });
 
-  it("refuses export, events and a delivery body under the private socket", async () => {
+  it("explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands", async () => {
     const socket = process.env.MARFA_CONTROL_SOCKET;
     expect(
       socket,
@@ -746,16 +746,21 @@ describe("the instance from the terminal", () => {
     ).toBeTruthy();
     const viaSocket = c.cli.viaSocket(socket!);
 
-    // Direct local authority is answered 401 on these, so the command
-    // refuses before it sends anything.
-    for (const args of [
-      ["export"],
-      ["events"],
-      ["connectors", "deliveries", "body", "connector-id", "delivery-id"],
-    ]) {
+    // Witness: the plain and the streamed command both succeed under the
+    // key, so what follows is the server's 401 and not the command line.
+    expect((await c.cli.run(["--json", "items", "list"])).code).toBe(0);
+    expect((await c.cli.run(["--json", "export"])).code).toBe(0);
+
+    // Direct local authority carries no key, so the server answers 401.
+    for (const args of [["items", "list"], ["export"], ["events"]]) {
+      const label = args.join(" ");
       const refused = await viaSocket.refused(args);
-      expect(refused.code, args.join(" ")).toBe(2);
-      expect(refused.envelope.error.code, args.join(" ")).toBe("usage");
+      expect(refused.code, label).toBe(5);
+      expect(refused.envelope.error.code, label).toBe("unauthorized");
+      expect(refused.envelope.error.server?.status, label).toBe(401);
+      expect(refused.envelope.error.message, label).toContain(
+        "this operation needs a key or a token, which --socket does not carry; run it without --socket",
+      );
     }
   });
 
