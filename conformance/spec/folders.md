@@ -564,6 +564,14 @@ When an include or ignore pattern matches a file's path directly, a device MUST 
 
 **Tests:** `device/folder-patterns.test.ts › resolves an equivalent file pattern before a matching parent pattern`.
 
+### `folders/pattern-not-folder-root`
+
+A device MUST NOT match an include or ignore pattern against the folder's own directory, so a line that names only directories neither takes nor leaves out a file at the folder's top level.
+
+**Reason:** git reads a list the same way, and a bound file a line stops taking is kept as `folders/excluded-binding-kept` keeps it.
+
+**Tests:** `device/folders.test.ts › keeps a bound file at the top that a line naming only directories does not take`.
+
 ### `folders/pattern-one-character`
 
 When an include or ignore pattern holds a `?` or a bracket class, a device MUST match each against exactly one character of the path, whatever the character's length in bytes.
