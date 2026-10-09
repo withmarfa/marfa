@@ -17,6 +17,7 @@ import type { Stores } from "./housekeeping/blob-delete.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { RevokedGrantPurger, TrashPurger } from "./storage/retention.js";
 import { hashApiKey } from "./middleware/auth.js";
+import { makeTokenHasher } from "./auth/oauth-provider.js";
 import type { PersistedEvent, Storage } from "./storage/interface.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
@@ -90,6 +91,10 @@ export function inlineOpenApiRefs(
  *  hash with the same value the route auth resolver expects. */
 export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
+
+/** The digest a device code is stored as under `createTestContext`, for a
+ *  test that reads or edits the code's row directly. */
+export const storedDeviceCode = makeTokenHasher(TEST_API_KEY_SALT);
 
 /**
  * Resolve the raw-SQL test escape hatch off the storage object, throwing

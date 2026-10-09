@@ -1950,7 +1950,8 @@ export interface OauthProviderStore {
    */
   drain(): Promise<void>;
   /**
-   * Resolve an approved device code to the grant it belongs to, and say
+   * Resolve an approved device code, by the digest it is stored as, to the
+   * grant it belongs to, and say
    * whether that grant is still consented and its projection live on both
    * lifecycle axes. A code in any other state resolves to null, because
    * until it is approved there is no grant to judge it against. The device twin of `findAuthorizationCodeGrantKey`,
@@ -1962,19 +1963,20 @@ export interface OauthProviderStore {
    * Returns null for a code this store does not recognize, or one no person
    * has claimed yet, which the caller passes through to the plugin.
    */
-  findDeviceCodeGrantKey(deviceCode: string): Promise<{
+  findDeviceCodeGrantKey(deviceCodeDigest: string): Promise<{
     clientId: string;
     userId: string;
     hasConsent: boolean;
   } | null>;
   /**
-   * The client and the scopes a device code's row carries, in any state:
+   * The client and the scopes a device code's row carries, found by the
+   * digest the code is stored as, in any state:
    * what the device asked for, narrowed to what the person ticked once
    * approved. Null for a code this store does not recognize, which the
    * caller passes through to the plugin.
    */
   findDeviceCodeRequest(
-    deviceCode: string,
+    deviceCodeDigest: string,
   ): Promise<{ clientId: string; scopes: string[] } | null>;
   /**
    * Rewrite a pending device code's `scope` to the set the person ticked.

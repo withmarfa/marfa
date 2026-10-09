@@ -6,6 +6,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { MarfaAuth, MarfaAuthSession } from "./instance.js";
 import { KeyedThrottle } from "./keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
+import { PasswordAttemptsSpent, passwordAttempts } from "./sign-in-throttle.js";
 
 export const CLAIM_STATE_KEY = "instance.claim";
 const SESSION_MS = 15 * 60_000;
@@ -348,18 +349,50 @@ export async function recoverOwnerPassword(
     { action: "owner.password.recovered", resource_type: "owner" },
   );
 }
+/**
+ * The owner's password change. The current password is a password check like
+ * a sign-in, so it is counted against the sign-in windows before it is judged,
+ * and each refusal is recorded as a failed sign-in is.
+ */
 export async function changeOwnerPassword(
   storage: Storage,
   auth: MarfaAuth,
   headers: Headers,
-  input: { currentPassword: string; password: string },
+  input: {
+    currentPassword: string;
+    password: string;
+    clientAddress: string | null;
+  },
 ): Promise<void> {
   const initial = await requireOwnerSession(storage, auth, headers);
-  const prepared = await auth.preparePasswordChange(
-    initial.user.id,
-    input.currentPassword,
-    input.password,
+  const refused = (reason: "too_many_attempts" | "invalid_credentials") =>
+    runAuditedTransaction(storage, () => undefined, {
+      action: "owner.password.change_failed",
+      resource_type: "owner",
+      resource_id: initial.user.id,
+      client_ip: input.clientAddress,
+      details: { reason },
+    });
+  const admitted = await passwordAttempts(storage)(
+    initial.user.email,
+    input.clientAddress,
   );
+  if (!admitted.allowed) {
+    await refused("too_many_attempts");
+    throw new PasswordAttemptsSpent(admitted.retryAfter);
+  }
+  let prepared: Awaited<ReturnType<MarfaAuth["preparePasswordChange"]>>;
+  try {
+    prepared = await auth.preparePasswordChange(
+      initial.user.id,
+      input.currentPassword,
+      input.password,
+    );
+  } catch (error) {
+    if (error instanceof MarfaError && error.code === ErrorCode.UNAUTHORIZED)
+      await refused("invalid_credentials");
+    throw error;
+  }
   // Recheck the live session and previously verified password digest under the
   // writer lock, so a recovery racing with slow password work wins safely.
   await runAuditedTransaction(

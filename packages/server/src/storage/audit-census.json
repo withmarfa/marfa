@@ -24,11 +24,11 @@
     }
   },
   "auth/instance-claim.ts": {
-    "boundary": "Machine-issued setup proofs, atomic owner claim, password changes and recovery share strict audited transactions. Fault and process tests cover rollback, durable consumption and uncertain commits; operational sign-in counters clear within the credential change.",
+    "boundary": "Machine-issued setup proofs, atomic owner claim, password changes and recovery share strict audited transactions. Fault and process tests cover rollback, durable consumption and uncertain commits; operational sign-in counters clear within the credential change. A refused password change writes only its audit record.",
     "calls": {
       "RateLimitStore.clearSignIn": 2,
       "SettingsStore.set": 1,
-      "runAuditedTransaction": 7
+      "runAuditedTransaction": 8
     }
   },
   "auth/instance.ts": {

@@ -87,7 +87,6 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "POST /auth/revoke-other-sessions":
     "ends every browser session but the caller's",
   "POST /auth/change-password": "the owner's password change",
-  "POST /auth/update-user": "the owner's profile change",
   "GET /auth/jwks": "the key set that signs id tokens",
   "GET /auth/oauth2/authorize": "an app's authorization request",
   "POST /auth/oauth2/token": "the token exchange, every grant",
@@ -143,7 +142,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/revoke-sessions": [200, 401],
   "POST /auth/revoke-other-sessions": [200, 401],
   "POST /auth/change-password": [200, 400, 401],
-  "POST /auth/update-user": [200, 400, 401],
   "GET /auth/oauth2/authorize": [200, 302],
   "GET /auth/authorize": [200, 302, 400, 404],
   "POST /auth/authorize/decision": [200, 302, 400, 403, 500],
@@ -423,6 +421,19 @@ export function reportStatuses(
       const statuses = local.get(operation) ?? new Set<number>();
       statuses.add(line.status);
       local.set(operation, statuses);
+      continue;
+    }
+    // The sign-in catch-all refusing a path it does not serve, in the
+    // envelope, answered for no door: there is no route to explain and no
+    // status to hold. A path it serves and nothing names is still reported.
+    if (
+      !declared.has(operation) &&
+      line.route.includes("*") &&
+      line.status === 404 &&
+      line.code === "not_found" &&
+      UNPUBLISHED_ROUTES[operation] === undefined &&
+      signInStatuses[operation] === undefined
+    ) {
       continue;
     }
     if (!declared.has(operation)) {

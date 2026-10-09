@@ -220,13 +220,14 @@ describe("owner and setup routes", () => {
       .join("; ");
     expect(
       (
-        await app.request(`${origin}/auth/list-sessions`, {
-          headers: { cookie },
-        })
+        await app.request(
+          `${origin}/auth/revoke-other-sessions`,
+          json({}, { cookie, origin }),
+        )
       ).status,
     ).toBe(200);
     for (const path of [
-      "/auth/list-sessions",
+      "/auth/revoke-other-sessions",
       "/auth/get-session",
       "/auth/oauth2/authorize?prompt=none",
     ]) {
@@ -244,9 +245,10 @@ describe("owner and setup routes", () => {
     );
     expect(
       (
-        await app.request(`${origin}/auth/list-sessions`, {
-          headers: { cookie },
-        })
+        await app.request(
+          `${origin}/auth/revoke-other-sessions`,
+          json({}, { cookie, origin }),
+        )
       ).status,
     ).toBe(401);
     await storage.__sqliteRun(
@@ -259,9 +261,10 @@ describe("owner and setup routes", () => {
     );
     expect(
       (
-        await app.request(`${origin}/auth/list-sessions`, {
-          headers: { cookie },
-        })
+        await app.request(
+          `${origin}/auth/revoke-other-sessions`,
+          json({}, { cookie, origin }),
+        )
       ).status,
     ).toBe(401);
     expect(

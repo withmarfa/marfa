@@ -596,7 +596,7 @@ export interface DeviceFlow {
   approve(): Promise<void>;
   /** The owner signs in and denies the code on the consent screen. */
   deny(): Promise<void>;
-  /** The code a device's own request carries, for a fixture that ages it. */
+  /** The code a device's own request carries. */
   deviceCode: string;
 }
 

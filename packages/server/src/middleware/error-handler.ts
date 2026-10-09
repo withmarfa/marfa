@@ -8,6 +8,7 @@ import { notifyError } from "./error-notifier.js";
 import { errorStack, reportableError } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { diskFull } from "../storage/disk-space.js";
+import { PasswordAttemptsSpent } from "../auth/sign-in-throttle.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 
 /**
@@ -169,6 +170,10 @@ export function createErrorHandler(config: {
     const shaped = shapedError(err);
     if (shaped) {
       if (diskFull(err)) report(err, c);
+      // A refusal raised below any route, where no context can take the
+      // header before the throw, carries its wait on the error instead.
+      if (shaped instanceof PasswordAttemptsSpent)
+        c.header("Retry-After", String(shaped.retryAfterSeconds));
       const error: Record<string, unknown> = {
         code: shaped.code,
         message: shaped.message,

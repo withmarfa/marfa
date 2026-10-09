@@ -17,9 +17,11 @@
  *
  * Mounted as a Better Auth hook rather than on a Marfa route so that it holds
  * for `/auth/sign-in/email` reached directly and for Marfa's sign-in form,
- * which dispatches to it in-process.
+ * which dispatches to it in-process. A password change counts its check of
+ * the current password against the same windows (`passwordAttempts`).
  */
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import {
   CLIENT_ADDRESS_HEADER,
@@ -41,7 +43,13 @@ interface SignInHookCtx {
   headers?: Headers | null;
 }
 
-export function buildSignInThrottlePlugin(storage: Storage) {
+/**
+ * The two windows a password check is counted against, shared by sign-in and
+ * by every other operation that checks the owner's password, so a guess
+ * counts the same wherever it is made. Answers when the caller may try again
+ * if the attempt is refused.
+ */
+export function passwordAttempts(storage: Storage) {
   const perAddress = new KeyedThrottle(storage, {
     family: "sign-in-account-address",
     limit: SIGN_IN_ADDRESS_LIMIT,
@@ -52,16 +60,35 @@ export function buildSignInThrottlePlugin(storage: Storage) {
     limit: SIGN_IN_ACCOUNT_LIMIT,
     windowMs: SIGN_IN_ACCOUNT_WINDOW_MS,
   });
-
-  const refuse = (resetAt: number): never => {
-    const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
-    throw new APIError(
-      "TOO_MANY_REQUESTS",
-      { message: "Too many sign-in attempts. Try again later." },
-      { "Retry-After": String(retryAfter) },
-    );
+  return async (
+    email: string,
+    ip: string | null | undefined,
+  ): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> => {
+    const account = email.trim().toLowerCase();
+    const address = ip ? addressBucket(ip) : "unknown";
+    const local = await perAddress.attempt(`${account}|${address}`);
+    const refused = local.allowed ? await perAccount.attempt(account) : local;
+    if (refused.allowed) return { allowed: true };
+    return {
+      allowed: false,
+      retryAfter: Math.max(1, Math.ceil((refused.resetAt - Date.now()) / 1000)),
+    };
   };
+}
 
+/** A password check refused by `passwordAttempts`, answered with
+ *  `Retry-After` by the error handler. */
+export class PasswordAttemptsSpent extends MarfaError {
+  constructor(readonly retryAfterSeconds: number) {
+    super(
+      ErrorCode.RATE_LIMITED,
+      `Too many password attempts. Try again in ${String(retryAfterSeconds)} seconds.`,
+    );
+  }
+}
+
+export function buildSignInThrottlePlugin(storage: Storage) {
+  const attempt = passwordAttempts(storage);
   return {
     id: "marfa-sign-in-throttle" as const,
     hooks: {
@@ -71,13 +98,16 @@ export function buildSignInThrottlePlugin(storage: Storage) {
           handler: createAuthMiddleware(async (ctx: SignInHookCtx) => {
             const email = ctx.body?.email;
             if (typeof email !== "string") return;
-            const account = email.trim().toLowerCase();
-            const ip = ctx.headers?.get(CLIENT_ADDRESS_HEADER);
-            const address = ip ? addressBucket(ip) : "unknown";
-            const local = await perAddress.attempt(`${account}|${address}`);
-            if (!local.allowed) refuse(local.resetAt);
-            const overall = await perAccount.attempt(account);
-            if (!overall.allowed) refuse(overall.resetAt);
+            const admitted = await attempt(
+              email,
+              ctx.headers?.get(CLIENT_ADDRESS_HEADER),
+            );
+            if (admitted.allowed) return;
+            throw new APIError(
+              "TOO_MANY_REQUESTS",
+              { message: "Too many sign-in attempts. Try again later." },
+              { "Retry-After": String(admitted.retryAfter) },
+            );
           }),
         },
       ],

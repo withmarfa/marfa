@@ -142,17 +142,6 @@ describe("a sign-in credential", () => {
     // A password change ends every other session, the file's own included.
     cookie = own;
   });
-
-  it("is in the audit log when a profile change answers", async () => {
-    const before = await logged("auth.user.update");
-    const response = await fetch(`${server.apiUrl}/auth/update-user`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin, cookie },
-      body: JSON.stringify({ name: "Audited Owner" }),
-    });
-    expect(response.status, await response.clone().text()).toBe(200);
-    expect(await logged("auth.user.update")).toBe(before + 1);
-  });
 });
 
 describe("a grant made or ended without the person asking", () => {

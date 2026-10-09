@@ -17,7 +17,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, storedDeviceCode } from "../test-utils.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -139,7 +139,12 @@ async function redeem(c: TestContext, deviceCode: string, clientId: string) {
   await db
     .update(schema.auth_oauth_device_code)
     .set({ lastPolledAt: null })
-    .where(eq(schema.auth_oauth_device_code.deviceCode, deviceCode));
+    .where(
+      eq(
+        schema.auth_oauth_device_code.deviceCode,
+        storedDeviceCode(deviceCode),
+      ),
+    );
   const res = await request(c.app, "POST", "/auth/oauth2/token", {
     form: {
       grant_type: DEVICE_CODE_GRANT_TYPE,
