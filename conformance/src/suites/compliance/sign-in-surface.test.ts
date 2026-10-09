@@ -110,6 +110,14 @@ describe("the sign-in surface", () => {
     );
     expect(own.status).toBe(302);
     expect(own.headers.get("location")).toContain("error=missing_field");
+    // A post naming no origin at all is answered by the door too.
+    const unnamed = await postForm(
+      "/auth/sign-in",
+      { email: "", password: "", return_to: "/" },
+      {},
+    );
+    expect(unnamed.status).toBe(302);
+    expect(unnamed.headers.get("location")).toContain("error=missing_field");
   });
 
   it("sends a signed-in browser only to a path on the instance", async () => {
@@ -140,11 +148,11 @@ describe("the sign-in surface", () => {
 
     const onInstance = await postForm(
       "/auth/sign-in",
-      { ...OWNER, return_to: "/auth/device?from=sign-in" },
+      { ...OWNER, return_to: "/auth/device?from=sign-in#entry" },
       { origin, [CLIENT_HEADER]: "192.0.2.2" },
     );
     expect(onInstance.headers.get("location")).toBe(
-      "/auth/device?from=sign-in",
+      "/auth/device?from=sign-in#entry",
     );
   });
 
@@ -330,6 +338,11 @@ describe("the pages a person reads at sign-in", () => {
     expect(await (await fetch(edited)).text()).not.toContain(
       "Conformance Notes",
     );
+    const unsigned = new URL(signInUrl);
+    unsigned.searchParams.delete("sig");
+    expect(await (await fetch(unsigned)).text()).not.toContain(
+      "Conformance Notes",
+    );
   });
 
   it("tells a person who is signed in so, and shows the form to one an authorization sent to sign in again", async () => {
@@ -370,6 +383,21 @@ describe("the pages a person reads at sign-in", () => {
     const text = await refused.text();
     expect(text).toContain("We could not verify this request");
     expect(text).not.toContain("has expired");
+
+    // A signature the instance did not make is told the same.
+    const forged = new URL(authorize);
+    forged.searchParams.set("sig", "AAAA" + (forged.searchParams.get("sig") ?? "").slice(4));
+    const unverified = await fetch(forged, { headers: { cookie } });
+    expect(unverified.status).toBe(400);
+    expect(await unverified.text()).toContain(
+      "We could not verify this request",
+    );
+    // The witness: the link as it was signed reaches the consent screen.
+    const genuine = await fetch(authorize, { headers: { cookie } });
+    expect(genuine.status).toBe(200);
+    expect(await genuine.text()).not.toContain(
+      "We could not verify this request",
+    );
   });
 
   it("shows a browser at end-session with no session a page, and a program the provider's JSON", async () => {

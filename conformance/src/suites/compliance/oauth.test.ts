@@ -121,7 +121,16 @@ describe("OAuth provider", () => {
     expect(r.data.application_type).toBe("native");
     expect(r.data.redirect_uris).toEqual(["http://127.0.0.1:9/callback"]);
     expect(r.data.token_endpoint_auth_method).toBe("none");
-    expect((r.data.scope as string).length).toBeGreaterThan(0);
+    // A registration naming no scope is registered for every scope the
+    // instance allows, which is at least every scope discovery publishes.
+    const registered = new Set((r.data.scope as string).split(" "));
+    const discovery = (await (
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+    ).json()) as { scopes_supported: string[] };
+    expect(discovery.scopes_supported.length).toBeGreaterThan(0);
+    for (const scope of discovery.scopes_supported) {
+      expect(registered.has(scope), scope).toBe(true);
+    }
   });
 
   it("registers a client naming a scope at that scope, once each", async () => {
@@ -221,8 +230,10 @@ describe("OAuth provider", () => {
       }
     }
     const none = await revoke({});
-    await none.body?.cancel();
     expect(none.status).toBe(400);
+    expect(((await none.json()) as { error?: string }).error).toBe(
+      "invalid_request",
+    );
   });
 
   it("refuses a grant type it does not support", async () => {

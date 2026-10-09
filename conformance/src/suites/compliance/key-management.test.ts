@@ -756,6 +756,7 @@ describe("key management", () => {
       },
     );
     expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
 
     // A key that reads every type and writes none still has the action
     // narrowed to what it may write, which is nothing, rather than refused.
