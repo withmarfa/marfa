@@ -1597,7 +1597,9 @@ export interface OauthClientRow {
    * `null` carries the same "no declaration" reading as `scopes`, and for
    * the same reason: a client that never said is not a client that said
    * nothing. The device code request reads it through `clientMayRefresh`
-   * to refuse `offline_access` to a client that may not refresh.
+   * to refuse `offline_access` to a client that may not refresh; `null`
+   * reads as `authorization_code`, as the provider reads it, so such a
+   * client may refresh.
    */
   grantTypes: string[] | null;
 }

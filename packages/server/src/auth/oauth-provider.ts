@@ -868,7 +868,7 @@ export function refuseOfflineWithoutRefresh(
   storage: Storage,
 ): (clientId: string, scope: string | undefined) => Promise<void> {
   return async (clientId, scope) => {
-    if (!scope?.split(" ").includes("offline_access")) return;
+    if (!scope?.split(/\s+/).includes("offline_access")) return;
     const client = await storage.oauthProvider?.getClient(clientId);
     if (client && !clientMayRefresh(client.grantTypes))
       throw new APIError("BAD_REQUEST", {
