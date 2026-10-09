@@ -20,6 +20,7 @@
  * which dispatches to it in-process. A password change counts its check of
  * the current password against the same windows (`passwordAttempts`).
  */
+import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -87,7 +88,7 @@ export class PasswordAttemptsSpent extends MarfaError {
   }
 }
 
-export function buildSignInThrottlePlugin(storage: Storage) {
+export function buildSignInThrottlePlugin(storage: Storage): BetterAuthPlugin {
   const attempt = passwordAttempts(storage);
   return {
     id: "marfa-sign-in-throttle" as const,
