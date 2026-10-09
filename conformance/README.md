@@ -179,9 +179,10 @@ or when the classifier skipped them all.
   themselves by credential, so a runner takes any part of a group. A group of
   more than one shard splits its files with `pnpm test:compliance --shard=1/4`,
   weighed by the seconds each file takes (`src/utils/shard-weights.ts`) rather
-  than by Vitest's own split by path, which can leave one shard with far more of the slow files than another.
-  A file not in the weights is still run, by exactly one shard. Only the device
-  shards build or restore the `marfa` binary.
+  than by Vitest's own split by path, which can leave one shard with far more
+  of the slow files than another. A file not in the weights is still run, by
+  exactly one shard. Only the device shards build or restore the `marfa`
+  binary.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 - **Statuses.** Each shard holds the statuses its server answered to their

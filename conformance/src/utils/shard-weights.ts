@@ -7,8 +7,7 @@
  *
  * Read the times off the per-file lines of a CI shard's log and round them to
  * 5 seconds. The five `folders` files, which were one file, are scaled from
- * a run of each on one machine to the 1,381 seconds that file took in CI, and
- * are the numbers to correct first from a CI run.
+ * a run of each on one machine to the 1,381 seconds that file took in CI.
  */
 export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/archive-limits.test.ts": 100,

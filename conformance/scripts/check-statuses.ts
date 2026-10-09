@@ -10,12 +10,12 @@
  *   tsx scripts/check-statuses.ts --shards <dir> [--complete]
  *
  * The document is fetched from the server that wrote the log, so the two
- * describe one process; a shard keeps the one its server served. The observed table it prints is the record of what
- * the fixtures reach. Exit 1 names every status with no declaration, every
- * refusal code a declared status does not list, and every served route the
- * document leaves out without a reason. `--complete` is for
- * the run that reaches every door: it also holds the declared statuses no
- * request drew to the list of the ones nothing can draw.
+ * describe one process; a shard keeps the one its server served. The observed
+ * table it prints is the record of what the fixtures reach. Exit 1 names every
+ * status with no declaration, every refusal code a declared status does not
+ * list, and every served route the document leaves out without a reason.
+ * `--complete` is for the run that reaches every door: it also holds the
+ * declared statuses no request drew to the list of the ones nothing can draw.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";

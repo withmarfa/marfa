@@ -70,7 +70,7 @@ describe("the Conformance check", () => {
   });
 
   it("waits for every conformance job, whether or not they ran", () => {
-    expect(jobs.conformance?.needs).toEqual(CONFORMANCE_JOBS);
+    expect(jobs.conformance?.needs).toEqual(["changes", ...CONFORMANCE_JOBS]);
     // Not `success()`, which a skipped job fails: the classifier skips them.
     expect(jobs.conformance?.if).toBe("${{ !cancelled() }}");
     // Every job collected is one this workflow defines.
@@ -79,10 +79,21 @@ describe("the Conformance check", () => {
 
   describe("as the shell step reads the results of the jobs it waits on", () => {
     const step = jobs.conformance?.steps[0];
-    const verdict = (results: string): number => {
+    const verdict = (
+      results: string,
+      owed: { shards?: boolean; offline?: boolean } = {},
+    ): number => {
+      const [offline = "", shards = ""] = results.split(" ");
       try {
         execFileSync("sh", ["-c", step?.run ?? "exit 99"], {
-          env: { ...process.env, RESULTS: results },
+          env: {
+            ...process.env,
+            RESULTS: `success ${results}`,
+            SHARDS: shards,
+            SHARDS_OWED: String(owed.shards ?? false),
+            OFFLINE: offline,
+            OFFLINE_OWED: String(owed.offline ?? false),
+          },
           stdio: "pipe",
         });
         return 0;
@@ -105,6 +116,20 @@ describe("the Conformance check", () => {
       ],
     ])("passes when %s", (_, results) => {
       expect(verdict(results)).toBe(0);
+    });
+
+    it("fails when the shards were owed a run and were skipped", () => {
+      expect(verdict("success skipped skipped", { shards: true })).toBe(1);
+    });
+
+    it("fails when the offline lane was owed a run and was skipped", () => {
+      expect(verdict("skipped success skipped", { offline: true })).toBe(1);
+    });
+
+    it("passes when the jobs owed a run ran", () => {
+      expect(
+        verdict("success success success", { shards: true, offline: true }),
+      ).toBe(0);
     });
 
     it.each([

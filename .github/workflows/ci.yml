@@ -360,6 +360,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: marfa-server-log-${{ matrix.slug }}
+          overwrite: true
           path: |
             ${{ runner.temp }}/marfa/server.log
             ${{ runner.temp }}/marfa/fresh-server-logs/
@@ -448,7 +449,8 @@ jobs:
   # check did before the work was split; it fails when any of them failed
   # or was cancelled.
   conformance:
-    needs: [conformance-offline, conformance-shards, conformance-statuses]
+    needs:
+      [changes, conformance-offline, conformance-shards, conformance-statuses]
     if: ${{ !cancelled() }}
     name: Conformance
     timeout-minutes: 5
@@ -457,8 +459,22 @@ jobs:
       - name: Require every conformance job that ran to have passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          # A skipped job passes only when the classifier skipped it. One it
+          # owes a run that was skipped anyway is a failure.
+          SHARDS: ${{ needs.conformance-shards.result }}
+          SHARDS_OWED: ${{ needs.changes.outputs.conformance-shards != '[]' }}
+          OFFLINE: ${{ needs.conformance-offline.result }}
+          OFFLINE_OWED: ${{ needs.changes.outputs.conformance-offline != 'false' }}
         run: |
           echo "Results: $RESULTS"
+          if [ "$SHARDS_OWED" = true ] && [ "$SHARDS" = skipped ]; then
+            echo "::error::The shards were owed a run and were skipped."
+            exit 1
+          fi
+          if [ "$OFFLINE_OWED" = true ] && [ "$OFFLINE" = skipped ]; then
+            echo "::error::The offline lane was owed a run and was skipped."
+            exit 1
+          fi
           for result in $RESULTS; do
             case "$result" in
               failure | cancelled)
