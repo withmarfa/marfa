@@ -70,11 +70,25 @@ export class Cli {
     readonly url: string,
     readonly key: string | undefined,
     readonly socketPath?: string,
+    readonly extraEnv: Readonly<Record<string, string>> = {},
   ) {}
 
   /** The same binary under another credential, or under none. */
   as(key: string | undefined): Cli {
-    return new Cli(this.binary, this.url, key);
+    return new Cli(this.binary, this.url, key, undefined, this.extraEnv);
+  }
+
+  /** The same binary against another server address. */
+  at(url: string): Cli {
+    return new Cli(this.binary, url, this.key, undefined, this.extraEnv);
+  }
+
+  /** The same binary with more of the environment set. */
+  withEnv(extraEnv: Record<string, string>): Cli {
+    return new Cli(this.binary, this.url, this.key, this.socketPath, {
+      ...this.extraEnv,
+      ...extraEnv,
+    });
   }
 
   /** Selects private machine authority with no ordinary credential. */
@@ -97,7 +111,7 @@ export class Cli {
     if (this.socketPath !== undefined) return env;
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
-    return { ...env, ...keychainEnv() };
+    return { ...env, ...keychainEnv(), ...this.extraEnv };
   }
 
   /** Runs the binary and answers whatever it did, refusal or not. */

@@ -12,14 +12,16 @@ url="${MARFA_TEST_URL:-${MARFA_API_URL:-}}"
 key="${MARFA_TEST_KEY:-${MARFA_API_KEY:-}}"
 [[ -n "${url}" && -n "${key}" ]] || { echo "seed: set MARFA_TEST_URL and MARFA_TEST_KEY" >&2; exit 2; }
 
-python3 - "${url}" "${key}" "$@" <<'PY'
+MARFA_SEED_KEY="${key}" python3 - "${url}" "$@" <<'PY'
 import hashlib
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
-url, key, command, *args = sys.argv[1:]
+url, command, *args = sys.argv[1:]
+key = os.environ["MARFA_SEED_KEY"]
 url = url.rstrip("/")
 
 

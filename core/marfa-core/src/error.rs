@@ -25,6 +25,9 @@ pub enum CoreError {
         status: u16,
         code: String,
         message: String,
+        /// The envelope's `error.details`, supplied only by a caller that
+        /// read the envelope itself; `Http` does not read them.
+        details: Option<Box<serde_json::Value>>,
     },
     #[error("{0}")]
     Io(String),
@@ -393,6 +396,7 @@ mod tests {
             status,
             code: String::new(),
             message: String::new(),
+            details: None,
         };
         assert!(answered(503).is_environmental());
         assert!(answered(408).is_environmental());

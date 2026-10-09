@@ -1265,6 +1265,7 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
             status,
             code,
             message,
+            details: None,
         },
     }
 }

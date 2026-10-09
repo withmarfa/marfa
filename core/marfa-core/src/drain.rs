@@ -3046,6 +3046,15 @@ mod tests {
                 status: 400,
                 code: "invalid_scope".into(),
                 message: "refused scope".into(),
+                details: None,
+            },
+            CoreError::Server {
+                status: 400,
+                code: "invalid_scope".into(),
+                message: "refused scope".into(),
+                details: Some(Box::new(
+                    serde_json::json!({ "required_scope": "items.read" }),
+                )),
             },
         ] {
             let server = crate::scripted::Scripted::start();

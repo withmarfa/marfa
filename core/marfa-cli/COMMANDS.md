@@ -23,15 +23,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 
 Exit codes:
   0  done
@@ -81,15 +87,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## metrics
@@ -111,15 +123,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## whoami
@@ -141,15 +159,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## login
@@ -185,15 +209,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## logout
@@ -215,15 +245,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## setup
@@ -252,15 +288,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa setup status
@@ -280,15 +322,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa setup code
@@ -308,15 +356,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa setup open
@@ -339,15 +393,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa setup claim
@@ -376,15 +436,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## owner
@@ -411,15 +477,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa owner show
@@ -439,15 +511,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa owner recover
@@ -470,15 +548,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## items
@@ -528,15 +612,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items list
@@ -609,15 +699,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items get
@@ -644,15 +740,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items create
@@ -717,15 +819,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items update
@@ -792,15 +900,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items delete
@@ -828,15 +942,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items restore
@@ -864,15 +984,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items transition
@@ -905,15 +1031,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items purge
@@ -941,15 +1073,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items versions
@@ -980,15 +1118,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items tag
@@ -1015,15 +1159,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items untag
@@ -1050,15 +1200,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items edges
@@ -1091,15 +1247,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items backrefs
@@ -1132,15 +1294,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items add
@@ -1182,15 +1350,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items attach
@@ -1228,15 +1402,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items stats
@@ -1261,15 +1441,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items occurrences
@@ -1298,15 +1484,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk
@@ -1341,15 +1533,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-get
@@ -1376,15 +1574,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items lookup
@@ -1422,15 +1626,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items tombstones
@@ -1466,15 +1676,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action
@@ -1507,15 +1723,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action transition
@@ -1577,15 +1799,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action purge
@@ -1646,15 +1874,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action tags
@@ -1717,15 +1951,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action tier
@@ -1787,15 +2027,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action properties
@@ -1855,15 +2101,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action occurred-at
@@ -1923,15 +2175,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action job
@@ -1955,15 +2213,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa items bulk-action cancel
@@ -1987,15 +2251,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## edges
@@ -2026,15 +2296,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges list
@@ -2069,15 +2345,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges get
@@ -2101,15 +2383,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges create
@@ -2148,15 +2436,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges update
@@ -2196,15 +2490,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges delete
@@ -2232,15 +2532,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edges bulk
@@ -2272,15 +2578,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## edge-types
@@ -2310,15 +2622,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edge-types list
@@ -2338,15 +2656,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edge-types register
@@ -2373,15 +2697,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa edge-types delete
@@ -2406,15 +2736,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## types
@@ -2450,15 +2786,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types list
@@ -2478,15 +2820,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types get
@@ -2510,15 +2858,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types register
@@ -2545,15 +2899,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types replace
@@ -2588,15 +2948,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types delete
@@ -2623,15 +2989,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types drift
@@ -2651,15 +3023,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa types prune
@@ -2683,15 +3061,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## search
@@ -2751,15 +3135,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## metadata
@@ -2788,15 +3178,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa metadata get
@@ -2820,15 +3216,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa metadata replace
@@ -2855,15 +3257,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa metadata update
@@ -2890,15 +3298,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa metadata tags
@@ -2918,15 +3332,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## extensions
@@ -2955,15 +3375,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa extensions list
@@ -2987,15 +3413,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa extensions get
@@ -3022,15 +3454,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa extensions write
@@ -3063,15 +3501,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa extensions delete
@@ -3098,15 +3542,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## blobs
@@ -3142,15 +3592,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs upload
@@ -3177,15 +3633,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs download
@@ -3212,15 +3674,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs url
@@ -3247,15 +3715,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs stores
@@ -3276,15 +3750,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs locations
@@ -3308,15 +3788,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs delete-location
@@ -3343,15 +3829,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa blobs orphans
@@ -3371,15 +3863,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## keys
@@ -3401,8 +3899,8 @@ Commands:
   revoke   Revoke a key; the next request bearing it is refused. Needs `keys.manage` or direct
            owner/local authority
   keep     Keep a key for this server in the operating system's keychain, and make this server the
-           one a bare command talks to. The key is read from `--key`, from MARFA_API_KEY, or from
-           stdin; never from a file
+           one a bare command talks to. The key is read from MARFA_API_KEY or from stdin, or from
+           `--key`, which other users of the machine can read in the process list; never from a file
   forget   Forget the key kept for this server
   help     Print this message or the help of the given subcommand(s)
 
@@ -3416,15 +3914,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys create
@@ -3496,15 +4000,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys list
@@ -3524,15 +4034,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys current
@@ -3553,15 +4069,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys update
@@ -3645,15 +4167,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys revoke
@@ -3678,22 +4206,29 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys keep
 
 ```text
 Keep a key for this server in the operating system's keychain, and make this server the one a bare
-command talks to. The key is read from `--key`, from MARFA_API_KEY, or from stdin; never from a file
+command talks to. The key is read from MARFA_API_KEY or from stdin, or from `--key`, which other
+users of the machine can read in the process list; never from a file
 
 Usage: marfa keys keep [OPTIONS]
 
@@ -3707,15 +4242,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa keys forget
@@ -3735,15 +4276,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## config
@@ -3771,15 +4318,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa config get
@@ -3800,15 +4353,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa config replace
@@ -3834,15 +4393,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## export
@@ -3889,15 +4454,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## restore
@@ -3935,15 +4506,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## webhooks
@@ -3975,15 +4552,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks create
@@ -4015,15 +4598,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks list
@@ -4043,15 +4632,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks get
@@ -4075,15 +4670,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks update
@@ -4122,15 +4723,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks delete
@@ -4154,15 +4761,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks deliveries
@@ -4189,15 +4802,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa webhooks redeliver
@@ -4224,15 +4843,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## audit
@@ -4275,15 +4900,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## events
@@ -4319,15 +4950,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## housekeeping
@@ -4355,15 +4992,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa housekeeping list
@@ -4384,15 +5027,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa housekeeping run
@@ -4416,15 +5065,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## connectors
@@ -4466,15 +5121,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors register
@@ -4501,15 +5162,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors list
@@ -4529,15 +5196,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors get
@@ -4561,15 +5234,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors delete
@@ -4593,15 +5272,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors heartbeat
@@ -4625,15 +5310,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors report
@@ -4674,15 +5365,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors runs
@@ -4709,15 +5406,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors endpoints
@@ -4744,15 +5447,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors endpoints create
@@ -4784,15 +5493,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors endpoints list
@@ -4816,15 +5531,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors endpoints retire
@@ -4851,15 +5572,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors deliveries
@@ -4885,15 +5612,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors deliveries list
@@ -4931,15 +5664,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors deliveries body
@@ -4969,15 +5708,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors deliveries handle
@@ -5009,15 +5754,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors hold
@@ -5045,15 +5796,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors release
@@ -5080,15 +5837,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors state
@@ -5115,15 +5878,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors state get
@@ -5147,15 +5916,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors state put
@@ -5188,15 +5963,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors state delete
@@ -5220,15 +6001,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors agreements
@@ -5254,15 +6041,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors agreements write
@@ -5295,15 +6088,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors agreements lookup
@@ -5330,15 +6129,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa connectors agreements list
@@ -5373,15 +6178,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## operations
@@ -5403,15 +6214,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## device
@@ -5473,15 +6290,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device hydrate
@@ -5522,15 +6345,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device pin
@@ -5564,15 +6393,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device unpin
@@ -5605,15 +6440,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device catch-up
@@ -5642,15 +6483,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device follow
@@ -5684,15 +6531,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device changes
@@ -5725,15 +6578,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items
@@ -5788,15 +6647,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items list
@@ -5879,15 +6744,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items get
@@ -5920,15 +6791,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items create
@@ -5988,15 +6865,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items update
@@ -6056,15 +6939,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items delete
@@ -6097,15 +6986,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items purge
@@ -6144,15 +7039,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items bin
@@ -6193,15 +7094,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items restore
@@ -6235,15 +7142,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items transition
@@ -6281,15 +7194,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items add
@@ -6340,15 +7259,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items attach
@@ -6403,15 +7328,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items links
@@ -6445,15 +7376,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items embed
@@ -6490,15 +7427,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device items thumbnail
@@ -6535,15 +7478,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device folders
@@ -6582,15 +7531,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device folders create
@@ -6656,15 +7611,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device folders change
@@ -6736,15 +7697,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device folders revoke
@@ -6781,15 +7748,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device folders get
@@ -6822,15 +7795,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device search
@@ -6894,15 +7873,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device queue
@@ -6931,15 +7916,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device drain
@@ -6971,15 +7962,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device forget
@@ -7011,15 +8008,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device discard
@@ -7055,15 +8058,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device release
@@ -7102,15 +8111,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device withdraw
@@ -7147,15 +8162,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device status
@@ -7184,15 +8205,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types
@@ -7232,15 +8259,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types list
@@ -7269,15 +8302,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types served
@@ -7307,15 +8346,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types get
@@ -7348,15 +8393,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types declare
@@ -7395,15 +8446,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device types declared
@@ -7433,15 +8490,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edge-types
@@ -7477,15 +8540,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edge-types list
@@ -7514,15 +8583,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edge-types served
@@ -7552,15 +8627,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edge-types get
@@ -7593,15 +8674,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges
@@ -7638,15 +8725,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges list
@@ -7679,15 +8772,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges to
@@ -7720,15 +8819,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges create
@@ -7774,15 +8879,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges update
@@ -7829,15 +8940,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device edges delete
@@ -7870,15 +8987,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device tags
@@ -7912,15 +9035,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device tags add
@@ -7956,15 +9085,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device tags remove
@@ -8000,15 +9135,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device metadata
@@ -8042,15 +9183,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device metadata replace
@@ -8086,15 +9233,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device metadata merge
@@ -8130,15 +9283,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device extensions
@@ -8172,15 +9331,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device extensions write
@@ -8221,15 +9386,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device extensions delete
@@ -8265,15 +9436,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device blobs
@@ -8308,15 +9485,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device blobs put
@@ -8352,15 +9535,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa device blobs get
@@ -8393,15 +9582,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## folders
@@ -8448,15 +9643,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders add
@@ -8488,15 +9689,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders list
@@ -8517,15 +9724,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders remove
@@ -8551,15 +9764,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders status
@@ -8583,15 +9802,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders confirm
@@ -8616,15 +9841,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders restore
@@ -8649,15 +9880,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders hydrate
@@ -8681,15 +9918,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders scan
@@ -8713,15 +9956,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders pull
@@ -8745,15 +9994,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders push
@@ -8777,15 +10032,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders create
@@ -8841,15 +10102,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders change
@@ -8912,15 +10179,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders revoke
@@ -8948,15 +10221,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa folders watch
@@ -8983,15 +10262,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ## docs
@@ -9032,15 +10317,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 
 Examples:
   marfa docs search "restore an archive" --limit 5
@@ -9072,15 +10363,21 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```
 
 ### marfa docs topics
@@ -9100,13 +10397,19 @@ Server:
           made current
 
       --key <KEY>
-          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
-          file MARFA_KEYCHAIN names, where it names one
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
 
       --socket <PATH>
           Use private local process authority through this Unix socket, without a keychain
 
 Output:
       --json
-          Print the answer as JSON, and a refusal as one JSON object on stderr
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
 ```

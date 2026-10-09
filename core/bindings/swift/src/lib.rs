@@ -2117,6 +2117,7 @@ mod tests {
                 status: 500,
                 code: text(),
                 message: text(),
+                details: None,
             },
             E::Io(text()),
             E::Network(text()),
@@ -2361,6 +2362,7 @@ mod tests {
                     status: 500,
                     code: text(),
                     message: text(),
+                    details: None,
                 }
                 .into(),
                 "Server",
