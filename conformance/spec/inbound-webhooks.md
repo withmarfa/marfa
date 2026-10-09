@@ -108,6 +108,14 @@ When twenty requests to `POST /connectors/{id}/endpoints` arrive at once for a r
 
 **Tests:** `compliance/connector-races.test.ts › makes ten live endpoints and refuses the rest when twenty are asked for at once`.
 
+### `inbound-webhooks/endpoint-key-dead`
+
+If the key of a registration is revoked or past its `expires_at` when a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, then the server MUST answer `409 conflict` with `details.key_id` naming the key, and make no endpoint.
+
+**Reason:** an address on such a registration answers `404` for as long as its key stays dead (`inbound-webhooks/address-key-revoked`), so a `201` would hand out an address that never works.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › refuses an endpoint on a registration whose key is revoked or has expired, naming the key, and makes none`.
+
 ### `inbound-webhooks/endpoint-retire`
 
 When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.

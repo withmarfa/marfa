@@ -5288,184 +5288,7 @@
           },
           "source": {
             "type": "string",
-            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change."
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none."
-          },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Permission"
-            },
-            "description": "The permissions the key holds, such as `audit.read`. Empty if it holds none."
-          },
-          "oauth_client_id": {
-            "type": "string",
-            "description": "The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin."
-          },
-          "default_tier": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Tier"
-              },
-              {
-                "description": "The tier an item this key creates goes to when the write names none."
-              }
-            ]
-          },
-          "type_permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/TypePermissionLevel"
-            },
-            "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
-          },
-          "extension_permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PermissionLevel"
-            },
-            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
-          },
-          "edge_permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PermissionLevel"
-            },
-            "description": "Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`."
-          },
-          "metadata_permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PermissionLevel"
-            },
-            "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
-          },
-          "profile_permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PermissionLevel"
-            },
-            "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
-          },
-          "enforcement_override": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/EnforcementOverride"
-              },
-              {
-                "description": "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's."
-              }
-            ]
-          },
-          "created_at": {
-            "type": "string",
-            "description": "When the key was created, in UTC."
-          },
-          "last_used_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour."
-          }
-        },
-        "required": [
-          "id",
-          "key",
-          "label",
-          "source",
-          "sources",
-          "permissions",
-          "default_tier",
-          "type_permissions",
-          "extension_permissions",
-          "edge_permissions",
-          "metadata_permissions",
-          "profile_permissions",
-          "created_at",
-          "last_used_at"
-        ],
-        "description": "A new API key, with its plaintext `key`."
-      },
-      "Permission": {
-        "type": "string",
-        "enum": [
-          "webhooks.manage",
-          "schema.write",
-          "config.manage",
-          "audit.read",
-          "items.purge",
-          "keys.mint",
-          "grants.manage",
-          "instance.read",
-          "instance.maintain",
-          "connectors.manage",
-          "blobs.manage",
-          "keys.manage"
-        ],
-        "description": "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access."
-      },
-      "TypePermissionLevel": {
-        "type": "string",
-        "enum": [
-          "read",
-          "write",
-          "none"
-        ],
-        "description": "What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach."
-      },
-      "PermissionLevel": {
-        "type": "string",
-        "enum": [
-          "read",
-          "write"
-        ],
-        "description": "What a key may do with an entry: `read` it, or `write` it (which includes reading). A name no entry covers is denied."
-      },
-      "ApiKeyPage": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ApiKey"
-            },
-            "description": "Every key you can reach."
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Always `null`: Marfa returns every key you can reach in one page."
-          }
-        },
-        "required": [
-          "data",
-          "next_cursor"
-        ],
-        "description": "A page holding every key you can reach."
-      },
-      "ApiKey": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique identifier for the key."
-          },
-          "label": {
-            "type": "string",
-            "description": "A name for the key, to tell it apart from your other keys."
-          },
-          "source": {
-            "type": "string",
-            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change."
+            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
           },
           "sources": {
             "type": "array",
@@ -5549,7 +5372,192 @@
               "string",
               "null"
             ],
-            "description": "When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires."
+            "description": "When the key stops working, in UTC, or `null` if it doesn't expire."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour."
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "label",
+          "source",
+          "sources",
+          "permissions",
+          "default_tier",
+          "type_permissions",
+          "extension_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "profile_permissions",
+          "created_at",
+          "expires_at",
+          "last_used_at"
+        ],
+        "description": "A new API key, with its plaintext `key`."
+      },
+      "Permission": {
+        "type": "string",
+        "enum": [
+          "webhooks.manage",
+          "schema.write",
+          "config.manage",
+          "audit.read",
+          "items.purge",
+          "keys.mint",
+          "grants.manage",
+          "instance.read",
+          "instance.maintain",
+          "connectors.manage",
+          "blobs.manage",
+          "keys.manage"
+        ],
+        "description": "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access."
+      },
+      "TypePermissionLevel": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "none"
+        ],
+        "description": "What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach."
+      },
+      "PermissionLevel": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ],
+        "description": "What a key may do with an entry: `read` it, or `write` it (which includes reading). A name no entry covers is denied."
+      },
+      "ApiKeyPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            },
+            "description": "Every key you can reach."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Always `null`: Marfa returns every key you can reach in one page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "description": "A page holding every key you can reach."
+      },
+      "ApiKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the key."
+          },
+          "label": {
+            "type": "string",
+            "description": "A name for the key, to tell it apart from your other keys."
+          },
+          "source": {
+            "type": "string",
+            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Permission"
+            },
+            "description": "The permissions the key holds, such as `audit.read`. Empty if it holds none."
+          },
+          "oauth_client_id": {
+            "type": "string",
+            "description": "The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin."
+          },
+          "default_tier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The tier an item this key creates goes to when the write names none."
+              }
+            ]
+          },
+          "type_permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TypePermissionLevel"
+            },
+            "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
+          },
+          "extension_permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionLevel"
+            },
+            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
+          },
+          "edge_permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionLevel"
+            },
+            "description": "Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`."
+          },
+          "metadata_permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionLevel"
+            },
+            "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
+          },
+          "profile_permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionLevel"
+            },
+            "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
+          },
+          "enforcement_override": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnforcementOverride"
+              },
+              {
+                "description": "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's."
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the key was created, in UTC."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the key stops working, in UTC, or `null` if it doesn't expire."
           },
           "last_used_at": {
             "type": [
@@ -28878,7 +28886,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the connector already has 10 live endpoints. Retire one first.",
+            "description": "- `conflict`: the connector already has 10 live endpoints (retire one first), or its key is revoked or past its `expires_at`, so an address would never answer.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34932,7 +34940,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200,
-                    "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later."
+                    "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later."
                   },
                   "sources": {
                     "type": "array",
@@ -35005,6 +35013,10 @@
                         "description": "Enforcement levers for this key alone. Leave it out for none, so the key follows the instance's."
                       }
                     ]
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "description": "When the key stops working, as an ISO 8601 time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`."
                   }
                 },
                 "required": [
@@ -35045,7 +35057,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.",
+            "description": "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist, more than 1,000 `sources`, or an `expires_at` that isn't a time or isn't in the future, or `source` or a claimed source starts with `oauth:`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35105,7 +35117,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35135,7 +35147,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
+            "description": "- `conflict`: another key that hasn't been revoked or expired already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36310,6 +36322,13 @@
                     ],
                     "description": "Replaces the key's enforcement levers whole. `null` clears them."
                   },
+                  "expires_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Replaces when the key stops working, as an ISO 8601 time in the future. `null` clears it, so the key never expires. Your own key's `expires_at` is the latest you can give."
+                  },
                   "source": {
                     "type": "string",
                     "description": "Can't change. To give a key another source, create a new key and revoke this one."
@@ -36349,7 +36368,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
+            "description": "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as an `expires_at` that isn't a time or isn't in the future, or a claimed source that starts with `oauth:`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36409,7 +36428,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold; it widens a key an app created, or you act through `keys.manage`, which only narrows; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app created or, through `keys.manage`, any key; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing.",
             "content": {
               "application/json": {
                 "schema": {

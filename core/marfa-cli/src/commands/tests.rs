@@ -591,6 +591,159 @@ fn a_key_update_can_empty_each_map_without_naming_other_reach() {
 }
 
 #[test]
+fn an_expiry_is_named_as_a_time_or_as_a_duration_from_now() {
+    // 2027-01-15T08:00:00Z.
+    const NOW: u64 = 1_800_000_000;
+    let expiry = |expires_in: Option<&str>, expires_at: Option<&str>| keys::ExpiryArgs {
+        expires_in: expires_in.map(String::from),
+        expires_at: expires_at.map(String::from),
+    };
+    let cases = [
+        ("1s", "2027-01-15T08:00:01Z"),
+        ("90m", "2027-01-15T09:30:00Z"),
+        ("12h", "2027-01-15T20:00:00Z"),
+        ("7d", "2027-01-22T08:00:00Z"),
+        ("2w", "2027-01-29T08:00:00Z"),
+        // Across a month, a year and a leap day.
+        ("17d", "2027-02-01T08:00:00Z"),
+        ("351d", "2028-01-01T08:00:00Z"),
+        ("410d", "2028-02-29T08:00:00Z"),
+    ];
+    for (text, instant) in cases {
+        assert_eq!(
+            expiry(Some(text), None).instant(NOW).unwrap().as_deref(),
+            Some(instant),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        expiry(None, Some("2030-01-31T12:00:00+02:00"))
+            .instant(NOW)
+            .unwrap()
+            .as_deref(),
+        Some("2030-01-31T12:00:00+02:00"),
+        "a time is sent as written, for the server to read"
+    );
+    assert_eq!(expiry(None, None).instant(NOW).unwrap(), None);
+    for bad in ["", "d", "7", "7 d", "7y", "1.5h", "-1d", "0d", "+7d", "7dd"] {
+        assert!(
+            matches!(
+                expiry(Some(bad), None).instant(NOW),
+                Err(crate::error::CliError::Invalid(_))
+            ),
+            "`{bad}` was taken as a duration"
+        );
+    }
+    for far in ["18446744073709551615w", "9999999999d"] {
+        assert!(
+            expiry(Some(far), None).instant(NOW).is_err(),
+            "`{far}` was taken as a duration"
+        );
+    }
+}
+
+#[test]
+fn a_key_is_given_an_expiry_on_a_mint_and_on_an_update_and_loses_it_on_request() {
+    let at = |text: &str| keys::ExpiryArgs {
+        expires_in: None,
+        expires_at: Some(text.into()),
+    };
+    let minted = keys::create_request(&keys::KeyCreateArgs {
+        label: "script".into(),
+        source: "script-1".into(),
+        expiry: at("2030-01-31T12:00:00Z"),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&minted),
+        &json!({
+            "label": "script",
+            "source": "script-1",
+            "expires_at": "2030-01-31T12:00:00Z",
+        })
+    );
+    let relative = keys::create_request(&keys::KeyCreateArgs {
+        label: "script".into(),
+        source: "script-1".into(),
+        expiry: keys::ExpiryArgs {
+            expires_in: Some("7d".into()),
+            expires_at: None,
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    let sent = body(&relative)["expires_at"].as_str().unwrap();
+    assert_eq!(sent.len(), 20, "{sent}");
+    assert!(sent.ends_with('Z') && sent.as_bytes()[10] == b'T', "{sent}");
+
+    let changed = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        expiry: at("2030-01-31T12:00:00Z"),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&changed),
+        &json!({ "expires_at": "2030-01-31T12:00:00Z" })
+    );
+    let cleared = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        no_expiry: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&cleared), &json!({ "expires_at": null }));
+    let untouched = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        label: Some("renamed".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&untouched), &json!({ "label": "renamed" }));
+}
+
+#[test]
+fn the_expiry_options_conflict_with_each_other() {
+    use clap::Parser;
+
+    let parse = |args: &[&str]| crate::Cli::try_parse_from(args);
+    let create = ["marfa", "keys", "create", "--label", "l", "--source", "s"];
+    for (extra, ok) in [
+        (vec!["--expires-in", "7d"], true),
+        (vec!["--expires-at", "2030-01-31T12:00:00Z"], true),
+        (
+            vec!["--expires-in", "7d", "--expires-at", "2030-01-31T12:00:00Z"],
+            false,
+        ),
+    ] {
+        let mut args = create.to_vec();
+        args.extend(extra.iter());
+        assert_eq!(parse(&args).is_ok(), ok, "{extra:?}");
+    }
+    let update = ["marfa", "keys", "update", "key-id"];
+    for (extra, ok) in [
+        (vec!["--expires-in", "7d"], true),
+        (vec!["--no-expiry"], true),
+        (vec!["--no-expiry", "--expires-in", "7d"], false),
+        (
+            vec!["--no-expiry", "--expires-at", "2030-01-31T12:00:00Z"],
+            false,
+        ),
+    ] {
+        let mut args = update.to_vec();
+        args.extend(extra.iter());
+        assert_eq!(parse(&args).is_ok(), ok, "{extra:?}");
+    }
+    let mut mint_with_clear = create.to_vec();
+    mint_with_clear.push("--no-expiry");
+    assert!(
+        parse(&mint_with_clear).is_err(),
+        "a mint has no expiry to clear"
+    );
+}
+
+#[test]
 fn a_map_clear_conflicts_with_replacement_and_global_clear() {
     use clap::Parser;
 

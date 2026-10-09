@@ -27,8 +27,7 @@ import { withConsentLock } from "./consent-lock.js";
  * lets a revocation offer to take them. Both callers ask this rather than
  * filtering a key list of their own, so the offer counts exactly the rows the
  * revoke would take. `list` excludes revoked rows and rows past their
- * `expires_at`; no door stamps a lifetime onto an app-minted key today, so
- * the count and the sweep agree.
+ * `expires_at`, so the count and the sweep agree.
  */
 export async function keysMintedByApp(
   storage: Storage,

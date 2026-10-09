@@ -215,6 +215,9 @@ export interface ApiKeyRequest {
   sources?: readonly string[];
   /** `null` clears a key's levers on an update. */
   enforcement_override?: EnforcementOverride | null;
+  /** When the key stops working. Absent mints a key that never expires;
+   *  `null` clears the expiry on an update. */
+  expires_at?: string | null;
 }
 
 /** The one account behind the instance's sign-in surface. */
@@ -241,6 +244,7 @@ export interface ApiKeyResponse {
   oauth_client_id?: string;
   enforcement_override?: EnforcementOverride;
   created_at: string;
+  expires_at?: string | null;
   last_used_at?: string | null;
 }
 

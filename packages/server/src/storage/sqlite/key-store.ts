@@ -7,6 +7,7 @@ import {
   isNotNull,
   isNull,
   lt,
+  lte,
   or,
   inArray,
 } from "drizzle-orm";
@@ -96,7 +97,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): StoredApiKey {
 }
 
 /** Rows that are neither revoked nor past their expiry. `expires_at` is
- *  NULL on every key a door mints, so the NULL branch keeps them live. The
+ *  NULL on a key minted without one, so the NULL branch keeps it live. The
  *  expiry arm is what stops a stamped row reading as active past its
  *  instant, since nothing revokes it on the way. */
 function notRevokedOrExpired(nowIso: string) {
@@ -133,9 +134,40 @@ export class SqliteKeyStore implements KeyStore {
           ? null
           : JSON.stringify(input.enforcement_override),
       created_at: now,
+      expires_at: input.expires_at ?? null,
     };
     try {
-      await this.db.insert(apiKeys).values(row).run();
+      await this.db.transaction(async (tx) => {
+        // A key past its expiry is dead but not revoked, and the unique
+        // index lets an unrevoked key hold its own source. It cannot be
+        // revoked by id (it answers as unknown), so a mint for its source
+        // retires it, or the source would stay taken for good.
+        const lapsed = await tx
+          .select({ id: apiKeys.id })
+          .from(apiKeys)
+          .where(
+            and(
+              eq(apiKeys.source, input.source),
+              isNull(apiKeys.revoked_at),
+              isNotNull(apiKeys.expires_at),
+              lte(apiKeys.expires_at, now),
+            ),
+          )
+          .all();
+        if (lapsed.length > 0) {
+          const ids = lapsed.map((key) => key.id);
+          await tx
+            .update(apiKeys)
+            .set({ revoked_at: now })
+            .where(inArray(apiKeys.id, ids))
+            .run();
+          await tx
+            .delete(outboundWebhooks)
+            .where(inArray(outboundWebhooks.key_id, ids))
+            .run();
+        }
+        await tx.insert(apiKeys).values(row).run();
+      });
     } catch (err) {
       // The partial unique index on an unrevoked key's own `source` is the
       // check, so two mints racing for one source cannot both pass it.
@@ -165,7 +197,7 @@ export class SqliteKeyStore implements KeyStore {
         enforcement_override: input.enforcement_override,
       }),
       created_at: now,
-      expires_at: null,
+      expires_at: row.expires_at,
       last_used_at: null,
     };
   }
@@ -229,6 +261,9 @@ export class SqliteKeyStore implements KeyStore {
         input.enforcement_override === null
           ? null
           : JSON.stringify(input.enforcement_override);
+
+    // `null` clears the expiry; an instant replaces it.
+    if (input.expires_at !== undefined) patch.expires_at = input.expires_at;
 
     const [refreshed] = await this.db
       .update(apiKeys)

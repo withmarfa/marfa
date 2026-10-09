@@ -3032,8 +3032,9 @@ export interface InboundTarget {
 }
 
 export interface InboundStore {
-  /** A new endpoint, or `"limit"` when the registration already holds
-   *  `maxLive` live ones. */
+  /** A new endpoint; `"limit"` when the registration already holds
+   *  `maxLive` live ones; `"key_dead"` when its key is revoked or past its
+   *  expiry, so no address on it would answer. */
   createEndpoint(
     input: {
       connectorId: string;
@@ -3043,7 +3044,7 @@ export interface InboundStore {
       duplicateHeader: string | null;
     },
     maxLive: number,
-  ): Promise<InboundEndpoint | "limit">;
+  ): Promise<InboundEndpoint | "limit" | "key_dead">;
   /** A registration's endpoints, retired ones included, newest first. */
   listEndpoints(connectorId: string): Promise<InboundEndpoint[]>;
   /** Retire the endpoint, answering it and whether this call retired it;

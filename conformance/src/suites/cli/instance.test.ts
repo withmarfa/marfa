@@ -19,7 +19,7 @@ import {
 import { expectSignedBy, startReceiver } from "../../utils/webhook-receiver.js";
 import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
-import type { CliContext, ItemEnvelope } from "./harness.js";
+import type { Cli, CliContext, ItemEnvelope } from "./harness.js";
 
 /**
  * The instance from the terminal: what it says about itself, its keys, its
@@ -316,6 +316,178 @@ describe("the instance from the terminal", () => {
       }
       previous = current;
     }
+  });
+
+  it("mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5", async () => {
+    const DAY_MS = 86_400_000;
+    const expiryOf = async (id: string) =>
+      (
+        await c.operator.json<{
+          data: Array<{ id: string; expires_at: string | null }>;
+        }>(["keys", "list"])
+      ).data.find((key) => key.id === id)?.expires_at;
+
+    // A duration from now, on the command's own clock.
+    const weekly = await c.cli.json<{ id: string; expires_at: string | null }>([
+      "keys",
+      "create",
+      "--label",
+      "expiring-in",
+      "--source",
+      unique("cli-expiring-in"),
+      "--type-permission",
+      "core.note=read",
+      "--expires-in",
+      "7d",
+    ]);
+    trackKey(c.ctx, weekly.id);
+    const mintedFor = Date.parse(weekly.expires_at ?? "") - Date.now();
+    expect(
+      Math.abs(mintedFor - 7 * DAY_MS),
+      `--expires-in 7d minted a key expiring ${String(weekly.expires_at)}`,
+    ).toBeLessThan(600_000);
+    expect(await expiryOf(weekly.id)).toBe(weekly.expires_at);
+
+    // A time of its own at mint, which the server reads and answers in UTC.
+    const exact = new Date(Date.now() + 2 * DAY_MS);
+    const dated = await c.cli.json<{ id: string; expires_at: string | null }>([
+      "keys",
+      "create",
+      "--label",
+      "expiring-at",
+      "--source",
+      unique("cli-expiring-at"),
+      "--type-permission",
+      "core.note=read",
+      "--expires-at",
+      `${exact.toISOString().slice(0, 19)}Z`,
+    ]);
+    trackKey(c.ctx, dated.id);
+    expect(dated.expires_at).toBe(`${exact.toISOString().slice(0, 19)}.000Z`);
+
+    // A duration and a time together are a wrong command line.
+    const both = await c.cli.refused([
+      "keys",
+      "create",
+      "--label",
+      "expiring-both",
+      "--source",
+      unique("cli-expiring-both"),
+      "--expires-in",
+      "7d",
+      "--expires-at",
+      exact.toISOString(),
+    ]);
+    expect(both.code).toBe(2);
+    expect(both.envelope.error.code).toBe("usage");
+
+    // A time of its own, shortened by a caller that can only narrow.
+    const shorter = new Date(Date.now() + DAY_MS).toISOString();
+    const shortened = await c.operator.json<{ expires_at: string }>([
+      "keys",
+      "update",
+      weekly.id,
+      "--expires-at",
+      shorter,
+    ]);
+    expect(shortened.expires_at).toBe(shorter);
+    const lengthened = await c.operator.refused([
+      "keys",
+      "update",
+      weekly.id,
+      "--expires-in",
+      "30d",
+    ]);
+    expect(lengthened.code).toBe(1);
+    expect(lengthened.envelope.error.code).toBe("forbidden");
+    const kept = await c.operator.refused([
+      "keys",
+      "update",
+      weekly.id,
+      "--no-expiry",
+    ]);
+    expect(kept.envelope.error.code).toBe("forbidden");
+    expect(await expiryOf(weekly.id)).toBe(shorter);
+
+    // A caller that is not held to narrowing clears it, and the key reads back with none.
+    const cleared = await c.cli.json<{ expires_at: string | null }>([
+      "keys",
+      "update",
+      weekly.id,
+      "--no-expiry",
+    ]);
+    expect(cleared.expires_at).toBeNull();
+    expect(await expiryOf(weekly.id)).toBeNull();
+
+    // A duration on an update is measured from now, as it is on a mint.
+    const again = await c.cli.json<{ expires_at: string | null }>([
+      "keys",
+      "update",
+      weekly.id,
+      "--expires-in",
+      "2d",
+    ]);
+    expect(
+      Math.abs(Date.parse(again.expires_at ?? "") - Date.now() - 2 * DAY_MS),
+      `--expires-in 2d set ${String(again.expires_at)}`,
+    ).toBeLessThan(600_000);
+
+    // A time that has passed, and a duration that is no duration, are
+    // refused, and the key keeps the expiry it had.
+    const past = await c.cli.refused([
+      "keys",
+      "update",
+      weekly.id,
+      "--expires-at",
+      "2001-01-01T00:00:00Z",
+    ]);
+    expect(past.code).toBe(1);
+    expect(past.envelope.error.server?.code).toBe("validation_error");
+    for (const nonsense of ["soon", "0d", "7y", "1.5h", "7", "-1d"]) {
+      const refused = await c.cli.refused([
+        "keys",
+        "update",
+        weekly.id,
+        `--expires-in=${nonsense}`,
+      ]);
+      expect(refused.code, nonsense).toBe(1);
+      expect(refused.envelope.error.code, nonsense).toBe("invalid");
+      expect(refused.envelope.error.server, nonsense).toBeNull();
+    }
+    expect(await expiryOf(weekly.id)).toBe(again.expires_at);
+
+    // A key works until its expiry and is refused after it.
+    const brief = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "expiring-soon",
+      "--source",
+      unique("cli-expiring-soon"),
+      "--type-permission",
+      "core.note=read",
+      "--expires-in",
+      "8s",
+    ]);
+    trackKey(c.ctx, brief.id);
+    const holder = c.cli.as(brief.key);
+    expect((await holder.json<{ id: string }>(["keys", "current"])).id).toBe(
+      brief.id,
+    );
+    const deadline = Date.now() + 30_000;
+    let refused: Awaited<ReturnType<Cli["refused"]>> | undefined;
+    while (refused === undefined && Date.now() < deadline) {
+      const outcome = await holder.run(["--json", "keys", "current"]);
+      if (outcome.code === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } else {
+        refused = await holder.refused(["keys", "current"]);
+      }
+    }
+    expect(refused, "the key was never refused after its expiry").toBeDefined();
+    expect(refused?.code).toBe(5);
+    expect(refused?.envelope.error.code).toBe("unauthorized");
+    expect(refused?.envelope.error.server?.status).toBe(401);
   });
 
   it("mints a key claiming a source, and a create under it names that source until the claim is taken away", async () => {
