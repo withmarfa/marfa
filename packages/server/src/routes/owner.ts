@@ -10,16 +10,7 @@ import { claimOwner } from "../auth/instance-claim.js";
 import { requireOwnerOrigin } from "../auth/owner-browser.js";
 import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
-import { ownerWire } from "./owner-wire.js";
-const OwnerSchema = z
-  .object({
-    id: z.string().describe("Unique identifier for the owner."),
-    email: z.string().describe("Email address used to sign in."),
-    name: z.string().describe("Display name of the owner."),
-    created_at: z.string().describe("When the owner was created, in UTC."),
-  })
-  .describe("The single owner of the instance.")
-  .openapi("Owner");
+import { OwnerSchema, ownerWire } from "./owner-wire.js";
 const failure = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
   description: string,

@@ -54,15 +54,17 @@ When valid setup proof claims an unclaimed instance with valid owner details, th
 
 ### `instance-claim/status-fields`
 
-When the private local command reads the claim status, the server MUST answer `claimed`, `owner_id` and `generation`.
+When the private local command reads the claim status, the server MUST answer `claimed`, `owner_id` and `generation`, where `owner_id` is the owner's `id` once claimed and otherwise `null`, and `generation` is a string while unclaimed and `null` once claimed.
 
-**Reason:** `owner_id` is `null` while the instance is unclaimed. Every field in an answer is snake_case, so a script reading the status finds the same names the public owner answer uses.
+**Reason:** Every field in an answer is snake_case, so a script reading the status finds the same names the public owner answer uses.
 
 **Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› creates exactly one owner and requires owner sign-in to read it`, `› keeps a completed claim and recovered password through restart`.
 
 ### `instance-claim/ticket-fields`
 
 When the private local command requests browser setup, the server MUST answer the handoff `ticket`, its setup `url`, and `expires_at` as an ISO 8601 instant in UTC.
+
+**Reason:** The expiry takes the same form as every other time field, so a script compares it with them without a conversion.
 
 **Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› expires a handoff after five minutes while its exchanged setup session remains usable`.
 

@@ -474,8 +474,10 @@ describe("claiming through the private socket", () => {
       const socketState = await mkdtemp(
         join(tmpdir(), "marfa-owner-socket-conformance-"),
       );
+      let booted = false;
       try {
         const socketServer = await bootUnclaimedServer({ state: socketState });
+        booted = true;
         const control = (path: string, body?: unknown) =>
           controlRequest(
             socketServer.controlSocket,
@@ -490,6 +492,7 @@ describe("claiming through the private socket", () => {
           "owner_id",
         ]);
         expect(before.body.owner_id).toBeNull();
+        expect(typeof before.body.generation).toBe("string");
         const ticket = await control("/_control/setup/ticket", {});
         expect(ticket.status).toBe(200);
         expect(Object.keys(ticket.body).sort()).toEqual([
@@ -522,12 +525,14 @@ describe("claiming through the private socket", () => {
           false,
         );
         await expectMatchesSchema("POST", "/owner", 201, claim.body);
-        expect((await control("/_control/setup/status")).body).toMatchObject({
+        const after = await control("/_control/setup/status");
+        expect(after.body).toMatchObject({
           claimed: true,
           owner_id: claim.body.id,
         });
+        expect(after.body.generation).toBeNull();
       } finally {
-        await stopServer({ state: socketState });
+        if (booted) await stopServer({ state: socketState });
         await rm(socketState, { recursive: true, force: true });
       }
     },
