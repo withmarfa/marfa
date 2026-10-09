@@ -258,6 +258,39 @@ fn usage(
     Some(CliError::Usage(message))
 }
 
+/// What `--socket` refuses about a command, before anything is sent: the
+/// commands with no use for it, and the ones that need a key it does not carry.
+fn socket_refusal(command: &Command) -> Option<CliError> {
+    if matches!(
+        command,
+        Command::Login(_)
+            | Command::Logout
+            | Command::Device(_)
+            | Command::Folders { .. }
+            | Command::Docs(_)
+    ) {
+        return Some(CliError::Usage(
+            "this command does not support --socket".into(),
+        ));
+    }
+    if matches!(
+        command,
+        Command::Export(_)
+            | Command::Events(_)
+            | Command::Connectors {
+                command: connectors::ConnectorsCommand::Deliveries {
+                    command: connectors::DeliveriesCommand::Body { .. }
+                }
+            }
+    ) {
+        return Some(CliError::Usage(
+            "this command needs a key or a token, which --socket does not carry; run it without --socket"
+                .into(),
+        ));
+    }
+    None
+}
+
 fn run(cli: Cli) -> Result<Exit, CliError> {
     if cli.allow_http || cleartext::allowed_by_environment() {
         cleartext::allow();
@@ -274,35 +307,9 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         ));
     }
     if cli.socket.is_some()
-        && matches!(
-            cli.command,
-            Command::Login(_)
-                | Command::Logout
-                | Command::Device(_)
-                | Command::Folders { .. }
-                | Command::Docs(_)
-        )
+        && let Some(refusal) = socket_refusal(&cli.command)
     {
-        return Err(CliError::Usage(
-            "this command does not support --socket".into(),
-        ));
-    }
-    if cli.socket.is_some()
-        && matches!(
-            cli.command,
-            Command::Export(_)
-                | Command::Events(_)
-                | Command::Connectors {
-                    command: connectors::ConnectorsCommand::Deliveries {
-                        command: connectors::DeliveriesCommand::Body { .. }
-                    }
-                }
-        )
-    {
-        return Err(CliError::Usage(
-            "this command needs a key or a token, which --socket does not carry; run it without --socket"
-                .into(),
-        ));
+        return Err(refusal);
     }
     if cli.socket.is_none()
         && matches!(
@@ -426,10 +433,10 @@ mod tests {
 
     #[test]
     fn socket_authority_is_refused_for_commands_that_need_a_key() {
-        let usage = |words: &[&str]| {
+        let command = |words: &[&str]| {
             let mut argv = vec!["marfa", "--socket", "/marfa-test-missing/control.sock"];
             argv.extend_from_slice(words);
-            run(Cli::try_parse_from(argv).unwrap())
+            Cli::try_parse_from(argv).unwrap().command
         };
         for words in [
             &["export"][..],
@@ -437,23 +444,17 @@ mod tests {
             &["connectors", "deliveries", "body", "id", "delivery"],
         ] {
             assert!(
-                matches!(usage(words), Err(CliError::Usage(ref message)) if message.starts_with("this command needs a key or a token")),
+                matches!(socket_refusal(&command(words)), Some(CliError::Usage(ref message)) if message.starts_with("this command needs a key or a token")),
                 "{words:?}"
             );
         }
-        // Witness: the neighbors of those commands are not refused. They go
-        // on to the missing socket and fail there.
+        // Witness: the neighbors of those commands are not refused.
         for words in [
             &["connectors", "deliveries", "list", "id"][..],
             &["connectors", "list"],
             &["blobs", "download", "sha256:abc"],
         ] {
-            let result = usage(words);
-            assert!(
-                !matches!(result, Err(CliError::Usage(_))),
-                "{words:?}: {:?}",
-                result.err()
-            );
+            assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }
     }
 

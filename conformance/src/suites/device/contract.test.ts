@@ -1,7 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   answers,
   certifiedRead,
@@ -16,6 +25,7 @@ import {
 } from "../../device/marfa-answers.js";
 import {
   BUILT_FOR,
+  CONTRACT_HEADER,
   ScriptedServer,
   type Answer,
 } from "../../device/scripted-server.js";
@@ -523,31 +533,93 @@ describe("the contract the binary was built for", () => {
   });
 
   it("refuses export, events and a delivery body under --socket before sending a request", async () => {
-    server = await ScriptedServer.start();
-    for (const args of [
-      ["export"],
-      ["events"],
-      ["connectors", "deliveries", "body", ID, ID],
-    ]) {
-      const label = args.join(" ");
-      // Witness: without --socket the same command does send its request.
-      const before = server.requests.length;
-      await marfa(["--json", "--url", server.url, "--key", KEY, ...args]);
-      expect(server.requests.length, label).toBeGreaterThan(before);
-
-      const sent = server.requests.length;
-      const refused = await marfa([
+    const socket = await PrivateSocket.start();
+    try {
+      // Witness: a streamed command that the socket does serve connects to
+      // it, so a count of zero below means the command did not try.
+      const out = join(socket.dir, "blob.out");
+      const served = await marfa([
         "--json",
         "--socket",
-        "/marfa-test-missing/control.sock",
-        ...args,
+        socket.path,
+        "blobs",
+        "download",
+        HASH,
+        "--output",
+        out,
       ]);
-      expect(refused.code, `${label}: ${refused.stderr}`).toBe(2);
-      expect(refusal(refused.stderr).error.code, label).toBe("usage");
-      expect(server.requests.length, label).toBe(sent);
+      expect(served.code, served.stderr).toBe(0);
+      expect(readFileSync(out, "utf8")).toBe("streamed bytes");
+      expect(socket.connections).toBeGreaterThan(0);
+
+      for (const args of [
+        ["export"],
+        ["events"],
+        ["connectors", "deliveries", "body", ID, ID],
+      ]) {
+        const label = args.join(" ");
+        const before = socket.connections;
+        const refused = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          ...args,
+        ]);
+        expect(refused.code, `${label}: ${refused.stderr}`).toBe(2);
+        expect(refusal(refused.stderr).error.code, label).toBe("usage");
+        expect(socket.connections, label).toBe(before);
+      }
+    } finally {
+      await socket.stop();
     }
   });
 });
+
+/**
+ * A server on a Unix socket of its own, which answers a blob download and
+ * counts the connections made to it. The directory is short because macOS
+ * caps a socket path, and private because the binary refuses any other.
+ */
+class PrivateSocket {
+  connections = 0;
+
+  private constructor(
+    readonly dir: string,
+    readonly path: string,
+    private readonly server: Server,
+  ) {}
+
+  static async start(): Promise<PrivateSocket> {
+    const dir = mkdtempSync(join(realpathSync(tmpdir()), "m-"));
+    const path = join(dir, "s");
+    const server = createServer((request, response) => {
+      if (request.method === "GET" && request.url?.startsWith("/blobs/")) {
+        response.writeHead(200, {
+          "content-type": "application/octet-stream",
+          [CONTRACT_HEADER]: BUILT_FOR,
+        });
+        response.end("streamed bytes");
+        return;
+      }
+      response.writeHead(501).end();
+    });
+    const socket = new PrivateSocket(dir, path, server);
+    server.on("connection", () => {
+      socket.connections += 1;
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(path, resolve);
+    });
+    chmodSync(path, 0o600);
+    return socket;
+  }
+
+  async stop(): Promise<void> {
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    rmSync(this.dir, { recursive: true, force: true });
+  }
+}
 
 /**
  * What each command in the binary's own table is run with: the arguments it

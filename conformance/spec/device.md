@@ -1518,7 +1518,7 @@ If the selected private socket cannot be reached safely, then the command MUST f
 
 ### `device/local-socket-streamed`
 
-When a command that streams its answer and needs no credential, such as `blobs download`, is given `--socket PATH`, the command MUST send its request through that socket and to no other address.
+When a command given `--socket PATH` streams its answer, the command MUST send that request through the socket and to no other address.
 
 **Reason:** a streamed answer is read on its own connection, which has to reach the private socket as every other request does.
 
