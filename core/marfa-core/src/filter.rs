@@ -516,7 +516,7 @@ fn field(token: &Token) -> Result<Field> {
         }
         if path.contains('.') {
             return Err(refused(format!(
-                "Nested property paths are not supported in v1. Use \"properties.<field>\" at position {}",
+                "Nested property paths are not supported. Use \"properties.<field>\" at position {}",
                 token.pos
             )));
         }

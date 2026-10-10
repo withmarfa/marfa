@@ -22,9 +22,7 @@ export interface SearchableText {
   name: string;
   /**
    * Concatenation (space-joined) of every other string-typed field
-   * declared on the type that isn't `searchable: false`. Empty when
-   * the type isn't registered (codepath used by ad-hoc inserts that
-   * pre-date type registration).
+   * declared on the type that isn't `searchable: false`.
    */
   extra: string;
 }
@@ -70,7 +68,7 @@ export function searchableShape(typeId: string): string {
  */
 export function extractSearchableText(
   properties: Record<string, unknown>,
-  typeId: string | undefined,
+  typeId: string,
 ): SearchableText {
   const result: Record<CoreFtsField, string> = {
     title: "",
@@ -80,12 +78,12 @@ export function extractSearchableText(
   };
   for (const field of CORE_FTS_FIELDS) {
     // Resolve the type so a custom type's `searchable: false` opt-outs apply.
-    if (typeId && isFieldSearchableExcluded(typeId, field)) continue;
+    if (isFieldSearchableExcluded(typeId, field)) continue;
     const value = properties[field];
     if (typeof value === "string") result[field] = value;
   }
 
-  const extraFields = typeId ? searchableExtraFields(typeId) : [];
+  const extraFields = searchableExtraFields(typeId);
   const extraParts: string[] = [];
   for (const field of extraFields) {
     const value = properties[field];

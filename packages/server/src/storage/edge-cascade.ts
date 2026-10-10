@@ -38,7 +38,7 @@ export async function planCascadeDelete(
     if (depth > MAX_DEPTH) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-        `Cascade-delete depth limit (${String(MAX_DEPTH)}) exceeded — graph may contain a cycle`,
+        `Cascade-delete depth limit (${String(MAX_DEPTH)}) exceeded: a chain of cascading edges is deeper than one delete can follow`,
         { item_id: itemId },
       );
     }

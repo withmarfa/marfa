@@ -1145,7 +1145,7 @@ export interface SearchStore {
   index(
     itemId: string,
     properties: Record<string, unknown>,
-    typeId?: string,
+    typeId: string,
   ): Promise<void>;
   /** Replace the tags on the item's row. The metadata store calls this
    *  from every tag write, so a tag is findable the moment it is set;
