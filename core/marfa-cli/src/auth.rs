@@ -175,7 +175,8 @@ pub fn client_name(machine: Option<&str>) -> String {
     }
 }
 
-/// This machine's host name, without the `.local` a Mac adds.
+/// This machine's host name, without the domain after it, such as the
+/// `.local` a Mac adds.
 fn machine_name() -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is writable for the length passed.
@@ -184,7 +185,7 @@ fn machine_name() -> Option<String> {
     }
     let end = buffer.iter().position(|byte| *byte == 0)?;
     let name = std::str::from_utf8(&buffer[..end]).ok()?.trim();
-    let name = name.strip_suffix(".local").unwrap_or(name);
+    let name = name.split('.').next().unwrap_or(name);
     (!name.is_empty() && !name.chars().any(char::is_control)).then(|| name.to_string())
 }
 
@@ -651,7 +652,7 @@ mod tests {
         assert!(
             machine
                 .as_deref()
-                .is_none_or(|name| !name.is_empty() && !name.ends_with(".local"))
+                .is_none_or(|name| !name.is_empty() && !name.contains('.'))
         );
     }
 
