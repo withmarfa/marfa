@@ -45,6 +45,7 @@ beforeAll(async () => {
   // The reserved namespace refuses a write to every credential, so the
   // system row goes in through the store.
   const folder = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.folder",
     properties: { title: "stats-folder" },
   });

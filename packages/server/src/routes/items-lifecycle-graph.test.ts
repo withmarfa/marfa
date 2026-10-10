@@ -60,6 +60,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     // stays permissive so the archive restore can replay it, so it is the
     // only way to reach the row shape the restore gate exists for.
     const trashed = await itemWrites(c.storage).create({
+      writer: null,
       type: SYSTEM_TYPE,
       state: "trashed",
       properties: systemProperties(),

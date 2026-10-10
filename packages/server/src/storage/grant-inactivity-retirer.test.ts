@@ -145,7 +145,10 @@ async function backdate(
   const then = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
   const props = { ...grant.properties };
   for (const f of fields) props[f] = then;
-  await itemWrites(c.storage).update(grant.id, { properties: props });
+  await itemWrites(c.storage).update(grant.id, {
+    writer: null,
+    properties: props,
+  });
 }
 
 async function tokenRows(c: TestContext, clientId: string): Promise<number> {
@@ -257,6 +260,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
           const props: Record<string, unknown> = { ...grant.properties };
           Reflect.deleteProperty(props, "last_used_at");
           await itemWrites(ctx!.storage).update(grant.id, {
+            writer: null,
             properties: props,
             properties_mode: "replace",
           });
@@ -274,6 +278,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
           expect(rows).toHaveLength(1);
           const grant = await grantOf(ctx!, clientId);
           await itemWrites(ctx!.storage).update(grant.id, {
+            writer: null,
             properties: {
               ...grant.properties,
               [field]: new Date().toISOString(),
@@ -312,6 +317,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
     Reflect.deleteProperty(props, "last_used_at");
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
     await itemWrites(ctx.storage).update(grant.id, {
+      writer: null,
       properties: props,
       properties_mode: "replace",
     });

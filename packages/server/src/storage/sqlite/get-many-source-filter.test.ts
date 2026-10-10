@@ -15,24 +15,28 @@ it("keeps keyed reads bounded at the bulk cap and applies source filtering only 
     (_, i) => `01900000-0000-7000-8000-${i.toString(16).padStart(12, "0")}`,
   );
   const approved = await itemWrites(ctx.storage).create({
+    writer: null,
     id: ids[100],
     type: "core.note",
     source: "approved",
     properties: { body: "approved" },
   });
   const hidden = await itemWrites(ctx.storage).create({
+    writer: null,
     id: ids[40_000],
     type: "core.note",
     source: "other",
     properties: { body: "hidden" },
   });
   const uncovered = await itemWrites(ctx.storage).create({
+    writer: null,
     id: ids[49_998],
     type: "core.bookmark",
     source: "other",
     properties: { url: "https://example.com/uncovered" },
   });
   const trashed = await itemWrites(ctx.storage).create({
+    writer: null,
     id: ids[49_999],
     type: "core.note",
     source: "approved",

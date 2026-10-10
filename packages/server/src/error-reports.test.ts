@@ -413,6 +413,7 @@ describe("a failed write no request is waiting on", () => {
     let rejection: unknown;
     try {
       await itemWrites(ctx.storage).create({
+        writer: null,
         type: "core.note",
         tier: "library",
         state: "active",

@@ -903,6 +903,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 
     // Simulate the user revoking the grant via /security (sets status=revoked).
     const revokedUpdate = await itemWrites(ctx.storage).update(grantId, {
+      writer: null,
       properties: {
         ...items.data[0]!.properties,
         status: "revoked",

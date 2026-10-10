@@ -23,6 +23,7 @@ async function seed(count: number) {
   await ctx.storage.runInTransaction(async () => {
     for (let i = 0; i < count; i++)
       await itemWrites(ctx.storage).create({
+        writer: null,
         type: "core.note",
         properties: { body: "sourceyieldfixture" },
         source: "yield-fixture",

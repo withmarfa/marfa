@@ -36,6 +36,7 @@ afterAll(async () => {
 
 async function connection(): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.connection",
     properties: {
       kind: "app",
@@ -48,6 +49,7 @@ async function connection(): Promise<string> {
 
 async function note(): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "soft delete fixture" },
   });

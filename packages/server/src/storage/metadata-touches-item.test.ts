@@ -62,6 +62,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
  *  the past so any movement is the write under test. */
 async function pinnedItem(): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "metadata touches item" },
     tags: ["seed"],

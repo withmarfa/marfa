@@ -641,11 +641,11 @@ export interface BlobProofInput {
 
 /**
  * The sign-in the version a write leaves the row at was written by, which
- * the snapshot of that version takes when an update moves past it. Absent
- * or null where no sign-in wrote it.
+ * the snapshot of that version takes when an update moves past it. Null
+ * where no sign-in wrote it, which every caller says rather than leaves out.
  */
 export interface WriterInput {
-  writer?: VersionWriter | null;
+  writer: VersionWriter | null;
 }
 
 export type StoredCreateItemInput = CreateItemInput &

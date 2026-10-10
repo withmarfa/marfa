@@ -87,12 +87,14 @@ describe("the same upstream record", () => {
   it("refuses a duplicate at the store, as a refusal no door answers", async () => {
     const shared = { source: "feed-inner", source_id: "upstream-inner" };
     await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { title: "one", body: "x" },
       ...shared,
     });
     await expect(
       itemWrites(ctx.storage).create({
+        writer: null,
         type: "core.note",
         properties: { title: "two", body: "x" },
         ...shared,

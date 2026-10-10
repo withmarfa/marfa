@@ -38,6 +38,7 @@ afterAll(async () => {
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.folder",
     properties: { title: "A folder" },
     source: "test/purge-refusal",
@@ -134,6 +135,7 @@ describe("purging a soft-deleted row", () => {
 
   async function trashedNote(): Promise<string> {
     const note = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "trashed" },
     });
@@ -169,6 +171,7 @@ describe("purging a soft-deleted row", () => {
 
   it("refuses a trashed row of a type the key may only read", async () => {
     const task = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.task",
       properties: { title: "read only here" },
     });
@@ -201,6 +204,7 @@ describe("purging a soft-deleted row", () => {
   it("purges a revoked connection for a key whose map writes the type, and only for one", async () => {
     // A connection soft-deletes to `revoked`, not `trashed`.
     const conn = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",

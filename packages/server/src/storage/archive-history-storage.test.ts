@@ -41,6 +41,7 @@ function snapshots(itemId: string): Version[] {
 
 async function note(ctx: TestContext) {
   return itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "current" },
     version: 3,

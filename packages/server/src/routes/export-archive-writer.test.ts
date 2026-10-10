@@ -36,7 +36,7 @@ async function itemLines(archive: Buffer): Promise<Record<string, unknown>[]> {
   let text = "";
   extract.on("entry", (header, stream, next) => {
     const parts: Buffer[] = [];
-    stream.on("data", (part: Buffer) => parts.push(part));
+    stream.on("data", (part: unknown) => parts.push(part as Buffer));
     stream.on("end", () => {
       if (header.name === "items.ndjson")
         text = Buffer.concat(parts).toString();

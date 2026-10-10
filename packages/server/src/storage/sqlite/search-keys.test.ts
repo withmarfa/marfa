@@ -31,6 +31,7 @@ const key = async () =>
 describe("stable search keys", () => {
   it("matches content and tags without treating item identifiers as content", async () => {
     await itemWrites(storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { title: "Searchabletitle", body: "searchablebody" },
@@ -41,10 +42,12 @@ describe("stable search keys", () => {
     const title = await storage.search.search("searchabletitle", {});
     expect(title[0]?.snippet_html).toContain("<mark>Searchabletitle</mark>");
     const contentWitness = await itemWrites(storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: itemId },
     });
     const tagWitness = await itemWrites(storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "tagidentifierwitness" },
     });
@@ -58,6 +61,7 @@ describe("stable search keys", () => {
 
   it("preserves the explicit key through reindexing, VACUUM and reopen", async () => {
     const item = await itemWrites(storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "beforevacuum" },
@@ -66,6 +70,7 @@ describe("stable search keys", () => {
     const original = await key();
     expect(original).toHaveLength(1);
     await itemWrites(storage).update(itemId, {
+      writer: null,
       properties: { body: "aftervacuum" },
       version: item.version,
       may_read_type: () => true,
@@ -85,6 +90,7 @@ describe("stable search keys", () => {
 
   it("keeps SQLite integer keys exact without a JavaScript number round trip", async () => {
     await itemWrites(storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "exactinteger" },
@@ -113,6 +119,7 @@ describe("stable search keys", () => {
     await expect(
       storage.runInTransaction(async () => {
         await itemWrites(storage).create({
+          writer: null,
           id: itemId,
           type: "core.note",
           properties: { body: "rolledbackcreate" },
@@ -125,6 +132,7 @@ describe("stable search keys", () => {
     expect(await hits("rolledbackcreate")).toEqual([]);
 
     const item = await itemWrites(storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "lifecyclecontent" },
@@ -133,6 +141,7 @@ describe("stable search keys", () => {
     for (const change of [
       () =>
         itemWrites(storage).update(itemId, {
+          writer: null,
           properties: { body: "rolledbackupdate" },
           version: item.version,
           may_read_type: () => true,
@@ -213,6 +222,7 @@ describe("stable search keys", () => {
 
   it("rolls back FTS removal when deleting its map key fails", async () => {
     await itemWrites(storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "removalfailure" },

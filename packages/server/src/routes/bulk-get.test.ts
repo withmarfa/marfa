@@ -216,6 +216,7 @@ describe("POST /items/bulk-get and the system token", () => {
     // The fixture models a platform-owned row, which no public credential
     // can create through the item write API.
     const folder = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.folder",
       properties: { title: `bulk-sys-${marker}` },
       source: `bulk-get-system-${marker}`,

@@ -103,6 +103,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
   it("purge removes the item and its FTS entry", async () => {
     const itemId = id("aaa1");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "alphabravo searchable" },
@@ -126,6 +127,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
   it("the trash sweep removes FTS entries for purged trashed items", async () => {
     const itemId = id("aaa2");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "charliedelta searchable" },
@@ -159,6 +161,7 @@ describe("TrashPurger — edge cleanup", () => {
 
     for (const itemId of [doomed, neighbor, bystander]) {
       await itemWrites(ctx.storage).create({
+        writer: null,
         id: itemId,
         type: "core.note",
         properties: { body: `note ${itemId}` },
@@ -214,6 +217,7 @@ describe("TrashPurger — edge cleanup", () => {
     const b = id("ddd2");
     for (const itemId of [a, b]) {
       await itemWrites(ctx.storage).create({
+        writer: null,
         id: itemId,
         type: "core.note",
         properties: { body: `note ${itemId}` },
@@ -242,7 +246,8 @@ describe("TrashPurger — edge cleanup", () => {
 describe("ItemStore.purge — the trash gate", () => {
   it("takes only a row in its type's soft-deleted state", async () => {
     const make = async (type: string, properties: Record<string, unknown>) =>
-      (await itemWrites(ctx.storage).create({ type, properties })).id;
+      (await itemWrites(ctx.storage).create({ writer: null, type, properties }))
+        .id;
     const connection = {
       kind: "app",
       status: "active",
@@ -280,6 +285,7 @@ describe("a purge through the item write — atomicity", () => {
   it("rolls the row back if its FTS removal fails", async () => {
     const id1 = id("bbb1");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: id1,
       type: "core.note",
       properties: { body: "rollbackalpha searchable" },
@@ -322,6 +328,7 @@ describe("TrashPurger — the clock it reads", () => {
   it("purges a trashed item that was written to after it entered the bin", async () => {
     const itemId = id("c10c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "past the window" },
@@ -344,6 +351,7 @@ describe("TrashPurger — the clock it reads", () => {
   it("leaves a trashed item whose stamp is inside the window", async () => {
     const itemId = id("c11c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "recently binned" },
@@ -374,6 +382,7 @@ describe("TrashPurger — the clock it reads", () => {
   it("does not let the modification time vote once a stamp exists", async () => {
     const itemId = id("c15c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "stamp inside, modification time outside" },
@@ -399,6 +408,7 @@ describe("TrashPurger — the clock it reads", () => {
     // contract, so the assertion is on the column.
     const itemId = id("c14c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "in and back out" },
@@ -422,6 +432,7 @@ describe("TrashPurger — the clock it reads", () => {
   it("starts a fresh window when an item is restored and binned again", async () => {
     const itemId = id("c12c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "back out and in again" },
@@ -447,6 +458,7 @@ describe("TrashPurger — the clock it reads", () => {
     // alone and a row without one is not its to remove.
     const itemId = id("c16c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "system.folder",
       state: "trashed",
@@ -467,6 +479,7 @@ describe("TrashPurger — the clock it reads", () => {
     // row stamped at the instant itself is inside it.
     const itemId = id("c17c");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { body: "on the line" },

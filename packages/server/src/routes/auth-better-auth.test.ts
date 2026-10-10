@@ -384,6 +384,7 @@ describe("better-auth /auth/* surface", () => {
     // listing doesn't validate against the client table.
     const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
     const grant = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       state: "active",
       tier: "library",
