@@ -80,7 +80,6 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "POST /auth/sign-in/email": "password sign-in, which the sign-in form calls",
   "POST /auth/sign-out": "a browser's sign-out",
   "GET /auth/get-session": "the browser session a cookie names",
-  "POST /auth/revoke-session": "ends one browser session",
   "POST /auth/revoke-sessions": "ends every browser session",
   "POST /auth/revoke-other-sessions":
     "ends every browser session but the caller's",
@@ -136,7 +135,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/sign-in/email": [200, 400, 401, 403],
   "POST /auth/sign-out": [200, 500],
   "GET /auth/get-session": [200],
-  "POST /auth/revoke-session": [200, 401],
   "POST /auth/revoke-sessions": [200, 401],
   "POST /auth/revoke-other-sessions": [200, 401],
   "POST /auth/change-password": [200, 400, 401],

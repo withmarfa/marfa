@@ -83,9 +83,15 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
+/** Answers the owner's own doors, which no key opens. */
+const ownerCookie = process.env.MARFA_OWNER_COOKIE ?? "";
+
 async function read(path: string, key = apiKey): Promise<unknown> {
   const response = await fetch(`${apiUrl}${path}`, {
-    headers: { Authorization: `Bearer ${key}` },
+    headers:
+      key === ownerCookie
+        ? { cookie: ownerCookie }
+        : { Authorization: `Bearer ${key}` },
   });
   expect(response.status, path).toBe(200);
   return response.json();
@@ -97,6 +103,7 @@ describe("one envelope for every list and search", () => {
     path: () => string;
     siblings?: string[];
     operator?: boolean;
+    owner?: boolean;
   }[] = [
     { template: "/items", path: () => `/items?source=${ctx.source}` },
     { template: "/edges", path: () => "/edges" },
@@ -164,14 +171,17 @@ describe("one envelope for every list and search", () => {
         "/occurrences?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z",
       siblings: ["window", "scan"],
     },
+    { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
   ];
+  const credentialOf = (door: (typeof doors)[number]) =>
+    door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names twenty-four doors, every one the document publishes as a page", async () => {
+  it("names twenty-five doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(24);
+    expect(doors).toHaveLength(25);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -190,18 +200,18 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(13);
+    expect(whole).toHaveLength(14);
     for (const door of whole) {
-      const body = (await read(
-        door.path(),
-        door.operator ? managementKey : apiKey,
-      )) as Record<string, unknown>;
+      const body = (await read(door.path(), credentialOf(door))) as Record<
+        string,
+        unknown
+      >;
       expect(body.next_cursor, door.template).toBeNull();
     }
   });
 
   it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
-    // Outside the twenty-four: the owner's approved-apps list is served
+    // Outside the twenty-five: the owner's approved-apps list is served
     // beside the document rather than in it, and answers the same two keys.
     expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
     const minted = await client.createKey({
@@ -226,10 +236,10 @@ describe("one envelope for every list and search", () => {
   it.each(doorRows)(
     "GET %s answers data and next_cursor",
     async (_template, door) => {
-      const body = (await read(
-        door.path(),
-        door.operator ? managementKey : apiKey,
-      )) as Record<string, unknown>;
+      const body = (await read(door.path(), credentialOf(door))) as Record<
+        string,
+        unknown
+      >;
       await expectMatchesSchema("GET", door.template, 200, body);
       // The occurrence door adds its diagnostics only when there are any,
       // so on that door alone they are set aside from the key set.

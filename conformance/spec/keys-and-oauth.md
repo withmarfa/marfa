@@ -1677,9 +1677,143 @@ When the consent screen or the device approval page offers a grant of one type, 
 
 **Tests:** `compliance/unverified-apps.test.ts › is named in the same words on the consent page and the device approval page, reach included`.
 
+## The owner's sign-ins
+
+The owner lists their browser sessions at `GET /owner/sign-ins` and ends one at `DELETE /owner/sign-ins/{id}`.
+
+### `keys-and-oauth/sign-ins-list`
+
+When the owner's browser session asks `GET /owner/sign-ins`, the server MUST answer `200` with every live browser session of the owner, each with `kind` `browser`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`.
+
+### `keys-and-oauth/sign-ins-fields`
+
+When `GET /owner/sign-ins` answers, the server MUST give each browser session its `id`, `kind`, `current`, `created_at`, `last_used_at`, `expires_at`, `ip_address` and `user_agent`, and no other field.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`.
+
+### `keys-and-oauth/sign-ins-current`
+
+When `GET /owner/sign-ins` answers, the server MUST give `current` `true` to the session that asked and `false` to every other.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`.
+
+### `keys-and-oauth/sign-ins-no-token`
+
+The server MUST NOT carry a browser session's token or cookie value in an answer of `GET /owner/sign-ins`.
+
+**Reason:** Whoever holds the token is signed in as that browser.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › carries no session's token, which the sign-in library's own answer does`.
+
+### `keys-and-oauth/sign-ins-owner-only`
+
+The server MUST NOT list a browser session of anyone but the owner at `GET /owner/sign-ins`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › lists and ends no session of anyone but the owner`.
+
+### `keys-and-oauth/sign-ins-browser-only`
+
+If a request to `GET /owner/sign-ins` or `DELETE /owner/sign-ins/{id}` carries a key, an app's access token or the private local command's authority, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
+
+**Reason:** Only a browser has a session of its own to tell apart from the others, and neither a key nor an app holds a right to the owner's sign-ins.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key, an app's token and the local command 403, and no credential 401`.
+
+### `keys-and-oauth/sign-in-end`
+
+When the owner's browser session asks `DELETE /owner/sign-ins/{id}` naming a live browser session of the owner, the server MUST answer `200` with `ok` `true`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`.
+
+### `keys-and-oauth/sign-in-end-refused`
+
+When `DELETE /owner/sign-ins/{id}` has ended a browser session, the server MUST answer that browser's next request as a request with no session.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`.
+
+### `keys-and-oauth/sign-in-end-others`
+
+When `DELETE /owner/sign-ins/{id}` ends a browser session, the server MUST keep every other browser session of the owner signed in.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`.
+
+### `keys-and-oauth/sign-in-end-cookie`
+
+When `DELETE /owner/sign-ins/{id}` ends the session that asked, the server MUST clear that browser's session cookie.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › clears the cookie of the session that ends itself`.
+
+### `keys-and-oauth/sign-in-end-unknown`
+
+If `DELETE /owner/sign-ins/{id}` names no live browser session of the owner, then the server MUST answer `404 sign_in_not_found`.
+
+**Reason:** A session that already ended answers the same as one that never existed, so the second of two ends of one session says that nothing ended.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for a session already ended and an id no session has`, `› lists and ends no session of anyone but the owner`.
+
+### `keys-and-oauth/sign-in-end-recent`
+
+If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A browser left signed in, or a copied cookie, cannot end the owner's other sessions without the password.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`.
+
+## A browser session's idle week
+
+A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use.
+
+### `keys-and-oauth/session-use-recorded`
+
+When the server admits a request on a browser session whose last recorded use is a minute old or older, the server MUST record that request's time as the session's `last_used_at`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`, `› does not record a use within a minute of the last one`.
+
+### `keys-and-oauth/session-use-expiry`
+
+When the server records a use of a browser session, the server MUST set the session's `expires_at` to seven days and one minute after that use.
+
+**Reason:** The sign-in library renews a session only once its last renewal is a day old, so a session used within that day would end a week after the older renewal rather than a week after its last use.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`.
+
+### `keys-and-oauth/session-use-cookie`
+
+When the server records a use of a browser session in an answer that succeeds, the server MUST send the browser's session cookie again with a `Max-Age` of seven days and one minute.
+
+**Reason:** The browser keeps the cookie as long as the server keeps the session.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again with a week and a minute's lifetime when it records a use`.
+
+### `keys-and-oauth/session-idle-kept`
+
+While a browser session's last use was less than seven days ago, the server MUST admit a request on it.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › admits a session last used just under a week ago`.
+
+### `keys-and-oauth/session-idle-ends`
+
+If a browser session has not been used for seven days and one minute, then the server MUST answer a request on it as a request with no session.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a session unused for a week and a minute`.
+
+### `keys-and-oauth/session-end-restart`
+
+When the server restarts, the server MUST keep refusing every browser session that was ended or had expired before the restart.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session refused, and a live session's last use and expiry`.
+
+### `keys-and-oauth/session-use-restart`
+
+When the server restarts, the server MUST keep each live browser session's `last_used_at` and `expires_at`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session refused, and a live session's last use and expiry`.
+
 ## Browser sessions and apps
 
-A browser session ends by sign-out, by ending one, the other or every session, by a password change that keeps the current session, by local password recovery, or by the provider's end-session once confirmed.
+A browser session ends by sign-out, by the owner ending it, by ending the other or every session, by a password change that keeps the current session, by local password recovery, by the provider's end-session once confirmed, or by going unused for a week.
 
 ### `keys-and-oauth/app-outlives-browser`
 
@@ -1687,13 +1821,13 @@ When a person's browser session ends, the server MUST keep valid every access to
 
 **Reason:** An app is not the browser that approved it, and an app with no refresh grant has no way back in. Only a revocation of the grant ends an app's access.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/refresh-outlives-browser`
 
 When a person's browser session ends, the server MUST answer the exchange of a refresh token an app holds for that person `200` with tokens that are valid.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/consent-outlives-browser`
 
@@ -1808,6 +1942,12 @@ When the inactivity retirement retires a grant, the server MUST already hold the
 **Reason:** A grant unused for the instance's window, a year unless it says otherwise, is ended as a person's own revocation ends it.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the inactivity retirement retires a grant`.
+
+### `keys-and-oauth/audit-sign-in-end`
+
+When `DELETE /owner/sign-ins/{id}` answers `200`, the server MUST already hold the audit record of the session's end, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › is in the audit log when it answers`.
 
 ### `keys-and-oauth/audit-failed-sign-in`
 
