@@ -3815,14 +3815,14 @@ export interface components {
             inbound_pending_retention_days?: number;
         };
         /** @description An error response. */
-        InvalidPropertiesOrValidationErrorRefusal: {
+        InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "invalid_properties" | "validation_error";
+                code: "invalid_properties" | "invalid_schema" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -19309,6 +19309,7 @@ export interface operations {
             /**
              * @description - `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
              *     - `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.
+             *     - `invalid_schema`: an archived type or edge type is invalid, or carries a key the schema doesn't define (`details.errors` names each key's path).
              */
             400: {
                 headers: {
@@ -19321,7 +19322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidPropertiesOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

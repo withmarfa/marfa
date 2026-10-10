@@ -5700,7 +5700,7 @@
         ],
         "description": "The instance configuration: its enforcement levers and retention settings, with the instance's ID."
       },
-      "InvalidPropertiesOrValidationErrorRefusal": {
+      "InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -5710,6 +5710,7 @@
                 "type": "string",
                 "enum": [
                   "invalid_properties",
+                  "invalid_schema",
                   "validation_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -37364,11 +37365,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.",
+            "description": "- `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.\n- `invalid_schema`: an archived type or edge type is invalid, or carries a key the schema doesn't define (`details.errors` names each key's path).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidPropertiesOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal"
                 }
               }
             },
