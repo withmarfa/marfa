@@ -981,8 +981,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       headers,
       ctx.authCookies.dontRememberToken.name,
     );
-    // Only a request that records a use sends the cookie again, so a
-    // session in use for longer than the cookie lives keeps it.
+    // Sent again only with a recorded use: often enough that a session in
+    // use for longer than the cookie lives keeps it, and rarely enough to
+    // leave the browser's back-forward cache alone.
     const use = (recorded: boolean): SessionUse => ({
       session: found,
       cookie:
