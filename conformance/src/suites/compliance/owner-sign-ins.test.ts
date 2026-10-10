@@ -8,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { HeldLock } from "../../utils/held-lock.js";
 import {
   connect,
   issuerOrigin,
@@ -39,6 +40,9 @@ let addresses = 0;
 beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
     TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    // How long a write waits for the lock before it gives up, kept short for
+    // the case that holds the lock from outside.
+    SQLITE_BUSY_BUDGET_MS: "1000",
   });
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -259,7 +263,7 @@ describe("the owner's sign-ins", () => {
     ).toBeDefined();
   });
 
-  it("refuses a key, an app's token and the local command 403, and no credential 401", async () => {
+  it("refuses a key and an app's token 403, and no credential 401", async () => {
     const browser = await signIn();
     const id = await idOf(browser);
     const app = await registerApp(server, "core.note:read");
@@ -291,15 +295,31 @@ describe("the owner's sign-ins", () => {
       ["GET", "/owner/sign-ins"],
       ["DELETE", `/owner/sign-ins/${id}`],
     ] as const) {
-      const local = await controlRequest(server.controlSocket, path, {
-        method,
-      });
-      expect(local.status, `local ${method} ${path}`).toBe(403);
       const none = await fetch(`${server.apiUrl}${path}`, { method });
       expect(none.status, `no credential ${method} ${path}`).toBe(401);
     }
     // Nothing above ended the session.
     expect(await session(browser)).not.toBeNull();
+  });
+
+  it("answers the private local command every browser session, marking none current, and ends one for it", async () => {
+    const browser = await signIn();
+    const id = await idOf(browser);
+    const listed = await controlRequest(
+      server.controlSocket,
+      "/owner/sign-ins",
+    );
+    expect(listed.status).toBe(200);
+    const rows = (listed.body as { data: SignIn[] }).data;
+    expect(rows.map((row) => row.id)).toContain(id);
+    expect(rows.every((row) => !row.current)).toBe(true);
+    const ended = await controlRequest(
+      server.controlSocket,
+      `/owner/sign-ins/${id}`,
+      { method: "DELETE" },
+    );
+    expect(ended.status).toBe(200);
+    expect(await session(browser)).toBeNull();
   });
 });
 
@@ -345,6 +365,8 @@ describe("ending a sign-in", () => {
           (line) => line.startsWith(`${name}=;`) && /max-age=0/i.test(line),
         ),
     ).toBe(true);
+    // The cookie is cleared, not also sent again for the session it ended.
+    expect(cookieMaxAge(response, browser.cookie)).toBeUndefined();
     expect(await session(browser)).toBeNull();
   });
 
@@ -434,25 +456,66 @@ describe("a browser session's idle week", () => {
     const id = await idOf(browser);
     const recorded = Date.now() - 2 * MINUTE;
     arrange(id, { updatedAt: recorded });
-    withInstanceDatabase(server.sqlitePath, (db) =>
-      db.exec(
-        "CREATE TRIGGER refuse_session_use BEFORE UPDATE ON auth_session BEGIN SELECT RAISE(ABORT, 'session use refused'); END",
-      ),
-    );
+    // The write lock held from outside: the use waits for it, then gives up.
+    const lock = await HeldLock.take(server.sqlitePath);
     try {
       const admitted = await list(browser);
       expect(admitted.status).toBe(200);
       expect(cookieMaxAge(admitted, browser.cookie)).toBeUndefined();
       expect(stored(id).updated_at).toBe(Math.floor(recorded / 1000));
     } finally {
-      withInstanceDatabase(server.sqlitePath, (db) =>
-        db.exec("DROP TRIGGER refuse_session_use"),
-      );
+      await lock.release();
     }
     const next = await list(browser);
     expect(next.status).toBe(200);
     expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
     expect(stored(id).updated_at).toBeGreaterThan(Math.floor(recorded / 1000));
+  }, 30_000);
+
+  it("keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server", async () => {
+    addresses += 1;
+    const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
+      },
+      body: JSON.stringify({ ...OWNER, rememberMe: false }),
+    });
+    expect(response.status).toBe(200);
+    const line = response.headers
+      .getSetCookie()
+      .find((value) => /session_token=/.test(value));
+    expect(line, "sign-in set no session cookie").toBeDefined();
+    expect(line).not.toMatch(/max-age/i);
+    const browser: Browser = {
+      cookie: response.headers
+        .getSetCookie()
+        .map((value) => value.split(";")[0])
+        .join("; "),
+      address: "",
+      userAgent: "",
+      maxAge: Number.NaN,
+    };
+    const session = line!.split(";")[0]!;
+    const id = await idOf(browser);
+    const created = (await signIns(browser)).find((row) => row.id === id)!;
+    expect(
+      (Date.parse(created.expires_at) - Date.parse(created.created_at)) / 1000,
+    ).toBe(7 * 24 * 3600 + 60);
+
+    arrange(id, { updatedAt: Date.now() - 2 * MINUTE });
+    const before = Math.floor(Date.now() / 1000);
+    const used = await list(browser);
+    expect(used.status).toBe(200);
+    expect(cookieMaxAge(used, session)).toBeUndefined();
+    expect(
+      used.headers.getSetCookie().some((value) => /session_token=/.test(value)),
+    ).toBe(false);
+    const row = stored(id);
+    expect(row.updated_at).toBeGreaterThanOrEqual(before);
+    expect(row.expires_at - row.updated_at).toBe(7 * 24 * 3600 + 60);
   });
 
   it("does not record a use within a minute of the last one", async () => {

@@ -1715,17 +1715,23 @@ The server MUST NOT list a browser session of anyone but the owner at `GET /owne
 
 ### `keys-and-oauth/sign-ins-browser-only`
 
-If a request to `GET /owner/sign-ins` or `DELETE /owner/sign-ins/{id}` carries a key, an app's access token or the private local command's authority, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
+If a request to `GET /owner/sign-ins` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
 
-**Reason:** Only a browser has a session of its own to tell apart from the others, and neither a key nor an app holds a right to the owner's sign-ins.
+**Reason:** Neither a key nor an app holds a right to the owner's sign-ins. The owner's browser session and the private local command do.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key, an app's token and the local command 403, and no credential 401`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403, and no credential 401`.
+
+### `keys-and-oauth/sign-ins-local`
+
+When the private local command asks `GET /owner/sign-ins`, the server MUST answer every live browser session of the owner, each with `current` `false`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › answers the private local command every browser session, marking none current, and ends one for it`.
 
 ### `keys-and-oauth/sign-in-end`
 
-When the owner's browser session asks `DELETE /owner/sign-ins/{id}` naming a live browser session of the owner, the server MUST answer `200` with `ok` `true`.
+When the owner's browser session or the private local command asks `DELETE /owner/sign-ins/{id}` naming a live browser session of the owner, the server MUST answer `200` with `ok` `true`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› answers the private local command every browser session, marking none current, and ends one for it`.
 
 ### `keys-and-oauth/sign-in-end-refused`
 
@@ -1763,7 +1769,7 @@ If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than 
 
 ## A browser session's idle week
 
-A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use. Its cookie lasts longer, and the stored session is what ends it.
+A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use. A session signed in to be remembered keeps a cookie that lasts longer, and one signed in not to be remembered keeps a cookie that ends with the browser. The stored session is what ends either.
 
 ### `keys-and-oauth/session-use-recorded`
 
@@ -1783,29 +1789,37 @@ When the server records a use of a browser session, the server MUST set the sess
 
 When a password sign-in creates a browser session, the server MUST set the session's `expires_at` to seven days and one minute after the sign-in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
+**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
 
 ### `keys-and-oauth/session-cookie-lifetime`
 
-When a password sign-in sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
+When a password sign-in that asks to be remembered sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
 
 **Reason:** The stored session is the only clock, so the cookie only has to outlive it. A cookie that tracked the session's expiry would be dropped while the session lived whenever the answer that renewed it did not reach the browser.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
 
+### `keys-and-oauth/session-cookie-forgotten`
+
+When a password sign-in asks not to be remembered, the server MUST set the session's cookie without a `Max-Age`.
+
+**Reason:** The browser drops such a cookie when it closes, as the person asked.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+
 ### `keys-and-oauth/session-use-cookie`
 
-When the server records a use of a browser session, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401`.
+When the server records a use of a browser session signed in to be remembered, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401` or one that ends that session.
 
-**Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, and a `401` means the session ended while the request was in flight.
+**Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, a `401` means the session ended while the request was in flight, and an answer that ends the session clears its cookie instead.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`.
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`, `› clears the cookie of the session that ends itself`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
 
 ### `keys-and-oauth/session-use-unwritten`
 
-If the server cannot record a use of a live browser session, then the server MUST still admit the request on it.
+If the storage is full, read-only or held by another writer when the server records a use of a live browser session, then the server MUST still admit the request on it.
 
-**Reason:** Recording a use is bookkeeping, and a full disk must not sign the owner out of reading. A write the request makes meets the same storage and answers as it would.
+**Reason:** Recording a use is bookkeeping, and a full or busy disk must not sign the owner out of reading. A write the request makes meets the same storage and answers as it would. Any other failure to record the use refuses the request.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › admits a request whose use cannot be recorded, and records the next once it can`.
 
