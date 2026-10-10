@@ -316,8 +316,7 @@ async function runUpdateChunk(
 
 /**
  * Whether this job's events drive outbound side effects. Absent reads as
- * off: the bulk doors default that way, and an input stored by an earlier
- * build carries no such field.
+ * off, as the bulk doors read it.
  */
 function fansOutFor(input: BulkActionInput): boolean {
   return input.enable_fanout ?? false;
