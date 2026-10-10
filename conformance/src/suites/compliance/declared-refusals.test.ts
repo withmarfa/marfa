@@ -734,9 +734,13 @@ describe("a query key no door declares", () => {
     id: string = UNKNOWN,
   ): Promise<{ status: number; unknown: unknown }> {
     const path = template.replace(/\{[^}]+\}/g, id);
-    if (template === "/owner" || template === "/restore") {
+    if (
+      template === "/owner" ||
+      template.startsWith("/owner/") ||
+      template === "/restore"
+    ) {
       const response = await getOwnerClient().rawRequest(`${path}?${STRAY}=1`, {
-        method: method as "GET" | "POST",
+        method: method as "GET" | "POST" | "DELETE",
         headers: { "Content-Type": "application/json" },
         ...(method === "POST" ? { body: "{}" } : {}),
       });
