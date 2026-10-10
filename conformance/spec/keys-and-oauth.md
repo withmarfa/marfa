@@ -1971,13 +1971,13 @@ If a browser session has not been used for seven days and one minute, then the s
 
 When the server restarts, the server MUST keep refusing every browser session that was ended or had expired before the restart.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session refused, and a live session's last use and expiry`.
+**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session, an ended app and an ended key refused, and a live session's last use and expiry`.
 
 ### `keys-and-oauth/session-use-restart`
 
 When the server restarts, the server MUST keep each live browser session's `last_used_at` and `expires_at`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session refused, and a live session's last use and expiry`.
+**Tests:** `compliance/owner-sign-ins.test.ts › keeps an ended and an expired session, an ended app and an ended key refused, and a live session's last use and expiry`.
 
 ## Browser sessions and apps
 
