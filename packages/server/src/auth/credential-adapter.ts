@@ -16,6 +16,9 @@ interface CredentialRequest {
   /** The scope a registration stores, settled by its before-hook. */
   registrationScopes?: string[];
   email?: string;
+  /** Set only by the renewal of a browser session on use, whose update of
+   *  the session row changes no credential and so writes no audit row. */
+  recordsSessionUse?: boolean;
   verifiedPasswordHash?: string;
   /** Scopes a device initiation names beyond the client's stored ceiling. The
    *  plugin's exact-membership check reads them as held for this request only;
@@ -26,7 +29,10 @@ export const credentialRequest = new AsyncLocalStorage<CredentialRequest>();
 
 /** Own every provider operation and withhold its answer until persistence settles. */
 export async function withCredentialRequest<T>(
-  input: Pick<CredentialRequest, "path" | "clientIp" | "phase" | "email">,
+  input: Pick<
+    CredentialRequest,
+    "path" | "clientIp" | "phase" | "email" | "recordsSessionUse"
+  >,
   work: () => Promise<T>,
 ): Promise<T> {
   const scope: CredentialRequest = {
@@ -366,17 +372,18 @@ export function withCredentialAudit<
               return result;
             },
             (result) => {
+              const request = credentialRequest.getStore();
               if (
                 result === null ||
                 result === 0 ||
                 (operation === "delete" && !previous) ||
-                // The only update of a session is its renewal on use, which
-                // changes no credential; a row for each request a browser
-                // makes would bury the rows that record one.
-                (operation === "update" && args.model === "session")
+                // A renewal on use changes no credential; a row for each use
+                // would bury the rows that record one.
+                (operation === "update" &&
+                  args.model === "session" &&
+                  request?.recordsSessionUse === true)
               )
                 return null;
-              const request = credentialRequest.getStore();
               const row = (
                 result && typeof result === "object" ? result : previous
               ) as Record<string, unknown> | undefined;
