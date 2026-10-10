@@ -360,8 +360,7 @@ export function listTypes(): TypeSchema[] {
  * (reserved, and a namespace nothing may occupy) without keeping a second
  * list beside `RESERVED_ROOTS`.
  */
-export type NamespaceTier =
-  "core" | "system" | "app" | "user" | "publisher" | "marfa";
+type NamespaceTier = "core" | "system" | "app" | "user" | "publisher" | "marfa";
 
 /**
  * Returns true if the candidate is a reserved root prefix.
@@ -935,7 +934,7 @@ function getZodSchema(
 }
 
 /** Validation result for property validation. */
-export type ValidationResult =
+type ValidationResult =
   | { success: true; data: Record<string, unknown> }
   | { success: false; errors: { field: string; message: string }[] };
 
@@ -1017,7 +1016,7 @@ export const SYSTEM_DEFAULT_STATE: ItemState = "active";
  * via these transitions; the `system.*` set declares its own override (see
  * SYSTEM_TYPE_TRANSITIONS) where `active → revoked` is the lifecycle.
  */
-export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
+const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
   active: ["archived", "trashed"],
   archived: ["active", "trashed"],
   trashed: ["active"],
@@ -1029,13 +1028,12 @@ export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
  * where `revoked` is terminal. Archived / trashed do not apply to
  * operational platform records.
  */
-export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
-  {
-    active: ["revoked"],
-    archived: [],
-    trashed: [],
-    revoked: [],
-  };
+const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
+  active: ["revoked"],
+  archived: [],
+  trashed: [],
+  revoked: [],
+};
 
 /**
  * Whether a type follows the bounded `active | revoked` lifecycle rather than

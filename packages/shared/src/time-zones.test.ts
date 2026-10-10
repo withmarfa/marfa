@@ -10,7 +10,6 @@
 import { describe, expect, it } from "vitest";
 import {
   dateInZoneToInstant,
-  instantToDateInZone,
   instantToWallClock,
   wallClockToInstant,
 } from "./time-zones.js";
@@ -25,6 +24,11 @@ function underAmbientZone<T>(zone: string, fn: () => T): T {
     if (previous === undefined) delete process.env.TZ;
     else process.env.TZ = previous;
   }
+}
+
+/** The calendar date `instant` falls on, read in `zone`. */
+function dateInZone(instant: string, zone: string | undefined): string {
+  return instantToWallClock(new Date(instant), zone).toISOString().slice(0, 10);
 }
 
 /** East and west of the event zone, and far enough either way that a
@@ -43,7 +47,7 @@ describe("a whole day", () => {
       expect(instant, eventZone).not.toBeNull();
       for (const viewer of VIEWERS) {
         const seen = underAmbientZone(viewer, () =>
-          instantToDateInZone(instant!, eventZone),
+          dateInZone(instant!, eventZone),
         );
         expect(seen, `${eventZone} seen from ${viewer}`).toBe("2026-09-15");
       }
@@ -57,9 +61,7 @@ describe("a whole day", () => {
     const instant = dateInZoneToInstant("2026-03-29", "Europe/Berlin");
     for (const viewer of VIEWERS) {
       expect(
-        underAmbientZone(viewer, () =>
-          instantToDateInZone(instant!, "Europe/Berlin"),
-        ),
+        underAmbientZone(viewer, () => dateInZone(instant!, "Europe/Berlin")),
       ).toBe("2026-03-29");
     }
   });
@@ -76,9 +78,9 @@ describe("a whole day", () => {
     );
     // Midnight UTC read back in Los Angeles is the day before — the shape
     // this exists to avoid.
-    expect(
-      instantToDateInZone("2026-09-15T00:00:00.000Z", "America/Los_Angeles"),
-    ).toBe("2026-09-14");
+    expect(dateInZone("2026-09-15T00:00:00.000Z", "America/Los_Angeles")).toBe(
+      "2026-09-14",
+    );
   });
 
   it("falls back to UTC consistently when the event states no zone", () => {
@@ -86,9 +88,7 @@ describe("a whole day", () => {
     expect(instant).toBe("2026-09-15T00:00:00.000Z");
     for (const viewer of VIEWERS) {
       expect(
-        underAmbientZone(viewer, () =>
-          instantToDateInZone(instant!, undefined),
-        ),
+        underAmbientZone(viewer, () => dateInZone(instant!, undefined)),
       ).toBe("2026-09-15");
     }
   });
@@ -98,7 +98,6 @@ describe("a whole day", () => {
       dateInZoneToInstant("2026-09-15T10:00:00Z", "Europe/Berlin"),
     ).toBeNull();
     expect(dateInZoneToInstant("not a date", "Europe/Berlin")).toBeNull();
-    expect(instantToDateInZone("not an instant", "Europe/Berlin")).toBeNull();
   });
 });
 

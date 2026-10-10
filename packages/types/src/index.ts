@@ -16,27 +16,20 @@ export type {
 export { TYPE_ROLES } from "./schema-types.js";
 
 export type {
-  EdgeTypeSchemaValidationResult,
-  SchemaValidationContext,
   SchemaValidationIssue,
   TypeSchemaValidationResult,
 } from "./schema-validation.js";
 export {
   ALWAYS_SEARCHED_FIELDS,
-  EDGE_CARDINALITIES,
-  EDGE_CASCADES,
   EDGE_PROPERTY_KEYS,
   EDGE_TYPE_SCHEMA_KEYS,
   FIELD_FORMATS,
   FIELD_TYPES,
-  MERGE_STRATEGIES,
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
   isRoleConstraint,
-  normalizeFieldDefinition,
   roleFromConstraint,
   unreadKeys,
-  validateEdgeTypeSchema,
   validateTypeSchema,
 } from "./schema-validation.js";
 

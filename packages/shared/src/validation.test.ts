@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isValidTimestamp,
-  isValidStrictTimestamp,
   isValidBlobHash,
-  isValidUrl,
-  isValidEmail,
-  isValidLanguageCode,
   isValidTypeIdentifier,
   isValidTypePattern,
   isValidEdgeTypeIdentifier,
@@ -72,24 +68,6 @@ describe("isValidTimestamp", () => {
   );
 });
 
-describe("isValidStrictTimestamp", () => {
-  it("accepts full timestamp with Z", () => {
-    expect(isValidStrictTimestamp("2026-03-15T14:30:00Z")).toBe(true);
-  });
-
-  it("accepts full timestamp with offset", () => {
-    expect(isValidStrictTimestamp("2026-03-15T14:30:00+05:00")).toBe(true);
-  });
-
-  it("rejects date-only", () => {
-    expect(isValidStrictTimestamp("2026-03-15")).toBe(false);
-  });
-
-  it("rejects timestamp without timezone", () => {
-    expect(isValidStrictTimestamp("2026-03-15T14:30:00")).toBe(false);
-  });
-});
-
 describe("isValidBlobHash", () => {
   it("accepts valid sha256 hash", () => {
     expect(
@@ -125,95 +103,6 @@ describe("isValidBlobHash", () => {
 
   it("rejects short hash", () => {
     expect(isValidBlobHash("sha256:abc123")).toBe(false);
-  });
-});
-
-describe("isValidUrl", () => {
-  it("accepts https URLs", () => {
-    expect(isValidUrl("https://example.com")).toBe(true);
-  });
-
-  it("accepts http URLs", () => {
-    expect(isValidUrl("http://localhost:3000/path")).toBe(true);
-  });
-
-  it("rejects bare domains", () => {
-    expect(isValidUrl("example.com")).toBe(false);
-  });
-
-  it("rejects empty string", () => {
-    expect(isValidUrl("")).toBe(false);
-  });
-});
-
-describe("isValidEmail", () => {
-  it("accepts standard email", () => {
-    expect(isValidEmail("user@example.com")).toBe(true);
-  });
-
-  it("rejects missing @", () => {
-    expect(isValidEmail("userexample.com")).toBe(false);
-  });
-
-  it("rejects missing domain", () => {
-    expect(isValidEmail("user@")).toBe(false);
-  });
-
-  it("rejects spaces", () => {
-    expect(isValidEmail("user @example.com")).toBe(false);
-  });
-
-  it.each([
-    ["user@a.b", true],
-    ["user@a.b.", true],
-    ["user@.a.b", true],
-    ["user@a..b", true],
-    ["user@.com", false],
-    ["user@com.", false],
-    ["user@.", false],
-    ["user@..", false],
-    ["user@nodot", false],
-    ["@example.com", false],
-    ["a@b@example.com", false],
-    ["user@exa\tmple.com", false],
-  ])("answers %j with %s", (value, expected) => {
-    expect(isValidEmail(value)).toBe(expected);
-  });
-
-  it("refuses an address longer than 254 characters", () => {
-    const local = "a".repeat(248);
-    expect(isValidEmail(`${local}@b.com`)).toBe(true);
-    expect(isValidEmail(`${local}x@b.com`)).toBe(false);
-  });
-
-  it("answers a long adversarial input at once", () => {
-    const start = performance.now();
-    expect(isValidEmail(`a@${"a.".repeat(50_000)}`)).toBe(false);
-    expect(isValidEmail(`a@${".".repeat(100_000)}`)).toBe(false);
-    expect(isValidEmail(`a@${"a@.".repeat(50_000)}`)).toBe(false);
-    expect(performance.now() - start).toBeLessThan(200);
-  });
-});
-
-describe("isValidLanguageCode", () => {
-  it("accepts simple language code", () => {
-    expect(isValidLanguageCode("en")).toBe(true);
-  });
-
-  it("accepts language with region", () => {
-    expect(isValidLanguageCode("en-US")).toBe(true);
-  });
-
-  it("accepts language with script", () => {
-    expect(isValidLanguageCode("zh-Hans")).toBe(true);
-  });
-
-  it("rejects empty string", () => {
-    expect(isValidLanguageCode("")).toBe(false);
-  });
-
-  it("rejects single character", () => {
-    expect(isValidLanguageCode("e")).toBe(false);
   });
 });
 

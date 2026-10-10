@@ -109,7 +109,7 @@ export function typeMatchesAnyPattern(
  * - `core.media.*`    → `{ exact: "core.media", descendantPattern: "core.media.%" }`
  * - `core.note`       → `{ exact: "core.note" }`
  */
-export interface TypePatternSql {
+interface TypePatternSql {
   /** The pattern matches every type; emit no predicate at all. */
   global: boolean;
   /** Identifier to compare with equality, when the pattern has one. */
@@ -272,7 +272,7 @@ export interface TypeFilter {
  * that backwards. Ranking once here is what keeps three SQL compilers and one
  * JavaScript predicate from each having their own opinion about it.
  */
-export interface TypeFilterTerm {
+interface TypeFilterTerm {
   pattern: string;
   minus: string[];
 }

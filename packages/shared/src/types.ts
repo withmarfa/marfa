@@ -496,17 +496,6 @@ export interface AncestorUnavailableResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Property sub-types
-// ---------------------------------------------------------------------------
-
-/** A binary attachment reference within item properties. */
-export interface Attachment {
-  blob_ref: string;
-  mime_type: string;
-  title?: string;
-}
-
-// ---------------------------------------------------------------------------
 // Webhook types
 // ---------------------------------------------------------------------------
 

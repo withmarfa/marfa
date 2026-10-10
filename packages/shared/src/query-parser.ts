@@ -15,7 +15,7 @@ import { ErrorCode, MarfaError } from "./errors.js";
 // AST types
 // ---------------------------------------------------------------------------
 
-export type FilterValue = string | number | boolean | null;
+type FilterValue = string | number | boolean | null;
 
 export type ComparisonOp =
   | "eq"
@@ -29,9 +29,9 @@ export type ComparisonOp =
   | "exists"
   | "not_exists";
 
-export type LogicalOp = "AND" | "OR";
+type LogicalOp = "AND" | "OR";
 
-export type FieldRef =
+type FieldRef =
   | { kind: "system"; column: string }
   | { kind: "property"; path: string }
   | { kind: "tags" }
@@ -65,7 +65,7 @@ export interface FilterExpression {
  * attempt forever, and a second copy of the number is how it ends up
  * checking against the wrong one.
  */
-export const MAX_FILTER_INPUT_LENGTH = 2048;
+const MAX_FILTER_INPUT_LENGTH = 2048;
 const MAX_INPUT_LENGTH = MAX_FILTER_INPUT_LENGTH;
 const MAX_CONDITIONS = 10;
 
