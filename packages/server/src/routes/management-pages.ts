@@ -53,7 +53,7 @@ function action(parent, label, run) {
   const button = document.createElement('button'); button.textContent = label;
   button.addEventListener('click', async () => {
     button.disabled = true; status.textContent = '';
-    try { await run(); status.textContent = 'Done.'; await refresh(); }
+    try { if ((await run()) === 'left') return; status.textContent = 'Done.'; await refresh(); }
     catch (error) { status.textContent = error.message; }
     finally { button.disabled = false; }
   }); parent.append(' ', button);
@@ -86,7 +86,7 @@ async function refresh() {
     action(li, 'Sign out', async () => {
       if (!confirm(row.current ? 'Sign out this browser?' : 'Sign out this browser? It will need to sign in again. Connected apps keep their access.')) return;
       await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'});
-      if (row.current) location.assign('/auth/sign-in');
+      if (row.current) { location.assign('/auth/sign-in'); return 'left'; }
     });
   });
   rows('apps', apps.data, (li, row) => { li.textContent = row.client_name || row.client_id || row.id;
