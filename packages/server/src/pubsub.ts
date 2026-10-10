@@ -209,23 +209,47 @@ export function __listenerCountForTests(): number {
 }
 
 /**
- * Maps an internal event type to its wire string.
- *   item.* for item events (created / updated / deleted / restored /
- *     purged / state_changed)
+ * The wire string of every event type the bus carries, in the order the
+ * published specification lists them.
+ *   item.* for item events
  *   metadata.changed (bare, not namespaced) for metadata mutations —
  *     a deliberate exception because it describes a metadata-layer change
- *   edge.created / edge.updated / edge.deleted for edge lifecycle events
+ *   edge.* for edge lifecycle events
  *
- * Mirrored by routes/events.ts, webhooks/delivery.ts, and
- * routes/webhooks.ts so SSE wire, webhook payloads, and subscription
- * validation all agree.
+ * Keyed on the union above and checked against it, so a type added there
+ * without a name fails to compile. The event stream, the webhook payloads
+ * and the webhook subscription vocabulary all read their names from here.
  */
-export function wireEventName(type: PubsubEvent["type"]): string {
-  if (type === "metadata_changed") return "metadata.changed";
-  if (type === "edge_created") return "edge.created";
-  if (type === "edge_updated") return "edge.updated";
-  if (type === "edge_deleted") return "edge.deleted";
-  return `item.${type}`;
+export const WIRE_EVENT_NAMES = {
+  created: "item.created",
+  updated: "item.updated",
+  deleted: "item.deleted",
+  restored: "item.restored",
+  purged: "item.purged",
+  state_changed: "item.state_changed",
+  metadata_changed: "metadata.changed",
+  edge_created: "edge.created",
+  edge_updated: "edge.updated",
+  edge_deleted: "edge.deleted",
+} as const satisfies Record<PubsubEvent["type"], string>;
+
+export type WireEventName = (typeof WIRE_EVENT_NAMES)[PubsubEvent["type"]];
+
+/** Maps an internal event type to its wire string. */
+export function wireEventName(type: PubsubEvent["type"]): WireEventName {
+  return WIRE_EVENT_NAMES[type];
+}
+
+/**
+ * The wire string for a type read back from the event log, which holds
+ * whatever the writing build stored. A type this build does not carry comes
+ * back unchanged, so a reader that checks the name against the vocabulary
+ * refuses it rather than failing on it.
+ */
+export function loggedWireEventName(type: string): string {
+  return Object.hasOwn(WIRE_EVENT_NAMES, type)
+    ? WIRE_EVENT_NAMES[type as PubsubEvent["type"]]
+    : type;
 }
 
 function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
@@ -271,18 +295,7 @@ function emitInOrder(emit: () => void): void {
 
 /** The internal name for a wire event name, or undefined for another. */
 function eventTypeOf(wire: unknown): PubsubEvent["type"] | undefined {
-  const types: PubsubEvent["type"][] = [
-    "created",
-    "updated",
-    "deleted",
-    "restored",
-    "purged",
-    "state_changed",
-    "metadata_changed",
-    "edge_created",
-    "edge_updated",
-    "edge_deleted",
-  ];
+  const types = Object.keys(WIRE_EVENT_NAMES) as PubsubEvent["type"][];
   return types.find((type) => wireEventName(type) === wire);
 }
 

@@ -25,6 +25,7 @@ import type {
 } from "../storage/interface.js";
 import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { WIRE_EVENT_NAMES, type WireEventName } from "../pubsub.js";
 import { DELIVERY_CANCELED, ownerCredential } from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
@@ -56,8 +57,9 @@ export const MIN_WEBHOOK_SECRET_LENGTH = 32;
 /**
  * Every event an outbound webhook may subscribe to.
  *
- * **The one statement of the vocabulary, and the specification is generated
- * from it rather than describing it separately.** It was a `Set` here and
+ * **Derived from the events the bus carries, so no copy of the list is kept
+ * here, and the specification is generated from it rather than describing it
+ * separately.** It was a `Set` here and
  * `z.array(z.string())` in the schema, so the constraint was real, enforced,
  * and invisible: a generated client got `string`, an editor offered no
  * completion, and the only way to learn a valid name was to send a wrong one
@@ -76,18 +78,10 @@ export const MIN_WEBHOOK_SECRET_LENGTH = 32;
  * name here is one dispatch can match, which is what makes this list a
  * vocabulary rather than a menu.
  */
-export const WEBHOOK_EVENTS = [
-  "item.created",
-  "item.updated",
-  "item.deleted",
-  "item.restored",
-  "item.purged",
-  "item.state_changed",
-  "metadata.changed",
-  "edge.created",
-  "edge.updated",
-  "edge.deleted",
-] as const;
+export const WEBHOOK_EVENTS = Object.values(WIRE_EVENT_NAMES) as [
+  WireEventName,
+  ...WireEventName[],
+];
 
 /**
  * The vocabulary as the request schemas see it, which is what puts the names

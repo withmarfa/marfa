@@ -6,12 +6,7 @@ import type {
   WebhookDeliveryStore,
   WebhookOwner,
 } from "../storage/interface.js";
-import {
-  eventMatchesTypeFilter,
-  wireEventName,
-  type EdgeEvent,
-  type ItemEvent,
-} from "../pubsub.js";
+import { eventMatchesTypeFilter, loggedWireEventName } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 import {
   resolveLiveCredential,
@@ -23,15 +18,6 @@ import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
 import { frameInReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 import { errorMessage } from "../error-text.js";
-
-/** Maps pubsub event types to webhook event types. Single entry point so
- *  the wire strings (item.*, metadata.changed, edge.*) stay consistent
- *  with SSE and the `WEBHOOK_EVENTS` vocabulary. */
-function toWebhookEventType(
-  type: ItemEvent["type"] | EdgeEvent["type"],
-): string {
-  return wireEventName(type);
-}
 
 /**
  * Stripe-style webhook signature. The HMAC is computed over
@@ -491,9 +477,7 @@ export class WebhookScheduler {
           throw new Error("Outbound webhook event payload is not a frame");
         }
         const frame = stored as Record<string, unknown>;
-        const eventType = toWebhookEventType(
-          event.event_type as ItemEvent["type"] | EdgeEvent["type"],
-        );
+        const eventType = loggedWireEventName(event.event_type);
         // Validate the retained frame independently of subscription matching
         // and authorization: malformed history is a failed job, not a skip.
         const isEdge = eventType.startsWith("edge.");

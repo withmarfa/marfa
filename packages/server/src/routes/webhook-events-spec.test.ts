@@ -12,8 +12,8 @@
  * here would reintroduce exactly the drift the change removed: the test and
  * the spec would then agree with each other while both disagreed with the
  * runtime. So it asserts that what the specification carries IS
- * `WEBHOOK_EVENTS`, which is why removing an event from that array changes
- * the generated document.
+ * `WEBHOOK_EVENTS`, which is why removing an event from the bus's wire names
+ * changes the generated document.
  */
 import { describe, expect, it } from "vitest";
 import { buildPublishedOpenAPISpec } from "../openapi-published.js";

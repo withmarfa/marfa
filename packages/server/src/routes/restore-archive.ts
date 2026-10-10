@@ -3,8 +3,9 @@
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
- * edges_imported, edges_skipped, blobs_imported}` and the registration
- * counts. Enforces the manifest version 0 contract and blob-hash
+ * edges_imported, edges_skipped, edges_skipped_reasons, blobs_imported,
+ * types_registered, types_skipped, edge_types_registered,
+ * edge_types_skipped}`. Enforces the manifest version 0 contract and blob-hash
  * verification, and checks every row before writing any. Memory does not
  * grow with the archive: entries it does not read are skipped, the rest are
  * read one line at a time, and no row is held past its line. It writes in a

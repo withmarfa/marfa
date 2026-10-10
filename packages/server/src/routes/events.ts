@@ -26,6 +26,7 @@ import {
   frameFor,
   storedFrame,
   subscribeAll,
+  loggedWireEventName,
   wireEventName,
 } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
@@ -1428,9 +1429,8 @@ export function eventRoutes(
                         }
                       }
 
-                      const replayWireType = wireEventName(
-                        event.event_type as
-                          ItemEventWithId["type"] | EdgeEventWithId["type"],
+                      const replayWireType = loggedWireEventName(
+                        event.event_type,
                       );
                       lastSentId = event.id;
                       send(
