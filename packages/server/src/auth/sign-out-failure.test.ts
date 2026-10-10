@@ -1,5 +1,10 @@
 import { afterEach, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  expectSessionCookieKept,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 import {
   withCredentialAudit,
   withCredentialRequest,
@@ -49,7 +54,7 @@ it("refuses sign-out without clearing cookies when native session deletion fails
     });
   const refused = await signOut();
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, cookie);
   expect(await db.__sqliteAll("SELECT id FROM auth_session")).toEqual(before);
   expect(await (await session()).json()).not.toBeNull();
   await db.__sqliteRun("DROP TRIGGER reject_session_delete", []);
@@ -86,7 +91,7 @@ it("keeps concurrent sign-out outcomes isolated between sessions", async () => {
     signOut(acceptedCookie),
   ]);
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, refusedCookie);
   expect(accepted.status).toBe(200);
   expect(accepted.headers.get("set-cookie")).toContain("Max-Age=0");
   const session = (cookie: string) =>
@@ -125,7 +130,7 @@ it("refuses sign-out when native lookup cannot determine whether to delete the s
     signOut({}),
   ]);
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, cookie);
   expect(anonymous.status).toBe(200);
   expect(await db.__sqliteAll("SELECT id FROM auth_session_saved")).toEqual(
     before,

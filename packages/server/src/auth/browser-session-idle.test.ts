@@ -25,6 +25,7 @@ const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 const T0 = Date.parse("2026-03-02T09:00:00.000Z");
 const ORIGIN = "http://localhost:0";
+const COOKIE_SECONDS = 400 * 24 * 3600;
 const EMAIL = "idle-sessions@example.com";
 const PASSWORD = "correct horse battery";
 
@@ -60,6 +61,17 @@ async function signIn(c: TestContext): Promise<string> {
   )?.[1];
   expect(cookie).toBeTruthy();
   return cookie!;
+}
+
+/** The `Max-Age` of the session cookie an answer sets, if it sets one. */
+function maxAge(res: Response, cookie: string): number | undefined {
+  const name = cookie.slice(0, cookie.indexOf("="));
+  const line = res.headers
+    .getSetCookie()
+    .find((value) => value.startsWith(`${name}=`));
+  if (line === undefined) return undefined;
+  expect(line.split(";")[0]).toBe(cookie);
+  return Number(/max-age=(\d+)/i.exec(line)?.[1]);
 }
 
 /** One authenticated request as the browser holding `cookie`. */
@@ -150,7 +162,8 @@ describe("a browser session's idle week", () => {
     at(T0 + DAY + 59 * SECOND);
     const unrecorded = await use(c, cookie);
     expect(unrecorded.status).toBe(200);
-    expect(unrecorded.headers.getSetCookie()).toEqual([]);
+    // Not written, so the cookie the last use sent still holds.
+    expect(maxAge(unrecorded, cookie)).toBeUndefined();
     const listed = (await list(c, cookie)).find((row) => row.current);
     expect(listed?.last_used_at).toBe(new Date(T0 + DAY).toISOString());
     // A week after the unrecorded use, the session is still live.
@@ -158,7 +171,7 @@ describe("a browser session's idle week", () => {
     expect((await use(c, cookie)).status).toBe(200);
   });
 
-  it("sends the cookie again with a week's lifetime on each use", async () => {
+  it("sends the cookie again, to outlive the session, on each use it records", async () => {
     at(T0 - DAY);
     const c = await context();
     at(T0);
@@ -171,7 +184,7 @@ describe("a browser session's idle week", () => {
       .find((line) => line.startsWith(cookie.slice(0, cookie.indexOf("="))));
     expect(sent, "no session cookie on a use").toBeTruthy();
     expect(sent!.split(";")[0]).toBe(cookie);
-    expect(sent).toMatch(/Max-Age=604860/i);
+    expect(sent).toMatch(/Max-Age=34560000/i);
     expect(sent).toMatch(/HttpOnly/i);
     expect(sent).toMatch(/SameSite=Lax/i);
   });
@@ -189,8 +202,90 @@ describe("a browser session's idle week", () => {
     expect(res.status).toBe(200);
     expect((await use(c, ended)).status).toBe(401);
     expect((await list(c, other)).map((row) => row.id)).not.toContain(id);
-    expect((await use(c, ended)).headers.getSetCookie().join()).not.toMatch(
-      /Max-Age=604860/i,
+    expect(maxAge(await use(c, ended), ended)).toBeUndefined();
+  });
+
+  it("sends the cookie on a refused answer to a use it records", async () => {
+    at(T0 - DAY);
+    const c = await context();
+    at(T0);
+    const cookie = await signIn(c);
+    at(T0 + 5 * DAY);
+    const missing = await request(
+      c.app,
+      "GET",
+      "/items/019537a0-7b80-7000-8000-000000000000",
+      { headers: { cookie } },
     );
+    expect(missing.status).toBe(404);
+    expect(maxAge(missing, cookie)).toBe(COOKIE_SECONDS);
+  });
+
+  it("admits both of two uses that fall due together, and the cookie outlives the session", async () => {
+    at(T0 - DAY);
+    const c = await context();
+    at(T0);
+    const signedIn = await request(c.app, "POST", "/auth/sign-in/email", {
+      body: { email: EMAIL, password: PASSWORD },
+      headers: { origin: ORIGIN },
+    });
+    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+      signedIn.headers.get("set-cookie") ?? "",
+    )![1]!;
+    expect(maxAge(signedIn, cookie)).toBe(COOKIE_SECONDS);
+    at(T0 + 2 * DAY);
+    const [one, two] = await Promise.all([use(c, cookie), use(c, cookie)]);
+    expect(one.status).toBe(200);
+    expect(two.status).toBe(200);
+    const sent = [maxAge(one, cookie), maxAge(two, cookie)].filter(
+      (age) => age !== undefined,
+    );
+    expect(sent.length).toBeGreaterThan(0);
+    for (const age of sent) expect(age).toBe(COOKIE_SECONDS);
+    const listed = (await list(c, cookie)).find((row) => row.current)!;
+    expect(Date.parse(listed.expires_at)).toBeLessThan(
+      T0 + 2 * DAY + COOKIE_SECONDS * 1000,
+    );
+  });
+
+  it("admits a read when the use cannot be written, and records the next use once it can", async () => {
+    at(T0 - DAY);
+    const c = await context();
+    at(T0);
+    const cookie = await signIn(c);
+    const config: unknown = await (
+      await request(c.app, "GET", "/config", { headers: { cookie } })
+    ).json();
+    const write = (headers: Record<string, string>) =>
+      request(c.app, "PUT", "/config", {
+        headers: { ...headers, origin: ORIGIN },
+        body: config,
+      });
+    // The witness: the owner's browser can make this write.
+    expect((await write({ cookie })).status).toBe(200);
+    const runInTransaction = c.storage.runInTransaction.bind(c.storage);
+    c.storage.runInTransaction = () =>
+      Promise.reject(
+        Object.assign(new Error("database or disk is full"), {
+          code: "SQLITE_FULL",
+        }),
+      );
+    at(T0 + 3 * DAY);
+    const read = await use(c, cookie);
+    expect(read.status).toBe(200);
+    expect(maxAge(read, cookie)).toBeUndefined();
+    // A write still meets the full disk itself.
+    const refused = await write({ cookie });
+    expect(refused.status).toBe(507);
+    expect(refused.headers.get("x-error-code")).toBe("insufficient_storage");
+
+    c.storage.runInTransaction = runInTransaction;
+    at(T0 + 3 * DAY + MINUTE);
+    const recovered = await use(c, cookie);
+    expect(recovered.status).toBe(200);
+    expect(maxAge(recovered, cookie)).toBe(COOKIE_SECONDS);
+    expect(
+      (await list(c, cookie)).find((row) => row.current)?.last_used_at,
+    ).toBe(new Date(T0 + 3 * DAY + MINUTE).toISOString());
   });
 });

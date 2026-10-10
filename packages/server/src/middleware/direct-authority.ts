@@ -102,18 +102,16 @@ export function directAuthorityMiddleware(
       }
       if (recent) requireRecentOwnerAuthentication(c);
     }, next);
-    // Only an answer that succeeded carries the cookie: a refusal or a fault
-    // sets none, and a `401` means the session ended while the request was
-    // in flight.
-    if (renewal?.cookie && c.res.status < 400)
+    // Any answer but a `401`, which means the session ended while the request
+    // was in flight: a refused or failed request still moved the expiry.
+    if (renewal?.cookie && c.res.status !== 401)
       sendRenewedCookie(c, renewal.cookieName, renewal.cookie);
   });
 }
 
 /**
- * Send the browser its cookie again with the lifetime the renewal gave the
- * session, unless the response sets that cookie itself, as sign-out and the
- * end of the current session do.
+ * Send the browser its cookie again, unless the response sets that cookie
+ * itself, as sign-out and the end of the current session do.
  */
 function sendRenewedCookie(
   c: Context<AppEnv>,

@@ -1,6 +1,6 @@
 import { CredentialPersistencePhase } from "./credential-adapter.js";
 import { afterEach, expect, it } from "vitest";
-import { request } from "../test-utils.js";
+import { expectSessionCookieKept, request } from "../test-utils.js";
 import { createClaimTestApp } from "./claim-test-app.js";
 type TestContext = Awaited<ReturnType<typeof createClaimTestApp>>;
 const contexts: TestContext[] = [];
@@ -253,7 +253,7 @@ it("rolls password replacement and session turnover back when their final audit 
     });
   const refused = await change();
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, cookie);
   expect(await db.__sqliteAll("SELECT id FROM auth_session")).toEqual(sessions);
   expect(await db.__sqliteAll("SELECT id, password FROM auth_account")).toEqual(
     accounts,
@@ -268,7 +268,7 @@ it("rolls password replacement and session turnover back when their final audit 
   await db.__sqliteRun("DROP TRIGGER reject_password_audit", []);
   const accepted = await change();
   expect(accepted.status).toBe(200);
-  expect(accepted.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(accepted, cookie);
   expect(await db.__sqliteAll("SELECT id FROM auth_session")).not.toEqual(
     sessions,
   );
@@ -361,7 +361,7 @@ it.each(["owner/sign-ins", "revoke-sessions", "revoke-other-sessions"])(
           });
     const refused = await submit();
     expect(refused.status).toBe(500);
-    expect(refused.headers.getSetCookie()).toEqual([]);
+    expectSessionCookieKept(refused, cookie);
     expect(await db.__sqliteAll("SELECT id, token FROM auth_session")).toEqual(
       sessions,
     );

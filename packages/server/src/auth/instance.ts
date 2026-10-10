@@ -170,6 +170,16 @@ export const BROWSER_SESSION_USE_INTERVAL_SECONDS = 60;
 export const BROWSER_SESSION_LIFETIME_SECONDS =
   BROWSER_SESSION_IDLE_SECONDS + BROWSER_SESSION_USE_INTERVAL_SECONDS;
 
+/**
+ * The session cookie's lifetime in the browser: 400 days, the most a browser
+ * keeps a cookie. The stored session is the only clock, so the cookie only
+ * has to outlive it; one that tracked the stored expiry would be dropped
+ * early whenever the answer that renewed the session failed to reach the
+ * browser, and resending it on every answer stops the browser restoring a
+ * page from its back-forward cache.
+ */
+export const BROWSER_SESSION_COOKIE_SECONDS = 400 * 24 * 60 * 60;
+
 /** A live browser session of the owner, never carrying its token. */
 export interface BrowserSession {
   id: string;
@@ -183,9 +193,9 @@ export interface BrowserSession {
 /** The session a request was admitted on, and the cookie that renews it. */
 export interface SessionUse {
   session: MarfaAuthSession;
-  /** A `Set-Cookie` value carrying the browser's own cookie with the
-   *  lifetime this use gave the session, or `null` when this use was not
-   *  recorded or the cookie lives only as long as the browser. */
+  /** A `Set-Cookie` value carrying the browser's own cookie for
+   *  {@link BROWSER_SESSION_COOKIE_SECONDS}, or `null` when this request
+   *  recorded no use or the cookie lives only as long as the browser. */
   cookie: string | null;
   /** The session cookie's name, so a response that sets it itself wins. */
   cookieName: string;
@@ -460,11 +470,33 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     },
     // The provider renews a session only once its last renewal is a day old,
     // so a session used within that day still ends a week after the renewal.
-    // Its own refresh is off and `useSession` renews on use instead.
+    // Its own refresh is off and `useSession` renews on use instead. Its
+    // `expiresIn` is the cookie's lifetime; the stored expiry a new session
+    // gets is set by the hook below.
     session: {
-      expiresIn: BROWSER_SESSION_LIFETIME_SECONDS,
+      expiresIn: BROWSER_SESSION_COOKIE_SECONDS,
       deferSessionRefresh: true,
       disableSessionRefresh: true,
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          before: (session) => {
+            const limit = new Date(
+              Date.now() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+            );
+            // A session signed in not to be remembered keeps the provider's
+            // shorter first expiry.
+            return Promise.resolve({
+              data: {
+                ...session,
+                expiresAt:
+                  session.expiresAt < limit ? session.expiresAt : limit,
+              },
+            });
+          },
+        },
+      },
     },
     // The durable account/address limiter is cleared atomically by recovery.
     // A second, process-local password limiter would keep a recovered owner locked out.
@@ -942,31 +974,6 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const due = (row: { updatedAt: Date }) =>
       now.getTime() - row.updatedAt.getTime() >=
       BROWSER_SESSION_USE_INTERVAL_SECONDS * 1000;
-    if (!due(found.session))
-      return { session: found, cookie: null, cookieName: name };
-    const storage = requireStorage();
-    const recorded = await credentialOperation("/use-session", () =>
-      runAuditedTransaction(
-        storage,
-        async (): Promise<{ wrote: boolean } | null> => {
-          // Read again under the write lock: a session that ended or expired
-          // since the lookup above stays ended, rather than renewed back.
-          const current = await ctx.internalAdapter.findSession(token);
-          if (current?.session.userId !== userId || !live(current.session, now))
-            return null;
-          if (!due(current.session)) return { wrote: false };
-          const updated = await ctx.internalAdapter.updateSession(token, {
-            expiresAt: new Date(
-              now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
-            ),
-            updatedAt: now,
-          });
-          return updated ? { wrote: true } : null;
-        },
-        () => null,
-      ),
-    );
-    if (!recorded) return null;
     const value = cookieValueFor(headers, name, token);
     // A session signed in not to be remembered keeps a cookie that ends with
     // the browser, as the provider set it.
@@ -974,14 +981,55 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       headers,
       ctx.authCookies.dontRememberToken.name,
     );
-    return {
+    // Only a request that records a use sends the cookie again, so a
+    // session in use for longer than the cookie lives keeps it.
+    const use = (recorded: boolean): SessionUse => ({
       session: found,
       cookie:
-        recorded.wrote && value !== undefined && remembered
-          ? sessionCookie(ctx, value, BROWSER_SESSION_LIFETIME_SECONDS)
+        recorded && value !== undefined && remembered
+          ? sessionCookie(ctx, value, BROWSER_SESSION_COOKIE_SECONDS)
           : null,
       cookieName: name,
-    };
+    });
+    if (!due(found.session)) return use(false);
+    const storage = requireStorage();
+    let recorded: { wrote: boolean } | null;
+    try {
+      recorded = await credentialOperation("/use-session", () =>
+        runAuditedTransaction(
+          storage,
+          async (): Promise<{ wrote: boolean } | null> => {
+            // Read again under the write lock: a session that ended or
+            // expired since the lookup above stays ended, rather than
+            // renewed back.
+            const current = await ctx.internalAdapter.findSession(token);
+            if (
+              current?.session.userId !== userId ||
+              !live(current.session, now)
+            )
+              return null;
+            if (!due(current.session)) return { wrote: false };
+            const updated = await ctx.internalAdapter.updateSession(token, {
+              expiresAt: new Date(
+                now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+              ),
+              updatedAt: now,
+            });
+            return updated ? { wrote: true } : null;
+          },
+          () => null,
+        ),
+      );
+    } catch (err) {
+      // The lookup found the session live, so a use that cannot be written,
+      // on a full disk for one, still admits the request. Each write the
+      // request makes checks the session again under the write lock.
+      log("warn", "A browser session's use could not be recorded", {
+        error: errorMessage(err),
+      });
+      return use(false);
+    }
+    return recorded ? use(recorded.wrote) : null;
   };
 
   const listBrowserSessions = async (

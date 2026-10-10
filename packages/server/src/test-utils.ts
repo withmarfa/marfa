@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { PERMISSIONS } from "@withmarfa/shared";
 import type { Permission } from "@withmarfa/shared";
 import { createHash, randomBytes } from "node:crypto";
@@ -1189,4 +1190,28 @@ export function sweepRevokedGrantsBefore(
 ): Promise<number> {
   const now = new Date(Date.parse(cutoffIso) + MS_PER_DAY);
   return new RevokedGrantPurger(storage, 1, () => now).runOnce();
+}
+
+/**
+ * The cookies `response` sets, each one the request already sent, unchanged
+ * and still alive: an answer that keeps the browser's session as it was. A
+ * request that records a use of the session sends its cookie again, so "sets
+ * no cookie" is not what holds.
+ */
+export function expectSessionCookieKept(
+  response: Response,
+  cookieHeader: string,
+): void {
+  const sent = new Map(
+    cookieHeader.split(";").map((part) => {
+      const pair = part.trim();
+      const at = pair.indexOf("=");
+      return [pair.slice(0, at), pair] as const;
+    }),
+  );
+  for (const line of response.headers.getSetCookie()) {
+    const pair = line.split(";")[0] ?? "";
+    expect(sent.get(pair.slice(0, pair.indexOf("="))), line).toBe(pair);
+    expect(Number(/max-age=(\d+)/i.exec(line)?.[1]), line).toBeGreaterThan(0);
+  }
 }
