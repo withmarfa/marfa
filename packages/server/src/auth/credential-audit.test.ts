@@ -318,7 +318,7 @@ it("couples signing-key creation to its native audit", async () => {
   ).toHaveLength(1);
 });
 
-it.each(["revoke-session", "revoke-sessions", "revoke-other-sessions"])(
+it.each(["owner/sign-ins", "revoke-sessions", "revoke-other-sessions"])(
   "keeps %s atomic when a native session audit fails",
   async (door) => {
     const ctx = await fixture();
@@ -351,10 +351,14 @@ it.each(["revoke-session", "revoke-sessions", "revoke-other-sessions"])(
       [],
     );
     const submit = () =>
-      request(ctx.app, "POST", `/auth/${door}`, {
-        body: { token: sessions[1]!.token },
-        headers: { cookie, origin: "http://localhost:0" },
-      });
+      door === "owner/sign-ins"
+        ? request(ctx.app, "DELETE", `/owner/sign-ins/${sessions[1]!.id}`, {
+            headers: { cookie, origin: "http://localhost:0" },
+          })
+        : request(ctx.app, "POST", `/auth/${door}`, {
+            body: {},
+            headers: { cookie, origin: "http://localhost:0" },
+          });
     const refused = await submit();
     expect(refused.status).toBe(500);
     expect(refused.headers.getSetCookie()).toEqual([]);

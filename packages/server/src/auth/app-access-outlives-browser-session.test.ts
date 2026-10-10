@@ -10,8 +10,8 @@ import { recoverOwnerPassword } from "./instance-claim.js";
  *
  * **Every door is driven, not one.** The sweep is the provider's own, run
  * from a hook on session deletion, and each door reaches deletion by its own
- * route: sign-out, the three revocations, a password change and the lookup of
- * an expired session. Disabling one hook would leave the others. The
+ * route: sign-out, the owner ending one session, the two revocations, a
+ * password change and the lookup of an expired session. Disabling one hook would leave the others. The
  * provider's end-session verifies its hint by fetching the instance's own
  * keys over HTTP, which a test app cannot do, so the conformance fixture
  * drives that door.
@@ -242,9 +242,14 @@ const DOORS: {
     name: "ending one session",
     survivor: true,
     run: async (c, d) => {
-      const res = await request(c.app, "POST", "/auth/revoke-session", {
+      const listed = await request(c.app, "GET", "/owner/sign-ins", {
+        headers: { cookie: d.a },
+      });
+      const id = (
+        (await listed.json()) as { data: { id: string; current: boolean }[] }
+      ).data.find((row) => row.current)!.id;
+      const res = await request(c.app, "DELETE", `/owner/sign-ins/${id}`, {
         headers: { cookie: d.b, origin: ORIGIN },
-        body: { token: rawToken(d.a) },
       });
       expect(res.status).toBe(200);
     },

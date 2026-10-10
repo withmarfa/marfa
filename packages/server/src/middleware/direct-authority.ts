@@ -2,7 +2,8 @@ import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
-import type { MarfaAuth } from "../auth/instance.js";
+import type { Context } from "hono";
+import type { MarfaAuth, SessionUse } from "../auth/instance.js";
 import { resolveBoundCredential } from "../auth/live-credential.js";
 import { withRequestAuthority } from "../auth/request-authority.js";
 import {
@@ -19,6 +20,7 @@ export function directAuthorityMiddleware(
   localAuthority = false,
 ) {
   return createMiddleware<AppEnv>(async (c, next) => {
+    let renewal: SessionUse | null = null;
     if (localAuthority) {
       c.set("authority", { kind: "local_process" });
       c.set("apiKey", undefined);
@@ -31,10 +33,11 @@ export function directAuthorityMiddleware(
       !c.req.path.startsWith("/setup") &&
       !["/auth/sign-in", "/auth/sign-in/email"].includes(c.req.path)
     ) {
-      const session = await auth.getSession(c.req.raw.headers, {
-        readOnly: true,
-      });
-      if (session && (await storage.owner?.find())?.id === session.user.id) {
+      const owner = await storage.owner?.find();
+      const session = owner
+        ? await auth.getSession(c.req.raw.headers, { readOnly: true })
+        : null;
+      if (owner && session?.user.id === owner.id) {
         requireSecureOwnerTransport(auth);
         if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
           const origin = c.req.header("origin");
@@ -45,12 +48,16 @@ export function directAuthorityMiddleware(
             );
           }
         }
-        c.set("authority", {
-          kind: "owner",
-          userId: session.user.id,
-          sessionId: session.session.id,
-          authenticatedAt: session.session.createdAt.getTime(),
-        });
+        // Admitting the request is a use of the session, which renews it.
+        // One that ended since the lookup admits nothing.
+        renewal = await auth.useSession(c.req.raw.headers, owner.id);
+        if (renewal)
+          c.set("authority", {
+            kind: "owner",
+            userId: renewal.session.user.id,
+            sessionId: renewal.session.session.id,
+            authenticatedAt: renewal.session.session.createdAt.getTime(),
+          });
       }
     }
     const bound = c.get("boundCredential");
@@ -95,5 +102,35 @@ export function directAuthorityMiddleware(
       }
       if (recent) requireRecentOwnerAuthentication(c);
     }, next);
+    // Only an answer that succeeded carries the cookie: a refusal or a fault
+    // sets none, and a `401` means the session ended while the request was
+    // in flight.
+    if (renewal?.cookie && c.res.status < 400)
+      sendRenewedCookie(c, renewal.cookieName, renewal.cookie);
   });
+}
+
+/**
+ * Send the browser its cookie again with the lifetime the renewal gave the
+ * session, unless the response sets that cookie itself, as sign-out and the
+ * end of the current session do.
+ */
+function sendRenewedCookie(
+  c: Context<AppEnv>,
+  name: string,
+  cookie: string,
+): void {
+  const prefix = `${name}=`;
+  if (c.res.headers.getSetCookie().some((line) => line.startsWith(prefix)))
+    return;
+  try {
+    c.res.headers.append("set-cookie", cookie);
+  } catch {
+    // A response whose headers are immutable, such as one `Response.redirect`
+    // made, is copied so the cookie can be added.
+    const copy = new Response(c.res.body, c.res);
+    copy.headers.append("set-cookie", cookie);
+    c.res = undefined;
+    c.res = copy;
+  }
 }

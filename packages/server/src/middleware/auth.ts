@@ -790,6 +790,20 @@ export const directAuthorityOnly = standingRule(
   requireDirectAuthority,
 );
 
+/**
+ * The owner's own signed-in browser, never a key, an app's token or a local
+ * command: these doors show and end browser sessions, and only a browser has
+ * one of its own to be told apart from the others.
+ */
+export const ownerBrowserOnly = standingRule("the owner's browser", (c) => {
+  requireDirectAuthority(c);
+  if (c.get("authority")?.kind !== "owner")
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Sign in to Marfa in a browser to manage its sign-ins.",
+    );
+});
+
 export const readsSomeType = standingRule("reads some type", (c) => {
   getTypeFilter(c);
 });

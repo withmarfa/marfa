@@ -115,9 +115,80 @@ interface BetterAuthCredentialContext {
     ) => Promise<{ providerId: string; password?: string | null }[]>;
     updatePassword: (userId: string, password: string) => Promise<void>;
     deleteUserSessions: (userId: string) => Promise<void>;
-    listSessions: (userId: string) => Promise<{ id: string; token: string }[]>;
+    listSessions: (userId: string) => Promise<ProviderSessionRow[]>;
     deleteSessions: (tokens: string[]) => Promise<void>;
+    deleteSession: (token: string) => Promise<void>;
+    findSession: (
+      token: string,
+    ) => Promise<{ session: ProviderSessionRow } | null>;
+    updateSession: (
+      token: string,
+      session: { expiresAt: Date; updatedAt: Date },
+    ) => Promise<ProviderSessionRow | null>;
   };
+  authCookies: {
+    sessionToken: { name: string; attributes: CookieAttributes };
+    dontRememberToken: { name: string };
+  };
+}
+
+interface CookieAttributes {
+  path?: string;
+  domain?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
+}
+
+/** A row of the provider's session table, as its internal adapter returns it. */
+interface ProviderSessionRow {
+  id: string;
+  token: string;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+/** How long a browser session lasts unused: a week from its last use. */
+export const BROWSER_SESSION_IDLE_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * How often a use is recorded. Recording each request would make every read
+ * a browser sends wait for the write lock, so a use within this long of the
+ * last recorded one is not written.
+ */
+export const BROWSER_SESSION_USE_INTERVAL_SECONDS = 60;
+
+/**
+ * A session's lifetime from its last recorded use. The interval is added so
+ * that a use the interval left unrecorded still has its whole idle week: a
+ * session ends between a week and a week and a minute after its last use.
+ */
+export const BROWSER_SESSION_LIFETIME_SECONDS =
+  BROWSER_SESSION_IDLE_SECONDS + BROWSER_SESSION_USE_INTERVAL_SECONDS;
+
+/** A live browser session of the owner, never carrying its token. */
+export interface BrowserSession {
+  id: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+}
+
+/** The session a request was admitted on, and the cookie that renews it. */
+export interface SessionUse {
+  session: MarfaAuthSession;
+  /** A `Set-Cookie` value carrying the browser's own cookie with the
+   *  lifetime this use gave the session, or `null` when this use was not
+   *  recorded or the cookie lives only as long as the browser. */
+  cookie: string | null;
+  /** The session cookie's name, so a response that sets it itself wins. */
+  cookieName: string;
 }
 
 /**
@@ -148,7 +219,13 @@ export interface MarfaAuthSessionUser {
 /** A live Better Auth session (cookie-backed). */
 export interface MarfaAuthSession {
   user: MarfaAuthSessionUser;
-  session: { id: string; token: string; createdAt: Date };
+  session: {
+    id: string;
+    token: string;
+    createdAt: Date;
+    updatedAt: Date;
+    expiresAt: Date;
+  };
 }
 
 /** What the device plugin answers about a user code. `clientId` and `scope`
@@ -202,6 +279,28 @@ export interface MarfaAuth {
     headers: Headers,
     options?: { readOnly?: boolean },
   ) => Promise<MarfaAuthSession | null>;
+  /**
+   * Admit a request on the session its cookie names, and count it as a use:
+   * unless a use was recorded within {@link BROWSER_SESSION_USE_INTERVAL_SECONDS},
+   * the session's expiry moves to {@link BROWSER_SESSION_LIFETIME_SECONDS}
+   * after now. `null` when the cookie names no live session of `userId`,
+   * including one that ended or expired between the lookup and the renewal.
+   */
+  useSession: (headers: Headers, userId: string) => Promise<SessionUse | null>;
+  /** The live browser sessions of `userId`, oldest first. */
+  listBrowserSessions: (userId: string) => Promise<BrowserSession[]>;
+  /**
+   * End the live browser session `sessionId` of `userId`, finding and deleting
+   * it in one write transaction. `false` when no live session of that person
+   * has the id, so the second of two ends of one session says nothing ended.
+   */
+  endBrowserSession: (
+    userId: string,
+    sessionId: string,
+    clientIp: string | null,
+  ) => Promise<boolean>;
+  /** A `Set-Cookie` value that removes the session cookie from a browser. */
+  clearedSessionCookie: () => Promise<string>;
   /**
    * Create an email + password account without going through sign-up.
    *
@@ -359,7 +458,14 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         ctx.logger.error(error.name, error);
       },
     },
-    session: { deferSessionRefresh: true },
+    // The provider renews a session only once its last renewal is a day old,
+    // so a session used within that day still ends a week after the renewal.
+    // Its own refresh is off and `useSession` renews on use instead.
+    session: {
+      expiresIn: BROWSER_SESSION_LIFETIME_SECONDS,
+      deferSessionRefresh: true,
+      disableSessionRefresh: true,
+    },
     // The durable account/address limiter is cleared atomically by recovery.
     // A second, process-local password limiter would keep a recovered owner locked out.
     ...(options.storage
@@ -771,6 +877,161 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     } else await ctx.internalAdapter.deleteUserSessions(userId);
   };
 
+  const requireStorage = (): Storage => {
+    if (!options.storage)
+      throw new Error("Browser sessions require transactional storage");
+    return options.storage;
+  };
+  // The provider counts a session as expired once its expiry is in the past,
+  // so one expiring this instant is still live.
+  const live = (row: ProviderSessionRow, now: Date) => !(row.expiresAt < now);
+  const sessionCookie = (
+    ctx: BetterAuthCredentialContext,
+    value: string,
+    maxAge: number,
+  ) => {
+    const { name, attributes } = ctx.authCookies.sessionToken;
+    const sameSite = attributes.sameSite;
+    return [
+      `${name}=${value}`,
+      `Max-Age=${String(maxAge)}`,
+      `Path=${attributes.path ?? "/"}`,
+      ...(attributes.domain ? [`Domain=${attributes.domain}`] : []),
+      ...(attributes.httpOnly ? ["HttpOnly"] : []),
+      ...(attributes.secure ? ["Secure"] : []),
+      ...(sameSite
+        ? [`SameSite=${sameSite.charAt(0).toUpperCase()}${sameSite.slice(1)}`]
+        : []),
+    ].join("; ");
+  };
+  /** The request's own cookie entry for the verified session `token`. */
+  const cookieValueFor = (
+    headers: Headers,
+    name: string,
+    token: string,
+  ): string | undefined => {
+    for (const part of (headers.get("cookie") ?? "").split(";")) {
+      const pair = part.trim();
+      if (!pair.startsWith(`${name}=`)) continue;
+      const value = pair.slice(name.length + 1);
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(value);
+      } catch {
+        continue;
+      }
+      if (decoded.startsWith(`${token}.`)) return value;
+    }
+    return undefined;
+  };
+  const hasCookie = (headers: Headers, name: string) =>
+    (headers.get("cookie") ?? "")
+      .split(";")
+      .some((part) => part.trim().startsWith(`${name}=`));
+
+  const useSession = async (
+    headers: Headers,
+    userId: string,
+  ): Promise<SessionUse | null> => {
+    const found = await facade.getSession(headers, { readOnly: true });
+    if (found?.user.id !== userId) return null;
+    const ctx = await credentialContext();
+    const { name } = ctx.authCookies.sessionToken;
+    const token = found.session.token;
+    const now = new Date();
+    const due = (row: { updatedAt: Date }) =>
+      now.getTime() - row.updatedAt.getTime() >=
+      BROWSER_SESSION_USE_INTERVAL_SECONDS * 1000;
+    if (!due(found.session))
+      return { session: found, cookie: null, cookieName: name };
+    const storage = requireStorage();
+    const recorded = await credentialOperation("/use-session", () =>
+      runAuditedTransaction(
+        storage,
+        async (): Promise<{ wrote: boolean } | null> => {
+          // Read again under the write lock: a session that ended or expired
+          // since the lookup above stays ended, rather than renewed back.
+          const current = await ctx.internalAdapter.findSession(token);
+          if (current?.session.userId !== userId || !live(current.session, now))
+            return null;
+          if (!due(current.session)) return { wrote: false };
+          const updated = await ctx.internalAdapter.updateSession(token, {
+            expiresAt: new Date(
+              now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+            ),
+            updatedAt: now,
+          });
+          return updated ? { wrote: true } : null;
+        },
+        () => null,
+      ),
+    );
+    if (!recorded) return null;
+    const value = cookieValueFor(headers, name, token);
+    // A session signed in not to be remembered keeps a cookie that ends with
+    // the browser, as the provider set it.
+    const remembered = !hasCookie(
+      headers,
+      ctx.authCookies.dontRememberToken.name,
+    );
+    return {
+      session: found,
+      cookie:
+        recorded.wrote && value !== undefined && remembered
+          ? sessionCookie(ctx, value, BROWSER_SESSION_LIFETIME_SECONDS)
+          : null,
+      cookieName: name,
+    };
+  };
+
+  const listBrowserSessions = async (
+    userId: string,
+  ): Promise<BrowserSession[]> => {
+    const ctx = await credentialContext();
+    const now = new Date();
+    return (await ctx.internalAdapter.listSessions(userId))
+      .filter((row) => row.userId === userId && live(row, now))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((row) => ({
+        id: row.id,
+        createdAt: row.createdAt,
+        lastUsedAt: row.updatedAt,
+        expiresAt: row.expiresAt,
+        ipAddress: row.ipAddress ?? null,
+        userAgent: row.userAgent ?? null,
+      }));
+  };
+
+  const endBrowserSession = async (
+    userId: string,
+    sessionId: string,
+    clientIp: string | null,
+  ): Promise<boolean> => {
+    const storage = requireStorage();
+    const ctx = await credentialContext();
+    // The deletion's own audit row is the record of the end, and carries the
+    // address the request came from.
+    return withCredentialRequest({ path: "/owner/sign-ins", clientIp }, () =>
+      runAuditedTransaction(
+        storage,
+        async () => {
+          const now = new Date();
+          const target = (await ctx.internalAdapter.listSessions(userId)).find(
+            (row) =>
+              row.id === sessionId && row.userId === userId && live(row, now),
+          );
+          if (!target) return false;
+          await ctx.internalAdapter.deleteSession(target.token);
+          return true;
+        },
+        () => null,
+      ),
+    );
+  };
+
+  const clearedSessionCookie = async (): Promise<string> =>
+    sessionCookie(await credentialContext(), "", 0);
+
   const facade: MarfaAuth = {
     handler: async (request: Request, clientAddress: string | null) => {
       // Set on the request's own headers rather than on a copy: copying a
@@ -817,7 +1078,6 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       const browserSessionPaths = new Set([
         "/get-session",
         "/sign-out",
-        "/revoke-session",
         "/revoke-sessions",
         "/revoke-other-sessions",
         "/oauth2/authorize",
@@ -833,11 +1093,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         );
       if (
         options.storage &&
-        [
-          "/revoke-session",
-          "/revoke-sessions",
-          "/revoke-other-sessions",
-        ].includes(path)
+        ["/revoke-sessions", "/revoke-other-sessions"].includes(path)
       ) {
         await requireOwnerSession(options.storage, facade, request.headers, {
           recent: true,
@@ -931,6 +1187,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       credentialOperation("/device/deny", () =>
         deviceDecision((params) => api.deviceDeny(params))(code, headers),
       ),
+    useSession,
+    listBrowserSessions,
+    endBrowserSession,
+    clearedSessionCookie,
     createEmailAccount,
     preparePassword,
     preparePasswordChange,

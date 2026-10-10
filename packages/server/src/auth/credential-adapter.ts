@@ -369,7 +369,11 @@ export function withCredentialAudit<
               if (
                 result === null ||
                 result === 0 ||
-                (operation === "delete" && !previous)
+                (operation === "delete" && !previous) ||
+                // The only update of a session is its renewal on use, which
+                // changes no credential; a row for each request a browser
+                // makes would bury the rows that record one.
+                (operation === "update" && args.model === "session")
               )
                 return null;
               const request = credentialRequest.getStore();

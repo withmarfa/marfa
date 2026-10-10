@@ -32,6 +32,7 @@ export function managementPages() {
 <p id="status" role="status"></p>
 <h2>Server</h2><pre id="health">Loading…</pre>
 <h2>Maintenance</h2><p>Maintenance can permanently delete data that is eligible for removal.</p><ul id="jobs"></ul>
+<h2>Signed-in browsers</h2><p>A browser stays signed in until it goes unused for seven days. To sign a browser out, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="browsers"></ul>
 <h2>Connected apps</h2><ul id="apps"></ul>
 <h2>Connectors</h2><ul id="connectors"></ul>
 <h2>Keys</h2><p>To create or change a key, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="keys"></ul>
@@ -63,8 +64,8 @@ function rows(id, data, render) {
   if (!data.length) { const li = document.createElement('li'); li.textContent = 'None'; list.append(li); }
 }
 async function refresh() {
-  const [health, jobs, keys, connectors, apps] = await Promise.all([
-    request('/health'), request('/housekeeping'), request('/keys'), request('/connectors'), request('/auth/grants')
+  const [health, jobs, keys, connectors, apps, signIns] = await Promise.all([
+    request('/health'), request('/housekeeping'), request('/keys'), request('/connectors'), request('/auth/grants'), request('/owner/sign-ins')
   ]);
   document.getElementById('health').textContent = 'Status: ' + health.status;
   rows('jobs', jobs.data, (li, row) => { li.textContent = row.name;
@@ -79,6 +80,14 @@ async function refresh() {
   });
   rows('connectors', connectors.data, (li, row) => { li.textContent = row.name;
     action(li, 'Remove', async () => { if (confirm('Remove this connector registration?')) await request('/connectors/' + encodeURIComponent(row.id), {method:'DELETE'}); });
+  });
+  rows('browsers', signIns.data, (li, row) => {
+    li.textContent = (row.user_agent || 'Unknown browser') + (row.ip_address ? ', from ' + row.ip_address : '') + ', last used ' + new Date(row.last_used_at).toLocaleString() + (row.current ? ' (this browser)' : '');
+    action(li, 'Sign Out', async () => {
+      if (!confirm(row.current ? 'Sign out this browser?' : 'Sign out this browser? It will need to sign in again. Connected apps keep their access.')) return;
+      await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'});
+      if (row.current) location.assign('/auth/sign-in');
+    });
   });
   rows('apps', apps.data, (li, row) => { li.textContent = row.client_name || row.client_id || row.id;
     action(li, 'Disconnect', async () => { if (confirm('Disconnect this app? Its ordinary keys keep their access.')) await request('/auth/grants/' + encodeURIComponent(row.id), {method:'DELETE'}); });
