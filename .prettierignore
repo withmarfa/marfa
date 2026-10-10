@@ -1,7 +1,6 @@
 **/dist/
 **/node_modules/
 **/coverage/
-**/seed/
 # Generated code — shape owned by the codegen, not Prettier.
 packages/types/generated/
 packages/client/src/generated/
@@ -12,7 +11,6 @@ openapi.json
 # Lockfile — owned by pnpm, not Prettier.
 pnpm-lock.yaml
 # Nested worktrees are separate checkouts that run their own checks.
-worktrees/
 .claude/worktrees/
 # Scratch folders. The same set eslint.config.js ignores: harnesses,
 # captures and throwaway files that sit in the repo tree without being

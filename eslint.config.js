@@ -77,10 +77,8 @@ export default [
       "packages/client/src/generated/",
       "**/coverage/",
       "**/node_modules/",
-      "**/seed/",
       // Nested worktrees are separate checkouts that run their own lint;
       // descending into them surfaces work in progress from other branches.
-      "worktrees/",
       ".claude/worktrees/",
       // Scratch folders: throwaway harnesses, captures and never-tracked
       // files that sit in the repo tree without being part of its source.

@@ -1,6 +1,5 @@
 /**
- * Build the published OpenAPI document — the spec committed at the repo root
- * and synced to the public API reference.
+ * Build the published OpenAPI document, the spec committed at the repo root.
  *
  * `scripts/generate-openapi.ts` is a thin wrapper over `buildPublishedOpenAPISpec`
  * so the committed artifact and any test that checks it exercise the same code
