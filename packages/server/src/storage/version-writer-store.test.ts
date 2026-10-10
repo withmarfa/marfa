@@ -57,9 +57,7 @@ describe("an app whose sign-in record is gone", () => {
       tokenEndpointAuthMethod: "none",
       scopes: null,
       redirectUris: ["http://127.0.0.1:9/callback"],
-    } as Parameters<
-      NonNullable<typeof ctx.storage.oauthProvider>["createClient"]
-    >[0]);
+    });
     const id = await noteBy(ctx, "client-with-no-record");
     const [snapshot] = await ctx.storage.versions.all(id);
     expect(snapshot!.writer).toEqual({
