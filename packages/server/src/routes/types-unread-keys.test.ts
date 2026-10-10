@@ -2,11 +2,10 @@
  * What the type and edge type doors answer a definition carrying a key the
  * schema does not define.
  *
- * Each door once read such a key as it read any other: the type or edge type
- * registered without it, so a misspelled rule or an `integer` bounded by a
- * `minimum` nothing enforces came back as a success. The cases pair every
- * refusal with the same body, mended, that registers, so a refusal cannot be
- * the door refusing everything.
+ * A misspelled rule, or an `integer` bounded by a `minimum` nothing enforces,
+ * must not come back as a success. The cases pair every refusal with the same
+ * body, mended, that registers, so a refusal cannot be the door refusing
+ * everything.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EDGE_PROPERTY_KEYS, EDGE_TYPE_SCHEMA_KEYS } from "@withmarfa/shared";

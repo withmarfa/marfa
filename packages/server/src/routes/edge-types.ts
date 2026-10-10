@@ -225,11 +225,9 @@ export function assertEdgeNamesFree(
 /**
  * Refuses a key the edge type, or one of its properties, does not take.
  *
- * The request schema strips what it does not declare, so it answers a
- * misspelled rule as though it had been sent right: the edge type registers
- * without it. The keys are asked of the body as it was sent, and a refusal
- * names each one's path. The route and an archive restore share it, so
- * neither is the laxer door.
+ * The keys are asked of the body as it was sent, because the request schema
+ * strips what it does not declare. A refusal names each key's path. The route
+ * and an archive restore share it, so neither is the laxer door.
  */
 export function refuseUnreadEdgeTypeKeys(
   sent: unknown,
