@@ -9,6 +9,7 @@ import {
   browserSignInName,
   keySignInName,
   SIGN_IN_NAME_MAX,
+  UNPRINTABLE,
   usableSignInName,
 } from "./sign-in-names.js";
 
@@ -26,6 +27,25 @@ export const LOCAL_WRITER: VersionWriter = {
   name: "Local command",
 };
 
+const UNPRINTABLE_RUNS = new RegExp(UNPRINTABLE.source, "gu");
+
+/**
+ * `name` as a writer can be stored under, so an archive of it restores: the
+ * name itself where the sign-in listing could show it, else with each
+ * unprintable character a space, trimmed and cut to the bound, which
+ * `usableSignInName` counts in UTF-16 units, on a character boundary.
+ */
+export function storedName(name: string, fallback: string): string {
+  const usable = usableSignInName(name);
+  if (usable !== undefined) return usable;
+  let cut = "";
+  for (const character of name.replace(UNPRINTABLE_RUNS, " ").trim()) {
+    if (cut.length + character.length > SIGN_IN_NAME_MAX) break;
+    cut += character;
+  }
+  return cut.trim() || fallback;
+}
+
 /** The owner's browser session `sessionId`, named from the `User-Agent` it
  *  signed in with, as the sign-in listing names it. */
 export function browserWriter(
@@ -35,7 +55,7 @@ export function browserWriter(
   return {
     kind: "browser",
     id: sessionId,
-    name: browserSignInName(userAgent),
+    name: storedName(browserSignInName(userAgent), "A browser"),
   };
 }
 
@@ -49,18 +69,26 @@ async function credentialWriter(
 ): Promise<VersionWriter> {
   const grant = oauthGrantOf(key);
   if (grant === null) {
-    return { kind: "key", id: key.id, name: keySignInName(key.label, key.id) };
+    return {
+      kind: "key",
+      id: key.id,
+      name: storedName(keySignInName(key.label, key.id), "A key"),
+    };
   }
   const recordId = await storage.oauthProvider?.findGrantItemId(grant);
   const record = recordId ? await storage.items.get(recordId) : null;
-  if (!record) {
-    // A token is minted only under a grant, whose record stays until long
-    // after its tokens are gone.
-    throw new Error(
-      `The app ${grant.clientId} wrote with no record of its grant`,
-    );
-  }
-  return appWriter(storage, record);
+  if (record) return appWriter(storage, record);
+  // A grant's record removed while its tokens still stand. Naming the app
+  // by what is left beats failing a write its token is entitled to.
+  const client = await storage.oauthProvider?.getClient(grant.clientId);
+  return {
+    kind: "app",
+    id: grant.clientId,
+    name: storedName(
+      usableSignInName(client?.name) ?? grant.clientId,
+      "An app",
+    ),
+  };
 }
 
 /** The app whose grant `record` is, named as the sign-in listing names it. */
@@ -71,7 +99,7 @@ export async function appWriter(
   return {
     kind: "app",
     id: record.id,
-    name: await appRecordName(storage, record),
+    name: storedName(await appRecordName(storage, record), "An app"),
   };
 }
 
@@ -125,10 +153,15 @@ export function archivedWriter(
       field: `${path}.kind`,
       expected: VERSION_WRITER_KINDS.join(", "),
     };
-  if (typeof id !== "string" || id === "" || id.length > SIGN_IN_NAME_MAX)
+  if (
+    typeof id !== "string" ||
+    id === "" ||
+    id.length > SIGN_IN_NAME_MAX ||
+    UNPRINTABLE.test(id)
+  )
     return {
       field: `${path}.id`,
-      expected: `a string of 1 to ${String(SIGN_IN_NAME_MAX)} characters`,
+      expected: `a string of 1 to ${String(SIGN_IN_NAME_MAX)} characters, none unprintable`,
     };
   if (typeof name !== "string" || usableSignInName(name) !== name)
     return {

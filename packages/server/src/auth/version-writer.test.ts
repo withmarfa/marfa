@@ -1,9 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { oauthGrantOf, oauthPrincipal } from "../middleware/auth.js";
 import { SIGN_IN_NAME_MAX } from "./sign-in-names.js";
-import { archivedWriter, browserWriter } from "./version-writer.js";
+import { archivedWriter, browserWriter, storedName } from "./version-writer.js";
 
 describe("a version's writer", () => {
+  it("stores every name it makes as one an archive of it restores", () => {
+    const writer = (name: string) => ({ kind: "app", id: "client", name });
+    for (const raw of [
+      "Desk laptop",
+      `  padded\t\u0007name  `,
+      "x".repeat(SIGN_IN_NAME_MAX + 50),
+      "\u{1F3B2}".repeat(SIGN_IN_NAME_MAX),
+      `over\u202eride`,
+      "\u0000\u0001",
+    ]) {
+      const name = storedName(raw, "An app");
+      expect(name.length, JSON.stringify(raw)).toBeLessThanOrEqual(
+        SIGN_IN_NAME_MAX,
+      );
+      expect(
+        archivedWriter(writer(name), "writer"),
+        JSON.stringify(raw),
+      ).toEqual({ writer: writer(name) });
+    }
+    expect(storedName("\u0000\u0001", "An app")).toBe("An app");
+    expect(storedName("Desk laptop", "An app")).toBe("Desk laptop");
+  });
+
   it("names a browser as the sign-in listing does", () => {
     expect(
       browserWriter(
@@ -45,6 +68,8 @@ describe("a version's writer", () => {
       [[], "writer"],
       [{ kind: "robot", id: "x", name: "x" }, "writer.kind"],
       [{ kind: "key", id: "", name: "x" }, "writer.id"],
+      [{ kind: "key", id: "a\u0007b", name: "x" }, "writer.id"],
+      [{ kind: "key", id: "a\u2066b", name: "x" }, "writer.id"],
       [
         { kind: "key", id: "x".repeat(SIGN_IN_NAME_MAX + 1), name: "x" },
         "writer.id",
