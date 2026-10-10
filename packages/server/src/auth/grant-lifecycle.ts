@@ -67,8 +67,8 @@ export async function revokeProjectedGrant(
      * Off unless the caller asks, because a key is not a token: it was minted
      * deliberately, it appears in the person's own key list, and it is meant
      * to outlive the session that made it. So the Manage Marfa page offers it
-     * as a separate button and the API door takes an explicit flag, and the expiry sweep — which has nobody
-     * to ask — leaves them alone.
+     * as a separate button and the API door takes an explicit flag, and the
+     * expiry sweep, which has nobody to ask, leaves them alone.
      */
     revokeKeys?: boolean;
     audit?: AuditLogEntry;

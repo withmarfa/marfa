@@ -1884,7 +1884,8 @@ export interface OauthProviderStore {
     revoked: boolean;
   } | null>;
   /** Insert an access + refresh token pair directly. The product mints
-   *  tokens through the plugin; this is a seam for tests. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`
+   *  tokens through the plugin; this is a seam for tests. Writes into
+   *  `auth_oauth_access_token` + `auth_oauth_refresh_token`
    *  with the same shape the plugin's `/oauth2/token` path would produce,
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;

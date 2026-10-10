@@ -127,9 +127,9 @@ async function createUserAppGrant(
       //
       // **Both axes, because both read surfaces filter on both.**
       // `GET /auth/grants` and the Manage Marfa page built on it list with
-      // `state: "active"` and then skip a row whose `properties.status` is not "active", so a
-      // row failing either axis is beyond the Disconnect button while the
-      // token step below still mints against it.
+      // `state: "active"` and then skip a row whose `properties.status` is
+      // not "active", so a row failing either axis is beyond the Disconnect
+      // button while the token step below still mints against it.
       //
       // **The lookup is the first fence now, and this is the second.**
       // `findGrantItemId` carries its own `state = 'active'` predicate, so a

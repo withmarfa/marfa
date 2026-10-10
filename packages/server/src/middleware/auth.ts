@@ -429,7 +429,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       // `tokenValue.replace(opts.prefix.opaqueAccessToken, "")` runs before
       // `getStoredToken` invokes our hash function). To stay symmetric with
       // the plugin's stored hash, we ALSO strip the prefix before hashing
-      // for lookup. The tests' `mintTokenPair` seam matches the same convention.
+      // for lookup. The tests' `mintTokenPair` seam matches the same
+      // convention.
       const bare = token.slice(ACCESS_TOKEN_PREFIX.length);
       const hash = hashApiKey(bare, salt);
       const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
