@@ -148,7 +148,7 @@ const EDGE_KEBAB_NAME = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/;
  * axes drift, which is exactly the defect this guards against, arriving
  * from the other direction.
  *
- * Naming the kebab form admits the nine shipped ids without exempting
+ * Naming the kebab form admits the shipped ids without exempting
  * everything that happens to share a character with them: skipping the check
  * for anything containing a hyphen would let `"-"`, `"MY-EDGE"`, `"a b-c"`,
  * `"../-"` and `"..--.."` register.

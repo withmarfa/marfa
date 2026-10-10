@@ -2,6 +2,27 @@
 
 An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more.
 
+## Shipped edge types
+
+Every instance ships these edge types, each a row of the table below, which is written from the shipped edge type definitions and so cannot differ from them. The source and target columns are the type constraints each edge type declares.
+
+<!-- edge-types-table:start -->
+
+| Edge type       | Reverse name     | Cardinality  | On delete | Source types | Target types                       |
+| --------------- | ---------------- | ------------ | --------- | ------------ | ---------------------------------- |
+| `about`         | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `attached-to`   | `has-attachment` | many-to-many | orphan    | Any type     | Any type                           |
+| `authored-by`   | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `derived-from`  | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `in-collection` | None             | many-to-many | orphan    | Any type     | Any type with the role `container` |
+| `in-folder`     | None             | many-to-many | orphan    | Any type     | `system.folder`                    |
+| `in-thread`     | None             | many-to-one  | orphan    | Any type     | Any type                           |
+| `parent-of`     | `child-of`       | one-to-many  | cascade   | Any type     | Any type                           |
+| `references`    | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `supersedes`    | None             | one-to-one   | orphan    | Any type     | Any type                           |
+
+<!-- edge-types-table:end -->
+
 ## Creating an edge
 
 Where one request meets more than one refusal below, `edges/create-order` says which answer it gets.

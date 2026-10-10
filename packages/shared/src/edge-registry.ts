@@ -33,7 +33,7 @@ const _coreRegistry = registryMapView(() => core);
 const _customRegistry = registryMapFacet("edges");
 
 /**
- * The core edge-type registry — the nine shipped edge types by identifier.
+ * The core edge-type registry: the shipped edge types by identifier.
  * Custom edge types are NOT exposed here; consumers that need the full set
  * call `listEdgeTypes()`. The OAuth scope allow-list reads this for the
  * static core-scope enumeration.
