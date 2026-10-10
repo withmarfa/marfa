@@ -989,3 +989,32 @@ mod tests {
         );
     }
 }
+
+/// `text` with each control character and bidirectional formatting character
+/// escaped as `\u{..}`, so text a server holds, such as a name an app chose,
+/// cannot move the cursor, erase a line or reorder what follows it.
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}') {
+                c.escape_unicode().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod printable_tests {
+    use super::printable;
+
+    #[test]
+    fn escapes_control_and_bidirectional_characters_and_keeps_the_rest() {
+        assert_eq!(printable("a\r\u{1b}[2Kb"), "a\\u{d}\\u{1b}[2Kb");
+        assert_eq!(printable("line\nnext\u{85}"), "line\\u{a}next\\u{85}");
+        assert_eq!(printable("evil\u{202e}txt.exe"), "evil\\u{202e}txt.exe");
+        assert_eq!(printable("x\u{2068}y"), "x\\u{2068}y");
+        assert_eq!(printable("Café naïve \u{1F600}"), "Café naïve \u{1F600}");
+    }
+}
