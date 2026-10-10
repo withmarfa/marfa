@@ -101,6 +101,8 @@ const DATA_PLANE = [
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
   "GET /owner": DIRECT,
+  "GET /owner/sign-ins": DIRECT,
+  "DELETE /owner/sign-ins/:id": DIRECT,
   "GET /blobs/orphans": "instance.read",
   "GET /blobs/stores": "instance.read",
   "DELETE /blobs/:hash/locations/:store": "blobs.manage",

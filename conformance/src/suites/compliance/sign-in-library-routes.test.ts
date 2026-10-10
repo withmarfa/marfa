@@ -70,6 +70,7 @@ const UNUSED = [
   "/delete-user/callback",
   "/list-sessions",
   "/list-accounts",
+  "/revoke-session",
   "/link-social",
   "/unlink-account",
   "/refresh-token",

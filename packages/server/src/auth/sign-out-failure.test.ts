@@ -1,5 +1,10 @@
 import { afterEach, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  expectSessionCookieKept,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 import {
   withCredentialAudit,
   withCredentialRequest,
@@ -49,7 +54,7 @@ it("refuses sign-out without clearing cookies when native session deletion fails
     });
   const refused = await signOut();
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, cookie);
   expect(await db.__sqliteAll("SELECT id FROM auth_session")).toEqual(before);
   expect(await (await session()).json()).not.toBeNull();
   await db.__sqliteRun("DROP TRIGGER reject_session_delete", []);
@@ -86,7 +91,7 @@ it("keeps concurrent sign-out outcomes isolated between sessions", async () => {
     signOut(acceptedCookie),
   ]);
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, refusedCookie);
   expect(accepted.status).toBe(200);
   expect(accepted.headers.get("set-cookie")).toContain("Max-Age=0");
   const session = (cookie: string) =>
@@ -125,7 +130,7 @@ it("refuses sign-out when native lookup cannot determine whether to delete the s
     signOut({}),
   ]);
   expect(refused.status).toBe(500);
-  expect(refused.headers.getSetCookie()).toEqual([]);
+  expectSessionCookieKept(refused, cookie);
   expect(anonymous.status).toBe(200);
   expect(await db.__sqliteAll("SELECT id FROM auth_session_saved")).toEqual(
     before,
@@ -194,3 +199,38 @@ it.each(["findOne", "findMany", "delete"] as const)(
     ).toBe(200);
   },
 );
+
+it("audits an update of a session row other than a recorded use", async () => {
+  ctx = await createTestContext();
+  const row = { id: "session-audit-probe", userId: ctx.owner.id };
+  const adapter = withCredentialAudit(
+    () => ({
+      findOne: (args: { model: string }) =>
+        Promise.resolve(args.model === "session" ? row : null),
+      findMany: (args: { model: string }) =>
+        Promise.resolve(args.model === "session" ? [row] : []),
+      update: (args: { model: string }) =>
+        Promise.resolve(args.model === "session" ? row : null),
+      updateMany: (args: { model: string }) =>
+        Promise.resolve(args.model === "session" ? 1 : 0),
+    }),
+    ctx.storage,
+  )();
+  const audited = async (action: string) =>
+    (await ctx!.storage.audit.list({ action })).data.length;
+  const args = { model: "session", where: [], update: {} };
+  await withCredentialRequest({ path: "/sign-out", clientIp: null }, () =>
+    adapter.update(args),
+  );
+  await withCredentialRequest({ path: "/sign-out", clientIp: null }, () =>
+    adapter.updateMany(args),
+  );
+  expect(await audited("auth.session.update")).toBe(1);
+  expect(await audited("auth.session.updateMany")).toBe(1);
+  // A recorded use is the one update left out.
+  await withCredentialRequest(
+    { path: "/use-session", clientIp: null, recordsSessionUse: true },
+    () => adapter.update(args),
+  );
+  expect(await audited("auth.session.update")).toBe(1);
+});

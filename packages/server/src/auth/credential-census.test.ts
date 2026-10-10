@@ -77,7 +77,6 @@ it("serves over the wire only the library routes Marfa uses", () => {
     "/oauth2/token",
     "/oauth2/userinfo",
     "/revoke-other-sessions",
-    "/revoke-session",
     "/revoke-sessions",
     "/sign-in/email",
     "/sign-out",

@@ -796,6 +796,8 @@ const invocations: Record<string, () => string[]> = {
   "folders revoke": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
+  "sign-ins list": () => [],
+  "sign-ins end": () => [ID],
   "setup claim": () => ["--stdin"],
 };
 

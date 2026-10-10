@@ -133,12 +133,6 @@ async function signIn(): Promise<string> {
   return cookie!;
 }
 
-/** The raw session token inside a signed cookie, which the revocation door takes. */
-function rawToken(cookie: string): string {
-  const value = decodeURIComponent(cookie.slice(cookie.indexOf("=") + 1));
-  return value.slice(0, value.lastIndexOf("."));
-}
-
 async function post(
   path: string,
   cookie: string,
@@ -317,8 +311,15 @@ describe("a browser session ending", () => {
     const ended = live;
     await connectApps(ended);
     live = await signIn();
-    const res = await post("/auth/revoke-session", live, {
-      token: rawToken(ended),
+    const listed = await fetch(`${server!.apiUrl}/owner/sign-ins`, {
+      headers: { cookie: ended },
+    });
+    const id = (
+      (await listed.json()) as { data: { id: string; current: boolean }[] }
+    ).data.find((row) => row.current)!.id;
+    const res = await fetch(`${server!.apiUrl}/owner/sign-ins/${id}`, {
+      method: "DELETE",
+      headers: { origin, cookie: live },
     });
     expect(res.status).toBe(200);
     expect(await browserLive(ended)).toBe(false);

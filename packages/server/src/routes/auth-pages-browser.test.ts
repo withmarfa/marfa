@@ -403,3 +403,39 @@ inBrowser("the policy, in a browser", () => {
     }
   });
 });
+
+inBrowser("the Manage Marfa page, in a browser", () => {
+  it("signs this browser out and goes to sign in, asking nothing more of the ended session", async () => {
+    const page = await newPage();
+    try {
+      await page.goto(
+        `${origin}/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/manage")}`,
+      );
+      await signIn(page);
+      await page.waitForURL(/\/auth\/owner\/manage$/);
+      const current = page.locator("#browsers li", {
+        hasText: "(this browser)",
+      });
+      await current.waitFor();
+      page.on("dialog", (dialog) => void dialog.accept());
+      const after: string[] = [];
+      let ended = false;
+      page.on("request", (request) => {
+        if (ended) after.push(`${request.method()} ${request.url()}`);
+        if (request.method() === "DELETE") ended = true;
+      });
+      await current.locator("button", { hasText: "Sign out" }).click();
+      await page.waitForURL(/\/auth\/sign-in$/);
+      expect(ended).toBe(true);
+      // Only the sign-in page and what it loads: no refresh of the page left.
+      expect(
+        after.filter(
+          (line) =>
+            !line.endsWith("/auth/sign-in") && !line.includes("/auth/static/"),
+        ),
+      ).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+});

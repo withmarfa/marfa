@@ -34,6 +34,9 @@ import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
 import { buildSignInThrottlePlugin } from "./sign-in-throttle.js";
 import { errorMessage } from "../error-text.js";
+import { diskFull } from "../storage/disk-space.js";
+import { parseCookies } from "better-auth/cookies";
+import { generateCookie } from "hono/cookie";
 
 /**
  * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
@@ -115,9 +118,85 @@ interface BetterAuthCredentialContext {
     ) => Promise<{ providerId: string; password?: string | null }[]>;
     updatePassword: (userId: string, password: string) => Promise<void>;
     deleteUserSessions: (userId: string) => Promise<void>;
-    listSessions: (userId: string) => Promise<{ id: string; token: string }[]>;
+    listSessions: (userId: string) => Promise<ProviderSessionRow[]>;
     deleteSessions: (tokens: string[]) => Promise<void>;
+    deleteSession: (token: string) => Promise<void>;
+    findSession: (
+      token: string,
+    ) => Promise<{ session: ProviderSessionRow } | null>;
+    updateSession: (
+      token: string,
+      session: { expiresAt: Date; updatedAt: Date },
+    ) => Promise<ProviderSessionRow | null>;
   };
+  authCookies: {
+    sessionToken: { name: string; attributes: CookieAttributes };
+    dontRememberToken: { name: string };
+  };
+}
+
+/** The provider's cookie attributes, which are the cookie helper's own. */
+type CookieAttributes = NonNullable<Parameters<typeof generateCookie>[2]>;
+
+/** A row of the provider's session table, as its internal adapter returns it. */
+interface ProviderSessionRow {
+  id: string;
+  token: string;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+/** How long a browser session lasts unused: a week from its last use. */
+export const BROWSER_SESSION_IDLE_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * How often a use is recorded. Recording each request would make every read
+ * a browser sends wait for the write lock, so a use within this long of the
+ * last recorded one is not written.
+ */
+export const BROWSER_SESSION_USE_INTERVAL_SECONDS = 60;
+
+/**
+ * A session's lifetime from its last recorded use. The interval is added so
+ * that a use the interval left unrecorded still has its whole idle week: a
+ * session ends between a week and a week and a minute after its last use.
+ */
+export const BROWSER_SESSION_LIFETIME_SECONDS =
+  BROWSER_SESSION_IDLE_SECONDS + BROWSER_SESSION_USE_INTERVAL_SECONDS;
+
+/**
+ * The session cookie's lifetime in the browser: 400 days, the most a browser
+ * keeps a cookie. The stored session is the only clock, so the cookie only
+ * has to outlive it; one that tracked the stored expiry would be dropped
+ * early whenever the answer that renewed the session failed to reach the
+ * browser, and resending it on every answer stops the browser restoring a
+ * page from its back-forward cache.
+ */
+export const BROWSER_SESSION_COOKIE_SECONDS = 400 * 24 * 60 * 60;
+
+/** A live browser session of the owner, never carrying its token. */
+export interface BrowserSession {
+  id: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+}
+
+/** The session a request was admitted on, and the cookie that renews it. */
+export interface SessionUse {
+  session: MarfaAuthSession;
+  /** A `Set-Cookie` value carrying the browser's own cookie for
+   *  {@link BROWSER_SESSION_COOKIE_SECONDS}, or `null` when this request
+   *  recorded no use or the cookie lives only as long as the browser. */
+  cookie: string | null;
+  /** The session cookie's name, so a response that sets it itself wins. */
+  cookieName: string;
 }
 
 /**
@@ -148,7 +227,13 @@ export interface MarfaAuthSessionUser {
 /** A live Better Auth session (cookie-backed). */
 export interface MarfaAuthSession {
   user: MarfaAuthSessionUser;
-  session: { id: string; token: string; createdAt: Date };
+  session: {
+    id: string;
+    token: string;
+    createdAt: Date;
+    updatedAt: Date;
+    expiresAt: Date;
+  };
 }
 
 /** What the device plugin answers about a user code. `clientId` and `scope`
@@ -202,6 +287,31 @@ export interface MarfaAuth {
     headers: Headers,
     options?: { readOnly?: boolean },
   ) => Promise<MarfaAuthSession | null>;
+  /**
+   * Admit a request on the session its cookie names, and count it as a use:
+   * unless a use was recorded within {@link BROWSER_SESSION_USE_INTERVAL_SECONDS},
+   * the session's expiry moves to {@link BROWSER_SESSION_LIFETIME_SECONDS}
+   * after now. `session` is what a read-only `getSession` found for these
+   * headers. `null` when the session ended or expired since that lookup.
+   */
+  useSession: (
+    headers: Headers,
+    session: MarfaAuthSession,
+  ) => Promise<SessionUse | null>;
+  /** The live browser sessions of `userId`, oldest first. */
+  listBrowserSessions: (userId: string) => Promise<BrowserSession[]>;
+  /**
+   * End the live browser session `sessionId` of `userId`, finding and deleting
+   * it in one write transaction. `false` when no live session of that person
+   * has the id, so the second of two ends of one session says nothing ended.
+   */
+  endBrowserSession: (
+    userId: string,
+    sessionId: string,
+    clientIp: string | null,
+  ) => Promise<boolean>;
+  /** A `Set-Cookie` value that removes the session cookie from a browser. */
+  clearedSessionCookie: () => Promise<string>;
   /**
    * Create an email + password account without going through sign-up.
    *
@@ -292,6 +402,28 @@ function carriesWriteContention(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether the storage turned a write away for want of room, the write lock or
+ * permission to write, wherever in the `cause` chain: the faults that leave a
+ * read answerable. Bounded because a chain is data and may cycle.
+ */
+function storageRefusedWrite(err: unknown): boolean {
+  if (diskFull(err) !== undefined) return true;
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step instanceof MarfaError)
+      return (
+        step.code === ErrorCode.WRITE_CONTENTION ||
+        step.code === ErrorCode.INSUFFICIENT_STORAGE
+      );
+    if (step === null || typeof step !== "object") return false;
+    const code = (step as { code?: unknown }).code;
+    if (typeof code === "string" && /^SQLITE_(BUSY|READONLY)/.test(code))
+      return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const schema = {
     user: sqliteSchema.auth_user,
@@ -359,7 +491,33 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         ctx.logger.error(error.name, error);
       },
     },
-    session: { deferSessionRefresh: true },
+    // The provider renews a session only once its last renewal is a day old,
+    // so a session used within that day still ends a week after the renewal.
+    // Its own refresh is off and `useSession` renews on use instead. Its
+    // `expiresIn` is the cookie's lifetime; the stored expiry a new session
+    // gets is set by the hook below.
+    session: {
+      expiresIn: BROWSER_SESSION_COOKIE_SECONDS,
+      deferSessionRefresh: true,
+      disableSessionRefresh: true,
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          // Every password sign-in, remembered or not, gets the idle week.
+          before: (session) =>
+            Promise.resolve({
+              data: {
+                ...session,
+                expiresAt: new Date(
+                  session.createdAt.getTime() +
+                    BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+                ),
+              },
+            }),
+        },
+      },
+    },
     // The durable account/address limiter is cleared atomically by recovery.
     // A second, process-local password limiter would keep a recovered owner locked out.
     ...(options.storage
@@ -771,6 +929,144 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     } else await ctx.internalAdapter.deleteUserSessions(userId);
   };
 
+  const requireStorage = (): Storage => {
+    if (!options.storage)
+      throw new Error("Browser sessions require transactional storage");
+    return options.storage;
+  };
+  // The provider counts a session as expired once its expiry is in the past,
+  // so one expiring this instant is still live.
+  const live = (row: ProviderSessionRow, now: Date) => !(row.expiresAt < now);
+  const sessionCookie = (
+    ctx: BetterAuthCredentialContext,
+    value: string,
+    maxAge: number,
+  ) => {
+    const { name, attributes } = ctx.authCookies.sessionToken;
+    return generateCookie(name, value, { ...attributes, maxAge });
+  };
+
+  const useSession = async (
+    headers: Headers,
+    found: MarfaAuthSession,
+  ): Promise<SessionUse | null> => {
+    const ctx = await credentialContext();
+    const userId = found.user.id;
+    const { name } = ctx.authCookies.sessionToken;
+    const token = found.session.token;
+    const now = new Date();
+    const due = (row: { updatedAt: Date }) =>
+      now.getTime() - row.updatedAt.getTime() >=
+      BROWSER_SESSION_USE_INTERVAL_SECONDS * 1000;
+    const cookies = parseCookies(headers.get("cookie") ?? "");
+    const sent = cookies.get(name);
+    // A session signed in not to be remembered keeps the cookie the provider
+    // set it, which ends with the browser.
+    const remembered = !cookies.has(ctx.authCookies.dontRememberToken.name);
+    // Sent again only with a recorded use: often enough that a session in
+    // use for longer than the cookie lives keeps it, and rarely enough to
+    // leave the browser's back-forward cache alone.
+    const use = (recorded: boolean): SessionUse => ({
+      session: found,
+      cookie:
+        recorded && remembered && sent?.startsWith(`${token}.`)
+          ? sessionCookie(ctx, sent, BROWSER_SESSION_COOKIE_SECONDS)
+          : null,
+      cookieName: name,
+    });
+    if (!due(found.session)) return use(false);
+    const storage = requireStorage();
+    let recorded: { wrote: boolean } | null;
+    try {
+      recorded = await withCredentialRequest(
+        { path: "/use-session", clientIp: null, recordsSessionUse: true },
+        () =>
+          runAuditedTransaction(
+            storage,
+            async (): Promise<{ wrote: boolean } | null> => {
+              // Read again under the write lock: a session that ended or
+              // expired since the lookup stays ended, rather than renewed
+              // back.
+              const current = await ctx.internalAdapter.findSession(token);
+              if (
+                current?.session.userId !== userId ||
+                !live(current.session, now)
+              )
+                return null;
+              if (!due(current.session)) return { wrote: false };
+              const updated = await ctx.internalAdapter.updateSession(token, {
+                expiresAt: new Date(
+                  now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+                ),
+                updatedAt: now,
+              });
+              return updated ? { wrote: true } : null;
+            },
+            () => null,
+          ),
+      );
+    } catch (err) {
+      // The lookup found the session live, so a use the storage cannot take,
+      // on a full disk for one, still admits the request. Each write the
+      // request makes meets the storage itself, and checks the session again
+      // under the write lock.
+      if (!storageRefusedWrite(err)) throw err;
+      log("warn", "A browser session's use could not be recorded", {
+        error: errorMessage(err),
+      });
+      return use(false);
+    }
+    return recorded ? use(recorded.wrote) : null;
+  };
+
+  const listBrowserSessions = async (
+    userId: string,
+  ): Promise<BrowserSession[]> => {
+    const ctx = await credentialContext();
+    const now = new Date();
+    return (await ctx.internalAdapter.listSessions(userId))
+      .filter((row) => row.userId === userId && live(row, now))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((row) => ({
+        id: row.id,
+        createdAt: row.createdAt,
+        lastUsedAt: row.updatedAt,
+        expiresAt: row.expiresAt,
+        ipAddress: row.ipAddress ?? null,
+        userAgent: row.userAgent ?? null,
+      }));
+  };
+
+  const endBrowserSession = async (
+    userId: string,
+    sessionId: string,
+    clientIp: string | null,
+  ): Promise<boolean> => {
+    const storage = requireStorage();
+    const ctx = await credentialContext();
+    // The deletion's own audit row is the record of the end, and carries the
+    // address the request came from.
+    return withCredentialRequest({ path: "/owner/sign-ins", clientIp }, () =>
+      runAuditedTransaction(
+        storage,
+        async () => {
+          const now = new Date();
+          const target = (await ctx.internalAdapter.listSessions(userId)).find(
+            (row) =>
+              row.id === sessionId && row.userId === userId && live(row, now),
+          );
+          if (!target) return false;
+          await ctx.internalAdapter.deleteSession(target.token);
+          return true;
+        },
+        () => null,
+      ),
+    );
+  };
+
+  const clearedSessionCookie = async (): Promise<string> =>
+    sessionCookie(await credentialContext(), "", 0);
+
   const facade: MarfaAuth = {
     handler: async (request: Request, clientAddress: string | null) => {
       // Set on the request's own headers rather than on a copy: copying a
@@ -817,7 +1113,6 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       const browserSessionPaths = new Set([
         "/get-session",
         "/sign-out",
-        "/revoke-session",
         "/revoke-sessions",
         "/revoke-other-sessions",
         "/oauth2/authorize",
@@ -833,11 +1128,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         );
       if (
         options.storage &&
-        [
-          "/revoke-session",
-          "/revoke-sessions",
-          "/revoke-other-sessions",
-        ].includes(path)
+        ["/revoke-sessions", "/revoke-other-sessions"].includes(path)
       ) {
         await requireOwnerSession(options.storage, facade, request.headers, {
           recent: true,
@@ -931,6 +1222,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       credentialOperation("/device/deny", () =>
         deviceDecision((params) => api.deviceDeny(params))(code, headers),
       ),
+    useSession,
+    listBrowserSessions,
+    endBrowserSession,
+    clearedSessionCookie,
     createEmailAccount,
     preparePassword,
     preparePasswordChange,

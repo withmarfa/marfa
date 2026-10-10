@@ -371,9 +371,9 @@ describe("pageDoors", () => {
     ).toThrow("#/components/schemas/Loop refers back to itself");
   });
 
-  it("names exactly the twenty-four GET pages of the committed document", () => {
+  it("names exactly the twenty-five GET pages of the committed document", () => {
     const pages = pageDoors(committed);
-    expect(pages).toHaveLength(24);
+    expect(pages).toHaveLength(25);
     expect(pages.every((door) => door.startsWith("GET "))).toBe(true);
     expect(pages).toContain("GET /items");
     // An extension read answers `data` without a cursor: published, and

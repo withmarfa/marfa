@@ -32,9 +32,9 @@
     }
   },
   "auth/instance.ts": {
-    "boundary": "Owner account and provider request persistence phases share the audited transaction after password preparation; credential-audit.test.ts covers native rejection and commit outcomes.",
+    "boundary": "Owner account and provider request persistence phases share the audited transaction after password preparation; a browser session's renewal and its end each read and write under one transaction, the end audited by its deletion row; credential-audit.test.ts covers native rejection and commit outcomes.",
     "calls": {
-      "runAuditedTransaction": 2
+      "runAuditedTransaction": 4
     }
   },
   "auth/key-reach.ts": {
