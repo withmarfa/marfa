@@ -7,11 +7,7 @@ import {
   typeMatchesPattern,
 } from "./type-patterns.js";
 
-// Full ISO 8601 with timezone (e.g. 2026-03-15T14:30:00Z)
-const STRICT_TIMESTAMP =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
-
-// Also accepts date-only (2026-03-15) and year-month (2026-03)
+// A full datetime, a date-only value (2026-03-15) or a year-month (2026-03)
 const FLEXIBLE_TIMESTAMP =
   /^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?)?)?$/;
 
@@ -36,13 +32,6 @@ export function isValidTimestamp(value: string): boolean {
   return true;
 }
 
-/** Returns true if `value` is a strict ISO 8601 timestamp with timezone (used for system fields). */
-export function isValidStrictTimestamp(value: string): boolean {
-  if (!STRICT_TIMESTAMP.test(value)) return false;
-  const d = new Date(value);
-  return !isNaN(d.getTime());
-}
-
 // ---------------------------------------------------------------------------
 // Blob hash validation
 // ---------------------------------------------------------------------------
@@ -52,46 +41,6 @@ const BLOB_HASH = /^sha256:[0-9a-f]{64}$/;
 /** Returns true if the value is a valid content-addressed blob hash (sha256:<hex>). */
 export function isValidBlobHash(value: string): boolean {
   return BLOB_HASH.test(value);
-}
-
-/** Returns true if the value is a valid URL. */
-export function isValidUrl(value: string): boolean {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Basic format check, not exhaustive: one `@` with text before it, and a
-// domain holding a dot with text on both sides of it. Written as string
-// scans because the single-regex form backtracks polynomially on a long
-// input with many dots. 254 is the longest address SMTP carries.
-const EMAIL_MAX_LENGTH = 254;
-const WHITESPACE = /\s/;
-
-/** Returns true if the value looks like a valid email address. */
-export function isValidEmail(value: string): boolean {
-  if (value.length > EMAIL_MAX_LENGTH || WHITESPACE.test(value)) return false;
-  const at = value.indexOf("@");
-  if (at < 1 || at !== value.lastIndexOf("@")) return false;
-  const domain = value.slice(at + 1);
-  const lastDot = domain.lastIndexOf(".");
-  // A dot with text before and after it exists exactly when some dot sits
-  // past the first character and before the last.
-  return (
-    lastDot > 0 &&
-    (lastDot < domain.length - 1 || domain.lastIndexOf(".", lastDot - 1) > 0)
-  );
-}
-
-// BCP 47: primary tag + optional subtags, e.g. en, en-US, zh-Hans
-const BCP47 = /^[a-z]{2,3}(-[A-Za-z]{2,8})*$/;
-
-/** Returns true if the value is a plausible BCP 47 language code. */
-export function isValidLanguageCode(value: string): boolean {
-  return BCP47.test(value);
 }
 
 // Type identifiers: dot-separated segments. Min 2 segments.
@@ -334,41 +283,4 @@ export function filterExtensionsByPermission(
     }
   }
   return filtered;
-}
-
-/**
- * True when the runtime's own zone database resolves `value` as an IANA zone.
- *
- * Asking Intl is the check rather than matching a pattern against a list,
- * because the question is whether *this* runtime can render an instant in the
- * zone. A name that looks well-formed but does not resolve fails far from the
- * write that accepted it: every read that formats a date in it throws.
- *
- * Two things Intl accepts are refused here. A bare offset (`+02:00`,
- * `Etc/GMT+2`) keeps no wall clock across a daylight-saving change, which is
- * the whole reason an account states a zone rather than an offset. And a
- * miscased spelling (`europe/berlin`) resolves fine but makes two strings
- * name one zone, so a later equality test against a stored series zone
- * silently disagrees.
- *
- * Aliases are deliberately accepted as written. `Asia/Kolkata` and
- * `Europe/Kyiv` are what upstream calendars send, and this runtime's ICU
- * canonicalizes them to `Asia/Calcutta` and `Europe/Kiev`. Storing the
- * canonical form would hand a user back a zone name they did not choose and
- * would round-trip a different string than the one a connector wrote.
- */
-export function isValidTimeZone(value: string): boolean {
-  if (typeof value !== "string" || value.length === 0) return false;
-  if (value === "UTC") return true;
-  // `Region/City`, optionally with a further segment (`America/Argentina/
-  // Salta`). Leading capital per segment is what excludes the miscased forms.
-  if (!/^[A-Z][A-Za-z_-]*(\/[A-Z][A-Za-z0-9_+-]*)+$/.test(value)) return false;
-  // `Etc/GMT+5` passes the shape test and is an offset, not a zone.
-  if (value.startsWith("Etc/GMT")) return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
 }

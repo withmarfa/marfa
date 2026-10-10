@@ -5,7 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  pdfjs-dist: 6.2.108
   esbuild@<=0.24.2: 0.25.12
   esbuild@>=0.27.3 <0.28.1: 0.28.2
   brace-expansion@>=4.0.0 <5.0.12: 5.0.12

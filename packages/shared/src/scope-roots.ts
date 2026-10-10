@@ -56,9 +56,9 @@ export const BANNED_ROOT = "space";
 /** The content category, `content:read` and `content:write`. */
 export const CONTENT_ROOT = "content";
 /** The metadata layer, `metadata:write` and `metadata.<sub>:<verb>`. */
-export const METADATA_ROOT = "metadata";
+const METADATA_ROOT = "metadata";
 /** Relationship scopes, `edge.<type>:<verb>`. */
-export const EDGE_ROOT = "edge";
+const EDGE_ROOT = "edge";
 /** Category 2 of the permission model — your name, email and avatar. */
 export const PROFILE_ROOT = "profile";
 

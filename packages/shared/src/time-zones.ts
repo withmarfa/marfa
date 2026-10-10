@@ -96,11 +96,6 @@ export function instantToWallClock(
   );
 }
 
-/** `YYYY-MM-DD` from a Date's UTC fields. */
-function utcDatePart(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 /**
  * The instant at which a whole day starts, for a day named as `YYYY-MM-DD`
  * in `zone`.
@@ -122,20 +117,4 @@ export function dateInZoneToInstant(
   const wall = new Date(`${date}T00:00:00.000Z`);
   if (Number.isNaN(wall.getTime())) return null;
   return wallClockToInstant(wall, zone).toISOString();
-}
-
-/**
- * The calendar date an instant falls on, read in `zone`.
- *
- * The inverse of `dateInZoneToInstant`, and the only way a reader should
- * derive an all-day event's date. Never uses the caller's own zone: two
- * people looking at one whole-day event have to see one day.
- */
-export function instantToDateInZone(
-  instant: string,
-  zone: string | undefined,
-): string | null {
-  const parsed = new Date(instant);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return utcDatePart(instantToWallClock(parsed, zone));
 }

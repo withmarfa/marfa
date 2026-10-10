@@ -314,7 +314,7 @@ export enum ErrorCode {
  * (`conformance/spec/errors.md`) is written from it, so neither can say
  * something this does not.
  */
-export interface ErrorCodeInfo {
+interface ErrorCodeInfo {
   /** The HTTP status the code answers with. */
   status: number;
   /**
@@ -337,7 +337,7 @@ export interface ErrorCodeInfo {
 export const INTERNAL_ERROR = "internal_error";
 
 /** Every code the server can answer: the enum and `internal_error`. */
-export type AnsweredCode = ErrorCode | typeof INTERNAL_ERROR;
+type AnsweredCode = ErrorCode | typeof INTERNAL_ERROR;
 
 /**
  * `bulk_atomic_rollback` is the one code whose status is not its own: a page

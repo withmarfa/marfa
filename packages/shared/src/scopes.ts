@@ -359,10 +359,10 @@ export { PROFILE_ROOT } from "./scope-roots.js";
  * `content:read`; neither is reached by any wildcard, and holding every
  * concrete type literal does not add up to either.
  */
-export type ContentScope = "content:read" | "content:write";
+type ContentScope = "content:read" | "content:write";
 
 /** Returns true if the literal is one of the two content-category scopes. */
-export function isContentScope(scope: string): scope is ContentScope {
+function isContentScope(scope: string): scope is ContentScope {
   return scope === "content:read" || scope === "content:write";
 }
 
@@ -1299,7 +1299,7 @@ export function grantCoversScope(
 /** The four permission-map axes that carry a verb. Extensions are not here:
  *  no scope names a namespace, so they are compared map to map by their own
  *  rule rather than through anything in this file. */
-export type PermissionMapAxis = "type" | "edge" | "metadata" | "profile";
+type PermissionMapAxis = "type" | "edge" | "metadata" | "profile";
 
 /** Whether a level is at least what was asked for. `write` implies `read`. */
 function atLeast(

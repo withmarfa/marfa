@@ -17,19 +17,6 @@ packages:
 verifyDepsBeforeRun: error
 
 overrides:
-  # `officeparser` pins `pdfjs-dist` to an exact version, and the version it
-  # pins carries an advisory for arbitrary JavaScript execution on opening a
-  # malicious document. The extraction sweeper parses any uploaded PDF with
-  # it, on input a caller controls, so the exposure is real rather than
-  # theoretical. No published `officeparser` release admits the patched
-  # reader — its newest is the one carrying the pin — so the version is
-  # forced here instead.
-  #
-  # Remove this the moment `officeparser` widens its pin past 6.1.200.
-  # `src/enrichment/pdf-reader-version.test.ts` is what notices if this line
-  # is lost, since an override that stops applying breaks nothing visible.
-  pdfjs-dist: "6.2.108"
-
   # Build tooling pins an `esbuild` range that carries an advisory, and no
   # published release of the tool that pulls it admits the fix: `tsup`
   # (newest 8.5.1) takes `^0.27.0`, and `drizzle-kit`'s `@esbuild-kit`

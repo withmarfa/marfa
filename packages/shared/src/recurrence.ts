@@ -52,13 +52,13 @@ export const RECURRENCE_TIME_LIMIT_MS = 1_000;
 /** Most characters a series' `recurrence` may hold in all, so reading it is
  *  bounded before any line is parsed. Room for one rule and the most dates
  *  a series may add and remove. */
-export const MAX_RECURRENCE_CHARS = 40_000;
+const MAX_RECURRENCE_CHARS = 40_000;
 
 /** Most added and removed dates, together, one series may carry. */
-export const MAX_RECURRENCE_DATES = 1_000;
+const MAX_RECURRENCE_DATES = 1_000;
 
 /** Longest an event may last, in seconds: a century. */
-export const MAX_EVENT_DURATION_SECONDS = 100 * 366 * 86_400;
+const MAX_EVENT_DURATION_SECONDS = 100 * 366 * 86_400;
 
 /** Whether `duration` is a length an occurrence can have. */
 export function isEventDuration(duration: number): boolean {
