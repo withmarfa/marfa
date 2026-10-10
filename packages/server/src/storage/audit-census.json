@@ -58,6 +58,15 @@
       "runAuditedTransaction": 1
     }
   },
+  "auth/sign-ins.ts": {
+    "boundary": "The owner's sign-in doors: a key's end and rename, and an app's rename, each look the sign-in up and write it under one audited transaction; an app's end is the grant cascade. sign-in-audit-atomicity.test.ts and the conformance owner-sign-ins fixtures.",
+    "calls": {
+      "KeyStore.revoke": 1,
+      "KeyStore.update": 1,
+      "runAuditedTransaction": 3,
+      "writeItem": 1
+    }
+  },
   "bulk-actions/gc.ts": {
     "boundary": "Existing operational exemption: expired completed bulk job bookkeeping, no resource changes.",
     "calls": {

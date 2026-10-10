@@ -1397,7 +1397,7 @@ export interface paths {
         };
         /**
          * List sign-ins
-         * @description Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session or local process authority.
+         * @description Returns every browser, app and key that can reach Marfa, marking the browser that sent the request. Requires the owner's browser session or the local command.
          */
         get: operations["listSignIns"];
         put?: never;
@@ -1420,12 +1420,16 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires local process authority or the owner's browser session, signed in within the last five minutes.
+         * @description Ends a sign-in at once: its next request is refused, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.
          */
         delete: operations["endSignIn"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a sign-in
+         * @description Gives an app or a key a new name and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.
+         */
+        patch: operations["updateSignIn"];
         trace?: never;
     };
     "/export": {
@@ -3975,7 +3979,7 @@ export interface components {
             /** @description Always `null`: Marfa returns every sign-in in one page. */
             next_cursor: string | null;
         };
-        /** @description A sign-in is one way the owner is signed in to Marfa. */
+        /** @description A sign-in is one way the owner's Marfa can be reached. */
         SignIn: {
             /**
              * @description Unique identifier for the sign-in.
@@ -3983,33 +3987,38 @@ export interface components {
              */
             id: string;
             /**
-             * @description What signed in. `browser`: a browser signed in with the owner's password.
+             * @description What signed in. `browser`: a browser signed in with the owner's password. `app`: an app the owner approved, for every device it signs in on with that approval. `key`: an API key.
              * @enum {string}
              */
-            kind: "browser";
+            kind: "browser" | "app" | "key";
+            /**
+             * @description A readable name for the sign-in. A browser's comes from its `user_agent`, an app's is the name the owner gave it or else the name it registered with, and a key's is its `label`.
+             * @example Safari on macOS
+             */
+            name: string;
             /** @description `true` if this sign-in sent the request. */
             current: boolean;
             /**
-             * @description When the sign-in was made, in UTC.
+             * @description When the sign-in was made, in UTC. For an app, when the owner last approved it.
              * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
             /**
-             * @description When the sign-in last made a request, in UTC. Marfa records a request at most once a minute.
+             * @description When the sign-in last made a request, in UTC, or `null` if it hasn't. Marfa records a browser's use at most once a minute and an app's or key's at most once an hour.
              * @example 2026-10-05T14:12:08.000Z
              */
-            last_used_at: string;
+            last_used_at: string | null;
             /**
-             * @description When the sign-in ends unless it makes another request, in UTC: seven days and one minute after `last_used_at`.
+             * @description When the sign-in ends unless something changes, in UTC. A browser's is seven days and one minute after `last_used_at`. `null` for an app, and for a key that doesn't expire.
              * @example 2026-10-12T14:13:08.000Z
              */
-            expires_at: string;
+            expires_at: string | null;
             /**
-             * @description The address the sign-in was made from, or `null` when Marfa could not tell.
+             * @description The address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.
              * @example 203.0.113.24
              */
             ip_address: string | null;
-            /** @description The `User-Agent` the browser sent when it signed in, or `null` when it sent none. */
+            /** @description The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none. */
             user_agent: string | null;
         };
         /** @description An error response. */
@@ -20185,7 +20194,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20319,7 +20328,181 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority, or the browser signed in more than five minutes ago. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description - `sign_in_not_found`: no live sign-in of the owner has this ID. It may have ended or expired. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInNotFoundRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    updateSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the sign-in. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description The sign-in's new name. Marfa trims spaces from each end.
+                     * @example Marfa app on the studio laptop
+                     */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the renamed sign-in. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignIn"];
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `name` is missing.
+             *     - `validation_error`: `name` is empty or too long, the body has another field, or the ID names a browser, whose name comes from the browser.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

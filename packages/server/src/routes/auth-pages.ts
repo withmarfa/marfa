@@ -3,7 +3,6 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
@@ -36,7 +35,10 @@ import { prefersHtml } from "./http-error-page.js";
 import { KeyedThrottle } from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
-import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
+import {
+  listActiveAppGrants,
+  revokeProjectedGrant,
+} from "../auth/grant-lifecycle.js";
 import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
@@ -47,7 +49,6 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
-import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { forwardHeaders } from "./forward-headers.js";
 
 /**
@@ -305,27 +306,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       granted_at: string;
       last_used_at: string | null;
     }[] = [];
-    // Every page, so a grant past the first is listed: the answer is the
-    // whole set, and says so with a null cursor.
-    const rows: Item[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await storage.items.list({
-        type: "system.connection",
-        state: "active",
-        limit: MAX_PAGE_LIMIT,
-        cursor,
-      });
-      rows.push(...page.data);
-      cursor = page.next_cursor ?? undefined;
-    } while (cursor !== undefined);
-    for (const item of rows) {
+    for (const item of await listActiveAppGrants(storage)) {
       const props = item.properties;
-      if (props.kind !== "app") continue;
-      if (props.status !== "active") continue;
       grants.push({
         id: item.id,
-        kind: props.kind,
+        kind: "app",
         client_id: typeof props.client_id === "string" ? props.client_id : "",
         scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
         status: typeof props.status === "string" ? props.status : "active",
