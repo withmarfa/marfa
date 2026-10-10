@@ -1362,53 +1362,53 @@ If a device is asked to attach a file to an item the copy does not hold, or hold
 
 **Tests:** `device/queue.test.ts › attaches only to an item the copy holds outside the bin`.
 
-## The server the command talks to
+## The server the CLI talks to
 
-The `marfa` command is built for one contract version, the version of the document it was generated from, and every answer names the contract it speaks in `X-Marfa-Contract` (`instance/contract-header`).
+The CLI is built for one contract version, the version of the document it was generated from, and every answer names the contract it speaks in `X-Marfa-Contract` (`instance/contract-header`).
 
 ### `device/command-contract-mismatch`
 
-If an answer names a contract other than the one the command was built for, then the command MUST refuse it `contract_mismatch` with exit 1.
+If an answer names a contract other than the one the CLI was built for, then the CLI MUST refuse it `contract_mismatch` with exit 1.
 
-**Reason:** a body shaped for another contract may be shaped and sized in ways the command cannot read.
+**Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read.
 
 **Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`.
 
 ### `device/command-mismatch-prints-nothing`
 
-When the command refuses an answer for its contract, the command MUST print nothing of the answer.
+When the CLI refuses an answer for its contract, the CLI MUST print nothing of the answer.
 
 **Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`.
 
 ### `device/command-unnamed-success`
 
-If a success names no contract, then the command MUST refuse it `contract_mismatch` with exit 1.
+If a success names no contract, then the CLI MUST refuse it `contract_mismatch` with exit 1.
 
 **Tests:** `device/contract.test.ts › refuses a success that names no contract`.
 
 ### `device/command-contract-twice`
 
-If an answer names its contract on two header lines that differ, then the command MUST refuse it `contract_mismatch`.
+If an answer names its contract on two header lines that differ, then the CLI MUST refuse it `contract_mismatch`.
 
 **Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
 
 ### `device/command-contract-repeated`
 
-When an answer names the command's own contract on two header lines, the command MUST read it as an answer on that contract.
+When an answer names the CLI's own contract on two header lines, the CLI MUST read it as an answer on that contract.
 
 **Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
 
 ### `device/command-write-sent`
 
-If the answer to a write the command sent names another contract, then the command MUST say in its refusal that the write was sent and may have taken effect.
+If the answer to a write the CLI sent names another contract, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
 
-**Reason:** the contract is named by the answer, so the server acted on the write before the command could read that it speaks another contract.
+**Reason:** the contract is named by the answer, so the server acted on the write before the CLI could read that it speaks another contract.
 
 **Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`.
 
 ### `device/command-unnamed-refusal`
 
-If a refusal names no contract, then the command MUST report it `unnamed_answer` with exit 3, naming its status.
+If a refusal names no contract, then the CLI MUST report it `unnamed_answer` with exit 3, naming its status.
 
 **Reason:** the server names its contract on every answer, so a refusal naming none is from something in front of it, such as a proxy.
 
@@ -1416,19 +1416,19 @@ If a refusal names no contract, then the command MUST report it `unnamed_answer`
 
 ### `device/command-redirect`
 
-If an answer to the command is a `3xx`, then the command MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
+If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
 
 **Tests:** `device/contract.test.ts › refuses a redirect without following it`.
 
 ### `device/command-no-root-first`
 
-When the command sends a call other than a mint, `status` or `whoami`, the command MUST send that call alone, with no read of the server's root before it.
+When the CLI sends a call other than a mint, `status` or `whoami`, the CLI MUST send that call alone, with no read of the server's root before it.
 
 **Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`.
 
 ### `device/command-mint-root-first`
 
-When the command sends a write whose answer is the only copy of what it mints, `keys create` or `webhooks create`, the command MUST first read the server's root.
+When the CLI sends a write whose answer is the only copy of what it mints, `keys create` or `webhooks create`, the CLI MUST first read the server's root.
 
 **Reason:** a mint refused for its contract has already minted a key or a secret nobody can read.
 
@@ -1436,37 +1436,37 @@ When the command sends a write whose answer is the only copy of what it mints, `
 
 ### `device/command-mint-not-sent`
 
-If the server's root names another contract, or none, then the command MUST NOT send a mint.
+If the server's root names another contract, or none, then the CLI MUST NOT send a mint.
 
 **Tests:** `device/contract.test.ts › sends no mint to a server whose root names another contract, or none`.
 
 ### `device/command-root-header`
 
-The command MUST take the contract the server speaks from the `X-Marfa-Contract` header of the root's answer, whatever the root's body says.
+The CLI MUST take the contract the server speaks from the `X-Marfa-Contract` header of the root's answer, whatever the root's body says.
 
 **Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`.
 
 ### `device/status-other-contract`
 
-When `status` reads a server on another contract, the command MUST report the contract the server speaks beside the one it was built for, and exit 0.
+When `status` reads a server on another contract, the CLI MUST report the contract the server speaks beside the one it was built for, and exit 0.
 
 **Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`, `› says in words that the server speaks another contract`, `› takes the served contract from the answer's header, whatever the root's body says`.
 
 ### `device/status-other-contract-no-counts`
 
-When `status` reads a server on another contract, the command MUST NOT ask it for the item counts.
+When `status` reads a server on another contract, the CLI MUST NOT ask it for the item counts.
 
 **Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`.
 
 ### `device/whoami-other-contract`
 
-When `whoami` reads a server on another contract, the command MUST report the contract the server speaks beside the one it was built for, and exit 0.
+When `whoami` reads a server on another contract, the CLI MUST report the contract the server speaks beside the one it was built for, and exit 0.
 
 **Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
 
 ### `device/status-counts-not-permitted`
 
-If the server refuses `status` the item counts `403 type_not_permitted`, then the command MUST still describe the server, say the counts need a working key and exit 0.
+If the server refuses `status` the item counts `403 type_not_permitted`, then the CLI MUST still describe the server, say the counts need a working key and exit 0.
 
 **Reason:** a credential whose type permissions reach no type is refused the counts (`keys-and-oauth/permissions-no-content`).
 
@@ -1474,19 +1474,19 @@ If the server refuses `status` the item counts `403 type_not_permitted`, then th
 
 ### `device/status-counts-refused`
 
-If the server refuses `status` the item counts for any other reason, then the command MUST fail with that refusal.
+If the server refuses `status` the item counts for any other reason, then the CLI MUST fail with that refusal.
 
 **Tests:** `device/contract.test.ts › hands on any other refusal of the counts`.
 
 ### `device/operations-offline`
 
-The command MUST print its table of operations without sending a request.
+The CLI MUST print its table of operations without sending a request.
 
 **Tests:** `device/contract.test.ts › sends nothing to print the table`.
 
 ### `device/claim-stdin`
 
-When `setup claim --stdin` runs, the command MUST read the email, password and setup code from a JSON object on standard input.
+When `setup claim --stdin` runs, the CLI MUST read the email, password and setup code from a JSON object on standard input.
 
 **Reason:** passwords and setup codes must not be left in shell history or process arguments.
 
@@ -1494,31 +1494,31 @@ When `setup claim --stdin` runs, the command MUST read the email, password and s
 
 ### `device/claim-invalid-stdin`
 
-If `setup claim --stdin` reads blank or malformed JSON, then the command MUST refuse it `invalid`.
+If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST refuse it `invalid`.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
 
 ### `device/claim-invalid-not-sent`
 
-If `setup claim --stdin` reads blank or malformed JSON, then the command MUST NOT send a claim.
+If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST NOT send a claim.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
 
 ### `device/local-socket-exclusive`
 
-When `--socket PATH` is supplied, the command MUST reject ordinary URL or credential selection.
+When `--socket PATH` is supplied, the CLI MUST reject ordinary URL or credential selection.
 
 **Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
 
 ### `device/local-socket-no-fallback`
 
-If the selected private socket cannot be reached safely, then the command MUST fail without falling back to HTTP or stored credentials.
+If the selected private socket cannot be reached safely, then the CLI MUST fail without falling back to HTTP or stored credentials.
 
 **Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
 
 ### `device/local-socket-streamed`
 
-When a command given `--socket PATH` streams its answer, the command MUST send that request through the socket and to no other address.
+When a command given `--socket PATH` streams its answer, the CLI MUST send that request through the socket and to no other address.
 
 **Reason:** a streamed answer is read on its own connection, which has to reach the private socket as every other request does.
 
@@ -1526,7 +1526,7 @@ When a command given `--socket PATH` streams its answer, the command MUST send t
 
 ### `device/local-socket-needs-key`
 
-If the server answers `401` to a request that a command sent through `--socket PATH`, then the command MUST fail with exit `5`, saying the operation needs a key, which `--socket` does not carry.
+If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST fail with exit `5`, saying the operation needs a key, which `--socket` does not carry.
 
 **Reason:** direct local authority carries no key, so the `401` is not an expired or wrong key, and the usual advice to sign in again would mislead.
 
@@ -1534,7 +1534,7 @@ If the server answers `401` to a request that a command sent through `--socket P
 
 ### `device/redeliver-request`
 
-When `webhooks redeliver <id> <delivery_id>` runs, the command MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.
+When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.
 
 **Reason:** the server decides from its current authority and retained deliveries whether to send again (`events/redeliver-current`).
 
@@ -1542,13 +1542,13 @@ When `webhooks redeliver <id> <delivery_id>` runs, the command MUST send one `PO
 
 ### `device/credential-lock-unsafe`
 
-If the command's credential lock is not safe to use, then the command MUST refuse `invalid`, naming the credential lock, before it sends anything.
+If the CLI's credential lock is not safe to use, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
 
 **Tests:** `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`, `› refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing`, `› refuses a sign-in under an unsafe credential lock before asking for a code`.
 
 ### `device/credential-lock-taken`
 
-While another process changes the credential kept for a server, as a refresh, `logout` or `keys forget` does, the command MUST keep no credential for that server through `login` or `keys keep` until that change ends.
+While another process changes the credential kept for a server, as a refresh, `logout` or `keys forget` does, the CLI MUST keep no credential for that server through `login` or `keys keep` until that change ends.
 
 **Reason:** a credential written beside a refresh in another process would be overwritten by the refreshed one, or brought back after a logout.
 
@@ -1556,7 +1556,7 @@ While another process changes the credential kept for a server, as a refresh, `l
 
 ### `device/credential-refresh-then-logout`
 
-If `logout` runs while another process refreshes the kept sign-in for the same server, then the command MUST revoke the refresh token that the refresh keeps.
+If `logout` runs while another process refreshes the kept sign-in for the same server, then the CLI MUST revoke the refresh token that the refresh keeps.
 
 **Reason:** a revocation of the token the refresh replaced would leave the rotated one standing.
 
@@ -1564,7 +1564,7 @@ If `logout` runs while another process refreshes the kept sign-in for the same s
 
 ### `device/credential-logout-then-refresh`
 
-If a refresh of a kept sign-in starts while `logout` for the same server runs in another process, then the command MUST NOT refresh or keep again the sign-in that `logout` forgets.
+If a refresh of a kept sign-in starts while `logout` for the same server runs in another process, then the CLI MUST NOT refresh or keep again the sign-in that `logout` forgets.
 
 **Reason:** a refresh that read the credential before the logout ended would bring back a sign-in the person ended.
 
@@ -1572,13 +1572,13 @@ If a refresh of a kept sign-in starts while `logout` for the same server runs in
 
 ### `device/command-logout-forgets`
 
-When `logout` signs out of a kept sign-in, the command MUST forget the kept token, whether or not the server takes its revocation.
+When `logout` signs out of a kept sign-in, the CLI MUST forget the kept token, whether or not the server takes its revocation.
 
 **Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
 
 ### `device/command-logout-not-revoked`
 
-If `logout` signs out of a sign-in that kept no revocation endpoint, or whose revocation the server refuses or cannot be reached for, then the command MUST report `revoked: false`.
+If `logout` signs out of a sign-in that kept no revocation endpoint, or whose revocation the server refuses or cannot be reached for, then the CLI MUST report `revoked: false`.
 
 **Reason:** a sign-out that claimed a revocation it never had would leave a person believing a token is dead while it stands until it expires.
 
@@ -1586,7 +1586,7 @@ If `logout` signs out of a sign-in that kept no revocation endpoint, or whose re
 
 ### `device/command-keys-forget-offline`
 
-When `keys forget` runs, the command MUST forget the credential kept for the server without sending a request.
+When `keys forget` runs, the CLI MUST forget the credential kept for the server without sending a request.
 
 **Reason:** a credential is often forgotten for a server that is gone.
 
@@ -1594,7 +1594,7 @@ When `keys forget` runs, the command MUST forget the credential kept for the ser
 
 ### `device/command-cleartext-warning`
 
-If the command is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the command MUST print a warning that names the address on standard error before it sends the credential.
+If the CLI is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends the credential.
 
 **Reason:** a credential sent over plain `http` can be read by anyone on the path, and the owner may not have noticed the scheme of the address that was named.
 
@@ -1602,7 +1602,7 @@ If the command is about to send a key or a token to an `http` address whose host
 
 ### `device/command-cleartext-sends`
 
-When the command has printed the plain `http` warning, the command MUST go on to send the request.
+When the CLI has printed the plain `http` warning, the CLI MUST go on to send the request.
 
 **Reason:** an owner's private network may already be encrypted below the address, so the warning informs and does not refuse.
 
@@ -1610,7 +1610,7 @@ When the command has printed the plain `http` warning, the command MUST go on to
 
 ### `device/command-cleartext-sign-in`
 
-If `login` is given an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the command MUST print a warning that names the address on standard error before it sends a request to it.
+If `login` is given an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends a request to it.
 
 **Reason:** a sign-in sends a device code and receives tokens, and the person types a password on the address's sign-in page.
 
@@ -1618,7 +1618,7 @@ If `login` is given an `http` address whose host is not `localhost`, an address 
 
 ### `device/command-cleartext-loopback`
 
-Where the address of the server is `http` and its host is `localhost`, an address in `127.0.0.0/8` or `::1`, the command MUST NOT print the plain `http` warning.
+Where the address of the server is `http` and its host is `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST NOT print the plain `http` warning.
 
 **Reason:** a request to this machine does not cross a network.
 
@@ -1626,19 +1626,19 @@ Where the address of the server is `http` and its host is `localhost`, an addres
 
 ### `device/command-cleartext-https`
 
-Where the address of the server is `https`, the command MUST NOT print the plain `http` warning.
+Where the address of the server is `https`, the CLI MUST NOT print the plain `http` warning.
 
 **Tests:** `cli/cleartext.test.ts › prints no warning for an https address, which it reaches`.
 
 ### `device/command-cleartext-allow-flag`
 
-Where `--allow-http` is given, the command MUST NOT print the plain `http` warning.
+Where `--allow-http` is given, the CLI MUST NOT print the plain `http` warning.
 
 **Tests:** `cli/cleartext.test.ts › prints no warning where --allow-http states it is intended, and sends the key`.
 
 ### `device/command-cleartext-allow-env`
 
-Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the command MUST NOT print the plain `http` warning.
+Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the CLI MUST NOT print the plain `http` warning.
 
 **Tests:** `cli/cleartext.test.ts › prints no warning where MARFA_ALLOW_HTTP states it is intended, and warns where it does not`.
 
@@ -1878,13 +1878,13 @@ When a held stream is told to stop, a device MUST end it at once, even while a s
 
 ### `device/command-follow-interrupted`
 
-When `follow` is interrupted, the command MUST end it with its report, as when its time is up.
+When `follow` is interrupted, the CLI MUST end it with its report, as when its time is up.
 
 **Tests:** `device/catch-up.test.ts › prints its report when interrupted, as it does when its time is up`.
 
 ### `device/command-follow-reader-gone`
 
-When the reader of `follow`'s output has gone, the command MUST end the follow.
+When the reader of `follow`'s output has gone, the CLI MUST end the follow.
 
 **Tests:** `device/catch-up.test.ts › ends a follow whose reader has gone, rather than going on untold`.
 
@@ -1976,13 +1976,13 @@ If a device is asked to open a store to read at a path where no store has been m
 
 ### `device/command-reader-no-store`
 
-If a command opens a store to read at a path where no store has been made, then the command MUST refuse it `no_store` with exit 2.
+If a command opens a store to read at a path where no store has been made, then the CLI MUST refuse it `no_store` with exit 2.
 
 **Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`, `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`.
 
 ### `device/command-reader-not-a-store`
 
-If a command opens a store to read at a path that holds a file that is not a store, then the command MUST NOT refuse it `no_store`.
+If a command opens a store to read at a path that holds a file that is not a store, then the CLI MUST NOT refuse it `no_store`.
 
 **Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
 
@@ -2032,7 +2032,7 @@ A device MUST give each store file its own writer role, so two stores in one dir
 
 ### `device/command-makes-store`
 
-When `hydrate` or `status` names a path where no store has been made, the command MUST make a store there.
+When `hydrate` or `status` names a path where no store has been made, the CLI MUST make a store there.
 
 **Reason:** the state report is how a caller learns that a hydration is owed before the first one.
 
@@ -2040,7 +2040,7 @@ When `hydrate` or `status` names a path where no store has been made, the comman
 
 ### `device/command-no-store`
 
-If a `device` command other than `hydrate` and `status` names a path where no store has been made, then the command MUST refuse it `no_store` and leave the path as it found it.
+If a `device` command other than `hydrate` and `status` names a path where no store has been made, then the CLI MUST refuse it `no_store` and leave the path as it found it.
 
 **Reason:** a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain.
 
@@ -2386,7 +2386,7 @@ When a stop is raised during a hydration, a catch-up or a drain, a device MUST e
 
 ### `device/command-stopped-exit`
 
-When a hydration, a catch-up or a drain that the command stopped on Ctrl-C ends `canceled`, the command MUST exit with status 3.
+When a hydration, a catch-up or a drain that the CLI stopped on Ctrl-C ends `canceled`, the CLI MUST exit with status 3.
 
 **Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
 
@@ -2428,7 +2428,7 @@ When a drain is stopped, a device MUST leave every write it had not sent queued 
 
 ### `device/command-second-ctrl-c`
 
-When the command receives a second Ctrl-C before the call has stopped, the command MUST end the process at once with status 130.
+When the CLI receives a second Ctrl-C before the call has stopped, the CLI MUST end the process at once with status 130.
 
 **Tests:** `device/stop.test.ts › ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
 
@@ -3098,7 +3098,7 @@ If the server refuses a body's edge write, then a device MUST answer the link `r
 
 When a caller reads an item's links and embeds, a device MUST answer each link and each embed of a file in its body, in the order of the body, with its text as typed, the name it reads and the item it names or the reason it names none.
 
-**Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess. The command reads them with `device items links`.
+**Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess. The CLI reads them with `device items links`.
 
 **Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`.
 
@@ -3186,7 +3186,7 @@ When a device attaches a file to an item under a title that names it alone among
 
 When a caller asks for the text that embeds a file attached to an item, a device MUST answer `![[title]]` where the file's title names it alone among the item's attachments.
 
-**Reason:** an app can write the embed of a file attached earlier. The command asks with `device items embed`.
+**Reason:** an app can write the embed of a file attached earlier. The CLI asks with `device items embed`.
 
 **Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`.
 
@@ -3314,7 +3314,7 @@ If a local list or search names a `type` outside the server's type grammar (`typ
 
 ### `device/docs-site`
 
-When `marfa docs` sends a request, the command MUST send it to the address in `MARFA_DOCS_URL` where that holds more than white space, whatever `MARFA_API_URL` holds.
+When `marfa docs` sends a request, the CLI MUST send it to the address in `MARFA_DOCS_URL` where that holds more than white space, whatever `MARFA_API_URL` holds.
 
 **Reason:** an agent can read the docs before it has a server, a working copy or a key.
 
@@ -3322,13 +3322,13 @@ When `marfa docs` sends a request, the command MUST send it to the address in `M
 
 ### `device/docs-paths`
 
-When `marfa docs` reads the docs site, the command MUST read a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
+When `marfa docs` reads the docs site, the CLI MUST read a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
 
 ### `device/docs-no-credential`
 
-When `marfa docs` sends a request to the docs site, the command MUST send no credential, whatever `MARFA_API_KEY` holds.
+When `marfa docs` sends a request to the docs site, the CLI MUST send no credential, whatever `MARFA_API_KEY` holds.
 
 **Reason:** the docs site has no keys, so a credential sent to it would reach a host that never asked for one.
 
@@ -3336,15 +3336,15 @@ When `marfa docs` sends a request to the docs site, the command MUST send no cre
 
 ### `device/docs-no-contract`
 
-When the docs site answers `marfa docs` naming no contract, the command MUST read the answer.
+When the docs site answers `marfa docs` naming no contract, the CLI MUST read the answer.
 
-**Reason:** the docs site names no contract, so the check the command holds a server's answers to would refuse every page.
+**Reason:** the docs site names no contract, so the check the CLI holds a server's answers to would refuse every page.
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
 
 ### `device/docs-page-missing`
 
-If the docs site answers `404` for the page `marfa docs` is given, then the command MUST exit 1 with `docs_page_not_found`, naming the path.
+If the docs site answers `404` for the page `marfa docs` is given, then the CLI MUST exit 1 with `docs_page_not_found`, naming the path.
 
 **Reason:** a retry does not change a missing page. The message points to `marfa docs search`, where an agent that guessed a path can find the page it meant.
 
@@ -3352,7 +3352,7 @@ If the docs site answers `404` for the page `marfa docs` is given, then the comm
 
 ### `device/docs-unreachable`
 
-If the docs site cannot be reached, or answers with a server fault or a status the command does not read, then the command MUST exit 3 with `docs_unreachable`, naming the site's address.
+If the docs site cannot be reached, or answers with a server fault or a status the CLI does not read, then the CLI MUST exit 3 with `docs_unreachable`, naming the site's address.
 
 **Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything.
 
@@ -3360,21 +3360,21 @@ If the docs site cannot be reached, or answers with a server fault or a status t
 
 ### `device/docs-page-names`
 
-When `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
+When `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the CLI MUST read the one page at `/<path>.md`.
 
 **Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`.
 
 ### `device/docs-json-refused`
 
-If the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
+If the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
 
-**Reason:** an answer the command cannot read is not a refusal and not a lost connection, and printing it would pass a proxy's or a catch-all page's words off as the docs.
+**Reason:** an answer the CLI cannot read is not a refusal and not a lost connection, and printing it would pass a proxy's or a catch-all page's words off as the docs.
 
 **Tests:** `device/contract.test.ts › exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it`.
 
 ### `device/docs-html`
 
-If the docs site answers a page `marfa docs` asked for as `text/html`, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
+If the docs site answers a page `marfa docs` asked for as `text/html`, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
 
 **Reason:** a site's catch-all page is never the page asked for.
 
@@ -3382,29 +3382,29 @@ If the docs site answers a page `marfa docs` asked for as `text/html`, then the 
 
 ### `device/docs-too-large`
 
-If the body of a success the docs site answers `marfa docs` with is larger than 10 MiB, which is 10,485,760 bytes, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
+If the body of a success the docs site answers `marfa docs` with is larger than 10 MiB, which is 10,485,760 bytes, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
 
-**Reason:** a page or the list of pages is far smaller, so a body that large is not what the command asked for, and a retry does not change it. It is not `docs_unreachable`, which says the site may answer next time.
+**Reason:** a page or the list of pages is far smaller, so a body that large is not what the CLI asked for, and a retry does not change it. It is not `docs_unreachable`, which says the site may answer next time.
 
 **Tests:** `device/contract.test.ts › exits 3 with decoding for a docs answer larger than the command reads`.
 
 ### `device/docs-not-utf8`
 
-If the body of a success the docs site answers `marfa docs` with is not UTF-8, then the command MUST exit 3 with `decoding`, printing nothing to standard output.
+If the body of a success the docs site answers `marfa docs` with is not UTF-8, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
 
 **Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page that is not UTF-8`.
 
 ### `device/docs-redirect-followed`
 
-When the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the command MUST follow it.
+When the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the CLI MUST follow it.
 
-**Reason:** the docs site may move a page, and the command sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (`device/redirect-not-followed`).
+**Reason:** the docs site may move a page, and the CLI sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (`device/redirect-not-followed`).
 
 **Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`.
 
 ### `device/docs-redirect-loop`
 
-If the docs site answers more than five redirects in a row to one request of `marfa docs`, then the command MUST exit 3 with `docs_unreachable`.
+If the docs site answers more than five redirects in a row to one request of `marfa docs`, then the CLI MUST exit 3 with `docs_unreachable`.
 
 **Reason:** more than five redirects in a row is a loop, which is the site failing.
 
@@ -3412,13 +3412,13 @@ If the docs site answers more than five redirects in a row to one request of `ma
 
 ### `device/docs-json-url`
 
-Where `--json` is given, when `marfa docs` reads a page, the command MUST report in `url` the address it asked for, whether or not a redirect led it to another.
+Where `--json` is given, when `marfa docs` reads a page, the CLI MUST report in `url` the address it asked for, whether or not a redirect led it to another.
 
 **Tests:** `device/contract.test.ts › reports the address a docs page was asked for, not the one a redirect led to`.
 
 ### `device/docs-url-key`
 
-If `--url` or `--key` is given to `marfa docs`, then the command MUST exit 2 with `usage` and send no request.
+If `--url` or `--key` is given to `marfa docs`, then the CLI MUST exit 2 with `usage` and send no request.
 
 **Reason:** both name a Marfa server and a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
 
@@ -3426,7 +3426,7 @@ If `--url` or `--key` is given to `marfa docs`, then the command MUST exit 2 wit
 
 ### `device/docs-path-refused`
 
-If the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, then the command MUST exit 1 with `invalid` and send no request.
+If the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, then the CLI MUST exit 1 with `invalid` and send no request.
 
 **Reason:** a path outside that set could leave the docs site's pages or carry another request in its name.
 
@@ -3434,7 +3434,7 @@ If the page `marfa docs` is given, once leading and trailing slashes, a leading 
 
 ### `device/docs-site-refused`
 
-If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` address with a host and no query or fragment, then the command MUST exit 1 with `invalid` and send no request.
+If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST exit 1 with `invalid` and send no request.
 
 **Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`.
 

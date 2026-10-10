@@ -66,13 +66,13 @@ describe("separate rule metadata", () => {
   it("reads a statement's citations from its Tests paragraph and not from its reason", () => {
     const found = readText(
       "device.md",
-      `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
+      `### \`device/a-rule\`\n\nWhen asked, the CLI MUST answer.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
     );
     expect(found).toEqual([
       {
         chapter: "device.md",
         id: "device/a-rule",
-        text: `When asked, the command MUST answer. ${cited}`,
+        text: `When asked, the CLI MUST answer. ${cited}`,
       },
     ]);
     expect(citationsIn(found[0].text)).toEqual([
@@ -88,7 +88,7 @@ describe("separate rule metadata", () => {
       [
         "### `folders/" + "sample-rule`",
         "",
-        "The command MUST answer.",
+        "The CLI MUST answer.",
         "",
         `**Tests:** \`cli/folder.test.ts › ${title}\`.`,
       ].join("\n"),
@@ -128,7 +128,7 @@ describe("every device statement is asserted by something", () => {
     // The witness: an ID statement's waiting line is read as its text ends.
     const waiting = readText(
       "device.md",
-      `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Tests:** waiting on #1.\n`,
+      `### \`device/a-rule\`\n\nWhen asked, the CLI MUST answer.\n\n**Tests:** waiting on #1.\n`,
     )[0];
     expect(WAITING.test(waiting.text), waiting.text).toBe(true);
     const uncited = allStatements

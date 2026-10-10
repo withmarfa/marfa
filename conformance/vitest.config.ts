@@ -93,7 +93,7 @@ export default defineConfig({
         },
       },
       {
-        // The scenario suite: the binary driven as the reference client
+        // The scenario suite: the CLI driven as the reference client
         // against the server the run booted. Every step is a process spawn
         // plus a round trip, so the budget matches the device project.
         test: {

@@ -1,4 +1,4 @@
-//! Before the command sends a credential over `http` to a host that is not
+//! Before the CLI sends a credential over `http` to a host that is not
 //! this machine, it warns once per address and goes on: an owner's private
 //! network may already be encrypted below the address.
 

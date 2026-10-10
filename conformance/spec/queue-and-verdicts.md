@@ -2,7 +2,7 @@
 
 A device does not write to the server directly. It writes to its working copy, queues the write, and drains the queue when it can. The server's answer to each queued write gives the write one of six verdicts: `accepted`, `merged`, `conflicted`, `refused`, `blocked` or `dead`.
 
-`device.md` states the working copy the queue writes into, and the answers the scripted server gives that the real server cannot be made to give; `device/fidelity.test.ts` holds every scripted answer the real server can also give to the real one. The server behavior a verdict is read from is in `versions.md`, `items.md`, `edges.md` and `errors.md`. The command runs each drain in a process of its own, so a fixture that drains more than once drains across a restart of the device.
+`device.md` states the working copy the queue writes into, and the answers the scripted server gives that the real server cannot be made to give; `device/fidelity.test.ts` holds every scripted answer the real server can also give to the real one. The server behavior a verdict is read from is in `versions.md`, `items.md`, `edges.md` and `errors.md`. The CLI runs each drain in a process of its own, so a fixture that drains more than once drains across a restart of the device.
 
 ## The queue
 
@@ -354,25 +354,25 @@ When a write a queued write depends on is answered, a device MUST keep it in the
 
 ### `queue-and-verdicts/command-queued-holds`
 
-When the command queues a write that depends on others and prints it as text, the command MUST print how many writes it depends on after `waiting on`.
+When the CLI queues a write that depends on others and prints it as text, the CLI MUST print how many writes it depends on after `waiting on`.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
 ### `queue-and-verdicts/command-queued-after`
 
-When the command queues a write that follows another and prints it as text, the command MUST print the write it follows after `after`.
+When the CLI queues a write that follows another and prints it as text, the CLI MUST print the write it follows after `after`.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
 ### `queue-and-verdicts/command-queue-waiting`
 
-When the command prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto a row its natural key names that no read has found yet, the command MUST name that write after `waiting on`.
+When the CLI prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto a row its natural key names that no read has found yet, the CLI MUST name that write after `waiting on`.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
 
 ### `queue-and-verdicts/command-queue-not-waiting`
 
-When the command prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, or is `dead`, and none is a create refused onto a row that no read has found yet, the command MUST NOT print `waiting on` for it.
+When the CLI prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, or is `dead`, and none is a create refused onto a row that no read has found yet, the CLI MUST NOT print `waiting on` for it.
 
 **Reason:** a dependency with such a verdict no longer holds the write, though `depends_on` still names it.
 
@@ -380,7 +380,7 @@ When the command prints the queue as text and every write a write depends on is 
 
 ### `queue-and-verdicts/command-queue-after`
 
-When the command prints the queue as text, the command MUST name after `after` the write each write follows.
+When the CLI prints the queue as text, the CLI MUST name after `after` the write each write follows.
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
@@ -474,37 +474,37 @@ When the server answers a write in a drain with `Retry-After`, or answers a read
 
 **Tests:** `device/classification.test.ts › retries a 5xx and a 429 without counting them`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`, `device/queue.test.ts › reads the row a create landed on again after a failure that clears on its own`, `device/classification.test.ts › passes on at most 300 seconds of the wait a write was asked for`.
 
-## The command's drain
+## The CLI's drain
 
-What the command prints and exits with for a drain.
+What the CLI prints and exits with for a drain.
 
 ### `queue-and-verdicts/command-drain-report`
 
-When a drain ends with a report and the command prints JSON, the command MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning`.
+When a drain ends with a report and the CLI prints JSON, the CLI MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning`.
 
 **Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
 
 ### `queue-and-verdicts/command-exit-stopped`
 
-When a drain stops because a refused credential parked the queue, the command MUST exit 5.
+When a drain stops because a refused credential parked the queue, the CLI MUST exit 5.
 
 **Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`.
 
 ### `queue-and-verdicts/command-exit-undelivered`
 
-When a drain that a refused credential did not stop reports `unavailable` or a write `undelivered`, the command MUST exit 3.
+When a drain that a refused credential did not stop reports `unavailable` or a write `undelivered`, the CLI MUST exit 3.
 
 **Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`, `› exits 3 for a pass the server could not finish that left nothing undelivered`, `› exits 3 for a write left undelivered by a pass the server finished`.
 
 ### `queue-and-verdicts/command-exit-done`
 
-When a drain reports neither `stopped`, nor `unavailable`, nor a write `undelivered`, the command MUST exit 0, whatever verdicts the drain reached.
+When a drain reports neither `stopped`, nor `unavailable`, nor a write `undelivered`, the CLI MUST exit 0, whatever verdicts the drain reached.
 
 **Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
 
 ### `queue-and-verdicts/command-refused-count`
 
-When a drain refuses writes and the command prints its report as text, the command MUST print how many it refused as `refused <n> write(s)`.
+When a drain refuses writes and the CLI prints its report as text, the CLI MUST print how many it refused as `refused <n> write(s)`.
 
 **Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
 
@@ -964,13 +964,13 @@ When a failed renewal ends a drain, a device MUST leave the write whose `401` st
 
 ### `queue-and-verdicts/command-renewal-error`
 
-When a failed renewal ends a drain, the command MUST print the failure as its error on standard error and nothing on standard output.
+When a failed renewal ends a drain, the CLI MUST print the failure as its error on standard error and nothing on standard output.
 
 **Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 
 ### `queue-and-verdicts/command-renewal-signed-out`
 
-When a drain ends because renewing the credential finds the person signed out, the command MUST report `signed_out` with `server` null and exit 5.
+When a drain ends because renewing the credential finds the person signed out, the CLI MUST report `signed_out` with `server` null and exit 5.
 
 **Reason:** the error says the sign-in on this machine has ended, which is not a server's answer to the write.
 

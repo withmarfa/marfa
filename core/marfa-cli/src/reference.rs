@@ -23,7 +23,7 @@ pub fn render() -> String {
     )
     .unwrap();
     out.push('\n');
-    out.push_str("# marfa command reference\n\n");
+    out.push_str("# Command reference\n\n");
     out.push_str("Global options, which every command accepts, and the exit codes:\n\n");
     // Hiding the commands leaves the options and exit codes the root's long help carries.
     let globals = root

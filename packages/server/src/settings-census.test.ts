@@ -45,12 +45,12 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
 const NOT_SERVER_SETTINGS: Record<string, string> = {
   UNSUPPORTED_MEDIA_TYPE:
     "the sign-in library's error code for a registration not sent as JSON",
-  MARFA_FOLDER_REGISTRY: "the device's folder registry, read by the binary",
+  MARFA_FOLDER_REGISTRY: "the device's folder registry, read by the CLI",
   MARFA_API_KEY: "the credential a client or the conformance run holds",
-  MARFA_API_URL: "the server a client names, read by the command",
-  MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the command",
+  MARFA_API_URL: "the server a client names, read by the CLI",
+  MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the CLI",
   MARFA_ALLOW_HTTP:
-    "states that a credential may go over plain http, read by the command",
+    "states that a credential may go over plain http, read by the CLI",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:

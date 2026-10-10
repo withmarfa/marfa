@@ -91,8 +91,8 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// For an error from a request the command itself sent, where a mismatch
-    /// is worded for the command. A device command keeps the core's own
+    /// For an error from a command's own request, where a mismatch is
+    /// worded for the CLI. A device command keeps the core's own
     /// words, which say what became of a queued write.
     pub fn direct(error: CoreError) -> Self {
         match error {
@@ -410,7 +410,7 @@ impl From<serde_json::Error> for CliError {
 const EXIT_CODES_TEXT: &str = "\
 Exit codes:
   0  done
-  1  the request was refused, by the server, by the command before
+  1  the request was refused, by the server, by the CLI before
      sending, for an answer on another contract, or for a docs page
      that does not exist; a retry does not change it
   2  the command line was wrong, or named no store or server

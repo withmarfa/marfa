@@ -35,7 +35,7 @@ const RULES = {
   oneRequirement:
     "a rule holds exactly one MUST or MUST NOT and no other key word of RFC 2119 in capitals",
   earsForm:
-    "a rule opens as one of the EARS patterns does and its subject is the server, a device or the command",
+    "a rule opens as one of the EARS patterns does and its subject is the server, a device or the CLI",
   testsShape:
     "a Tests paragraph holds fixture citations ending in a period, or exactly the words waiting on and an issue number, and never both",
   noServerTests: "a statement never names the server's own tests",
@@ -52,8 +52,8 @@ const ANY_KEYWORD =
   /\b(?:MUST|SHALL|SHOULD|MAY|REQUIRED|RECOMMENDED|OPTIONAL)\b/;
 const OTHER_KEYWORD = /\b(?:SHALL|SHOULD|MAY|REQUIRED|RECOMMENDED|OPTIONAL)\b/;
 
-const SUBJECT = "(?:the server|a device|the command)";
-const UBIQUITOUS = /^(?:The server|A device|The command)$/;
+const SUBJECT = "(?:the server|a device|the CLI)";
+const UBIQUITOUS = /^(?:The server|A device|The CLI)$/;
 // A state or an event, with an unwanted condition inside it; or the
 // unwanted condition alone.
 const EARS = new RegExp(
@@ -205,7 +205,7 @@ describe("the form check sees what it is for", () => {
     "",
     "### `sample/feature-event`",
     "",
-    "Where a setting is on, if a key asks, then the command MUST refuse.",
+    "Where a setting is on, if a key asks, then the CLI MUST refuse.",
     "",
     "**Tests:** `sync/c.test.ts › refuses`.",
     "",
@@ -295,6 +295,13 @@ describe("the form check sees what it is for", () => {
     "### `sample/wrong-subject`",
     "",
     "When asked, the client MUST answer.",
+    "",
+    "**Tests:** waiting on #1.",
+    "",
+    // The tool's subject before the CLI was named; it stays refused.
+    "### `sample/old-subject`",
+    "",
+    "When asked, the command MUST answer.",
     "",
     "**Tests:** waiting on #1.",
     "",
@@ -389,7 +396,7 @@ describe("the form check sees what it is for", () => {
     const text = [
       "### `sample/cli-rule`",
       "",
-      "The command MUST answer.",
+      "The CLI MUST answer.",
       "",
       "**Tests:** `cli/folder.test.ts › one`, `› two`.",
     ].join("\n");
@@ -434,6 +441,7 @@ describe("the form check sees what it is for", () => {
         s("no-comma"),
         s("no-then"),
         s("wrong-subject"),
+        s("old-subject"),
       ],
       testsShape: [s("both-tests"), s("no-period"), s("orphan-shorthand")],
       noServerTests: [s("server-test")],
