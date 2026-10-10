@@ -85,7 +85,7 @@ describe("a reserve the volume cannot keep", () => {
       [
         {
           id: typeId,
-          name: "Disk reserve note",
+          label: "Disk reserve note",
           description: "A type the archive registers",
           version: 1,
           fields: { body: { type: "string", description: "Body" } },
