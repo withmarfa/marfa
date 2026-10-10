@@ -10,6 +10,7 @@
 
 import { TYPE_ROLES } from "./schema-types.js";
 import type {
+  DisplayHints,
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
@@ -17,8 +18,10 @@ import type {
   FieldDefinition,
   FieldFormat,
   FieldType,
+  MergePolicy,
   TypeRole,
   TypeSchema,
+  VersionPolicy,
 } from "./schema-types.js";
 
 /**
@@ -593,8 +596,8 @@ function describeShapeConflict(
 /**
  * Top-level keys `validateTypeSchema` reads only to refuse. Lifecycle is
  * universal and metadata-layer, so a per-type state machine has no effect
- * and would mislead whoever wrote it. `unreadTopLevelKeys` leaves these to
- * the validator, which already names each one.
+ * and would mislead whoever wrote it. `unreadKeys` leaves these to the
+ * validator, which already names each one.
  */
 export const REFUSED_TYPE_SCHEMA_KEYS: readonly string[] = [
   "states",
@@ -736,6 +739,8 @@ export function validateTypeSchema(
       );
     }
   }
+
+  errors.push(...unreadKeys(obj, "type"));
 
   const fields = asRecord(obj.fields);
   if (!fields) {
@@ -1756,7 +1761,7 @@ export function validateEdgeTypeSchema(
     };
   }
 
-  const errors: SchemaValidationIssue[] = [];
+  const errors: SchemaValidationIssue[] = unreadKeys(obj, "edge");
 
   if (typeof obj.id !== "string" || obj.id.length === 0) {
     errors.push(
@@ -1979,8 +1984,8 @@ export function validateEdgeTypeSchema(
 /**
  * Every top-level key `validateTypeSchema` reads to accept. Checked against
  * `TypeSchema` in both directions, so a key added to the type without being
- * listed here fails to compile rather than being refused in every file that
- * uses it. `required` is the authoring form the validator folds into the
+ * listed here fails to compile rather than being refused in every schema
+ * that uses it. `required` is the authoring form the validator folds into the
  * fields, and so is read without being a key of the result. The keys it
  * reads only to refuse are `REFUSED_TYPE_SCHEMA_KEYS`, and
  * `unread-keys.test.ts` holds the two lists together to what it reads.
@@ -2003,6 +2008,47 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
   "required",
 ]);
 
+/** Every key of a field definition, held the same way. */
+export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    type: true,
+    description: true,
+    required: true,
+    enum_values: true,
+    items_type: true,
+    format: true,
+    searchable: true,
+    maxLength: true,
+    maxItems: true,
+  } satisfies Record<keyof FieldDefinition, true>),
+);
+
+/** Every key of a type's `display_hints`, held the same way. */
+export const DISPLAY_HINTS_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    title_field: true,
+    body_field: true,
+  } satisfies Record<keyof DisplayHints, true>),
+);
+
+/** Every key of a type's `version_policy`, held the same way. */
+export const VERSION_POLICY_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    recent_days: true,
+    daily_snapshot_days: true,
+    weekly_snapshot_days: true,
+    max_versions: true,
+  } satisfies Record<keyof VersionPolicy, true>),
+);
+
+/** Every key of a type's `merge_policy`, held the same way. */
+export const MERGE_POLICY_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    fields: true,
+    default: true,
+  } satisfies Record<keyof MergePolicy, true>),
+);
+
 /** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
 export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
@@ -2020,33 +2066,117 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
 );
 
 /**
- * One issue per top-level key the validator for this kind of schema does
- * not read.
- *
- * The validators ignore such a key, and the registration routes call them,
- * so refusing it there would change what the wire accepts. An in-tree file
- * is held tighter because it is the format people copy: a key nothing reads
- * says something nothing enforces, and a copy carries it on as if it did.
- * `scripts/validate.ts` asks this of every in-tree file.
+ * Every key of a property an edge type declares. A field's definition less
+ * the three keys that only mean something to the items a type validates:
+ * `searchable`, `maxLength` and `maxItems`. `POST /edge-types` does not
+ * declare them, and nothing checks an edge against its edge type's properties.
  */
-export function unreadTopLevelKeys(
+export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    type: true,
+    description: true,
+    required: true,
+    enum_values: true,
+    items_type: true,
+    format: true,
+  } satisfies Record<
+    Exclude<keyof FieldDefinition, "searchable" | "maxLength" | "maxItems">,
+    true
+  >),
+);
+
+/** A key's spelling with the case and separators a misspelling gets wrong removed. */
+const squashKey = (key: string): string =>
+  key.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function unreadKeysOf(
+  value: Record<string, unknown>,
+  path: string,
+  read: ReadonlySet<string>,
+  holder: string,
+  leftToTheValidator: readonly string[] = [],
+): SchemaValidationIssue[] {
+  return Object.keys(value)
+    .filter((key) => !read.has(key) && !leftToTheValidator.includes(key))
+    .map((key) => {
+      const likely = [...read].find(
+        (known) => squashKey(known) === squashKey(key),
+      );
+      return issue({
+        field: path === "" ? key : `${path}.${key}`,
+        expected: `only the keys ${holder} takes: ${[...read].sort().join(", ")}`,
+        actual: `an unread key "${key}"`,
+        hint:
+          likely === undefined
+            ? "Remove it: Marfa reads no such key, so it would change nothing about the type."
+            : `Marfa reads no key "${key}". Write "${likely}" if that is the rule you meant.`,
+      });
+    });
+}
+
+/**
+ * One issue per key a schema carries that its validator does not read, at the
+ * top level and inside each object the schema declares: a type's fields,
+ * `display_hints`, `version_policy` and `merge_policy`, and an edge type's
+ * properties. The issue's `field` is the key's path, such as
+ * `fields.title.minimum`.
+ *
+ * Both validators call it, so the wire, an archive restore and the in-tree
+ * files refuse such a key alike. Left alone, a misspelled rule registers and
+ * the type then accepts what its author meant it to refuse.
+ */
+export function unreadKeys(
   input: unknown,
   kind: "type" | "edge",
 ): SchemaValidationIssue[] {
   const obj = asRecord(input);
   if (!obj) return [];
-  const read = kind === "type" ? TYPE_SCHEMA_KEYS : EDGE_TYPE_SCHEMA_KEYS;
-  // A refused key is the validator's to report, and reporting it here too
-  // would name one fault twice.
-  const refused = kind === "type" ? REFUSED_TYPE_SCHEMA_KEYS : [];
-  return Object.keys(obj)
-    .filter((key) => !read.has(key) && !refused.includes(key))
-    .map((key) =>
-      issue({
-        field: key,
-        expected: `only the keys the ${kind} schema validator reads: ${[...read].sort().join(", ")}`,
-        actual: `an unread key "${key}"`,
-        hint: "Remove it: nothing reads it, so it changes nothing about the type.",
+  if (kind === "edge") {
+    const props = asRecord(obj.property_schema);
+    return [
+      ...unreadKeysOf(obj, "", EDGE_TYPE_SCHEMA_KEYS, "an edge type schema"),
+      ...Object.entries(props ?? {}).flatMap(([name, def]) => {
+        const record = asRecord(def);
+        return record
+          ? unreadKeysOf(
+              record,
+              `property_schema.${name}`,
+              EDGE_PROPERTY_KEYS,
+              "an edge property",
+            )
+          : [];
       }),
-    );
+    ];
+  }
+  const issues = unreadKeysOf(
+    obj,
+    "",
+    TYPE_SCHEMA_KEYS,
+    "a type schema",
+    // A refused key is the validator's to report, and reporting it here too
+    // would name one fault twice.
+    REFUSED_TYPE_SCHEMA_KEYS,
+  );
+  for (const [name, def] of Object.entries(asRecord(obj.fields) ?? {})) {
+    const record = asRecord(def);
+    if (record) {
+      issues.push(
+        ...unreadKeysOf(
+          record,
+          `fields.${name}`,
+          FIELD_DEFINITION_KEYS,
+          "a field definition",
+        ),
+      );
+    }
+  }
+  for (const [key, read] of [
+    ["display_hints", DISPLAY_HINTS_KEYS],
+    ["version_policy", VERSION_POLICY_KEYS],
+    ["merge_policy", MERGE_POLICY_KEYS],
+  ] as const) {
+    const record = asRecord(obj[key]);
+    if (record) issues.push(...unreadKeysOf(record, key, read, key));
+  }
+  return issues;
 }
