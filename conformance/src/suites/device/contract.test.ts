@@ -797,6 +797,7 @@ const invocations: Record<string, () => string[]> = {
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
   "sign-ins list": () => [],
+  "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
   "setup claim": () => ["--stdin"],
 };
