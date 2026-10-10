@@ -52,7 +52,7 @@ unset MARFA_API_URL MARFA_API_KEY
 marfa --socket "$(pwd -P)/packages/server/data/control/marfa.sock" setup open
 ```
 
-The CLI uses the private socket under the server's operating-system account. It opens a single-use link; `setup open --no-browser` prints the link instead. On Linux, install the `acl` package so the server and CLI can check socket access.
+This command uses the private socket under the server's operating-system account. It opens a single-use link; `setup open --no-browser` prints the link instead. On Linux, install the `acl` package so the server and CLI can check socket access.
 
 Sign in at <http://localhost:8600/auth/sign-in>, then open <http://localhost:8600/auth/owner/manage> to manage keys, apps, connectors and maintenance. Apps and scripts use ordinary keys or approved OAuth access tokens with explicit permissions. Neither becomes machine authority. [`CONTRIBUTING.md`](./CONTRIBUTING.md#claiming-the-instance-and-making-a-key) shows terminal setup and key creation; the [deployment guide](./deploy/README.md#recovering-the-owner) covers password recovery.
 
