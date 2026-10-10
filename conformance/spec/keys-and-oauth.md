@@ -1763,7 +1763,7 @@ If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than 
 
 ## A browser session's idle week
 
-A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use.
+A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use. Its cookie lasts longer, and the stored session is what ends it.
 
 ### `keys-and-oauth/session-use-recorded`
 
@@ -1779,13 +1779,35 @@ When the server records a use of a browser session, the server MUST set the sess
 
 **Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`.
 
+### `keys-and-oauth/session-sign-in-expiry`
+
+When a password sign-in creates a browser session, the server MUST set the session's `expires_at` to seven days and one minute after the sign-in.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
+
+### `keys-and-oauth/session-cookie-lifetime`
+
+When a password sign-in sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
+
+**Reason:** The stored session is the only clock, so the cookie only has to outlive it. A cookie that tracked the session's expiry would be dropped while the session lived whenever the answer that renewed it did not reach the browser.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
+
 ### `keys-and-oauth/session-use-cookie`
 
-When the server records a use of a browser session in an answer that succeeds, the server MUST send the browser's session cookie again with a `Max-Age` of seven days and one minute.
+When the server records a use of a browser session, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401`.
 
-**Reason:** The browser keeps the cookie as long as the server keeps the session.
+**Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, and a `401` means the session ended while the request was in flight.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again with a week and a minute's lifetime when it records a use`.
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`.
+
+### `keys-and-oauth/session-use-unwritten`
+
+If the server cannot record a use of a live browser session, then the server MUST still admit the request on it.
+
+**Reason:** Recording a use is bookkeeping, and a full disk must not sign the owner out of reading. A write the request makes meets the same storage and answers as it would.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › admits a request whose use cannot be recorded, and records the next once it can`.
 
 ### `keys-and-oauth/session-idle-kept`
 

@@ -51,6 +51,8 @@ interface Browser {
   cookie: string;
   address: string;
   userAgent: string;
+  /** The `Max-Age` the sign-in gave the cookie. */
+  maxAge: number;
 }
 
 interface SignIn {
@@ -83,8 +85,25 @@ async function signIn(): Promise<Browser> {
     response.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
-  return { cookie: cookie!, address, userAgent };
+  return {
+    cookie: cookie!,
+    address,
+    userAgent,
+    maxAge: cookieMaxAge(response, cookie!) ?? Number.NaN,
+  };
 }
+
+/** The `Max-Age` of the session cookie `response` sets, if it sets it. */
+function cookieMaxAge(response: Response, cookie: string): number | undefined {
+  const line = response.headers
+    .getSetCookie()
+    .find((value) => value.startsWith(`${cookie};`));
+  return line === undefined
+    ? undefined
+    : Number(/max-age=(\d+)/i.exec(line)?.[1]);
+}
+
+const COOKIE_SECONDS = 400 * 24 * 3600;
 
 function list(browser: Browser): Promise<Response> {
   return fetch(`${server.apiUrl}/owner/sign-ins`, {
@@ -382,17 +401,58 @@ describe("a browser session's idle week", () => {
     expect(Date.parse(listed.expires_at) / 1000).toBe(row.expires_at);
   });
 
-  it("sends the cookie again with a week and a minute's lifetime when it records a use", async () => {
+  it("gives a new session a week and a minute, and its cookie 400 days", async () => {
+    const browser = await signIn();
+    expect(browser.maxAge).toBe(COOKIE_SECONDS);
+    const own = (await signIns(browser)).find((row) => row.current)!;
+    expect(
+      (Date.parse(own.expires_at) - Date.parse(own.created_at)) / 1000,
+    ).toBe(7 * 24 * 3600 + 60);
+  });
+
+  it("sends the cookie again for 400 days when it records a use, in a refusal too", async () => {
     const browser = await signIn();
     const id = await idOf(browser);
     arrange(id, { updatedAt: Date.now() - 2 * MINUTE });
-    const response = await list(browser);
-    expect(response.status).toBe(200);
-    const sent = response.headers
-      .getSetCookie()
-      .find((line) => line.startsWith(`${browser.cookie};`));
-    expect(sent, "the cookie was not sent again").toBeDefined();
-    expect(sent).toMatch(/max-age=604860/i);
+    const missing = await fetch(
+      `${server.apiUrl}/items/019537a0-7b80-7000-8000-000000000000`,
+      { headers: { cookie: browser.cookie } },
+    );
+    expect(missing.status).toBe(404);
+    expect(cookieMaxAge(missing, browser.cookie)).toBe(COOKIE_SECONDS);
+    expect(stored(id).updated_at).toBeGreaterThan(
+      Math.floor((Date.now() - MINUTE) / 1000),
+    );
+    arrange(id, { updatedAt: Date.now() - 2 * MINUTE });
+    const listed = await list(browser);
+    expect(listed.status).toBe(200);
+    expect(cookieMaxAge(listed, browser.cookie)).toBe(COOKIE_SECONDS);
+  });
+
+  it("admits a request whose use cannot be recorded, and records the next once it can", async () => {
+    const browser = await signIn();
+    const id = await idOf(browser);
+    const recorded = Date.now() - 2 * MINUTE;
+    arrange(id, { updatedAt: recorded });
+    withInstanceDatabase(server.sqlitePath, (db) =>
+      db.exec(
+        "CREATE TRIGGER refuse_session_use BEFORE UPDATE ON auth_session BEGIN SELECT RAISE(ABORT, 'session use refused'); END",
+      ),
+    );
+    try {
+      const admitted = await list(browser);
+      expect(admitted.status).toBe(200);
+      expect(cookieMaxAge(admitted, browser.cookie)).toBeUndefined();
+      expect(stored(id).updated_at).toBe(Math.floor(recorded / 1000));
+    } finally {
+      withInstanceDatabase(server.sqlitePath, (db) =>
+        db.exec("DROP TRIGGER refuse_session_use"),
+      );
+    }
+    const next = await list(browser);
+    expect(next.status).toBe(200);
+    expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
+    expect(stored(id).updated_at).toBeGreaterThan(Math.floor(recorded / 1000));
   });
 
   it("does not record a use within a minute of the last one", async () => {
