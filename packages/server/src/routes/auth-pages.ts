@@ -18,11 +18,11 @@ import {
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
+import { browserWriter, requestWriter } from "../auth/version-writer.js";
 import type {
   DeviceCodeRefusal,
   MarfaAuth,
   MarfaAuthSession,
-  MarfaAuthSessionUser,
 } from "../auth/instance.js";
 import {
   renderSignInPage,
@@ -79,7 +79,7 @@ import { forwardHeaders } from "./forward-headers.js";
  */
 async function createUserAppGrant(
   storage: Storage,
-  consentingUser: MarfaAuthSessionUser,
+  consenting: MarfaAuthSession,
   clientId: string,
   scopes: string[],
   source: "marfa/oauth/device",
@@ -89,6 +89,11 @@ async function createUserAppGrant(
   scopes: string[];
 }> {
   const now = new Date().toISOString();
+  const consentingUser = consenting.user;
+  const by = browserWriter(
+    consenting.session.id,
+    consenting.session.userAgent ?? null,
+  );
 
   // Detect re-consent — update in place if a projection exists, else insert.
   let existingItemId: string | null = null;
@@ -158,7 +163,7 @@ async function createUserAppGrant(
       const mergedScopes = [...new Set([...standingScopes, ...scopes])];
       const written = await writeItem(
         storage,
-        { kind: "platform" },
+        { kind: "platform", by },
         {
           op: "update",
           id: existingItemId,
@@ -186,7 +191,7 @@ async function createUserAppGrant(
   // writer of one leaves it to the store the way `POST /items` does.
   const { item } = await writeItem(
     storage,
-    { kind: "platform" },
+    { kind: "platform", by },
     {
       op: "create",
       type: "system.connection",
@@ -347,6 +352,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       itemId: id,
       clientId,
       authUserId,
+      by: requestWriter(c),
       // Opt-in, and never inferred. A caller here has nobody to ask, so the
       // keys the app minted survive unless this door was told to take them.
       revokeKeys: asksToRevokeKeys(c.req.query("revoke_keys")),
@@ -942,7 +948,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
             }
             const created = await createUserAppGrant(
               storage,
-              sessionResult.session.user,
+              sessionResult.session,
               clientId,
               approvedScopes,
               "marfa/oauth/device",

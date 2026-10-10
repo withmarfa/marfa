@@ -1,6 +1,7 @@
 import { isAPIError } from "better-auth/api";
 import { withConsentLock } from "./consent-lock.js";
 import { revokeProjectedGrant, auditGrantReused } from "./grant-lifecycle.js";
+import { appWriter } from "./version-writer.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -326,6 +327,8 @@ export function withCredentialAudit<
                   itemId: item?.id ?? null,
                   clientId: revoke.clientId,
                   authUserId: revoke.userId,
+                  // The app revoking its own refresh token.
+                  by: item ? await appWriter(storage, item) : null,
                   audit: {
                     action: "auth.grant.revoked",
                     resource_type: "oauth_grant",

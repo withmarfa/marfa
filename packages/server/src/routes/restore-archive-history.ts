@@ -5,7 +5,8 @@ import {
   isValidTypeIdentifier,
   MarfaError,
 } from "@withmarfa/shared";
-import type { Version } from "@withmarfa/shared";
+import type { Version, VersionWriter } from "@withmarfa/shared";
+import { archivedWriter } from "../auth/version-writer.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -87,6 +88,7 @@ export function archiveVersions(
       occurred_at,
       source_id,
       created_at,
+      writer,
     } = snapshot;
     if (typeof id !== "string" || !isValidId(id)) {
       return fail(`${path}.id`, "a valid snapshot ID");
@@ -125,6 +127,8 @@ export function archiveVersions(
       return fail(`${path}.created_at`, "a valid instant");
     if (source_id !== null && typeof source_id !== "string")
       return fail(`${path}.source_id`, "a string or null");
+    const named = archivedWriter(writer, `${path}.writer`);
+    if ("field" in named) return fail(named.field, named.expected);
     seenIds.add(id);
     seenVersions.add(version);
     return {
@@ -136,7 +140,21 @@ export function archiveVersions(
       tier,
       occurred_at,
       source_id,
+      writer: named.writer,
       created_at,
     };
   });
+}
+
+/** The writer of an archived item's current version, which its line names
+ *  beside the item. */
+export function archiveWriter(
+  item: Record<string, unknown>,
+  writer: unknown,
+  index: number,
+): VersionWriter | null {
+  const named = archivedWriter(writer, "writer");
+  if ("field" in named)
+    throw refusal("item", item, index, named.field, named.expected);
+  return named.writer;
 }

@@ -28,6 +28,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
+import { requestWriter } from "../auth/version-writer.js";
 import type { ItemWriteResult } from "../storage/item-write.js";
 import { depthInsideFolder } from "../folder-path.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -532,7 +533,7 @@ export function folderRoutes(storage: Storage) {
       () =>
         writeItem(
           storage,
-          { kind: "platform" },
+          { kind: "platform", by: requestWriter(c) },
           {
             op: "create",
             type: FOLDER_TYPE,
@@ -575,7 +576,7 @@ export function folderRoutes(storage: Storage) {
         refuseRevoked(folder);
         return await writeItem(
           storage,
-          { kind: "platform" },
+          { kind: "platform", by: requestWriter(c) },
           {
             op: "update",
             id,
@@ -624,7 +625,7 @@ export function folderRoutes(storage: Storage) {
         refuseRevoked(folder);
         await writeItem(
           storage,
-          { kind: "platform" },
+          { kind: "platform", by: requestWriter(c) },
           {
             op: "update",
             id,
@@ -635,7 +636,7 @@ export function folderRoutes(storage: Storage) {
         );
         const { item: revoked } = await writeItem(
           storage,
-          { kind: "platform" },
+          { kind: "platform", by: requestWriter(c) },
           { op: "transition", id, state: "revoked" },
         );
         return { item: revoked, metadata: await storage.metadata.get(id) };

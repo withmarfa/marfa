@@ -39,6 +39,7 @@ import type {
   Metadata,
   Tier,
   Version,
+  VersionWriter,
 } from "@withmarfa/shared";
 import {
   checkEdgePermission,
@@ -70,6 +71,7 @@ import {
 } from "../routes/_edge-visibility.js";
 import { refuseUnlessUninstalled } from "../routes/_connection-refusal.js";
 import { staleVersion } from "./conflict.js";
+import { resolveWriter, type WrittenBy } from "../auth/version-writer.js";
 import type { ConflictMode, StaleVersionResponse } from "./conflict.js";
 import { readInstanceConfig } from "./instance-config.js";
 import { baseVersion } from "./interface.js";
@@ -82,13 +84,15 @@ import type {
 } from "./interface.js";
 
 /**
- * Who a write is made for. A credential's writes are held to its grants; the
- * platform's own (a folder, a grant's record, an enrichment, an archive
- * restore) are authorized by the door that makes them and held to everything
- * else.
+ * Who a write is made for. A credential's writes are held to its grants, and
+ * the versions they write name it. The platform's own (a folder, a grant's
+ * record, an enrichment, an archive restore) are authorized by the door that
+ * makes them and held to everything else, and name as their writer the
+ * sign-in `by` says, which the door decides: the request's, an archive's, or
+ * none for the server's own work (`version-writer-census.test.ts`).
  */
 export type ItemWriter =
-  { kind: "credential"; key: ApiKey } | { kind: "platform" };
+  { kind: "credential"; key: ApiKey } | { kind: "platform"; by: WrittenBy };
 
 /** The fields a write may set on a row that exists. */
 interface RowChange {
@@ -306,7 +310,9 @@ export interface AnnounceOptions {
 
 export async function writeItem<W extends ItemWrite>(
   storage: Storage,
-  writer: W extends ItemCreate ? { kind: "platform" } : ItemWriter,
+  writer: W extends ItemCreate
+    ? Extract<ItemWriter, { kind: "platform" }>
+    : ItemWriter,
   write: W,
   { announce = true, fanout = true }: AnnounceOptions = {},
 ): Promise<ResultOf<W>> {
@@ -511,6 +517,19 @@ async function announceMove(
 
 function credentialOf(writer: ItemWriter): ApiKey | undefined {
   return writer.kind === "credential" ? writer.key : undefined;
+}
+
+/** The sign-in the version a write leaves is written by. */
+function versionWriter(
+  storage: Storage,
+  writer: ItemWriter,
+): Promise<VersionWriter | null> {
+  return resolveWriter(
+    storage,
+    writer.kind === "credential"
+      ? { kind: "credential", key: writer.key }
+      : writer.by,
+  );
 }
 
 async function enforcementFor(
@@ -759,6 +778,7 @@ async function changeRow(
     if (writesRow) {
       const key = credentialOf(writer);
       const updated = await itemWrites(storage).update(row.id, {
+        writer: await versionWriter(storage, writer),
         properties: change.properties,
         ...(change.properties_mode !== undefined && {
           properties_mode: change.properties_mode,
@@ -978,6 +998,7 @@ async function put(
   );
   if (undeclared) throw undeclared;
   const created = await itemWrites(storage).create({
+    writer: await versionWriter(storage, writer),
     type: write.type,
     properties: write.properties ?? {},
     ...(write.blob_proof !== undefined && {
@@ -1042,6 +1063,7 @@ async function createPlatformRow(
     throw new Error("A credential's create is a put");
   }
   const created = await itemWrites(storage).create({
+    writer: await versionWriter(storage, writer),
     type: write.type,
     properties: write.properties,
     ...(write.id !== undefined && { id: write.id }),

@@ -94,7 +94,7 @@ it("keeps an app's name unchanged when the audit of its rename fails", async () 
   expect(owner).toBeTruthy();
   const { item } = await writeItem(
     ctx.storage,
-    { kind: "platform" },
+    { kind: "platform", by: null },
     {
       op: "create",
       type: "system.connection",

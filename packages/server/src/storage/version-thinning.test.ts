@@ -23,6 +23,7 @@ function makeVersion(id: string, version: number, createdAt: string): Version {
     tier: "library",
     occurred_at: createdAt,
     source_id: null,
+    writer: null,
     created_at: createdAt,
   };
 }

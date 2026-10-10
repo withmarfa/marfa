@@ -295,7 +295,11 @@ describe("a purge through the item write — atomicity", () => {
     );
 
     await expect(
-      writeItem(ctx.storage, { kind: "platform" }, { op: "purge", id: id1 }),
+      writeItem(
+        ctx.storage,
+        { kind: "platform", by: null },
+        { op: "purge", id: id1 },
+      ),
     ).rejects.toThrow(/simulated FTS failure/);
 
     expect(await ctx.storage.items.getIncludingTrashed(id1)).not.toBeNull();

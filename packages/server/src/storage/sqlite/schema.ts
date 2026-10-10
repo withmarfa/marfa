@@ -8,9 +8,33 @@ import {
   uniqueIndex,
   primaryKey,
   check,
+  type SQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { WebhookDeliveryStatus } from "@withmarfa/shared";
+
+/** A version's writer (`VersionWriter`): all three columns, or none. */
+function writerColumns() {
+  return {
+    writer_kind: text("writer_kind"),
+    writer_id: text("writer_id"),
+    writer_name: text("writer_name"),
+  };
+}
+
+function writerWhole(
+  name: string,
+  table: {
+    writer_kind: SQLiteColumn;
+    writer_id: SQLiteColumn;
+    writer_name: SQLiteColumn;
+  },
+) {
+  return check(
+    name,
+    sql`(${table.writer_kind} IS NULL AND ${table.writer_id} IS NULL AND ${table.writer_name} IS NULL) OR (${table.writer_kind} IN ('browser', 'app', 'key', 'local') AND ${table.writer_id} IS NOT NULL AND ${table.writer_name} IS NOT NULL)`,
+  );
+}
 
 export const items = sqliteTable(
   "items",
@@ -52,8 +76,12 @@ export const items = sqliteTable(
     // because most items are not events.
     starts_at: text("starts_at"),
     ends_at: text("ends_at"),
+    // The sign-in that wrote the row's current version, which the snapshot
+    // of that version takes when an update moves past it.
+    ...writerColumns(),
   },
   (table) => [
+    writerWhole("items_writer_whole", table),
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
     index("idx_items_created_at").on(table.created_at),
@@ -296,8 +324,14 @@ export const versions = sqliteTable(
     // type it was written under rather than the row's type now.
     type: text("type").notNull(),
     created_at: text("created_at").notNull(),
+    // Kept here rather than looked up, so a sign-in that has ended since is
+    // still named.
+    ...writerColumns(),
   },
-  (table) => [index("idx_versions_item_id").on(table.item_id)],
+  (table) => [
+    writerWhole("versions_writer_whole", table),
+    index("idx_versions_item_id").on(table.item_id),
+  ],
 );
 
 export const apiKeys = sqliteTable(

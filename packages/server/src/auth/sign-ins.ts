@@ -11,10 +11,11 @@ import {
 import type { MarfaAuth } from "./instance.js";
 import type { KeysInReach } from "./key-reach.js";
 import {
-  appSignInName,
+  appRecordName,
   browserSignInName,
   keySignInName,
 } from "./sign-in-names.js";
+import type { WrittenBy } from "./version-writer.js";
 
 /**
  * The owner's sign-ins: every way the owner's Marfa can be reached. A browser
@@ -38,11 +39,14 @@ export interface SignIn {
   mintedBy: string | null;
 }
 
-/** Who asks, for the audit rows the changes write. */
+/** Who asks, for the audit rows and the versions the changes write. */
 export interface SignInActor {
   /** The audit handle of the owner's session or the local command. */
   keyId: string;
   clientIp: string | null;
+  /** The owner's browser or the local command, which the changes are
+   *  written by. */
+  writer: WrittenBy;
 }
 
 /** The app grant `item` is, when it is a live one of the owner. */
@@ -65,18 +69,10 @@ function ownersLiveApp(
 
 async function appSignIn(storage: Storage, item: Item): Promise<SignIn> {
   const props = item.properties;
-  const clientId = typeof props.client_id === "string" ? props.client_id : "";
-  const client = clientId
-    ? await storage.oauthProvider?.getClient(clientId)
-    : null;
   return {
     id: item.id,
     kind: "app",
-    name: appSignInName(
-      typeof props.name === "string" ? props.name : undefined,
-      client?.name,
-      clientId,
-    ),
+    name: await appRecordName(storage, item),
     createdAt:
       typeof props.granted_at === "string" ? props.granted_at : item.created_at,
     lastUsedAt:
@@ -204,6 +200,7 @@ export async function endSignIn(
       clientId: grant.clientId,
       authUserId: grant.authUserId,
       revokeKeys: options.revokeKeys,
+      by: actor.writer,
       stillApplies: async () =>
         ownersLiveApp(await storage.items.get(id), ownerId) !== null,
       audit: {
@@ -273,7 +270,7 @@ export async function renameSignIn(
           if (grant?.clientId !== seen.clientId) return null;
           const written = await writeItem(
             storage,
-            { kind: "platform" },
+            { kind: "platform", by: actor.writer },
             { op: "update", id, properties: { name } },
           );
           if (written.outcome !== "updated")

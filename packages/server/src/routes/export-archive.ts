@@ -332,6 +332,7 @@ async function collectSelection(input: {
           item,
           metadata,
           versions,
+          writer: await storage.items.currentWriter(item.id),
           lending_blobs: lendingBlobs,
           lending_extensions: lendingExtensions,
         }),

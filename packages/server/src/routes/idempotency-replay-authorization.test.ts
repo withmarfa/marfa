@@ -399,7 +399,7 @@ it("applies a narrower OAuth grant to the same durable receipt identity", async 
   const grant = (await ctx.storage.items.get(oauth.grantId))!;
   const narrowGrant = await writeItem(
     ctx.storage,
-    { kind: "platform" },
+    { kind: "platform", by: null },
     {
       op: "update",
       id: grant.id,
@@ -427,7 +427,7 @@ it("applies a narrower OAuth grant to the same durable receipt identity", async 
   const narrowed = (await ctx.storage.items.get(grant.id))!;
   await writeItem(
     ctx.storage,
-    { kind: "platform" },
+    { kind: "platform", by: null },
     {
       op: "update",
       id: grant.id,

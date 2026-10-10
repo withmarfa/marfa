@@ -768,7 +768,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // The witness: the same write as the platform's own goes through.
     await writeItem(
       ctx.storage,
-      { kind: "platform" },
+      { kind: "platform", by: null },
       { op: "purge", id, revokedGrant: true },
     );
     expect(await ctx.storage.items.get(id)).toBeNull();

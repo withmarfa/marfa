@@ -63,6 +63,7 @@ import type {
   Tier,
   ItemState,
   PaginatedResult,
+  VersionWriter,
 } from "@withmarfa/shared";
 import type {
   BlobProof,
@@ -131,7 +132,7 @@ import { isPrimaryKeyViolation } from "./pk-violation.js";
 import { isFileType, stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
-import { rowToItem } from "./helpers.js";
+import { rowToItem, rowWriter, writerColumns } from "./helpers.js";
 
 // The stored properties column is SQLite's binary JSONB encoding. Every read
 // projects it back to JSON text via json() so rowToItem can parse it; every
@@ -295,6 +296,8 @@ async function insertConflictedSibling(
     proof: BlobProof;
     /** The digests the losing write sent that its base version lacked. */
     carried: ReadonlySet<string>;
+    /** The sign-in the losing write came from, which wrote the copy. */
+    writer: VersionWriter | null;
     mayCopyEdge?: (
       edgeType: string,
       sourceType: string,
@@ -326,6 +329,7 @@ async function insertConflictedSibling(
       version: 1,
       schema_version: schemaVersion,
       ...instantColumnValues(properties),
+      ...writerColumns(args.writer),
     })
     .onConflictDoNothing()
     .returning({ id: items.id });
@@ -786,6 +790,7 @@ export class SqliteItemStore implements ItemStore {
             capture_longitude: input.capture_longitude,
             // Ordinary text columns beside the JSONB blob, not part of it.
             ...instantColumnValues(properties),
+            ...writerColumns(input.writer ?? null),
           })
           .run();
       } catch (err) {
@@ -871,6 +876,19 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
+  async currentWriter(id: string): Promise<VersionWriter | null> {
+    const row = await this.db
+      .select({
+        writer_kind: items.writer_kind,
+        writer_id: items.writer_id,
+        writer_name: items.writer_name,
+      })
+      .from(items)
+      .where(eq(items.id, id))
+      .get();
+    return row ? rowWriter(row) : null;
+  }
+
   private async getRaw(id: string): Promise<Item | null> {
     const row = await this.db
       .select(itemColumns)
@@ -1255,6 +1273,7 @@ export class SqliteItemStore implements ItemStore {
             occurred_at: row.occurred_at,
             source_id: row.source_id,
             type: row.type,
+            writer: rowWriter(row),
           },
           tx,
         );
@@ -1284,6 +1303,7 @@ export class SqliteItemStore implements ItemStore {
           ...instantColumnValues(merged),
           version: newVersion,
           updated_at: now,
+          ...writerColumns(input.writer ?? null),
           ...(input.tier !== undefined && { tier: input.tier }),
           ...(input.occurred_at !== undefined && {
             occurred_at: input.occurred_at,
@@ -1539,6 +1559,7 @@ export class SqliteItemStore implements ItemStore {
             now,
             proof: input.blob_proof ?? null,
             carried: staleCarried,
+            writer: input.writer ?? null,
             properties: conflictedSiblingProperties({
               clientProperties: clientProps,
               currentProperties: currentProps,
@@ -1577,6 +1598,7 @@ export class SqliteItemStore implements ItemStore {
         ...instantColumnValues(resolvedProperties),
         version: newVersion,
         updated_at: now,
+        ...writerColumns(input.writer ?? null),
         ...(resolvedFields.tier !== undefined && { tier: resolvedFields.tier }),
         ...(resolvedFields.occurred_at !== undefined && {
           occurred_at: resolvedFields.occurred_at,

@@ -98,6 +98,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { projectGrantOnConsent } from "../auth/grant-lifecycle.js";
+import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
@@ -737,6 +738,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
               clientId,
               scopes: formScopes,
               clientIp: c.var.clientIp ?? null,
+              by: browserWriter(
+                session.session.id,
+                session.session.userAgent ?? null,
+              ),
             });
           }
           return withNoStore(proxyResp);
