@@ -200,6 +200,11 @@ Options:
           The client id an earlier sign-in registered, where no keychain remembers it; without one
           the binary registers again
 
+      --name <NAME>
+          The name this sign-in registers under, which is sent to the server and shown to its owner
+          among their sign-ins. Defaults to `marfa on` and this machine's host name without its
+          domain. Giving it registers the binary again
+
   -h, --help
           Print help
 
@@ -581,7 +586,8 @@ Commands:
   rename  Give an app or a key a new name. A key's name is its label; a browser's comes from the
           browser and can't be changed. Needs direct local authority (--socket)
   end     End a sign-in at once: its next request is refused, and an app can't refresh its tokens.
-          What it wrote stays. Needs direct local authority (--socket)
+          What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs
+          direct local authority (--socket)
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -659,7 +665,7 @@ Arguments:
           The sign-in's id
 
   <NAME>
-          The new name
+          The new name, which may start with `-`
 
 Options:
   -h, --help
@@ -692,7 +698,8 @@ Output:
 
 ```text
 End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it
-wrote stays. Needs direct local authority (--socket)
+wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs direct local
+authority (--socket)
 
 Usage: marfa sign-ins end [OPTIONS] <ID>
 
@@ -701,6 +708,9 @@ Arguments:
           The sign-in's id
 
 Options:
+      --revoke-keys
+          For an app, also revoke every key it minted. Refused for a browser or a key
+
   -h, --help
           Print help
 

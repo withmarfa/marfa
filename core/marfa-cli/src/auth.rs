@@ -189,10 +189,15 @@ fn machine_name() -> Option<String> {
     (!name.is_empty() && !name.chars().any(char::is_control)).then(|| name.to_string())
 }
 
-pub fn register(discovery: &Discovery) -> Result<String, CliError> {
+/// Register this binary, under `name` where the person gave one.
+pub fn register(discovery: &Discovery, name: Option<&str>) -> Result<String, CliError> {
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => client_name(machine_name().as_deref()),
+    };
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
-        "client_name": client_name(machine_name().as_deref()),
+        "client_name": name,
         "application_type": "native",
         "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
         "response_types": [],
