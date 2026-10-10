@@ -15,12 +15,14 @@ import {
   itemsStatus,
   registerApp,
   token,
+  type App,
 } from "../../utils/signed-in.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
- * The owner's browser sessions: listed and ended at `/owner/sign-ins`, and
- * ended by a week unused. A session's age is arranged in the server's own
+ * The owner's sign-ins: every browser session, app and key, listed, renamed
+ * and ended at `/owner/sign-ins`, and a browser session ended by a week
+ * unused. A session's age is arranged in the server's own
  * database where a clock would take a week to reach it, and then asked about
  * over HTTP, so what is asserted is what the server answers. Each sign-in
  * comes from an address of its own, so the per-address sign-in limit never
@@ -62,6 +64,7 @@ interface Browser {
 interface SignIn {
   id: string;
   kind: string;
+  name: string;
   current: boolean;
   created_at: string;
   last_used_at: string;
@@ -70,10 +73,11 @@ interface SignIn {
   user_agent: string | null;
 }
 
-async function signIn(): Promise<Browser> {
+async function signIn(
+  userAgent = `owner-sign-ins browser ${String(addresses + 1)}`,
+): Promise<Browser> {
   addresses += 1;
   const address = `198.51.100.${String(addresses)}`;
-  const userAgent = `owner-sign-ins browser ${String(addresses)}`;
   const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
     method: "POST",
     headers: {
@@ -134,6 +138,134 @@ function end(browser: Browser, id: string): Promise<Response> {
     method: "DELETE",
     headers: { cookie: browser.cookie, origin },
   });
+}
+
+function rename(
+  browser: Browser,
+  id: string,
+  body: unknown,
+): Promise<Response> {
+  return fetch(`${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: {
+      cookie: browser.cookie,
+      origin,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/** The private local command's request, which carries no credential. */
+function local(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return controlRequest(server.controlSocket, path, { method, body });
+}
+
+const APP_SCOPE = "core.note:read core.note:write offline_access";
+
+interface SignedInApp {
+  clientId: string;
+  accessToken: string;
+  refreshToken: string;
+  app: App;
+}
+
+/** An app registered under `name` and approved by `browser`. */
+async function approveApp(
+  browser: Browser,
+  name: string,
+): Promise<SignedInApp> {
+  const app = await registerApp(server, APP_SCOPE, { client_name: name });
+  const tokens = await connect(server, origin, browser.cookie, app, APP_SCOPE);
+  expect(tokens.access_token).toBeTruthy();
+  expect(tokens.refresh_token).toBeTruthy();
+  return {
+    clientId: app.clientId,
+    accessToken: tokens.access_token!,
+    refreshToken: tokens.refresh_token!,
+    app,
+  };
+}
+
+/** A key the local command mints, which can read and write notes. */
+async function mintKey(label: string): Promise<{ id: string; key: string }> {
+  const minted = await local("POST", "/keys", {
+    label,
+    source: `owner-sign-ins-${label.replace(/\W+/g, "-")}`,
+    type_permissions: { "core.note": "write" },
+  });
+  expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+  return minted.body as { id: string; key: string };
+}
+
+/** Writes a note with `bearer`, and changes it so it has a version, and
+ *  answers its id. */
+async function writeNote(bearer: string): Promise<string> {
+  const headers = {
+    authorization: `Bearer ${bearer}`,
+    "content-type": "application/json",
+  };
+  const created = await fetch(`${server.apiUrl}/items`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ type: "core.note", properties: { body: "first" } }),
+  });
+  expect(created.status, await created.clone().text()).toBe(201);
+  const id = ((await created.json()) as { item: { id: string } }).item.id;
+  const changed = await fetch(`${server.apiUrl}/items/${id}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ version: 1, properties: { body: "second" } }),
+  });
+  expect(changed.status, await changed.clone().text()).toBe(200);
+  return id;
+}
+
+/** An item's versions, as the working key reads them. */
+async function versionsOf(id: string): Promise<unknown> {
+  const response = await fetch(`${server.apiUrl}/items/${id}/versions`, {
+    headers: { authorization: `Bearer ${server.workingKey}` },
+  });
+  expect(response.status).toBe(200);
+  return response.json();
+}
+
+/** The app's refresh, answered status and error. */
+async function refresh(
+  signedIn: SignedInApp,
+): Promise<{ status: number; error?: string; access?: string }> {
+  const answer = await token(
+    server,
+    {
+      grant_type: "refresh_token",
+      refresh_token: signedIn.refreshToken,
+      client_id: signedIn.clientId,
+    },
+    signedIn.app,
+  );
+  return {
+    status: answer.status,
+    error: answer.body.error,
+    access: answer.body.access_token,
+  };
+}
+
+/** Waits for the listing to show `id` with a last use, which is written
+ *  after the request that made it answers. */
+async function listedWithUse(browser: Browser, id: string): Promise<SignIn> {
+  const deadline = Date.now() + 10 * SECOND;
+  for (;;) {
+    const row = (await signIns(browser)).find((r) => r.id === id);
+    if (row?.last_used_at || Date.now() > deadline) {
+      expect(row, `${id} is not listed`).toBeDefined();
+      return row!;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
 }
 
 /** What the sign-in library says of the browser's session: `null` for none. */
@@ -207,6 +339,7 @@ describe("the owner's sign-ins", () => {
         "ip_address",
         "kind",
         "last_used_at",
+        "name",
         "user_agent",
       ]);
       for (const at of [row.created_at, row.last_used_at, row.expires_at])
@@ -276,6 +409,7 @@ describe("the owner's sign-ins", () => {
     for (const bearer of [server.managementKey, server.workingKey, appToken]) {
       for (const [method, path] of [
         ["GET", "/owner/sign-ins"],
+        ["PATCH", `/owner/sign-ins/${id}`],
         ["DELETE", `/owner/sign-ins/${id}`],
       ] as const) {
         const response = await fetch(`${server.apiUrl}${path}`, {
@@ -285,7 +419,11 @@ describe("the owner's sign-ins", () => {
             authorization: `Bearer ${bearer}`,
             cookie: browser.cookie,
             origin,
+            "content-type": "application/json",
           },
+          ...(method === "PATCH"
+            ? { body: JSON.stringify({ name: "taken over" }) }
+            : {}),
         });
         expect(response.status, `${method} ${path}`).toBe(403);
         expect(response.headers.get("x-error-code")).toBe("forbidden");
@@ -293,9 +431,14 @@ describe("the owner's sign-ins", () => {
     }
     for (const [method, path] of [
       ["GET", "/owner/sign-ins"],
+      ["PATCH", `/owner/sign-ins/${id}`],
       ["DELETE", `/owner/sign-ins/${id}`],
     ] as const) {
-      const none = await fetch(`${server.apiUrl}${path}`, { method });
+      const none = await fetch(`${server.apiUrl}${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        ...(method === "PATCH" ? { body: JSON.stringify({ name: "x" }) } : {}),
+      });
       expect(none.status, `no credential ${method} ${path}`).toBe(401);
     }
     // Nothing above ended the session.
@@ -320,6 +463,227 @@ describe("the owner's sign-ins", () => {
     );
     expect(ended.status).toBe(200);
     expect(await session(browser)).toBeNull();
+  });
+
+  it("names a browser from the browser it reports", async () => {
+    const safari = await signIn(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    );
+    const own = (await signIns(safari)).find((row) => row.current)!;
+    expect(own.name).toBe("Safari on macOS");
+  });
+});
+
+describe("every sign-in", () => {
+  it("lists every app and key beside the browsers, each with a name, a kind and its last use", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "Marfa app on the test machine");
+    const minted = await mintKey("listed key");
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+
+    const rows = await signIns(browser);
+    const appRow = rows.find(
+      (row) =>
+        row.kind === "app" && row.name === "Marfa app on the test machine",
+    );
+    expect(appRow, "the app is not listed").toBeDefined();
+    const keyRow = rows.find((row) => row.id === minted.id);
+    expect(keyRow).toMatchObject({
+      kind: "key",
+      name: "listed key",
+      current: false,
+      ip_address: null,
+      user_agent: null,
+      expires_at: null,
+    });
+    expect(appRow).toMatchObject({
+      current: false,
+      ip_address: null,
+      user_agent: null,
+      expires_at: null,
+    });
+    expect(rows.some((row) => row.kind === "browser" && row.current)).toBe(
+      true,
+    );
+    for (const id of [appRow!.id, minted.id]) {
+      const used = await listedWithUse(browser, id);
+      expect(Number.isNaN(Date.parse(used.last_used_at))).toBe(false);
+    }
+    // Oldest first, across every kind.
+    const made = rows.map((row) => Date.parse(row.created_at));
+    expect(made).toEqual([...made].sort((a, b) => a - b));
+  });
+
+  it("carries no key and no app token, which the app and the key hold", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app that holds tokens");
+    const minted = await mintKey("key that holds itself");
+    // The witness: each credential is real and works.
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+    const text = await (await list(browser)).text();
+    expect(text).toContain(minted.id);
+    for (const secret of [
+      minted.key,
+      signedIn.accessToken,
+      signedIn.refreshToken,
+    ])
+      expect(text).not.toContain(secret);
+  });
+
+  it("lists no key past its expires_at", async () => {
+    const browser = await signIn();
+    const minted = await local("POST", "/keys", {
+      label: "short-lived key",
+      source: "owner-sign-ins-short-lived",
+      expires_at: new Date(Date.now() + 2 * SECOND).toISOString(),
+    });
+    expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+    const id = minted.body.id as string;
+    // The witness: the key is listed while it lives.
+    expect((await signIns(browser)).map((row) => row.id)).toContain(id);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2500));
+    expect((await signIns(browser)).map((row) => row.id)).not.toContain(id);
+    const ended = await end(browser, id);
+    expect(ended.status).toBe(404);
+    expect(ended.headers.get("x-error-code")).toBe("sign_in_not_found");
+  });
+
+  it("lists no revoked key", async () => {
+    const browser = await signIn();
+    const minted = await mintKey("revoked key");
+    // The witness: the key is listed while it lives.
+    expect((await signIns(browser)).map((row) => row.id)).toContain(minted.id);
+    const revoked = await fetch(`${server.apiUrl}/keys/${minted.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    expect(revoked.status).toBe(200);
+    expect((await signIns(browser)).map((row) => row.id)).not.toContain(
+      minted.id,
+    );
+  });
+
+  it("lists, renames and ends a sign-in through the local command", async () => {
+    const browser = await signIn();
+    const minted = await mintKey("local key");
+    const listed = await local("GET", "/owner/sign-ins");
+    expect(listed.status).toBe(200);
+    await expectMatchesSchema("GET", "/owner/sign-ins", 200, listed.body);
+    const rows = listed.body.data as SignIn[];
+    expect(rows.map((row) => row.id)).toContain(minted.id);
+    expect(rows.map((row) => row.id)).toContain(await idOf(browser));
+    // The local command is no browser, so no sign-in sent its request.
+    expect(rows.filter((row) => row.current)).toEqual([]);
+
+    const renamed = await local("PATCH", `/owner/sign-ins/${minted.id}`, {
+      name: "renamed locally",
+    });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body).toMatchObject({
+      id: minted.id,
+      name: "renamed locally",
+    });
+
+    const ended = await local("DELETE", `/owner/sign-ins/${minted.id}`);
+    expect(ended.status).toBe(200);
+    expect(ended.body).toEqual({ ok: true });
+    expect(await itemsStatus(server, minted.key)).toBe(401);
+  });
+});
+
+describe("renaming a sign-in", () => {
+  it("gives an app the owner's own name, which the listing shows", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "marfa");
+    const id = (await signIns(browser)).find(
+      (row) => row.kind === "app" && row.name === "marfa",
+    )!.id;
+    const response = await rename(browser, id, {
+      name: "  Marfa app on the studio laptop  ",
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as SignIn;
+    await expectMatchesSchema("PATCH", "/owner/sign-ins/{id}", 200, body);
+    expect(body).toMatchObject({
+      id,
+      kind: "app",
+      name: "Marfa app on the studio laptop",
+      current: false,
+    });
+    expect((await signIns(browser)).find((row) => row.id === id)?.name).toBe(
+      "Marfa app on the studio laptop",
+    );
+    // A name is not access: the app is still signed in.
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
+  });
+
+  it("gives a key a new label", async () => {
+    const browser = await signIn();
+    const minted = await mintKey("old label");
+    const response = await rename(browser, minted.id, { name: "new label" });
+    expect(response.status).toBe(200);
+    const keys = await fetch(`${server.apiUrl}/keys`, {
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    const listed = (await keys.json()) as {
+      data: { id: string; label: string }[];
+    };
+    expect(listed.data.find((key) => key.id === minted.id)?.label).toBe(
+      "new label",
+    );
+  });
+
+  it("refuses to rename a browser 400 validation_error", async () => {
+    const browser = await signIn();
+    const response = await rename(browser, await idOf(browser), {
+      name: "my browser",
+    });
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-error-code")).toBe("validation_error");
+  });
+
+  it("refuses an empty, overlong or missing name and another field 400", async () => {
+    const browser = await signIn();
+    const minted = await mintKey("kept label");
+    for (const [body, code] of [
+      [{ name: "   " }, "validation_error"],
+      [{ name: "x".repeat(201) }, "validation_error"],
+      [{ name: "ok", label: "no" }, "validation_error"],
+      [{}, "missing_required_field"],
+    ] as const) {
+      const response = await rename(browser, minted.id, body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(response.headers.get("x-error-code")).toBe(code);
+    }
+    // The witness: a name the door takes renames it.
+    expect(
+      (await rename(browser, minted.id, { name: "x".repeat(200) })).status,
+    ).toBe(200);
+  });
+
+  it("answers 404 sign_in_not_found for an ended sign-in and an id no sign-in has", async () => {
+    const browser = await signIn();
+    const minted = await mintKey("ended before rename");
+    expect((await end(browser, minted.id)).status).toBe(200);
+    for (const id of [minted.id, "no-such-sign-in"]) {
+      const response = await rename(browser, id, { name: "anything" });
+      expect(response.status, id).toBe(404);
+      expect(response.headers.get("x-error-code")).toBe("sign_in_not_found");
+    }
+  });
+
+  it("refuses a browser that signed in more than five minutes ago 403, and renames nothing", async () => {
+    const stale = await signIn();
+    const minted = await mintKey("stale rename");
+    arrange(await idOf(stale), { createdAt: Date.now() - 6 * MINUTE });
+    const refused = await rename(stale, minted.id, { name: "renamed" });
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("x-error-code")).toBe("forbidden");
+    expect(
+      (await signIns(stale)).find((row) => row.id === minted.id)?.name,
+    ).toBe("stale rename");
   });
 });
 
@@ -395,6 +759,126 @@ describe("ending a sign-in", () => {
     }).listAudit({ action: "auth.session.delete", limit: 200 });
     expect(page.status, JSON.stringify(page.error)).toBe(200);
     expect(page.data.data.map((row) => row.resource_id)).toContain(id);
+  });
+});
+
+describe("ending an app or a key", () => {
+  it("ends an app at once: its next request is refused and its refresh token is dead, and nothing else is", async () => {
+    const browser = await signIn();
+    const ended = await approveApp(browser, "app to end");
+    const kept = await approveApp(browser, "app to keep");
+    const key = await mintKey("key beside the ended app");
+    const id = (await signIns(browser)).find(
+      (row) => row.kind === "app" && row.name === "app to end",
+    )!.id;
+    // The witness: the app's access and refresh both work before it ends.
+    expect(await itemsStatus(server, ended.accessToken)).toBe(200);
+
+    const response = await end(browser, id);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+
+    expect(await itemsStatus(server, ended.accessToken)).toBe(401);
+    const renewed = await refresh(ended);
+    expect(renewed.status).toBe(400);
+    expect(renewed.error).toBe("invalid_grant");
+    expect((await signIns(browser)).map((row) => row.id)).not.toContain(id);
+
+    expect(await itemsStatus(server, kept.accessToken)).toBe(200);
+    const keptRenewed = await refresh(kept);
+    expect(keptRenewed.status).toBe(200);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await session(browser)).not.toBeNull();
+  });
+
+  it("ends a key at once, and leaves every other sign-in", async () => {
+    const browser = await signIn();
+    const ended = await mintKey("key to end");
+    const kept = await mintKey("key to keep");
+    const app = await approveApp(browser, "app beside the ended key");
+    expect(await itemsStatus(server, ended.key)).toBe(200);
+    expect((await end(browser, ended.id)).status).toBe(200);
+    expect(await itemsStatus(server, ended.key)).toBe(401);
+    expect(await itemsStatus(server, kept.key)).toBe(200);
+    expect(await itemsStatus(server, app.accessToken)).toBe(200);
+    expect(await session(browser)).not.toBeNull();
+  });
+
+  it("answers 404 sign_in_not_found to the second end of an app and of a key", async () => {
+    const browser = await signIn();
+    await approveApp(browser, "app ended twice");
+    const minted = await mintKey("key ended twice");
+    const appId = (await signIns(browser)).find(
+      (row) => row.kind === "app" && row.name === "app ended twice",
+    )!.id;
+    for (const id of [appId, minted.id]) {
+      expect((await end(browser, id)).status, id).toBe(200);
+      const again = await end(browser, id);
+      expect(again.status, id).toBe(404);
+      expect(again.headers.get("x-error-code")).toBe("sign_in_not_found");
+    }
+  });
+
+  it("refuses a browser that signed in more than five minutes ago 403, and ends no app or key", async () => {
+    const stale = await signIn();
+    const signedIn = await approveApp(stale, "app a stale browser asks about");
+    const minted = await mintKey("key a stale browser asks about");
+    const appId = (await signIns(stale)).find(
+      (row) =>
+        row.kind === "app" && row.name === "app a stale browser asks about",
+    )!.id;
+    arrange(await idOf(stale), { createdAt: Date.now() - 6 * MINUTE });
+    for (const id of [appId, minted.id]) {
+      const refused = await end(stale, id);
+      expect(refused.status, id).toBe(403);
+      expect(refused.headers.get("x-error-code")).toBe("forbidden");
+    }
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+  });
+
+  it("leaves every version the app and the key wrote as it was", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app that wrote");
+    const minted = await mintKey("key that wrote");
+    const byApp = await writeNote(signedIn.accessToken);
+    const byKey = await writeNote(minted.key);
+    const before = [await versionsOf(byApp), await versionsOf(byKey)];
+    // The witness: each wrote a version there is to keep.
+    for (const page of before)
+      expect((page as { data: unknown[] }).data.length).toBeGreaterThan(0);
+    const appId = (await signIns(browser)).find(
+      (row) => row.kind === "app" && row.name === "app that wrote",
+    )!.id;
+    expect((await end(browser, appId)).status).toBe(200);
+    expect((await end(browser, minted.id)).status).toBe(200);
+    expect([await versionsOf(byApp), await versionsOf(byKey)]).toEqual(before);
+  });
+
+  it("is in the audit log when it ends an app or a key", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app the audit names");
+    const minted = await mintKey("key the audit names");
+    const appId = (await signIns(browser)).find(
+      (row) => row.kind === "app" && row.name === "app the audit names",
+    )!.id;
+    expect((await end(browser, appId)).status).toBe(200);
+    expect((await end(browser, minted.id)).status).toBe(200);
+    const audit = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.managementKey,
+    });
+    const grants = await audit.listAudit({
+      action: "auth.grant.revoked",
+      limit: 200,
+    });
+    expect(grants.status, JSON.stringify(grants.error)).toBe(200);
+    expect(grants.data.data.map((row) => row.resource_id)).toContain(
+      signedIn.clientId,
+    );
+    const keys = await audit.listAudit({ action: "key.revoke", limit: 200 });
+    expect(keys.status, JSON.stringify(keys.error)).toBe(200);
+    expect(keys.data.data.map((row) => row.resource_id)).toContain(minted.id);
   });
 });
 
@@ -576,7 +1060,7 @@ describe("a browser session's idle week", () => {
 });
 
 describe("a restart", () => {
-  it("keeps an ended and an expired session refused, and a live session's last use and expiry", async () => {
+  it("keeps an ended and an expired session, an ended app and an ended key refused, and a live session's last use and expiry", async () => {
     const live = await signIn();
     const ended = await signIn();
     const expired = await signIn();
@@ -592,11 +1076,26 @@ describe("a restart", () => {
       expiresAt: recorded + WEEK + MINUTE,
     });
     const before = stored(liveId);
+    const endedApp = await approveApp(live, "app ended before a restart");
+    const endedKey = await mintKey("key ended before a restart");
+    const appId = (await signIns(live)).find(
+      (row) => row.kind === "app" && row.name === "app ended before a restart",
+    )!.id;
+    expect((await end(live, appId)).status).toBe(200);
+    expect((await end(live, endedKey.id)).status).toBe(200);
+    // That was the live session's own use, so its times are read again.
+    arrange(liveId, {
+      updatedAt: recorded,
+      expiresAt: recorded + WEEK + MINUTE,
+    });
 
     await server.restart();
 
     expect(await session(ended)).toBeNull();
     expect(await session(expired)).toBeNull();
+    expect(await itemsStatus(server, endedApp.accessToken)).toBe(401);
+    expect((await refresh(endedApp)).status).toBe(400);
+    expect(await itemsStatus(server, endedKey.key)).toBe(401);
     expect(stored(liveId)).toEqual(before);
     const listed = (await signIns(live)).find((row) => row.id === liveId)!;
     // That listing was itself a use, recorded after the restart.
