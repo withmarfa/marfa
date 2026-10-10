@@ -174,6 +174,7 @@ describe("system.* set", () => {
       "status",
       "granted_at",
       "client_id",
+      "name",
       "scopes",
       "last_used_at",
       "revoked_at",

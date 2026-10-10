@@ -200,6 +200,11 @@ Options:
           The client id an earlier sign-in registered, where no keychain remembers it; without one
           the binary registers again
 
+      --name <NAME>
+          The name this sign-in registers under, which is sent to the server and shown to its owner
+          among their sign-ins. Defaults to `marfa on` and this machine's host name without its
+          domain. Giving it registers the binary again
+
   -h, --help
           Print help
 
@@ -570,14 +575,20 @@ Output:
 ### marfa sign-ins
 
 ```text
-The owner's browser sessions: list them and end one
+Sign-ins: every browser, app and key that can reach the server. A key or an app's token is refused;
+use --socket
 
 Usage: marfa sign-ins [OPTIONS] <COMMAND>
 
 Commands:
-  list  List the browser sessions the owner is signed in with. Needs --socket PATH
-  end   End a browser session at once; connected apps keep their access. Needs --socket PATH
-  help  Print this message or the help of the given subcommand(s)
+  list    List every browser, app and key that can reach the server, each with its name, its kind
+          and when it was last used. Needs direct local authority (--socket)
+  rename  Give an app or a key a new name. A key's name is its label; a browser's comes from the
+          browser and can't be changed. Needs direct local authority (--socket)
+  end     End a sign-in at once: its next request is refused, and an app can't refresh its tokens.
+          What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs
+          direct local authority (--socket)
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -609,9 +620,52 @@ Output:
 ### marfa sign-ins list
 
 ```text
-List the browser sessions the owner is signed in with. Needs --socket PATH
+List every browser, app and key that can reach the server, each with its name, its kind and when it
+was last used. Needs direct local authority (--socket)
 
 Usage: marfa sign-ins list [OPTIONS]
+
+Options:
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
+
+      --socket <PATH>
+          Use private local process authority through this Unix socket, without a keychain
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
+```
+
+### marfa sign-ins rename
+
+```text
+Give an app or a key a new name. A key's name is its label; a browser's comes from the browser and
+can't be changed. Needs direct local authority (--socket)
+
+Usage: marfa sign-ins rename [OPTIONS] <ID> <NAME>
+
+Arguments:
+  <ID>
+          The sign-in's id
+
+  <NAME>
+          The new name, which may start with `-`
 
 Options:
   -h, --help
@@ -643,15 +697,20 @@ Output:
 ### marfa sign-ins end
 
 ```text
-End a browser session at once; connected apps keep their access. Needs --socket PATH
+End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it
+wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs direct local
+authority (--socket)
 
 Usage: marfa sign-ins end [OPTIONS] <ID>
 
 Arguments:
   <ID>
-          The ID of the sign-in, as `sign-ins list` prints it
+          The sign-in's id
 
 Options:
+      --revoke-keys
+          For an app, also revoke every key it minted. Refused for a browser or a key
+
   -h, --help
           Print help
 

@@ -112,6 +112,13 @@ async function itemTags(id: string): Promise<unknown> {
   return { tags: metadata.tags, extensions: metadata.extensions };
 }
 
+/** The run owner's browser session, which `pnpm marfa:up` writes. */
+function ownerCookie(): string {
+  const cookie = process.env.MARFA_OWNER_COOKIE;
+  expect(cookie, "MARFA_OWNER_COOKIE is required").toBeTruthy();
+  return cookie!;
+}
+
 async function send(
   door: string,
   way: (typeof WAYS)[number],
@@ -121,9 +128,14 @@ async function send(
   const [method, template] = door.split(" ") as [string, string];
   const path =
     options.path ?? template.replace(/\{[^}]+\}/g, () => randomUUID());
+  // The owner's sign-in doors refuse every key, so they are asked as the
+  // owner's browser, which is what reaches their body.
+  const credential: Record<string, string> = template.startsWith("/owner/")
+    ? { cookie: ownerCookie(), origin: new URL(apiUrl).origin }
+    : { Authorization: `Bearer ${key}` };
   return fetch(`${apiUrl}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${key}`, ...way.headers },
+    headers: { ...credential, ...way.headers },
     ...(way.body === undefined
       ? {}
       : { body: way.body(JSON.stringify(options.payload ?? {})) }),

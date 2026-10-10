@@ -81,8 +81,8 @@ async function refresh() {
   rows('connectors', connectors.data, (li, row) => { li.textContent = row.name;
     action(li, 'Remove', async () => { if (confirm('Remove this connector registration?')) await request('/connectors/' + encodeURIComponent(row.id), {method:'DELETE'}); });
   });
-  rows('browsers', signIns.data, (li, row) => {
-    li.textContent = (row.user_agent || 'Unknown browser') + (row.ip_address ? ', from ' + row.ip_address : '') + ', last used ' + new Date(row.last_used_at).toLocaleString() + (row.current ? ' (this browser)' : '');
+  rows('browsers', signIns.data.filter((row) => row.kind === 'browser'), (li, row) => {
+    li.textContent = row.name + (row.ip_address ? ', from ' + row.ip_address : '') + ', last used ' + new Date(row.last_used_at).toLocaleString() + (row.current ? ' (this browser)' : '');
     action(li, 'Sign out', async () => {
       if (!confirm(row.current ? 'Sign out this browser?' : 'Sign out this browser? It will need to sign in again. Connected apps keep their access.')) return;
       await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'});

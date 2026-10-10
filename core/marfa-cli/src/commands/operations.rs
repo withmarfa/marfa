@@ -119,6 +119,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("registerOAuthClient", "login"),
     reached("getOwner", "owner show"),
     reached("listSignIns", "sign-ins list"),
+    reached("updateSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
 ];

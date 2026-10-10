@@ -29,6 +29,12 @@ pub struct LoginArgs {
     /// remembers it; without one the binary registers again.
     #[arg(long, value_name = "ID")]
     pub client_id: Option<String>,
+    /// The name this sign-in registers under, which is sent to the server and
+    /// shown to its owner among their sign-ins. Defaults to `marfa on` and
+    /// this machine's host name without its domain. Giving it registers the
+    /// binary again.
+    #[arg(long, value_name = "NAME", conflicts_with = "client_id")]
+    pub name: Option<String>,
 }
 
 pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
@@ -59,9 +65,11 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         }
         Err(error) => return Err(error),
     }
-    let held = match &args.client_id {
-        Some(id) => Some(id.clone()),
-        None => match credentials::client_id(&origin) {
+    let held = match (&args.client_id, &args.name) {
+        (Some(id), _) => Some(id.clone()),
+        // A name belongs to a registration, so a new one is made for it.
+        (None, Some(_)) => None,
+        (None, None) => match credentials::client_id(&origin) {
             Ok(id) => id,
             Err(CliError::NoKeychain(_)) => None,
             Err(error) => return Err(error),
@@ -75,11 +83,11 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         Some(client_id) => match auth::device_code(&discovery, &client_id, &scope) {
             Ok(code) => (client_id, code),
             Err(CliError::Refused { code, .. }) if code == "invalid_client" => {
-                register_and_ask(&discovery, &origin, &scope)?
+                register_and_ask(&discovery, &origin, &scope, args.name.as_deref())?
             }
             Err(error) => return Err(error),
         },
-        None => register_and_ask(&discovery, &origin, &scope)?,
+        None => register_and_ask(&discovery, &origin, &scope, args.name.as_deref())?,
     };
 
     auth::pages_on_issuer(&discovery, &code)?;
@@ -148,8 +156,9 @@ fn register_and_ask(
     discovery: &Discovery,
     origin: &str,
     scope: &str,
+    name: Option<&str>,
 ) -> Result<(String, DeviceCode), CliError> {
-    let client_id = auth::register(discovery)?;
+    let client_id = auth::register(discovery, name)?;
     match credentials::keep_client_id(origin, &client_id) {
         Ok(()) | Err(CliError::NoKeychain(_)) => {}
         Err(error) => return Err(error),
@@ -207,7 +216,54 @@ mod tests {
             no_browser: true,
             print_token,
             client_id: Some("client".into()),
+            name: None,
         }
+    }
+
+    #[test]
+    fn a_given_name_registers_again_under_it() {
+        let door = Door::open_at(|origin| {
+            vec![
+                Answer::json("200 OK", &discovery(origin)),
+                Answer::json("201 Created", r#"{"client_id":"fresh"}"#),
+                Answer::json("200 OK", &device_code(origin)),
+                Answer::json(
+                    "200 OK",
+                    r#"{"access_token":"marfa_at_1","refresh_token":"marfa_rt_1","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
+                ),
+            ]
+        });
+        let origin = crate::remote::Remote::public_at(&door.url)
+            .unwrap()
+            .origin()
+            .to_string();
+        let _keychain = credentials::hold(&origin);
+        let named = Named {
+            url: Some(door.url.clone()),
+            key: None,
+        };
+        let given = LoginArgs {
+            client_id: None,
+            name: Some("Marfa app on the studio laptop".into()),
+            ..args(true)
+        };
+        run(given, &named, &Printer { json: true }).unwrap();
+        let sent = door.received();
+        assert_eq!(sent[1].path(), "/auth/oauth2/register");
+        let body: serde_json::Value = serde_json::from_str(&sent[1].body).unwrap();
+        assert_eq!(body["client_name"], "Marfa app on the studio laptop");
+        assert!(sent[2].body.contains("client_id=fresh"), "{}", sent[2].body);
+    }
+
+    #[test]
+    fn a_name_cannot_be_given_with_a_client_id() {
+        use clap::Parser;
+        assert!(
+            crate::Cli::try_parse_from(["marfa", "login", "--client-id", "c", "--name", "n"])
+                .is_err()
+        );
+        assert!(crate::Cli::try_parse_from(["marfa", "login", "--name", "-dash-"]).is_err());
+        assert!(crate::Cli::try_parse_from(["marfa", "login", "--name=-dash-"]).is_ok());
     }
 
     #[test]

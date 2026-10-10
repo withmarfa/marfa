@@ -99,6 +99,8 @@ const WRITERS: Record<string, string> = {
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",
   "auth/grant-lifecycle.ts":
     "the revoke cascade's projection flip, moved out of auth-pages so the grant routes and the client-revoke hook share one writer; a convergent write (status revoked, revoked_at restamped) reached from a browser form, an admin route or the plugin's revoke endpoint rather than from a retried API write, and taken under the consent lock whenever both ids are known",
+  "auth/sign-ins.ts":
+    "PATCH /owner/sign-ins/{id} setting an app grant's name on its projection: the owner's browser or the local command, never a key, and a convergent write, since a retry sets the same name again",
 };
 
 /** Every file under `src/` that is not a test. */

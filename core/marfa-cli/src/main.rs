@@ -94,7 +94,8 @@ enum Command {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// The owner's browser sessions: list them and end one.
+    /// Sign-ins: every browser, app and key that can reach the server. A key
+    /// or an app's token is refused; use --socket.
     #[command(name = "sign-ins")]
     SignIns {
         #[command(subcommand)]

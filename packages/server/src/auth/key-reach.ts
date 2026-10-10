@@ -200,3 +200,6 @@ export function keysInReach(storage: Storage, c: Context<AppEnv>) {
     },
   };
 }
+
+/** The key store as one caller may use it. */
+export type KeysInReach = ReturnType<typeof keysInReach>;

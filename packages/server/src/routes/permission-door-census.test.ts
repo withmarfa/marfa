@@ -102,6 +102,7 @@ const DATA_PLANE = [
 const STANDING: Record<string, string> = {
   "GET /owner": DIRECT,
   "GET /owner/sign-ins": DIRECT,
+  "PATCH /owner/sign-ins/:id": DIRECT,
   "DELETE /owner/sign-ins/:id": DIRECT,
   "GET /blobs/orphans": "instance.read",
   "GET /blobs/stores": "instance.read",

@@ -5997,9 +5997,16 @@
           "kind": {
             "type": "string",
             "enum": [
-              "browser"
+              "browser",
+              "app",
+              "key"
             ],
-            "description": "What signed in. `browser`: a browser signed in with the owner's password."
+            "description": "What signed in. `browser`: a browser signed in with the owner's password. `app`: an app the owner approved, for every device it signs in on with that approval. `key`: an API key."
+          },
+          "name": {
+            "type": "string",
+            "description": "A readable name: a browser's from its `user_agent`, an app's the owner's name for it or else its registered name, a key's its `label`. A name with a control or bidirectional character, or over 200 characters, gives way to the ID.",
+            "example": "Safari on macOS"
           },
           "current": {
             "type": "boolean",
@@ -6007,17 +6014,23 @@
           },
           "created_at": {
             "type": "string",
-            "description": "When the sign-in was made, in UTC.",
+            "description": "When the sign-in was made, in UTC. For an app, when the owner last approved it.",
             "example": "2026-10-03T09:30:00.000Z"
           },
           "last_used_at": {
-            "type": "string",
-            "description": "When the sign-in last made a request, in UTC. Marfa records a request at most once a minute.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the sign-in last made a request, in UTC, or `null` if it hasn't. Marfa records a browser's use at most once a minute and an app's or key's at most once an hour.",
             "example": "2026-10-05T14:12:08.000Z"
           },
           "expires_at": {
-            "type": "string",
-            "description": "When the sign-in ends unless it makes another request, in UTC: seven days and one minute after `last_used_at`.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the sign-in ends unless something changes, in UTC. A browser's is seven days and one minute after `last_used_at`. `null` for an app, and for a key that doesn't expire.",
             "example": "2026-10-12T14:13:08.000Z"
           },
           "ip_address": {
@@ -6025,7 +6038,7 @@
               "string",
               "null"
             ],
-            "description": "The address the sign-in was made from, or `null` when Marfa could not tell.",
+            "description": "The address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.",
             "example": "203.0.113.24"
           },
           "user_agent": {
@@ -6033,20 +6046,29 @@
               "string",
               "null"
             ],
-            "description": "The `User-Agent` the browser sent when it signed in, or `null` when it sent none."
+            "description": "The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none."
+          },
+          "minted_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended."
           }
         },
         "required": [
           "id",
           "kind",
+          "name",
           "current",
           "created_at",
           "last_used_at",
           "expires_at",
           "ip_address",
-          "user_agent"
+          "user_agent",
+          "minted_by"
         ],
-        "description": "A sign-in is one way the owner is signed in to Marfa."
+        "description": "A sign-in is one way the owner's Marfa can be reached."
       },
       "SignInNotFoundRefusal": {
         "type": "object",
@@ -38886,7 +38908,7 @@
             "ownerSession": []
           }
         ],
-        "description": "Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session or local process authority.",
+        "description": "Returns every browser, app and key that can reach Marfa, marking the browser that sent the request. Requires the owner's browser session or the local command.",
         "responses": {
           "200": {
             "description": "Returns every live sign-in.",
@@ -38976,7 +38998,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39132,6 +39154,347 @@
       }
     },
     "/owner/sign-ins/{id}": {
+      "patch": {
+        "operationId": "updateSignIn",
+        "tags": [
+          "Access"
+        ],
+        "summary": "Update a sign-in",
+        "security": [
+          {
+            "ownerSession": []
+          }
+        ],
+        "description": "Gives an app or a key a new name and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the sign-in."
+            },
+            "required": true,
+            "description": "The ID of the sign-in.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The sign-in's new name. Marfa trims spaces from each end.",
+                    "example": "Marfa app on the studio laptop"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the renamed sign-in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignIn"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` is empty, too long or holds a control or bidirectional formatting character, the body has another field, or the ID names a browser, whose name comes from the browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `sign_in_not_found`: no live sign-in of the owner has this ID. It may have ended or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "operationId": "endSignIn",
         "tags": [
@@ -39143,7 +39506,7 @@
             "ownerSession": []
           }
         ],
-        "description": "Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires local process authority or the owner's browser session, signed in within the last five minutes.",
+        "description": "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.",
         "parameters": [
           {
             "schema": {
@@ -39154,6 +39517,20 @@
             "description": "The ID of the sign-in.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it."
+            },
+            "required": false,
+            "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it.",
+            "name": "revoke_keys",
+            "in": "query"
           }
         ],
         "responses": {
@@ -39185,7 +39562,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39245,7 +39622,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority, or the browser signed in more than five minutes ago.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago.",
             "content": {
               "application/json": {
                 "schema": {

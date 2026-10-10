@@ -1,5 +1,6 @@
 import { grantCoversScope } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
+import type { ApiKey, Item } from "@withmarfa/shared";
+import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
@@ -19,6 +20,29 @@ import { withConsentLock } from "./consent-lock.js";
  * hooks alike, so a door added later cannot move one record and not the
  * other.
  */
+
+/**
+ * Every live app grant's projection, from every page, so a grant past the
+ * first is not left out.
+ */
+export async function listActiveAppGrants(storage: Storage): Promise<Item[]> {
+  const rows: Item[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await storage.items.list({
+      type: "system.connection",
+      state: "active",
+      limit: MAX_PAGE_LIMIT,
+      cursor,
+    });
+    rows.push(...page.data);
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+  return rows.filter(
+    (item) =>
+      item.properties.kind === "app" && item.properties.status === "active",
+  );
+}
 
 /**
  * The live keys an app minted.

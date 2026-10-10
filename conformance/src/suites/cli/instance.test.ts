@@ -16,6 +16,7 @@ import {
   trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { expectSignedBy, startReceiver } from "../../utils/webhook-receiver.js";
 import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
@@ -544,6 +545,143 @@ describe("the instance from the terminal", () => {
     const refused = await claimer.refused(create("cli-unclaimed"));
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.code).toBe("forbidden");
+  });
+
+  it("lists, renames and ends a sign-in through the private socket, and refuses an ordinary key", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const local = c.cli.viaSocket(socket!);
+    const label = unique("cli-sign-in");
+    const minted = await local.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      label,
+      "--source",
+      unique("cli-sign-in-source"),
+      "--type-permission",
+      "core.note=read",
+    ]);
+    trackKey(c.ctx, minted.id);
+    const holder = c.cli.as(minted.key);
+    // The witness: the key reaches the server before it is ended.
+    await holder.json(["keys", "current"]);
+
+    interface SignIn {
+      id: string;
+      kind: string;
+      name: string;
+      current: boolean;
+    }
+    const listed = await local.json<{ data: SignIn[] }>(["sign-ins", "list"]);
+    expect(listed.data.find((row) => row.id === minted.id)).toMatchObject({
+      kind: "key",
+      name: label,
+      current: false,
+    });
+    const plain = await local.run(["sign-ins", "list"]);
+    expect(plain.code).toBe(0);
+    expect(plain.stdout).toContain(`${minted.id}  key      ${label}`);
+
+    const renamed = await local.json<SignIn>([
+      "sign-ins",
+      "rename",
+      minted.id,
+      `${label} renamed`,
+    ]);
+    expect(renamed).toMatchObject({ id: minted.id, name: `${label} renamed` });
+
+    for (const ordinary of [c.cli, c.operator]) {
+      const refused = await ordinary.refused(["sign-ins", "list"]);
+      expect(refused.code).toBe(1);
+      expect(refused.envelope.error.server?.code).toBe("forbidden");
+    }
+
+    expect(await local.json(["sign-ins", "end", minted.id])).toEqual({
+      ok: true,
+    });
+    const after = await holder.refused(["keys", "current"]);
+    expect(after.code).toBe(5);
+    expect(after.envelope.error.server?.status).toBe(401);
+    const again = await local.refused(["sign-ins", "end", minted.id]);
+    expect(again.code).toBe(1);
+    expect(again.envelope.error.server?.code).toBe("sign_in_not_found");
+  });
+
+  it("lists an app whose registered name would forge a row by its client id, with no control character on the terminal", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const local = c.cli.viaSocket(socket!);
+    const forged = "  key      trusted  never used";
+    const registration = await fetch(`${c.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: `marfa\r\u001b[2K${forged}`,
+        application_type: "native",
+        grant_types: [
+          "urn:ietf:params:oauth:grant-type:device_code",
+          "refresh_token",
+        ],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const clientId = ((await registration.json()) as { client_id: string })
+      .client_id;
+    const asked = await fetch(`${c.apiUrl}/auth/device/code`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        scope: "core.note:read",
+      }),
+    });
+    expect(asked.status).toBe(200);
+    const code = (await asked.json()) as {
+      user_code: string;
+      verification_uri_complete: string;
+    };
+    const origin = new URL(code.verification_uri_complete).origin;
+    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(TEST_OWNER),
+    });
+    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+      signIn.headers.get("set-cookie") ?? "",
+    )?.[1];
+    expect(cookie, "sign-in set no session cookie").toBeTruthy();
+    const form = new URLSearchParams({
+      user_code: code.user_code,
+      decision: "approve",
+    });
+    form.append("scopes", "core.note:read");
+    const approved = await fetch(`${origin}/auth/device/consent`, {
+      method: "POST",
+      headers: {
+        cookie: cookie!,
+        origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form,
+    });
+    expect(approved.status).toBe(200);
+
+    const plain = await local.run(["sign-ins", "list"]);
+    expect(plain.code).toBe(0);
+    // The witness: the approved app is listed, by the id it fell back to.
+    expect(plain.stdout).toContain(`  app      ${clientId}  `);
+    expect(plain.stdout).not.toContain("\r");
+    expect(plain.stdout).not.toContain("\u001b");
+    expect(plain.stdout).not.toContain(forged);
   });
 
   it("reads and replaces the configuration under a credential that holds config.manage", async () => {
