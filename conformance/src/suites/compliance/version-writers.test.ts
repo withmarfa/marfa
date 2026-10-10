@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   approvedApp,
   bootFreshServer,
@@ -555,6 +556,97 @@ describe("who wrote each version", () => {
     expect(
       writers(await versionsOf(target.workingKey, id, target.apiUrl)),
     ).toEqual([byFirst, bySecond, byFirst]);
+  });
+
+  it("restores an archive that names no writer with none", async () => {
+    const minted = await mintKey("writer the archive forgets");
+    const id = await createNote(minted.key, "forgotten");
+    await changeNote(minted.key, id, 1, "second");
+    await changeNote(minted.key, id, 2, "third");
+    const exporter = await mintKey("forgetting exporter", {
+      "core.note": "read",
+    });
+    const archive = await new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: exporter.key,
+    }).exportArchive({ type: "core.note", source: minted.source });
+    expect(archive.status).toBe(200);
+    let stripped = 0;
+    const forgotten = tarGz(
+      listTarGzEntries(archive.data).map((entry) => ({
+        name: entry.name,
+        body:
+          entry.name === "items.ndjson"
+            ? Buffer.from(
+                entry.body
+                  .toString("utf8")
+                  .split("\n")
+                  .filter((text) => text.trim() !== "")
+                  .map((text) => {
+                    const line = JSON.parse(text) as Record<string, unknown>;
+                    // The witness: the export named a writer to take out.
+                    if (line.writer) stripped += 1;
+                    delete line.writer;
+                    for (const snapshot of line.versions as Record<
+                      string,
+                      unknown
+                    >[]) {
+                      if (snapshot.writer) stripped += 1;
+                      delete snapshot.writer;
+                    }
+                    return `${JSON.stringify(line)}\n`;
+                  })
+                  .join(""),
+              )
+            : entry.body,
+      })),
+    );
+    expect(stripped).toBe(3);
+    const owner = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: "",
+      ownerCookie: target.ownerCookie,
+      ownerCredentials: OWNER,
+    });
+    const restored = await owner.restoreArchive(forgotten);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(
+      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
+    ).toEqual([null, null]);
+    const changed = await call(
+      target.workingKey,
+      "PATCH",
+      `/items/${id}`,
+      { version: 3, properties: { body: "after the restore" } },
+      target.apiUrl,
+    );
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    expect(
+      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
+    ).toEqual([null, null, null]);
+  });
+
+  it("names an app by its client id once its sign-in record is gone, and still takes its write", async () => {
+    const browser = await signIn();
+    const app = await approveApp(browser, "app whose record goes");
+    const record = listedApp(await signIns(browser), "app whose record goes");
+    const id = await createNote(app.accessToken);
+    // The record goes while the app's token stands.
+    withInstanceDatabase(server.sqlitePath, (db) => {
+      db.prepare("UPDATE items SET state = 'trashed' WHERE id = ?").run(
+        record.id,
+      );
+    });
+    const changed = await call(app.accessToken, "PATCH", `/items/${id}`, {
+      version: 1,
+      properties: { body: "after the record went" },
+    });
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    await changeNote(app.accessToken, id, 2, "third");
+    expect(writers(await versionsOf(app.accessToken, id))).toEqual([
+      { kind: "app", id: record.id, name: "app whose record goes" },
+      { kind: "app", id: app.clientId, name: "app whose record goes" },
+    ]);
   });
 
   it("refuses an archive that names a malformed writer", async () => {
