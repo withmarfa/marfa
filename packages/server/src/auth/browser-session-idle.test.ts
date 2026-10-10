@@ -288,4 +288,59 @@ describe("a browser session's idle week", () => {
       (await list(c, cookie)).find((row) => row.current)?.last_used_at,
     ).toBe(new Date(T0 + 3 * DAY + MINUTE).toISOString());
   });
+
+  it("keeps a sign-in not to be remembered on a browser-session cookie, and its idle week on the server", async () => {
+    at(T0 - DAY);
+    const c = await context();
+    at(T0);
+    const signedIn = await request(c.app, "POST", "/auth/sign-in/email", {
+      body: { email: EMAIL, password: PASSWORD, rememberMe: false },
+      headers: { origin: ORIGIN },
+    });
+    expect(signedIn.status).toBe(200);
+    const sessionLine = signedIn.headers
+      .getSetCookie()
+      .find((line) => /session_token=/.test(line))!;
+    expect(sessionLine).toBeDefined();
+    expect(sessionLine).not.toMatch(/max-age/i);
+    const cookie = signedIn.headers
+      .getSetCookie()
+      .map((line) => line.split(";")[0])
+      .join("; ");
+    const session = cookie
+      .split("; ")
+      .find((pair) => pair.includes("session_token="))!;
+    const created = (await list(c, cookie)).find((row) => row.current)!;
+    expect(created.expires_at).toBe(new Date(T0 + WEEK + MINUTE).toISOString());
+
+    at(T0 + DAY);
+    const used = await use(c, cookie);
+    expect(used.status).toBe(200);
+    expect(maxAge(used, session)).toBeUndefined();
+    const row = (await list(c, cookie)).find((r) => r.current)!;
+    expect(row.last_used_at).toBe(new Date(T0 + DAY).toISOString());
+    expect(row.expires_at).toBe(
+      new Date(T0 + DAY + WEEK + MINUTE).toISOString(),
+    );
+  });
+
+  it("refuses a request whose use fails for a reason other than the storage", async () => {
+    at(T0 - DAY);
+    const c = await context();
+    at(T0);
+    const cookie = await signIn(c);
+    const runInTransaction = c.storage.runInTransaction.bind(c.storage);
+    c.storage.runInTransaction = (() =>
+      Promise.reject(
+        new Error("not a storage fault"),
+      )) as typeof c.storage.runInTransaction;
+    at(T0 + DAY);
+    try {
+      expect((await use(c, cookie)).status).toBe(500);
+    } finally {
+      c.storage.runInTransaction = runInTransaction;
+    }
+    // The witness: the same request answers once nothing fails.
+    expect((await use(c, cookie)).status).toBe(200);
+  });
 });

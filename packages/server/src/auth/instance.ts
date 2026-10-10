@@ -34,6 +34,9 @@ import { withHashedDeviceCodes } from "./hashed-device-code-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
 import { buildSignInThrottlePlugin } from "./sign-in-throttle.js";
 import { errorMessage } from "../error-text.js";
+import { diskFull } from "../storage/disk-space.js";
+import { parseCookies } from "better-auth/cookies";
+import { generateCookie } from "hono/cookie";
 
 /**
  * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
@@ -132,13 +135,8 @@ interface BetterAuthCredentialContext {
   };
 }
 
-interface CookieAttributes {
-  path?: string;
-  domain?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-  sameSite?: string;
-}
+/** The provider's cookie attributes, which are the cookie helper's own. */
+type CookieAttributes = NonNullable<Parameters<typeof generateCookie>[2]>;
 
 /** A row of the provider's session table, as its internal adapter returns it. */
 interface ProviderSessionRow {
@@ -293,10 +291,13 @@ export interface MarfaAuth {
    * Admit a request on the session its cookie names, and count it as a use:
    * unless a use was recorded within {@link BROWSER_SESSION_USE_INTERVAL_SECONDS},
    * the session's expiry moves to {@link BROWSER_SESSION_LIFETIME_SECONDS}
-   * after now. `null` when the cookie names no live session of `userId`,
-   * including one that ended or expired between the lookup and the renewal.
+   * after now. `session` is what a read-only `getSession` found for these
+   * headers. `null` when the session ended or expired since that lookup.
    */
-  useSession: (headers: Headers, userId: string) => Promise<SessionUse | null>;
+  useSession: (
+    headers: Headers,
+    session: MarfaAuthSession,
+  ) => Promise<SessionUse | null>;
   /** The live browser sessions of `userId`, oldest first. */
   listBrowserSessions: (userId: string) => Promise<BrowserSession[]>;
   /**
@@ -401,6 +402,28 @@ function carriesWriteContention(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether the storage turned a write away for want of room, the write lock or
+ * permission to write, wherever in the `cause` chain: the faults that leave a
+ * read answerable. Bounded because a chain is data and may cycle.
+ */
+function storageRefusedWrite(err: unknown): boolean {
+  if (diskFull(err) !== undefined) return true;
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step instanceof MarfaError)
+      return (
+        step.code === ErrorCode.WRITE_CONTENTION ||
+        step.code === ErrorCode.INSUFFICIENT_STORAGE
+      );
+    if (step === null || typeof step !== "object") return false;
+    const code = (step as { code?: unknown }).code;
+    if (typeof code === "string" && /^SQLITE_(BUSY|READONLY)/.test(code))
+      return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const schema = {
     user: sqliteSchema.auth_user,
@@ -481,20 +504,17 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     databaseHooks: {
       session: {
         create: {
-          before: (session) => {
-            const limit = new Date(
-              Date.now() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
-            );
-            // A session signed in not to be remembered keeps the provider's
-            // shorter first expiry.
-            return Promise.resolve({
+          // Every password sign-in, remembered or not, gets the idle week.
+          before: (session) =>
+            Promise.resolve({
               data: {
                 ...session,
-                expiresAt:
-                  session.expiresAt < limit ? session.expiresAt : limit,
+                expiresAt: new Date(
+                  session.createdAt.getTime() +
+                    BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+                ),
               },
-            });
-          },
+            }),
         },
       },
     },
@@ -923,72 +943,34 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     maxAge: number,
   ) => {
     const { name, attributes } = ctx.authCookies.sessionToken;
-    const sameSite = attributes.sameSite;
-    return [
-      `${name}=${value}`,
-      `Max-Age=${String(maxAge)}`,
-      `Path=${attributes.path ?? "/"}`,
-      ...(attributes.domain ? [`Domain=${attributes.domain}`] : []),
-      ...(attributes.httpOnly ? ["HttpOnly"] : []),
-      ...(attributes.secure ? ["Secure"] : []),
-      ...(sameSite
-        ? [`SameSite=${sameSite.charAt(0).toUpperCase()}${sameSite.slice(1)}`]
-        : []),
-    ].join("; ");
+    return generateCookie(name, value, { ...attributes, maxAge });
   };
-  /** The request's own cookie entry for the verified session `token`. */
-  const cookieValueFor = (
-    headers: Headers,
-    name: string,
-    token: string,
-  ): string | undefined => {
-    for (const part of (headers.get("cookie") ?? "").split(";")) {
-      const pair = part.trim();
-      if (!pair.startsWith(`${name}=`)) continue;
-      const value = pair.slice(name.length + 1);
-      let decoded: string;
-      try {
-        decoded = decodeURIComponent(value);
-      } catch {
-        continue;
-      }
-      if (decoded.startsWith(`${token}.`)) return value;
-    }
-    return undefined;
-  };
-  const hasCookie = (headers: Headers, name: string) =>
-    (headers.get("cookie") ?? "")
-      .split(";")
-      .some((part) => part.trim().startsWith(`${name}=`));
 
   const useSession = async (
     headers: Headers,
-    userId: string,
+    found: MarfaAuthSession,
   ): Promise<SessionUse | null> => {
-    const found = await facade.getSession(headers, { readOnly: true });
-    if (found?.user.id !== userId) return null;
     const ctx = await credentialContext();
+    const userId = found.user.id;
     const { name } = ctx.authCookies.sessionToken;
     const token = found.session.token;
     const now = new Date();
     const due = (row: { updatedAt: Date }) =>
       now.getTime() - row.updatedAt.getTime() >=
       BROWSER_SESSION_USE_INTERVAL_SECONDS * 1000;
-    const value = cookieValueFor(headers, name, token);
-    // A session signed in not to be remembered keeps a cookie that ends with
-    // the browser, as the provider set it.
-    const remembered = !hasCookie(
-      headers,
-      ctx.authCookies.dontRememberToken.name,
-    );
+    const cookies = parseCookies(headers.get("cookie") ?? "");
+    const sent = cookies.get(name);
+    // A session signed in not to be remembered keeps the cookie the provider
+    // set it, which ends with the browser.
+    const remembered = !cookies.has(ctx.authCookies.dontRememberToken.name);
     // Sent again only with a recorded use: often enough that a session in
     // use for longer than the cookie lives keeps it, and rarely enough to
     // leave the browser's back-forward cache alone.
     const use = (recorded: boolean): SessionUse => ({
       session: found,
       cookie:
-        recorded && value !== undefined && remembered
-          ? sessionCookie(ctx, value, BROWSER_SESSION_COOKIE_SECONDS)
+        recorded && remembered && sent?.startsWith(`${token}.`)
+          ? sessionCookie(ctx, sent, BROWSER_SESSION_COOKIE_SECONDS)
           : null,
       cookieName: name,
     });
@@ -996,35 +978,39 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const storage = requireStorage();
     let recorded: { wrote: boolean } | null;
     try {
-      recorded = await credentialOperation("/use-session", () =>
-        runAuditedTransaction(
-          storage,
-          async (): Promise<{ wrote: boolean } | null> => {
-            // Read again under the write lock: a session that ended or
-            // expired since the lookup above stays ended, rather than
-            // renewed back.
-            const current = await ctx.internalAdapter.findSession(token);
-            if (
-              current?.session.userId !== userId ||
-              !live(current.session, now)
-            )
-              return null;
-            if (!due(current.session)) return { wrote: false };
-            const updated = await ctx.internalAdapter.updateSession(token, {
-              expiresAt: new Date(
-                now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
-              ),
-              updatedAt: now,
-            });
-            return updated ? { wrote: true } : null;
-          },
-          () => null,
-        ),
+      recorded = await withCredentialRequest(
+        { path: "/use-session", clientIp: null, recordsSessionUse: true },
+        () =>
+          runAuditedTransaction(
+            storage,
+            async (): Promise<{ wrote: boolean } | null> => {
+              // Read again under the write lock: a session that ended or
+              // expired since the lookup stays ended, rather than renewed
+              // back.
+              const current = await ctx.internalAdapter.findSession(token);
+              if (
+                current?.session.userId !== userId ||
+                !live(current.session, now)
+              )
+                return null;
+              if (!due(current.session)) return { wrote: false };
+              const updated = await ctx.internalAdapter.updateSession(token, {
+                expiresAt: new Date(
+                  now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+                ),
+                updatedAt: now,
+              });
+              return updated ? { wrote: true } : null;
+            },
+            () => null,
+          ),
       );
     } catch (err) {
-      // The lookup found the session live, so a use that cannot be written,
+      // The lookup found the session live, so a use the storage cannot take,
       // on a full disk for one, still admits the request. Each write the
-      // request makes checks the session again under the write lock.
+      // request makes meets the storage itself, and checks the session again
+      // under the write lock.
+      if (!storageRefusedWrite(err)) throw err;
       log("warn", "A browser session's use could not be recorded", {
         error: errorMessage(err),
       });

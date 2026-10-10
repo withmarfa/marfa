@@ -50,7 +50,7 @@ export function directAuthorityMiddleware(
         }
         // Admitting the request is a use of the session, which renews it.
         // One that ended since the lookup admits nothing.
-        renewal = await auth.useSession(c.req.raw.headers, owner.id);
+        renewal = await auth.useSession(c.req.raw.headers, session);
         if (renewal)
           c.set("authority", {
             kind: "owner",
