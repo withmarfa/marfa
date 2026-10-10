@@ -17,7 +17,7 @@
     },
     "name": {
       "type": "string",
-      "description": "The owner's own name for this sign-in, set when they rename it. Unset, the app's registered client name names it"
+      "description": "The owner's own name for this app's sign-in, set at `PATCH /owner/sign-ins/{id}`. Unset, the app's registered client name names it. Any credential that can read `system.connection` items, such as an app holding the default read bundle, can read this name and the item's ID, which is the sign-in's ID"
     },
     "scopes": {
       "type": "array",
