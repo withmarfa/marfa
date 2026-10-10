@@ -165,10 +165,33 @@ pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     Ok(scopes.join(" "))
 }
 
+/// The name a registration gives: the binary, and the machine it runs on
+/// where the machine has a name, so the owner can tell one install's sign-in
+/// from another's.
+pub fn client_name(machine: Option<&str>) -> String {
+    match machine {
+        Some(machine) => format!("marfa on {machine}"),
+        None => "marfa".to_string(),
+    }
+}
+
+/// This machine's host name, without the `.local` a Mac adds.
+fn machine_name() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: the buffer is writable for the length passed.
+    if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
+        return None;
+    }
+    let end = buffer.iter().position(|byte| *byte == 0)?;
+    let name = std::str::from_utf8(&buffer[..end]).ok()?.trim();
+    let name = name.strip_suffix(".local").unwrap_or(name);
+    (!name.is_empty() && !name.chars().any(char::is_control)).then(|| name.to_string())
+}
+
 pub fn register(discovery: &Discovery) -> Result<String, CliError> {
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
-        "client_name": "marfa",
+        "client_name": client_name(machine_name().as_deref()),
         "application_type": "native",
         "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
         "response_types": [],
@@ -619,6 +642,18 @@ fn fingerprint(origin: &str) -> String {
 mod tests {
     use super::*;
     use crate::door::{Answer, Door};
+
+    #[test]
+    fn a_registration_names_the_machine_where_it_has_a_name() {
+        assert_eq!(client_name(Some("studio")), "marfa on studio");
+        assert_eq!(client_name(None), "marfa");
+        let machine = machine_name();
+        assert!(
+            machine
+                .as_deref()
+                .is_none_or(|name| !name.is_empty() && !name.ends_with(".local"))
+        );
+    }
 
     #[cfg(unix)]
     #[test]
