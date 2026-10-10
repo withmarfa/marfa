@@ -2,9 +2,9 @@
  * The PDF reader's version is a security property, so it is asserted.
  *
  * `officeparser` pins `pdfjs-dist` to an exact version, and releases of the
- * reader before 6.2.108 carry an advisory for arbitrary JavaScript execution
- * on opening a malicious document. The extraction sweeper opens any uploaded
- * PDF with it.
+ * reader from 5.6.83 up to, but not including, 6.2.108 carry an advisory for
+ * arbitrary JavaScript execution on opening a malicious document. The
+ * extraction sweeper opens any uploaded PDF with it.
  *
  * Nothing else fails if an `officeparser` update re-pins the reader to an
  * older release: the extractor keeps working and quietly parses
