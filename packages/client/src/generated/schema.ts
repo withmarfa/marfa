@@ -1866,6 +1866,24 @@ export interface components {
             occurred_at: string;
             /** @description The item's `source_id` at this version, or `null` if it had none. */
             source_id: string | null;
+            /** @description The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text. */
+            writer: {
+                /**
+                 * @description What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @enum {string}
+                 */
+                kind: "browser" | "app" | "key" | "local";
+                /**
+                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 */
+                id: string;
+                /**
+                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @example Safari on macOS
+                 */
+                name: string;
+            } | null;
             /** @description When Marfa recorded the snapshot, in UTC. */
             created_at: string;
         };

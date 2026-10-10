@@ -293,6 +293,7 @@ describe("a housekeeping run whose write fails", () => {
       run: async () => {
         try {
           await itemWrites(context.storage).create({
+            writer: null,
             type: "core.note",
             tier: "library",
             state: "active",

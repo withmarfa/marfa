@@ -265,6 +265,7 @@ describe("a purge reaches the stream", () => {
 
   it("the revoked-grant sweep announces the grant row it removed", async () => {
     const grant = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",

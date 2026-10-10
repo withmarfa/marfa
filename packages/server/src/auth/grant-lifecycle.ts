@@ -5,6 +5,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
+import type { WrittenBy } from "./version-writer.js";
 
 /**
  * The transitions of a user-app grant that more than one door reaches.
@@ -95,6 +96,8 @@ export async function revokeProjectedGrant(
      * expiry sweep, which has nobody to ask, leaves them alone.
      */
     revokeKeys?: boolean;
+    /** Who the revocation's change to the record is written by. */
+    by: WrittenBy;
     audit?: AuditLogEntry;
     /**
      * Asked inside the consent lock and the transaction, before anything is
@@ -137,7 +140,7 @@ export async function revokeProjectedGrant(
     if (opts.itemId === null) return true;
     await writeItem(
       storage,
-      { kind: "platform" },
+      { kind: "platform", by: opts.by },
       {
         op: "update",
         id: opts.itemId,
@@ -217,6 +220,8 @@ export async function projectGrantOnConsent(
     clientId: string;
     scopes: string[];
     clientIp: string | null;
+    /** The browser that approved. */
+    by: WrittenBy;
   },
 ): Promise<AuditLogEntry> {
   let itemId =
@@ -240,7 +245,7 @@ export async function projectGrantOnConsent(
     }
     const written = await writeItem(
       storage,
-      { kind: "platform" },
+      { kind: "platform", by: opts.by },
       {
         op: "update",
         id: itemId,
@@ -257,7 +262,7 @@ export async function projectGrantOnConsent(
   } else {
     const { item } = await writeItem(
       storage,
-      { kind: "platform" },
+      { kind: "platform", by: opts.by },
       {
         op: "create",
         type: "system.connection",

@@ -34,12 +34,14 @@ function snapshots(itemId: string): Version[] {
     tier: "feed",
     occurred_at: "2020-02-29T12:34:56.789+02:00",
     source_id: version === 1 ? "old-source" : null,
+    writer: version === 1 ? { kind: "key", id: "a-key", name: "A key" } : null,
     created_at: "2023-05-06T01:02:03.456Z",
   }));
 }
 
 async function note(ctx: TestContext) {
   return itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "current" },
     version: 3,

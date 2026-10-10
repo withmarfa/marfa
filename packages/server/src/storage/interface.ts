@@ -6,6 +6,7 @@ import type {
   UpdateItemInput,
   Metadata,
   Version,
+  VersionWriter,
   ApiKey,
   CreateKeyInput,
   UpdateKeyInput,
@@ -638,9 +639,19 @@ export interface BlobProofInput {
   blob_proof?: NonNullable<BlobProof>;
 }
 
+/**
+ * The sign-in the version a write leaves the row at was written by, which
+ * the snapshot of that version takes when an update moves past it. Null
+ * where no sign-in wrote it, which every caller says rather than leaves out.
+ */
+export interface WriterInput {
+  writer: VersionWriter | null;
+}
+
 export type StoredCreateItemInput = CreateItemInput &
   RestoredRowInput &
-  BlobProofInput;
+  BlobProofInput &
+  WriterInput;
 
 export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 
@@ -662,7 +673,8 @@ export type StoredCreateEdgeInput = CreateEdgeInput &
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput &
   BlobProofInput &
-  BaseVersionInput;
+  BaseVersionInput &
+  WriterInput;
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -689,6 +701,16 @@ export interface ItemStore {
   restoreDates(id: string, dates: ArchivedDates): Promise<void>;
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
+  /**
+   * The sign-in that wrote each row at the version named, keyed by id: the
+   * row's own writer where it still holds that version, else its snapshot's.
+   * One statement, so a write landing meanwhile cannot lend a later
+   * version's writer. An id absent from the map has neither, such as a
+   * snapshot the thinner removed.
+   */
+  writersAt(
+    rows: readonly { id: string; version: number }[],
+  ): Promise<Map<string, VersionWriter | null>>;
   /**
    * Fetch many items by id, as a map keyed by id; an id that resolves to
    * nothing is absent from the map rather than an error.
@@ -979,7 +1001,7 @@ export interface MetadataStore {
  */
 export type VersionedItemFields = Pick<
   Version,
-  "type" | "tier" | "occurred_at" | "source_id"
+  "type" | "tier" | "occurred_at" | "source_id" | "writer"
 >;
 
 /** One page of an item's snapshots, oldest first. */

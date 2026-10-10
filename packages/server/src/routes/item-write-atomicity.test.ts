@@ -82,6 +82,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
  *  below are what is under test. */
 async function makeNote(body: string): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body },
   });

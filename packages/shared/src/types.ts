@@ -179,6 +179,20 @@ export interface Metadata {
   extensions: Record<string, Record<string, unknown>>;
 }
 
+/** The kinds of sign-in that write a version. */
+export const VERSION_WRITER_KINDS = ["browser", "app", "key", "local"] as const;
+export type VersionWriterKind = (typeof VERSION_WRITER_KINDS)[number];
+
+/**
+ * The sign-in that wrote a version, as it was named when it wrote: kept with
+ * the version, so it names a sign-in that has since ended.
+ */
+export interface VersionWriter {
+  kind: VersionWriterKind;
+  id: string;
+  name: string;
+}
+
 /**
  * A frozen snapshot of an item's previous state: its properties and the four
  * fields the row had at that version. A snapshot is read under `type`, the
@@ -193,6 +207,8 @@ export interface Version {
   tier: Tier;
   occurred_at: string;
   source_id: string | null;
+  /** The sign-in that wrote this version; null where none did. */
+  writer: VersionWriter | null;
   created_at: string;
 }
 

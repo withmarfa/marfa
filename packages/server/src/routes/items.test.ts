@@ -2931,6 +2931,7 @@ describe("GET /items?include=system", () => {
     // namespace refuses a write to every credential. What this block is about
     // is who reads one back; the seed is not the claim.
     const folder = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.folder",
       properties: { title: `include-system-${marker}` },
     });

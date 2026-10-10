@@ -82,6 +82,8 @@ export type DirectAuthority =
       kind: "owner";
       userId: string;
       sessionId: string;
+      /** The `User-Agent` the session signed in with, which names it. */
+      userAgent: string | null;
       authenticatedAt: number;
     }>;
 
@@ -131,6 +133,7 @@ export function authorityId(c: Context<AppEnv>): string {
 // ---------------------------------------------------------------------------
 
 const KEY_PREFIX = "marfa_k1_";
+const OAUTH_SOURCE_PREFIX = "oauth:";
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
@@ -352,8 +355,8 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
   // inside it.
   return {
     id: oauthToken.id,
-    label: `oauth:${grantHandle}`,
-    source: `oauth:${grantHandle}`,
+    label: `${OAUTH_SOURCE_PREFIX}${grantHandle}`,
+    source: `${OAUTH_SOURCE_PREFIX}${grantHandle}`,
     // **A sign-in claims no source beyond its own.** A claim is granted
     // by a key's creator, and a grant is consent to scopes, none of
     // which names a source, so there is nothing an app was given that
@@ -371,6 +374,22 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
     created_at: createdAtIso,
     last_used_at: null,
   };
+}
+
+/**
+ * The app and person the principal `oauthPrincipal` made stands for, read
+ * back from the source it composed; null for a stored key, whose source can
+ * never take the reserved `oauth:` prefix. The person's id holds no colon,
+ * so the last one ends the app's.
+ */
+export function oauthGrantOf(
+  key: ApiKey,
+): { clientId: string; authUserId: string } | null {
+  if (!key.source.startsWith(OAUTH_SOURCE_PREFIX)) return null;
+  const handle = key.source.slice(OAUTH_SOURCE_PREFIX.length);
+  const at = handle.lastIndexOf(":");
+  if (at <= 0 || at === handle.length - 1) return null;
+  return { clientId: handle.slice(0, at), authUserId: handle.slice(at + 1) };
 }
 
 /**
@@ -514,7 +533,9 @@ export function authMiddleware(storage: Storage, salt: string) {
  * per request in this file, never persisted. A minted key carrying that
  * shape would read later as a grant it has no binding to.
  */
-export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = ["oauth:"] as const;
+export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
+  OAUTH_SOURCE_PREFIX,
+] as const;
 
 /** Whether `source` claims a reserved prefix. */
 export function isReservedCredentialSource(source: string): boolean {

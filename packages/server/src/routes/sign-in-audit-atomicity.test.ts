@@ -94,7 +94,7 @@ it("keeps an app's name unchanged when the audit of its rename fails", async () 
   expect(owner).toBeTruthy();
   const { item } = await writeItem(
     ctx.storage,
-    { kind: "platform" },
+    { kind: "platform", by: null },
     {
       op: "create",
       type: "system.connection",
@@ -137,7 +137,7 @@ it("renames an app only once the grant's consent lock is free, and not after a r
   const owner = await ctx.storage.owner?.find();
   const { item } = await writeItem(
     ctx.storage,
-    { kind: "platform" },
+    { kind: "platform", by: null },
     {
       op: "create",
       type: "system.connection",
@@ -165,7 +165,7 @@ it("renames an app only once the grant's consent lock is free, and not after a r
     await gate;
     await writeItem(
       ctx.storage,
-      { kind: "platform" },
+      { kind: "platform", by: null },
       {
         op: "update",
         id: item.id,

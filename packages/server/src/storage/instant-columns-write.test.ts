@@ -110,6 +110,7 @@ describe("the instant columns on the write path", () => {
       ends_at: "2026-04-05T10:00:00.000Z",
     });
     await itemWrites(ctx.storage).update(id, {
+      writer: null,
       properties: { title: "Undated" },
       properties_mode: "replace",
     });

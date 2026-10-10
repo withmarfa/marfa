@@ -56,6 +56,7 @@ export function directAuthorityMiddleware(
             kind: "owner",
             userId: renewal.session.user.id,
             sessionId: renewal.session.session.id,
+            userAgent: renewal.session.session.userAgent ?? null,
             authenticatedAt: renewal.session.session.createdAt.getTime(),
           });
       }

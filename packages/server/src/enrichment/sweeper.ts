@@ -338,7 +338,7 @@ export class TextEnrichmentSweeper {
           () =>
             writeItem(
               storage,
-              { kind: "platform" },
+              { kind: "platform", by: null },
               {
                 op: "update",
                 id: candidate.item_id,

@@ -44,6 +44,7 @@ export interface MarfaVersion {
   tier: "library" | "feed";
   occurred_at: string;
   source_id: string | null;
+  writer: { kind: string; id: string; name: string } | null;
   created_at: string;
 }
 

@@ -46,6 +46,7 @@ async function seedItemWithUpdatedAt(opts: {
   updatedAtIso: string;
 }): Promise<void> {
   await itemWrites(ctx.storage).create({
+    writer: null,
     id: opts.id,
     type: "core.note",
     properties: { body: `seed ${opts.id}` },
@@ -205,6 +206,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
     // A live app grant in the bin is refused by the purge doors, and is
     // the oldest row, so it is the first the sweep reaches.
     const stuck = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",
@@ -563,6 +565,7 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
       createdAt: new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY),
     });
     await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       tier: "library",
       state: "active",
@@ -727,6 +730,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
    */
   async function seedRevokedGrant(revokedAt: string) {
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",
@@ -768,7 +772,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // The witness: the same write as the platform's own goes through.
     await writeItem(
       ctx.storage,
-      { kind: "platform" },
+      { kind: "platform", by: null },
       { op: "purge", id, revokedGrant: true },
     );
     expect(await ctx.storage.items.get(id)).toBeNull();
@@ -782,6 +786,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
 
   it("leaves a live grant alone, whatever its age", async () => {
     const live = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",
@@ -820,6 +825,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // against: if it ever does occur, the row is a LIVE grant and sweeping it
     // deletes an app's access with no revocation behind it.
     const resurrected = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.connection",
       properties: {
         kind: "app",

@@ -315,6 +315,7 @@ describe("Housekeeping", () => {
       );
       const write = () =>
         itemWrites(ctx!.storage).create({
+          writer: null,
           type: "core.note",
           tier: "library",
           state: "active",
@@ -601,6 +602,7 @@ describe("Housekeeping", () => {
         run: () =>
           storage.runInTransaction(async () => {
             await itemWrites(storage).create({
+              writer: null,
               type: "core.note",
               properties: { body: "held under the lock" },
             });

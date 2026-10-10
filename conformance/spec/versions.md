@@ -110,7 +110,7 @@ When a credential sends `GET /items/{id}/versions`, the server MUST name in each
 
 ### `versions/history-list`
 
-When a credential sends `GET /items/{id}/versions` for an item it may read, the server MUST answer `200` with a page in which each snapshot in `data` carries its `id`, the item's `id` as `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at`.
+When a credential sends `GET /items/{id}/versions` for an item it may read, the server MUST answer `200` with a page in which each snapshot in `data` carries its `id`, the item's `id` as `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id`, `writer` and `created_at`.
 
 **Tests:** `correctness/item-versioning.test.ts › updating an item creates a version snapshot`, `› versions have correct item_id reference`, `› records the tier, own time, natural key and type the row had at each version`.
 
@@ -231,6 +231,112 @@ When a credential sends `GET /items/{id}` with `include=versions`, the server MU
 When snapshots are left out of a page of `GET /items/{id}/versions`, the server MUST fill the page with the snapshots after them, up to the `limit`.
 
 **Tests:** `compliance/version-reach.test.ts › pages the history and fills a page past what the key may not read`.
+
+## Who wrote a version
+
+A version's writer is the sign-in whose request wrote it: the owner's browser session, an app, a key or the private local command. The server takes it from the request's credential when it writes the version and keeps it with the version.
+
+### `versions/writer-recorded`
+
+When a request other than `POST /restore` writes a version of an item, the server MUST record as that version's writer the sign-in that sent the request: the owner's browser session, an app, a key or the private local command.
+
+**Reason:** the credential is the one thing about a request that its sender cannot choose, so a person reading the history can trust where each change came from.
+
+**Tests:** `compliance/version-writers.test.ts › names the key that wrote each version by its id and label`, `› names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`, `› names the sign-in whose write lost as the writer of the copy that keeps it`.
+
+### `versions/writer-field`
+
+When a credential sends `GET /items/{id}/versions`, or `GET /items/{id}` with `include=versions`, the server MUST carry in each snapshot a `writer` holding the `kind`, `id` and `name` of the sign-in that wrote that version, or `null` when no sign-in wrote it.
+
+**Reason:** a credential that may read a snapshot reads its writer too, under the same reach (`versions/reach-left-out`), so it learns the id and name of other sign-ins of the owner, such as another app's name or a key's label. That is the point of the history; no token, `User-Agent` or address is stored with a writer.
+
+**Tests:** `compliance/version-writers.test.ts › names the key that wrote each version by its id and label`, `› names no writer for a version the enrichment sweep wrote`.
+
+### `versions/writer-kind`
+
+The server MUST give a writer the `kind` `browser` for the owner's browser session, `app` for an app, `key` for a key and `local` for the private local command.
+
+**Tests:** `compliance/version-writers.test.ts › names the key that wrote each version by its id and label`, `› names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`.
+
+### `versions/writer-id`
+
+The server MUST give a browser, a key, or an app whose sign-in record stands, that wrote a version the `id` that `GET /owner/sign-ins` lists it under, and the private local command the `id` `local`.
+
+**Reason:** a reader can tell which listed sign-in wrote a version, and end it by that id.
+
+**Tests:** `compliance/version-writers.test.ts › names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`.
+
+### `versions/writer-app-gone`
+
+If an app writes a version once its sign-in record is gone, then the server MUST record the version with the app's client ID as the writer's `id`, and the `client_name` it registered with, or else its client ID, as the writer's `name`.
+
+**Reason:** a token can outlive the record that lists its app for a moment, and recording who wrote never fails a write the token is entitled to.
+
+**Tests:** `compliance/version-writers.test.ts › names an app by its client id once its sign-in record is gone, and still takes its write`.
+
+### `versions/writer-name`
+
+When the server records a version's writer, the server MUST give it the `name` that `GET /owner/sign-ins` gives that sign-in at that moment, and `Local command` for the private local command.
+
+**Tests:** `compliance/version-writers.test.ts › names the key that wrote each version by its id and label`, `› names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`.
+
+### `versions/writer-name-bounds`
+
+The server MUST hold a writer's `name` to at most 200 characters, none of them a control character or a bidirectional formatting character.
+
+**Reason:** a browser's `User-Agent`, an app's registered name and a key's label are text a client chose, which the listing replaces where it is unprintable or too long (`keys-and-oauth/sign-ins-unprintable-name`).
+
+**Tests:** `compliance/version-writers.test.ts › names a key or an app whose chosen name is unprintable or too long as the listing does`.
+
+### `versions/writer-kept`
+
+When the sign-in that wrote a version has ended, whether a key revoked, an app ended or a browser session ended, the server MUST still name it in that version's `writer` with the `id` and `name` it had when it wrote.
+
+**Reason:** ending a sign-in stops what it can do next and changes nothing it did, and its name is kept with the version rather than looked up.
+
+**Tests:** `compliance/version-writers.test.ts › still names each writer once the key is revoked, the app ended and the browser session ended`.
+
+### `versions/writer-not-settable`
+
+If the body of a write to an item names a `writer`, then the server MUST NOT record that `writer` as the writer of any version.
+
+**Reason:** `POST /items` drops a body key it does not declare (`items/create-undeclared-key`) and `PATCH /items/{id}` refuses one (`items/update-undeclared-key`), so no body reaches the writer.
+
+**Tests:** `compliance/version-writers.test.ts › takes the writer from the credential, drops one a create names and refuses one an update names`.
+
+### `versions/writer-sender`
+
+When a working copy sends a write it queued earlier, the server MUST record as the writer the sign-in that sends it.
+
+**Reason:** the server knows only the credential of the request it answers, not who made the edit offline or which sign-in the device held when it was made.
+
+**Tests:** `compliance/version-writers.test.ts › names the sign-in that sends a queued write, not the one that read the version it is based on`.
+
+### `versions/writer-none`
+
+When the server writes a version that no request asked for, such as an enrichment, the server MUST record `null` as the writer.
+
+**Tests:** `compliance/version-writers.test.ts › names no writer for a version the enrichment sweep wrote`.
+
+### `versions/writer-archive`
+
+When `GET /export?format=archive` carries an item, the server MUST carry the `writer` of each snapshot and, as the line's `writer`, the writer of the version the line carries the item at, however the item is written to while the archive is read.
+
+**Tests:** `compliance/version-writers.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`.
+
+### `versions/writer-restore`
+
+When `POST /restore` writes an archived item, the server MUST keep as writers the ones the archive names for each snapshot and for the current version, and `null` where it names none.
+
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the owner or the local command restores (`search-and-filters/restore-operator`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
+
+**Tests:** `compliance/version-writers.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
+
+### `versions/writer-restore-invalid`
+
+If an archive names a writer that is neither `null` nor an object holding a `kind` of `browser`, `app`, `key` or `local`, an `id` of 1 to 200 characters, none of them a control character or a bidirectional formatting character, and a `name` of at least one character that `versions/writer-name-bounds` admits with no space at either end, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/version-writers.test.ts › refuses an archive that names a malformed writer`.
 
 ## A stale write that collides
 

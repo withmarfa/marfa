@@ -32,10 +32,12 @@ async function collidingNote(seed: string): Promise<{
   base: number;
 }> {
   const created = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: `${seed} original` },
   });
   const updated = await itemWrites(ctx.storage).update(created.id, {
+    writer: null,
     properties: { body: `${seed} from the winner` },
     version: created.version,
     may_read_type: () => true,
@@ -59,6 +61,7 @@ describe("a keep-both resolution that runs twice", () => {
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await itemWrites(ctx.storage).update(id, {
+        writer: null,
         properties: { body: losing },
         version: base,
         may_read_type: () => true,
@@ -82,6 +85,7 @@ describe("a keep-both resolution that runs twice", () => {
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await itemWrites(ctx.storage).update(id, {
+        writer: null,
         properties: { body: losing },
         version: base,
         may_read_type: () => true,

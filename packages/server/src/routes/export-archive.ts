@@ -308,6 +308,14 @@ async function collectSelection(input: {
     const lines: string[] = [];
     const ids: string[] = [];
     const hashes = new Set<string>();
+    // Of the version each row was read at, which a write since may have
+    // moved the row past. A writer is held to the reach that holds the
+    // snapshots, so a caller that may not read the history learns none.
+    const writers = await storage.items.writersAt(
+      result.data
+        .filter((item) => readsHistory(item.type))
+        .map((item) => ({ id: item.id, version: item.version })),
+    );
     for (const item of await withCascadeMarks(
       storage,
       callerKey,
@@ -332,6 +340,7 @@ async function collectSelection(input: {
           item,
           metadata,
           versions,
+          writer: writers.get(item.id) ?? null,
           lending_blobs: lendingBlobs,
           lending_extensions: lendingExtensions,
         }),

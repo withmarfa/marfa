@@ -69,7 +69,11 @@ import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
-import { archiveDates, archiveVersions } from "./restore-archive-history.js";
+import {
+  archiveDates,
+  archiveVersions,
+  archiveWriter,
+} from "./restore-archive-history.js";
 import { archiveLines, readArchive } from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
@@ -278,6 +282,7 @@ interface ArchivedItemLine {
   lending_blobs?: unknown;
   lending_extensions?: unknown;
   versions?: unknown;
+  writer?: unknown;
 }
 
 /** An `edges.ndjson` line. */
@@ -398,6 +403,7 @@ function itemRefusal(
 ): MarfaError | null {
   const { item } = entry;
   archiveDates("item", item, index);
+  archiveWriter(item, entry.writer, index);
   const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
   const scalar = archiveScalarRefusal("item", item, index);
   if (scalar) return scalar;
@@ -690,6 +696,7 @@ async function restoreRows(
       const restoreItem = async (entry: ArchivedItemLine): Promise<void> => {
         const { item, metadata: meta, lending_blobs: lending } = entry;
         const dates = archiveDates("item", item, index);
+        const writer = archiveWriter(item, entry.writer, index);
         const history = archiveVersions(
           item,
           entry.versions,
@@ -710,7 +717,8 @@ async function restoreRows(
         try {
           ({ item: created } = await writeItem(
             storage,
-            { kind: "platform" },
+            // The archive's writer: a restore puts back what others wrote.
+            { kind: "platform", by: writer },
             {
               op: "create",
               // A digest lends here exactly where it lent in the

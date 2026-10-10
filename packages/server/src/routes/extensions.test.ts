@@ -13,6 +13,7 @@ let scopedKey: string;
 // which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
   const item = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: `ext-item-${String(Math.random())}` },
   });

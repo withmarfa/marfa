@@ -96,6 +96,7 @@ describe("export → restore round trip", () => {
     const destination = await newContext();
 
     const note1 = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { title: "First", body: "carries tags and an extension" },
       source: "rt-seed",
@@ -105,6 +106,7 @@ describe("export → restore round trip", () => {
       tags: ["alpha", "beta"],
     });
     const note2 = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { title: "Second", body: "archived on purpose" },
       source: "rt-seed",
@@ -112,6 +114,7 @@ describe("export → restore round trip", () => {
       state: "archived",
     });
     const note3 = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { title: "Third", body: "plain" },
       source: "rt-seed",
@@ -220,10 +223,12 @@ describe("export → restore round trip", () => {
     expect(made.status).toBe(201);
     const folderId = ((await made.json()) as { item: { id: string } }).item.id;
     const placed = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "placed" },
     });
     const planted = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "planted" },
     });
@@ -281,6 +286,7 @@ describe("export → restore round trip", () => {
     const source = await newContext();
 
     const a = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "a" },
       source: "rt2",
@@ -288,6 +294,7 @@ describe("export → restore round trip", () => {
       tags: ["keep"],
     });
     const b = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "b" },
       source: "rt2",
@@ -396,12 +403,14 @@ describe("export → restore round trip", () => {
     const ctx = await newContext();
 
     const note = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "in filter" },
       source: "rt4",
       source_id: "n",
     });
     const bookmark = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.bookmark",
       properties: { url: "https://example.com" },
       source: "rt4",

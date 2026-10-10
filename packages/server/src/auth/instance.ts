@@ -233,6 +233,8 @@ export interface MarfaAuthSession {
     createdAt: Date;
     updatedAt: Date;
     expiresAt: Date;
+    /** The `User-Agent` the browser signed in with. */
+    userAgent?: string | null;
   };
 }
 

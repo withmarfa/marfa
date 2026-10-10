@@ -216,6 +216,7 @@ describe("POST /items/:id/purge — items.purge", () => {
     // Create + trash an item via storage so the test doesn't have to
     // model the full lifecycle through HTTP.
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "doomed" },
     });
@@ -236,6 +237,7 @@ describe("POST /items/:id/purge — items.purge", () => {
       typePermissions: { "*": "write" },
     });
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "spared" },
     });

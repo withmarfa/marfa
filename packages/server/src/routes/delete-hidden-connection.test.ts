@@ -19,10 +19,12 @@ async function parentOfLiveConnection(): Promise<{
   connection: string;
 }> {
   const note = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "parent" },
   });
   const connection = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.connection",
     properties: {
       kind: "app",

@@ -377,6 +377,7 @@ describe("what the report counts as a reference", () => {
       // closed to every credential. The claim here is about what the scan
       // keeps, not about which door wrote the row.
       await itemWrites(ctx.storage).create({
+        writer: null,
         type,
         tier: "library",
         state,

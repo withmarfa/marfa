@@ -78,6 +78,7 @@ describe("GET /platform-types/drift", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
     await itemWrites(ctx.storage).create({
+      writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
@@ -226,6 +227,7 @@ describe("DELETE /platform-types/{id}", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
     await itemWrites(ctx.storage).create({
+      writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
@@ -322,6 +324,7 @@ describe("DELETE /platform-types/{id}", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
     await itemWrites(ctx.storage).create({
+      writer: null,
       type: id,
       properties: { name: "still here" },
       source: "test",
@@ -354,6 +357,7 @@ describe("DELETE /platform-types/{id} decides in one transaction", () => {
       creating ??= sqliteRequestContext
         .exit(() =>
           items.create({
+            writer: null,
             type: id,
             properties: { name: "written mid-removal" },
             source: "test",

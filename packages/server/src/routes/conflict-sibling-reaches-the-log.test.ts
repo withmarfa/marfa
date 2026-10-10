@@ -267,6 +267,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     // announcing again would report a create that did not happen.
     const cursor = await logCursor();
     const again = await itemWrites(ctx.storage).update(id, {
+      writer: null,
       properties: { body: "retried edit" },
       version: base,
       may_read_type: () => true,
@@ -327,6 +328,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
 
     const cursor = await logCursor();
     const again = await itemWrites(ctx.storage).update(id, {
+      writer: null,
       properties: { body: "retried edit, parented" },
       version: base,
       may_read_type: () => true,

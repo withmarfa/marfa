@@ -21,6 +21,7 @@ import { setNoStore } from "./no-store.js";
 import { OwnerSchema, ownerWire } from "./owner-wire.js";
 import { NextCursorSchema } from "./_schemas.js";
 import { keysInReach } from "../auth/key-reach.js";
+import { requestWriter } from "../auth/version-writer.js";
 import {
   endSignIn,
   listSignIns,
@@ -368,7 +369,11 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       owner?.id ?? null,
       id,
       name,
-      { keyId: authorityId(c), clientIp: c.get("clientIp") ?? null },
+      {
+        keyId: authorityId(c),
+        clientIp: c.get("clientIp") ?? null,
+        writer: requestWriter(c),
+      },
     );
     if (renamed === "browser")
       throw new MarfaError(
@@ -397,6 +402,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       {
         keyId: authorityId(c),
         clientIp: c.get("clientIp") ?? null,
+        writer: requestWriter(c),
       },
       { revokeKeys: revoke_keys === "true" },
     );

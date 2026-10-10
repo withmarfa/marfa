@@ -587,6 +587,7 @@ describe("what a delivery carries", () => {
 
   it("sends an edge only where its kind and its source's type are readable", async () => {
     const readable = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       tier: "library",
       state: "active",
@@ -594,6 +595,7 @@ describe("what a delivery carries", () => {
       source: "test/webhook-edges",
     });
     const hidden = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.task",
       tier: "library",
       state: "active",

@@ -1,4 +1,4 @@
-import { maxStringLength } from "@withmarfa/shared";
+import { maxStringLength, VERSION_WRITER_KINDS } from "@withmarfa/shared";
 /**
  * Reusable Zod schemas shared across route files. Centralized so each wire
  * shape is declared once.
@@ -561,6 +561,26 @@ export const AT_THIS_VERSION = {
     "The item's `source_id` at this version, or `null` if it had none.",
 } as const;
 
+const VersionWriterSchema = z.object({
+  kind: z
+    .enum(VERSION_WRITER_KINDS)
+    .describe(
+      "What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.",
+    ),
+  id: z
+    .string()
+    .describe(
+      "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
+    )
+    .openapi({ example: "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M" }),
+  name: z
+    .string()
+    .describe(
+      "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+    )
+    .openapi({ example: "Safari on macOS" }),
+});
+
 export const VersionSchema = z
   .object({
     id: z.string().describe("Unique identifier for the snapshot."),
@@ -577,6 +597,9 @@ export const VersionSchema = z
     tier: TierEnum.describe(AT_THIS_VERSION.tier),
     occurred_at: z.string().describe(AT_THIS_VERSION.occurred_at),
     source_id: z.string().nullable().describe(AT_THIS_VERSION.source_id),
+    writer: VersionWriterSchema.nullable().describe(
+      "The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text.",
+    ),
     created_at: z
       .string()
       .describe("When Marfa recorded the snapshot, in UTC."),

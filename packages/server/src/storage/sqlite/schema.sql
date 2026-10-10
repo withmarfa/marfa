@@ -585,7 +585,11 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`capture_latitude` real,
 	`capture_longitude` real,
 	`starts_at` text,
-	`ends_at` text
+	`ends_at` text,
+	`writer_kind` text,
+	`writer_id` text,
+	`writer_name` text,
+	CONSTRAINT "items_writer_whole" CHECK(("items"."writer_kind" IS NULL AND "items"."writer_id" IS NULL AND "items"."writer_name" IS NULL) OR ("items"."writer_kind" IN ('browser', 'app', 'key', 'local') AND "items"."writer_id" IS NOT NULL AND "items"."writer_name" IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS `idx_items_type` ON `items` (`type`);
@@ -708,7 +712,11 @@ CREATE TABLE IF NOT EXISTS `versions` (
 	`source_id` text,
 	`type` text NOT NULL,
 	`created_at` text NOT NULL,
-	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+	`writer_kind` text,
+	`writer_id` text,
+	`writer_name` text,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "versions_writer_whole" CHECK(("versions"."writer_kind" IS NULL AND "versions"."writer_id" IS NULL AND "versions"."writer_name" IS NULL) OR ("versions"."writer_kind" IN ('browser', 'app', 'key', 'local') AND "versions"."writer_id" IS NOT NULL AND "versions"."writer_name" IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS `idx_versions_item_id` ON `versions` (`item_id`);

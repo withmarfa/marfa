@@ -19,10 +19,12 @@ async function tagged(): Promise<Storage> {
   tmpDir = mkdtempSync(join(tmpdir(), "marfa-metadata-"));
   storage = await createSqliteStorage(join(tmpDir, "marfa.db"));
   const note = await itemWrites(storage).create({
+    writer: null,
     type: "core.note",
     properties: { body: "a note" },
   });
   const task = await itemWrites(storage).create({
+    writer: null,
     type: "core.task",
     properties: { title: "a task" },
   });

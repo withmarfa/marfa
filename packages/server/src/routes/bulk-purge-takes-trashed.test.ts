@@ -146,6 +146,7 @@ describe("a bulk purge takes only trashed rows", () => {
     // first lets both through to the state the purge is judged by.
     async function connection(): Promise<string> {
       const item = await itemWrites(ctx.storage).create({
+        writer: null,
         type: "system.connection",
         properties: {
           kind: "app",

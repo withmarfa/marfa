@@ -38,11 +38,13 @@ describe("SqliteStorage.runInTransaction", () => {
     await expect(
       storage.runInTransaction(async () => {
         await itemWrites(storage).create({
+          writer: null,
           id: "019d1111-1111-7111-a111-111111111111",
           type: "core.note",
           properties: { body: "rollback-alpha" },
         });
         await itemWrites(storage).create({
+          writer: null,
           id: "019d1111-1111-7111-a111-111111111112",
           type: "core.note",
           properties: { body: "rollback-bravo" },
@@ -62,11 +64,13 @@ describe("SqliteStorage.runInTransaction", () => {
   it("commits every write when the transaction body resolves", async () => {
     await storage.runInTransaction(async () => {
       await itemWrites(storage).create({
+        writer: null,
         id: "019d2222-2222-7222-a222-222222222221",
         type: "core.note",
         properties: { body: "commit-alpha" },
       });
       await itemWrites(storage).create({
+        writer: null,
         id: "019d2222-2222-7222-a222-222222222222",
         type: "core.note",
         properties: { body: "commit-bravo" },
@@ -87,6 +91,7 @@ describe("SqliteStorage.runInTransaction", () => {
     const open = () => readdirSync("/dev/fd").length;
     const write = (n: number) =>
       itemWrites(storage).create({
+        writer: null,
         id: `019d3333-3333-7333-a333-${String(n).padStart(12, "0")}`,
         type: "core.note",
         properties: { body: `handle-${String(n)}` },

@@ -14,7 +14,7 @@ import type {
 import { versions } from "./schema.js";
 import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
-import { rowToVersion } from "./helpers.js";
+import { rowToVersion, writerColumns } from "./helpers.js";
 import { isUniqueViolation } from "./pk-violation.js";
 
 /** The base Drizzle handle or a transaction handle from `db.transaction`. */
@@ -44,8 +44,11 @@ export class SqliteVersionStore implements VersionStore {
       source_id: itemFields.source_id,
       created_at: new Date().toISOString(),
     };
-    await db.insert(versions).values(row).run();
-    return { ...row, properties };
+    await db
+      .insert(versions)
+      .values({ ...row, ...writerColumns(itemFields.writer) })
+      .run();
+    return { ...row, properties, writer: itemFields.writer };
   }
 
   /** Replays validated archive snapshots without minting IDs or applying the
@@ -67,6 +70,7 @@ export class SqliteVersionStore implements VersionStore {
               occurred_at: snapshot.occurred_at,
               source_id: snapshot.source_id,
               created_at: snapshot.created_at,
+              ...writerColumns(snapshot.writer),
             })
             .run();
         } catch (err) {

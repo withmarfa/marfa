@@ -54,11 +54,13 @@ describe("a restore does not rewind a row's version", () => {
     const destination = await newContext();
 
     const note = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "v1" },
       source: "av-seed",
     });
     const other = await itemWrites(source.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "target" },
       source: "av-seed",
@@ -67,6 +69,7 @@ describe("a restore does not rewind a row's version", () => {
     // rather than coincidentally right.
     for (const body of ["v2", "v3", "v4"]) {
       const bumped = await itemWrites(source.storage).update(note.id, {
+        writer: null,
         properties: { body },
       });
       expect("error" in bumped).toBe(false);

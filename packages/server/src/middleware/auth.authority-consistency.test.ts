@@ -85,6 +85,7 @@ async function mintKey(opts: {
  *  depend on the consent pipeline. */
 async function seedConnection(): Promise<string> {
   const conn = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.connection",
     properties: {
       kind: "app",
@@ -147,6 +148,7 @@ describe("extensions — the reserved namespaces are nobody's", () => {
       extension_permissions: { "*": "write" },
     });
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "reserved-host" },
     });
@@ -169,6 +171,7 @@ describe("extensions — the reserved namespaces are nobody's", () => {
 
   it("refuses a management key on a reserved namespace too", async () => {
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "reserved-control" },
     });

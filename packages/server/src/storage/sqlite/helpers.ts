@@ -1,11 +1,12 @@
 import { safeJsonParse } from "../json-utils.js";
-import { isTier } from "@withmarfa/shared";
+import { isTier, VERSION_WRITER_KINDS } from "@withmarfa/shared";
 import type {
   Item,
   ItemState,
   Metadata,
   Tier,
   Version,
+  VersionWriter,
 } from "@withmarfa/shared";
 import type { items, metadata, versions } from "./schema.js";
 
@@ -80,6 +81,31 @@ export function rowToVersion(row: VersionRow): Version {
     tier: row.tier as Tier,
     occurred_at: row.occurred_at,
     source_id: row.source_id,
+    writer: rowWriter(row),
     created_at: row.created_at,
   };
+}
+
+/** The columns a writer is stored in, on a row or a snapshot. */
+export interface WriterColumns {
+  writer_kind: string | null;
+  writer_id: string | null;
+  writer_name: string | null;
+}
+
+export function writerColumns(writer: VersionWriter | null): WriterColumns {
+  return {
+    writer_kind: writer?.kind ?? null,
+    writer_id: writer?.id ?? null,
+    writer_name: writer?.name ?? null,
+  };
+}
+
+/** The writer a row or a snapshot holds. A kind this build does not know
+ *  cannot be stored (`items_writer_whole`), so it reads as none. */
+export function rowWriter(row: WriterColumns): VersionWriter | null {
+  const kind = VERSION_WRITER_KINDS.find((known) => known === row.writer_kind);
+  if (kind === undefined || row.writer_id === null || row.writer_name === null)
+    return null;
+  return { kind, id: row.writer_id, name: row.writer_name };
 }

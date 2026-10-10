@@ -37,7 +37,7 @@ async function purgeEach(
     try {
       const result = await writeItem(
         storage,
-        { kind: "platform" },
+        { kind: "platform", by: null },
         { op: "purge", id, ...(revokedGrant && { revokedGrant }) },
       );
       if (result.outcome === "moved") purged += 1;
@@ -285,6 +285,7 @@ export class GrantInactivityRetirer {
           },
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
+          by: null,
           audit: {
             action: "auth.grant.retired",
             resource_type: "oauth_grant",

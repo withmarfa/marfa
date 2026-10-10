@@ -98,6 +98,7 @@ describe("the tag bound is enforced where the tags are written", () => {
     // Through `items.create`, the one writer that is deliberately unbounded,
     // the same way an archive restore produces one.
     const created = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "already over" },
       tags: tags("legacy", MAX_TAGS_PER_ITEM + 20),

@@ -49,6 +49,7 @@ describe("items.properties is stored natively structured", () => {
   it("create writes the database's structured type, not text", async () => {
     const itemId = id("1");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: gnarly,
@@ -60,6 +61,7 @@ describe("items.properties is stored natively structured", () => {
   it("round-trips gnarly properties object-equivalently through create and get", async () => {
     const itemId = id("2");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: gnarly,
@@ -72,12 +74,14 @@ describe("items.properties is stored natively structured", () => {
   it("update keeps the structured encoding and the merged object", async () => {
     const itemId = id("3");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: gnarly,
       tier: "library",
     });
     const updated = await itemWrites(ctx.storage).update(itemId, {
+      writer: null,
       properties: { title: "replaced", added: [1, 2, 3] },
     });
     expect("error" in updated).toBe(false);
@@ -93,6 +97,7 @@ describe("items.properties is stored natively structured", () => {
     // store; on sqlite a json_set here would silently revert the row to text.
     const itemId = id("4");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { kind: "app", client_id: "c1", body: "grant" },
@@ -108,6 +113,7 @@ describe("items.properties is stored natively structured", () => {
   it("property filters read the structured column", async () => {
     const itemId = id("5");
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: itemId,
       type: "core.note",
       properties: { author: "Orwell", page_count: 328, body: "novel" },

@@ -50,11 +50,13 @@ describe("the link index", () => {
   it("is built when a type gains a link, and the type is refused one its rows share", async () => {
     const plain = await linkedType({ link_field: undefined });
     const a = await itemWrites(ctx.storage).create({
+      writer: null,
       type: plain.id,
       properties: { vendor_id: "v-1", body: "a" },
       source: "test",
     });
     const b = await itemWrites(ctx.storage).create({
+      writer: null,
       type: plain.id,
       properties: { vendor_id: "v-1", body: "b" },
       source: "test",
@@ -74,6 +76,7 @@ describe("the link index", () => {
     expect((await ctx.storage.types.get(plain.id))?.link_field).toBeUndefined();
 
     await itemWrites(ctx.storage).update(b.id, {
+      writer: null,
       properties: { vendor_id: "v-2" },
     });
     await ctx.storage.types.update(plain.id, {
@@ -86,6 +89,7 @@ describe("the link index", () => {
     expect(found.get("v-2")?.id).toBe(b.id);
     const third = await refusal(
       itemWrites(ctx.storage).create({
+        writer: null,
         type: plain.id,
         properties: { vendor_id: "v-1", body: "c" },
         source: "test",
@@ -100,16 +104,19 @@ describe("the link index", () => {
       merge_policy: { fields: { body: "keep_both_copies" } },
     });
     const row = await itemWrites(ctx.storage).create({
+      writer: null,
       type: type.id,
       properties: { vendor_id: "copied", body: "as written" },
       source: "test",
     });
     await itemWrites(ctx.storage).update(row.id, {
+      writer: null,
       properties: { body: "changed here" },
       version: 1,
       may_read_type: () => true,
     });
     const resolved = await itemWrites(ctx.storage).update(row.id, {
+      writer: null,
       properties: { body: "changed there" },
       version: 1,
       may_read_type: () => true,
@@ -129,6 +136,7 @@ describe("the timed trash sweep", () => {
   it("leaves a tombstone for a row's link and its natural key", async () => {
     const type = await linkedType();
     const row = await itemWrites(ctx.storage).create({
+      writer: null,
       type: type.id,
       properties: { vendor_id: "swept", body: "b" },
       source: "sweep-source",
@@ -164,6 +172,7 @@ describe("the timed trash sweep", () => {
     expect(naturalKey?.purged_at).toBe(link?.purged_at);
     // The swept row's link entry went with it, so the value is free.
     const again = await itemWrites(ctx.storage).create({
+      writer: null,
       type: type.id,
       properties: { vendor_id: "swept", body: "again" },
       source: "test",
@@ -177,6 +186,7 @@ describe("the timed trash sweep", () => {
   it("leaves a registered-again type none of the tombstones its orphaned rows left", async () => {
     const type = await linkedType();
     const orphan = await itemWrites(ctx.storage).create({
+      writer: null,
       type: type.id,
       properties: { vendor_id: "orphaned", body: "b" },
       source: "orphan-source",
@@ -213,6 +223,7 @@ describe("deleting a type", () => {
   it("takes the type's tombstones with it", async () => {
     const type = await linkedType();
     const row = await itemWrites(ctx.storage).create({
+      writer: null,
       type: type.id,
       properties: { vendor_id: "deleted-with", body: "b" },
       source: "delete-source",

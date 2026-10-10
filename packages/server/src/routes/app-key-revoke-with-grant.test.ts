@@ -63,6 +63,7 @@ async function seedKey(
  *  person made. */
 async function seedGrant() {
   const grant = await itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.connection",
     tier: "library",
     state: "active",

@@ -316,6 +316,7 @@ describe("GET /search?include=system", () => {
     // — the claim under test is what the read surface does with the row, not
     // how it got there.
     const folder = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "system.folder",
       properties: { title: word },
     });

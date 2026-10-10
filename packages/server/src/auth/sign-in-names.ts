@@ -2,6 +2,8 @@
  * The readable names of the owner's sign-ins, one function for each kind
  * whose name is not stored as it is shown.
  */
+import type { Item } from "@withmarfa/shared";
+import type { Storage } from "../storage/interface.js";
 
 const BROWSERS: readonly (readonly [RegExp, string])[] = [
   // Edge, Opera and every Chromium browser also say `Chrome/`, and Chrome
@@ -99,4 +101,22 @@ export function appSignInName(
  */
 export function keySignInName(label: string, keyId: string): string {
   return usableSignInName(label) ?? keyId;
+}
+
+/** The name of the app whose grant `record` is, the `system.connection`
+ *  item that stands for it. */
+export async function appRecordName(
+  storage: Pick<Storage, "oauthProvider">,
+  record: Item,
+): Promise<string> {
+  const props = record.properties;
+  const clientId = typeof props.client_id === "string" ? props.client_id : "";
+  const client = clientId
+    ? await storage.oauthProvider?.getClient(clientId)
+    : null;
+  return appSignInName(
+    typeof props.name === "string" ? props.name : undefined,
+    client?.name,
+    clientId,
+  );
 }

@@ -181,6 +181,7 @@ async function archive(
     // The target already exists, so this restore's event batch contains only
     // the newly restored source and its edge.
     await itemWrites(ctx.storage).create({
+      writer: null,
       id: targetId,
       type: "core.note",
       properties: { body: "target" },
@@ -523,6 +524,7 @@ describe("external and background audit units with real SQLite and disk", () => 
 
   it("rolls back a trash batch on refused audit", async () => {
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "old trash" },
     });
@@ -544,20 +546,24 @@ describe("external and background audit units with real SQLite and disk", () => 
 
   it("rolls back version thinning on refused audit", async () => {
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "v1" },
     });
     await itemWrites(ctx.storage).update(item.id, {
+      writer: null,
       may_read_type: () => true,
       properties: { body: "v2" },
       version: item.version,
     });
     await itemWrites(ctx.storage).update(item.id, {
+      writer: null,
       may_read_type: () => true,
       properties: { body: "v3" },
       version: item.version + 1,
     });
     await itemWrites(ctx.storage).update(item.id, {
+      writer: null,
       may_read_type: () => true,
       properties: { body: "v4" },
       version: item.version + 2,

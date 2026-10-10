@@ -125,6 +125,7 @@ afterEach(async () => {
 const generation = () => storage.settings.get(STRUCTURAL_GENERATION_KEY);
 const item = () =>
   itemWrites(storage).create({
+    writer: null,
     type: schema.id,
     properties: { title: "before" },
   });
@@ -230,6 +231,7 @@ it("a captured reader stays old across a writer commit and a subsequent capture 
       fields: { required: { type: "string", required: true } },
     });
     await itemWrites(storage).update(created.id, {
+      writer: null,
       type: destination.id,
       properties: { title: "after" },
     });
@@ -463,6 +465,7 @@ it("one root bumps once for retype, topology, registration and silent removal, w
   const created = await item(),
     old = await generation();
   await itemWrites(storage).update(created.id, {
+    writer: null,
     properties: { title: "ordinary" },
     tier: "feed",
     source_id: "ordinary-source-id",
@@ -476,6 +479,7 @@ it("one root bumps once for retype, topology, registration and silent removal, w
   expect(await generation()).toBe(old);
   await storage.runInTransaction(async () => {
     await itemWrites(storage).update(created.id, {
+      writer: null,
       type: destination.id,
       properties: { title: "move" },
     });
@@ -511,6 +515,7 @@ it.each(["before", "after"])(
     fault.mode = mode;
     await expect(
       itemWrites(storage).update(created.id, {
+        writer: null,
         type: destination.id,
         properties: { title: "move" },
       }),
@@ -534,6 +539,7 @@ it("a failed precommit bump rolls back SQL and releases admission for a healthy 
   ]);
   await expect(
     itemWrites(storage).update(created.id, {
+      writer: null,
       type: destination.id,
       properties: { title: "move" },
     }),
@@ -664,6 +670,7 @@ it("rolled-back child structural flags do not bump a healthy parent", async () =
     await expect(
       storage.runInTransaction(async () => {
         await itemWrites(storage).update(created.id, {
+          writer: null,
           type: destination.id,
           properties: { title: "move" },
         });
@@ -812,6 +819,7 @@ it("failed generation-only reconstruction stays unavailable until boot validates
   fault.reconstructionFails = true;
   await expect(
     itemWrites(storage).update(created.id, {
+      writer: null,
       type: destination.id,
       properties: { title: "move" },
     }),
@@ -844,6 +852,7 @@ it.each(["before", "after"])(
     fault.released = release.promise;
     const writer = storage.runInTransaction(async () => {
       await itemWrites(storage).update(created.id, {
+        writer: null,
         type: destination.id,
         properties: { title: "move" },
       });
@@ -887,6 +896,7 @@ it("precommit seals escaped writers before the generation flush can await", asyn
   let escaped!: Promise<void>;
   const writer = storage.runInTransaction(async () => {
     await itemWrites(storage).update(created.id, {
+      writer: null,
       type: destination.id,
       properties: { title: "move" },
     });

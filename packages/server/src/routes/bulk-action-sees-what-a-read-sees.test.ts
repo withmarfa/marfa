@@ -47,6 +47,7 @@ afterAll(async () => {
 /** A platform-owned row, seeded below the public reserved-namespace fence. */
 function seedReserved(marker: string, state?: ItemState): Promise<Item> {
   return itemWrites(ctx.storage).create({
+    writer: null,
     type: "system.folder",
     properties: { title: `ba-${marker}` },
     ...(state === undefined ? {} : { state }),

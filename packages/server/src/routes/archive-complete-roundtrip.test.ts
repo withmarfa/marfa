@@ -108,6 +108,7 @@ function restore(ctx: TestContext, archive: Buffer) {
 
 async function note(ctx: TestContext, body = "current") {
   return itemWrites(ctx.storage).create({
+    writer: null,
     type: "core.note",
     properties: { body },
   });
@@ -299,6 +300,7 @@ describe("complete archive round trips", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await target.storage.versions.all(item.id)).toEqual(history);
     await itemWrites(target.storage).update(item.id, {
+      writer: null,
       properties: { body: "live edit" },
     });
     const liveItem = await target.storage.items.get(item.id);
@@ -430,6 +432,7 @@ describe("complete archive round trips", () => {
     await seedHistory(source, item, 2);
     const archive = await exported(source);
     await itemWrites(source.storage).update(item.id, {
+      writer: null,
       properties: { body: "live state" },
     });
     const live = await source.storage.items.get(item.id);
@@ -615,6 +618,7 @@ describe("complete archive round trips", () => {
     };
     await source.storage.types.create(schema);
     const item = await itemWrites(source.storage).create({
+      writer: null,
       type,
       properties: { value: "original text" },
     });
@@ -630,6 +634,7 @@ describe("complete archive round trips", () => {
       },
     });
     await itemWrites(source.storage).update(item.id, {
+      writer: null,
       properties: { value: 42 },
     });
     const history = await source.storage.versions.all(item.id);

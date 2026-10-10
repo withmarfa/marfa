@@ -20,6 +20,7 @@ async function seed(count: number) {
   await ctx.storage.runInTransaction(async () => {
     for (let i = 0; i < count; i++) {
       const item = await itemWrites(ctx.storage).create({
+        writer: null,
         type: "core.note",
         properties: { body: "yieldfixture" },
         source: "yield-fixture",
@@ -271,6 +272,7 @@ describe("bulk actions give other requests an event-loop turn", () => {
             const selected = page.data[0]!;
             selectedId = selected.id;
             await itemWrites(ctx.storage).update(selected.id, {
+              writer: null,
               type: "core.bookmark",
               properties: { url: "https://example.com/retyped" },
               version: selected.version,
@@ -356,6 +358,7 @@ describe("bulk actions give other requests an event-loop turn", () => {
         setImmediate(() => {
           void itemWrites(ctx.storage)
             .create({
+              writer: null,
               type: "core.note",
               properties: { body: "latermatch" },
               source: "yield-fixture",

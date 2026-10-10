@@ -176,6 +176,7 @@ describe("an OAuth-derived subscriber", () => {
     const { token } = await seedOauthBearer(ctx, ["core.note:read"], {});
 
     const item = await itemWrites(ctx.storage).create({
+      writer: null,
       type: "core.note",
       properties: { body: "an oauth item" },
     });
