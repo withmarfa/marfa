@@ -10311,9 +10311,9 @@ Read Marfa's public docs: search them, list their pages, or print one.
 Reads the docs site at https://docs.marfa.so, or at the address in MARFA_DOCS_URL. It needs no
 server, store or key, and sends no credential.
 
-A page is its path on the site. `get-started/files`, `/get-started/files`, `get-started/files.md`
-and `https://docs.marfa.so/get-started/files` name the same page. `search`, `topics` and `help` are
-commands, so a page with one of those names takes a leading slash, such as `/search`.
+A page is its path on the site. `files`, `/files`, `files.md` and `https://docs.marfa.so/files` name
+the same page. `search`, `topics` and `help` are commands, so a page with one of those names takes a
+leading slash, such as `/search`.
 
 `--url` and `--key` name a Marfa server, so this command refuses them.
 
@@ -10358,7 +10358,7 @@ Output:
 Examples:
   marfa docs search "restore an archive" --limit 5
   marfa docs topics
-  marfa docs get-started/files
+  marfa docs files
 ```
 
 ### marfa docs search

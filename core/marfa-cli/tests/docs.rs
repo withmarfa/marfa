@@ -19,8 +19,8 @@ fn answer(status: &'static str, content_type: &'static str, body: &str) -> Answe
     }
 }
 
-const HITS: &str = r#"{"hits":[{"title":"Files","url":"https://docs.marfa.so/get-started/files","snippets":["Keep  files\nin a folder.","second"]}]}"#;
-const PAGES: &str = r#"{"pages":[{"title":"Files","url":"https://docs.marfa.so/get-started/files","description":"Keep files.","breadcrumbs":["Get started"]},{"title":"Bare","url":"https://docs.marfa.so/bare","description":null,"breadcrumbs":[]}]}"#;
+const HITS: &str = r#"{"hits":[{"title":"Files","url":"https://docs.marfa.so/files","snippets":["Keep  files\nin a folder.","second"]}]}"#;
+const PAGES: &str = r#"{"pages":[{"title":"Files","url":"https://docs.marfa.so/files","description":"Keep files.","breadcrumbs":["Get started"]},{"title":"Bare","url":"https://docs.marfa.so/bare","description":null,"breadcrumbs":[]}]}"#;
 
 struct Ran {
     code: i32,
@@ -71,7 +71,7 @@ fn a_search_prints_each_hit_and_its_first_snippet_or_the_sites_json() {
     assert_eq!(plain.code, 0, "{}", plain.stderr);
     assert_eq!(
         plain.stdout,
-        "Files  https://docs.marfa.so/get-started/files\n  Keep files in a folder.\n"
+        "Files  https://docs.marfa.so/files\n  Keep files in a folder.\n"
     );
     let json = marfa(&door.url, &["--json", "docs", "search", "keep files"]);
     assert_eq!(json.code, 0, "{}", json.stderr);
@@ -96,7 +96,7 @@ fn the_topics_print_their_descriptions_or_the_sites_json() {
     assert_eq!(plain.code, 0, "{}", plain.stderr);
     assert_eq!(
         plain.stdout,
-        "Files  https://docs.marfa.so/get-started/files\n  Keep files.\nBare  https://docs.marfa.so/bare\n"
+        "Files  https://docs.marfa.so/files\n  Keep files.\nBare  https://docs.marfa.so/bare\n"
     );
     let json = marfa(&door.url, &["docs", "topics", "--json"]);
     let printed: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
@@ -112,11 +112,11 @@ fn the_topics_print_their_descriptions_or_the_sites_json() {
 fn a_page_prints_exactly_as_served_in_every_form_it_can_be_named() {
     let body = "# Files\n\nKeep files.\n\n\n";
     let names = [
-        "get-started/files",
-        "/get-started/files",
-        "get-started/files.md",
-        "https://docs.marfa.so/get-started/files",
-        "/docs/get-started/files",
+        "files",
+        "/files",
+        "files.md",
+        "https://docs.marfa.so/files",
+        "/docs/files",
     ];
     let door = Door::open(
         (0..names.len() + 1)
@@ -128,18 +128,18 @@ fn a_page_prints_exactly_as_served_in_every_form_it_can_be_named() {
         assert_eq!(ran.code, 0, "{name}: {}", ran.stderr);
         assert_eq!(ran.stdout, body, "{name}");
     }
-    let json = marfa(&door.url, &["--json", "docs", "get-started/files"]);
+    let json = marfa(&door.url, &["--json", "docs", "files"]);
     let record: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
     assert_eq!(
         record,
         serde_json::json!({
-            "path": "get-started/files",
-            "url": format!("{}/get-started/files.md", door.url),
+            "path": "files",
+            "url": format!("{}/files.md", door.url),
             "markdown": body,
         })
     );
     let received = door.received();
-    assert!(received.iter().all(|r| r.path() == "/get-started/files.md"));
+    assert!(received.iter().all(|r| r.path() == "/files.md"));
     assert!(received.iter().all(|r| r.header("authorization").is_none()));
 }
 

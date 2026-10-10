@@ -985,7 +985,7 @@ describe("every command holds the server to the contract", () => {
         hits: [
           {
             title: "Files",
-            url: "https://docs.marfa.so/get-started/files",
+            url: "https://docs.marfa.so/files",
             snippets: ["Keep files."],
           },
         ],
@@ -999,7 +999,7 @@ describe("every command holds the server to the contract", () => {
         pages: [
           {
             title: "Files",
-            url: "https://docs.marfa.so/get-started/files",
+            url: "https://docs.marfa.so/files",
             description: null,
             breadcrumbs: [],
           },
@@ -1008,7 +1008,7 @@ describe("every command holds the server to the contract", () => {
     });
     server.answer(
       "GET",
-      "/get-started/files.md",
+      "/files.md",
       {
         kind: "bytes",
         status: 200,
@@ -1052,30 +1052,26 @@ describe("every command holds the server to the contract", () => {
     );
     expect(topics.code, topics.stderr).toBe(0);
     expect(JSON.parse(topics.stdout).pages[0].title).toBe("Files");
-    const page = await marfa(
-      ["docs", "/docs/get-started/files.md"],
-      undefined,
-      elsewhere,
-    );
+    const page = await marfa(["docs", "/docs/files.md"], undefined, elsewhere);
     expect(page.code, page.stderr).toBe(0);
     expect(page.stdout).toBe(markdown);
     const record = await marfa(
-      ["--json", "docs", "get-started/files"],
+      ["--json", "docs", "files"],
       undefined,
       elsewhere,
     );
     expect(record.code, record.stderr).toBe(0);
     expect(JSON.parse(record.stdout)).toEqual({
-      path: "get-started/files",
-      url: `${server.url}/get-started/files.md`,
+      path: "files",
+      url: `${server.url}/files.md`,
       markdown,
     });
 
     expect(sent(server)).toEqual([
       "GET /api/docs/search",
       "GET /api/docs/topics",
-      "GET /get-started/files.md",
-      "GET /get-started/files.md",
+      "GET /files.md",
+      "GET /files.md",
     ]);
     expect(server.requests[0]?.query.get("q")).toBe("keep files");
     expect(server.requests[0]?.query.get("limit")).toBe("3");
@@ -1205,7 +1201,7 @@ describe("every command holds the server to the contract", () => {
     // Consumed in order: the catch-all page first, then the Markdown.
     server.answer(
       "GET",
-      "/get-started/files.md",
+      "/files.md",
       {
         kind: "bytes",
         status: 200,
@@ -1214,13 +1210,13 @@ describe("every command holds the server to the contract", () => {
       },
       markdownPage("# Files\n"),
     );
-    const outcome = await docs(server.url, ["get-started/files"]);
+    const outcome = await docs(server.url, ["files"]);
     expect(outcome.code, outcome.stderr).toBe(3);
     expect(outcome.stdout).toBe("");
     expect(refusal(outcome.stderr).error.code).toBe("decoding");
     expect(outcome.stderr).not.toContain("<html>");
     // The witness: the same page served as Markdown is printed.
-    const served = await docs(server.url, ["get-started/files"]);
+    const served = await docs(server.url, ["files"]);
     expect(served.code, served.stderr).toBe(0);
     expect(JSON.parse(served.stdout).markdown).toBe("# Files\n");
   });
@@ -1273,11 +1269,7 @@ describe("every command holds the server to the contract", () => {
       ["--url", server.url],
       ["--key", KEY],
     ]) {
-      for (const command of [
-        ["topics"],
-        ["search", "files"],
-        ["get-started/files"],
-      ]) {
+      for (const command of [["topics"], ["search", "files"], ["files"]]) {
         const outcome = await marfa(
           [...flags, "--json", "docs", ...command],
           undefined,
@@ -1312,7 +1304,7 @@ describe("every command holds the server to the contract", () => {
       `${server.url}/?q=1`,
       `${server.url}#top`,
     ]) {
-      const outcome = await docs(address, ["get-started/files"]);
+      const outcome = await docs(address, ["files"]);
       expect(outcome.code, `${address}: ${outcome.stderr}`).toBe(1);
       expect(outcome.stdout).toBe("");
       expect(refusal(outcome.stderr).error.code).toBe("invalid");
@@ -1339,10 +1331,10 @@ describe("every command holds the server to the contract", () => {
     server = await ScriptedServer.start();
     server.answer(
       "GET",
-      "/get-started/files.md",
+      "/files.md",
       markdownPage(Buffer.from([0xff, 0xfe, 0xfd])),
     );
-    const outcome = await docs(server.url, ["get-started/files"]);
+    const outcome = await docs(server.url, ["files"]);
     expect(outcome.code, outcome.stderr).toBe(3);
     expect(outcome.stdout).toBe("");
     expect(refusal(outcome.stderr).error.code).toBe("decoding");
@@ -1350,27 +1342,25 @@ describe("every command holds the server to the contract", () => {
 
   it("reads one docs page however it is named: with a slash, under docs/, with .md, or by its address", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/get-started/files.md", markdownPage("# Files\n"));
+    server.answer("GET", "/files.md", markdownPage("# Files\n"));
     for (const named of [
-      "get-started/files",
-      "/get-started/files",
-      "get-started/files/",
-      "get-started/files.md",
-      "docs/get-started/files",
-      "/docs/get-started/files.md",
-      "get-started/files#a-heading",
-      "get-started/files?from=search",
-      "https://docs.marfa.so/get-started/files",
-      "https://docs.marfa.so/docs/get-started/files.md",
-      "http://docs.marfa.so/get-started/files",
+      "files",
+      "/files",
+      "files/",
+      "files.md",
+      "docs/files",
+      "/docs/files.md",
+      "files#a-heading",
+      "files?from=search",
+      "https://docs.marfa.so/files",
+      "https://docs.marfa.so/docs/files.md",
+      "http://docs.marfa.so/files",
     ]) {
       const outcome = await docs(server.url, [named]);
       expect(outcome.code, `${named}: ${outcome.stderr}`).toBe(0);
-      expect(JSON.parse(outcome.stdout).path).toBe("get-started/files");
+      expect(JSON.parse(outcome.stdout).path).toBe("files");
     }
-    expect(new Set(sent(server))).toEqual(
-      new Set(["GET /get-started/files.md"]),
-    );
+    expect(new Set(sent(server))).toEqual(new Set(["GET /files.md"]));
     expect(sent(server)).toHaveLength(11);
   });
 
