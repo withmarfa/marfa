@@ -38,6 +38,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 let addresses = 0;
+let keysMinted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
@@ -71,6 +72,7 @@ interface SignIn {
   expires_at: string;
   ip_address: string | null;
   user_agent: string | null;
+  minted_by: string | null;
 }
 
 async function signIn(
@@ -133,11 +135,14 @@ async function idOf(browser: Browser): Promise<string> {
   return own!.id;
 }
 
-function end(browser: Browser, id: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: { cookie: browser.cookie, origin },
-  });
+function end(browser: Browser, id: string, query = ""): Promise<Response> {
+  return fetch(
+    `${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}${query}`,
+    {
+      method: "DELETE",
+      headers: { cookie: browser.cookie, origin },
+    },
+  );
 }
 
 function rename(
@@ -165,7 +170,7 @@ function local(
   return controlRequest(server.controlSocket, path, { method, body });
 }
 
-const APP_SCOPE = "core.note:read core.note:write offline_access";
+const APP_SCOPE = "core.note:read core.note:write keys.mint offline_access";
 
 interface SignedInApp {
   clientId: string;
@@ -195,11 +200,41 @@ async function approveApp(
 async function mintKey(label: string): Promise<{ id: string; key: string }> {
   const minted = await local("POST", "/keys", {
     label,
-    source: `owner-sign-ins-${label.replace(/\W+/g, "-")}`,
+    source: `owner-sign-ins-${label.replace(/\W+/g, "-").slice(0, 60)}-${String(++keysMinted)}`,
     type_permissions: { "core.note": "write" },
   });
   expect(minted.status, JSON.stringify(minted.body)).toBe(201);
   return minted.body as { id: string; key: string };
+}
+
+/** A key the app mints with its own token, which records the app. */
+async function mintAsApp(
+  signedIn: SignedInApp,
+  label: string,
+): Promise<{ id: string; key: string }> {
+  const response = await fetch(`${server.apiUrl}/keys`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${signedIn.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      label,
+      source: `owner-sign-ins-app-${label.replace(/\W+/g, "-")}`,
+      type_permissions: { "core.note": "read" },
+    }),
+  });
+  expect(response.status, await response.clone().text()).toBe(201);
+  return (await response.json()) as { id: string; key: string };
+}
+
+/** The id of the app `name` names in the listing. */
+async function appId(browser: Browser, name: string): Promise<string> {
+  const row = (await signIns(browser)).find(
+    (r) => r.kind === "app" && r.name === name,
+  );
+  expect(row, `no app named ${name}`).toBeDefined();
+  return row!.id;
 }
 
 /** Writes a note with `bearer`, and changes it so it has a version, and
@@ -339,6 +374,7 @@ describe("the owner's sign-ins", () => {
         "ip_address",
         "kind",
         "last_used_at",
+        "minted_by",
         "name",
         "user_agent",
       ]);
@@ -635,6 +671,19 @@ describe("renaming a sign-in", () => {
     );
   });
 
+  it("answers 404 sign_in_not_found to the rename of a browser session that has expired", async () => {
+    const browser = await signIn();
+    const other = await signIn();
+    const id = await idOf(other);
+    arrange(id, {
+      updatedAt: Date.now() - 8 * DAY,
+      expiresAt: Date.now() - DAY,
+    });
+    const response = await rename(browser, id, { name: "too late" });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-error-code")).toBe("sign_in_not_found");
+  });
+
   it("refuses to rename a browser 400 validation_error", async () => {
     const browser = await signIn();
     const response = await rename(browser, await idOf(browser), {
@@ -644,12 +693,15 @@ describe("renaming a sign-in", () => {
     expect(response.headers.get("x-error-code")).toBe("validation_error");
   });
 
-  it("refuses an empty, overlong or missing name and another field 400", async () => {
+  it("refuses an empty, overlong, unprintable or missing name and another field 400", async () => {
     const browser = await signIn();
     const minted = await mintKey("kept label");
     for (const [body, code] of [
       [{ name: "   " }, "validation_error"],
       [{ name: "x".repeat(201) }, "validation_error"],
+      [{ name: "a\u001b[2Kb" }, "validation_error"],
+      [{ name: "a\rb" }, "validation_error"],
+      [{ name: "a\u202eb" }, "validation_error"],
       [{ name: "ok", label: "no" }, "validation_error"],
       [{}, "missing_required_field"],
     ] as const) {
@@ -759,6 +811,103 @@ describe("ending a sign-in", () => {
     }).listAudit({ action: "auth.session.delete", limit: 200 });
     expect(page.status, JSON.stringify(page.error)).toBe(200);
     expect(page.data.data.map((row) => row.resource_id)).toContain(id);
+  });
+});
+
+describe("a name a sign-in cannot be shown by", () => {
+  it("names an app by its client id when its registered name holds control characters", async () => {
+    const browser = await signIn();
+    const hostile = "marfa\r\u001b[2Kforged  key  trusted  never used";
+    const signedIn = await approveApp(browser, hostile);
+    // The witness: a printable name is what the listing shows for an app.
+    const plain = await approveApp(browser, "printable app");
+    const text = await (await list(browser)).text();
+    const rows = (JSON.parse(text) as { data: SignIn[] }).data;
+    expect(rows.some((r) => r.name === "printable app")).toBe(true);
+    expect(rows.some((r) => r.name === signedIn.clientId)).toBe(true);
+    expect(text).not.toContain("forged");
+    expect(plain.clientId).not.toBe(signedIn.clientId);
+  });
+
+  it("names a key by its id when its label holds a bidirectional override or is too long", async () => {
+    const browser = await signIn();
+    const reversed = await mintKey("invoice\u202efdp.exe");
+    const long = await mintKey("y".repeat(201));
+    const fine = await mintKey("printable key");
+    const rows = await signIns(browser);
+    expect(rows.find((r) => r.id === reversed.id)?.name).toBe(reversed.id);
+    expect(rows.find((r) => r.id === long.id)?.name).toBe(long.id);
+    expect(rows.find((r) => r.id === fine.id)?.name).toBe("printable key");
+  });
+});
+
+describe("the keys an app minted", () => {
+  it("names the app that minted a key while the app is signed in", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app that mints");
+    const minted = await mintAsApp(signedIn, "minted by an app");
+    const own = await mintKey("minted by the owner");
+    const id = await appId(browser, "app that mints");
+    const rows = await signIns(browser);
+    expect(rows.find((r) => r.id === minted.id)?.minted_by).toBe(id);
+    expect(rows.find((r) => r.id === own.id)?.minted_by).toBeNull();
+    expect(rows.find((r) => r.id === id)?.minted_by).toBeNull();
+    expect((await end(browser, id)).status).toBe(200);
+    expect(
+      (await signIns(browser)).find((r) => r.id === minted.id)?.minted_by,
+    ).toBeNull();
+  });
+
+  it("stay working when the app ends without revoke_keys", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app ended alone");
+    const minted = await mintAsApp(signedIn, "key outliving its app");
+    expect(
+      (await end(browser, await appId(browser, "app ended alone"))).status,
+    ).toBe(200);
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+  });
+
+  it("end with the app when revoke_keys is true, and no other key does", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app ended with its keys");
+    const minted = await mintAsApp(signedIn, "key ending with its app");
+    const other = await mintKey("key of the owner's own");
+    // The witness: the minted key works before the end.
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+    const response = await end(
+      browser,
+      await appId(browser, "app ended with its keys"),
+      "?revoke_keys=true",
+    );
+    expect(response.status).toBe(200);
+    await expectMatchesSchema(
+      "DELETE",
+      "/owner/sign-ins/{id}",
+      200,
+      await response.json(),
+    );
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
+    expect(await itemsStatus(server, minted.key)).toBe(401);
+    expect(await itemsStatus(server, other.key)).toBe(200);
+    expect((await signIns(browser)).map((r) => r.id)).not.toContain(minted.id);
+  });
+
+  it("refuses revoke_keys on a browser and a key 400, and ends neither", async () => {
+    const browser = await signIn();
+    const other = await signIn();
+    const minted = await mintKey("key asked to revoke keys");
+    for (const id of [await idOf(other), minted.id]) {
+      const refused = await end(browser, id, "?revoke_keys=true");
+      expect(refused.status, id).toBe(400);
+      expect(refused.headers.get("x-error-code")).toBe("validation_error");
+    }
+    expect(await session(other)).not.toBeNull();
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+    // An id no sign-in has is still unknown.
+    const unknown = await end(browser, "no-such-sign-in", "?revoke_keys=true");
+    expect(unknown.status).toBe(404);
   });
 });
 

@@ -1689,7 +1689,7 @@ When the owner's browser session or the private local command asks `GET /owner/s
 
 ### `keys-and-oauth/sign-ins-fields`
 
-When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `current`, `created_at`, `last_used_at`, `expires_at`, `ip_address` and `user_agent`, and no other field.
+When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `current`, `created_at`, `last_used_at`, `expires_at`, `ip_address`, `user_agent` and `minted_by`, and no other field.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`.
 
@@ -1709,7 +1709,7 @@ When `GET /owner/sign-ins` lists a browser session, the server MUST give it the 
 
 When `GET /owner/sign-ins` lists an app, the server MUST give it the `name` the owner gave it at `PATCH /owner/sign-ins/{id}`, or, where the owner gave none, the `client_name` the app registered with.
 
-**Reason:** Each install of an app registers on its own, so the name it registers with can say which machine it is on.
+**Reason:** Each install of an app registers on its own, so the name it registers with can say which machine it is on. The owner's name for an app is kept on the app's `system.connection` item, so any credential that can read `system.connection` items, such as an app holding the default read bundle, can read that name and the sign-in's `id`.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every app and key beside the browsers, each with a name, a kind and its last use`, `› gives an app the owner's own name, which the listing shows`.
 
@@ -1717,7 +1717,23 @@ When `GET /owner/sign-ins` lists an app, the server MUST give it the `name` the 
 
 When `GET /owner/sign-ins` lists a key, the server MUST give it its `label` as its `name`.
 
+**Reason:** A key holding `keys.mint` can change the label of a key within its reach at `PATCH /keys/{id}`, and an app holding it chooses the labels of the keys it mints, so a key's name is what its minter last chose.
+
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every app and key beside the browsers, each with a name, a kind and its last use`.
+
+### `keys-and-oauth/sign-ins-unprintable-name`
+
+If the name a sign-in would be listed by at `GET /owner/sign-ins` holds a control character or a bidirectional formatting character, or is longer than 200 characters, then the server MUST give the sign-in the next name in its order instead: for an app, its registered `client_name`, then its client ID; for a key, its `id`.
+
+**Reason:** Whoever registers an app or mints a key chooses its name, and a name shown in a terminal or a page must not move the cursor, erase a line or reorder the text after it to pass for another sign-in.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › names an app by its client id when its registered name holds control characters`, `› names a key by its id when its label holds a bidirectional override or is too long`.
+
+### `keys-and-oauth/sign-ins-minted-by`
+
+When `GET /owner/sign-ins` lists a key that an app minted while that app is a live sign-in of the owner, the server MUST give the key a `minted_by` of the app's sign-in `id`, and every other sign-in a `minted_by` of `null`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › names the app that minted a key while the app is signed in`.
 
 ### `keys-and-oauth/sign-ins-last-used`
 
@@ -1799,6 +1815,26 @@ When `DELETE /owner/sign-ins/{id}` has ended an app, the server MUST answer `400
 
 **Tests:** `compliance/owner-sign-ins.test.ts › ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`.
 
+### `keys-and-oauth/sign-in-end-app-keys`
+
+When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted working.
+
+**Reason:** As at `DELETE /auth/grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › stay working when the app ends without revoke_keys`.
+
+### `keys-and-oauth/sign-in-end-app-revoke-keys`
+
+When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, and no other key does`.
+
+### `keys-and-oauth/sign-in-end-revoke-keys-not-app`
+
+If `DELETE /owner/sign-ins/{id}` has `revoke_keys` set to `true` and names a live browser session or a live key, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses revoke_keys on a browser and a key 400, and ends neither`.
+
 ### `keys-and-oauth/sign-in-end-key`
 
 When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401` to the next request that carries that key.
@@ -1809,7 +1845,7 @@ When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401`
 
 When `DELETE /owner/sign-ins/{id}` ends a sign-in, the server MUST keep every other sign-in of the owner signed in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-versions`
 
@@ -1875,21 +1911,21 @@ If `PATCH /owner/sign-ins/{id}` names a live browser session of the owner, then 
 
 ### `keys-and-oauth/sign-in-rename-invalid`
 
-If the body of `PATCH /owner/sign-ins/{id}` has a `name` that is empty once trimmed or longer than 200 characters, or has a field other than `name`, then the server MUST answer `400 validation_error`.
+If the body of `PATCH /owner/sign-ins/{id}` has a `name` that is empty once trimmed, longer than 200 characters or holds a control character or a bidirectional formatting character, or has a field other than `name`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses an empty, overlong or missing name and another field 400`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses an empty, overlong, unprintable or missing name and another field 400`.
 
 ### `keys-and-oauth/sign-in-rename-missing`
 
 If the body of `PATCH /owner/sign-ins/{id}` has no `name`, then the server MUST answer `400 missing_required_field`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses an empty, overlong or missing name and another field 400`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses an empty, overlong, unprintable or missing name and another field 400`.
 
 ### `keys-and-oauth/sign-in-rename-unknown`
 
 If `PATCH /owner/sign-ins/{id}` names no live sign-in of the owner, then the server MUST answer `404 sign_in_not_found`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for an ended sign-in and an id no sign-in has`.
+**Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for an ended sign-in and an id no sign-in has`, `› answers 404 sign_in_not_found to the rename of a browser session that has expired`.
 
 ### `keys-and-oauth/sign-in-rename-recent`
 
