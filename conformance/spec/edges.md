@@ -1281,7 +1281,7 @@ If `POST /edge-types` names a property whose `type` is neither `thumbnail` nor a
 
 If `POST /edge-types` names a key the edge type does not define, at the top level or in a property of `property_schema`, which takes only `type`, `description`, `required`, `enum_values`, `items_type` and `format`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
-**Reason:** the code a type's field gets for the same fault (`types/unknown-key`). A key the server ignored would let a misspelt rule register as though it held.
+**Reason:** the code a type's field gets for the same fault (`types/unknown-key`). A key the server ignored would let a misspelled rule register as though it held.
 
 **Tests:** `compliance/edge-types.test.ts › refuses a key the edge type or one of its properties does not define, naming each path`.
 

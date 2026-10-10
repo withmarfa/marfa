@@ -3,7 +3,7 @@
  * schema does not define.
  *
  * Each door once read such a key as it read any other: the type or edge type
- * registered without it, so a misspelt rule or an `integer` bounded by a
+ * registered without it, so a misspelled rule or an `integer` bounded by a
  * `minimum` nothing enforces came back as a success. The cases pair every
  * refusal with the same body, mended, that registers, so a refusal cannot be
  * the door refusing everything.

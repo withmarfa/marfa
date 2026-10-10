@@ -556,7 +556,7 @@ describe("type registration and listing", () => {
         mended: { fields },
       },
       {
-        what: "a misspelt rule of a string field",
+        what: "a misspelled rule of a string field",
         bad: { fields: { title: { type: "string", max_length: 10 } } },
         paths: ["fields.title.max_length"],
         mended: { fields: { title: { type: "string", maxLength: 10 } } },
