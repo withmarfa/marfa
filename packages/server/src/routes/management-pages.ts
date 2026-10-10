@@ -6,7 +6,7 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
 import { PERMISSION_LABELS } from "./permission-labels.js";
 
-/** These pages call the same documented operations available to approved apps. */
+/** These pages call the API's own documented operations, as the owner's browser. */
 export function managementPages() {
   const router = new Hono<AppEnv>();
   router.use("*", async (c, next) => {
@@ -83,7 +83,7 @@ async function refresh() {
   });
   rows('browsers', signIns.data, (li, row) => {
     li.textContent = (row.user_agent || 'Unknown browser') + (row.ip_address ? ', from ' + row.ip_address : '') + ', last used ' + new Date(row.last_used_at).toLocaleString() + (row.current ? ' (this browser)' : '');
-    action(li, 'Sign Out', async () => {
+    action(li, 'Sign out', async () => {
       if (!confirm(row.current ? 'Sign out this browser?' : 'Sign out this browser? It will need to sign in again. Connected apps keep their access.')) return;
       await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'});
       if (row.current) location.assign('/auth/sign-in');

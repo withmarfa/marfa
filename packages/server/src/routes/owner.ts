@@ -166,8 +166,6 @@ const SignInListSchema = z
   })
   .describe("Every live sign-in of the owner.")
   .openapi("SignInList");
-const browserOnly = (description: string) =>
-  failure(["forbidden"], description);
 const listSignInsRoute = createRoute({
   operationId: "listSignIns",
   method: "get",
@@ -184,7 +182,8 @@ const listSignInsRoute = createRoute({
       description: "Returns every live sign-in.",
     },
     401: failure(["unauthorized"], "Sign in as the owner."),
-    403: browserOnly(
+    403: failure(
+      ["forbidden"],
       "- `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session.",
     ),
   },
@@ -210,7 +209,8 @@ const endSignInRoute = createRoute({
       description: "Returns `ok: true`. The sign-in has ended.",
     },
     401: failure(["unauthorized"], "Sign in as the owner."),
-    403: browserOnly(
+    403: failure(
+      ["forbidden"],
       "- `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session, or the browser signed in more than five minutes ago.",
     ),
     404: failure(
