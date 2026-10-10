@@ -318,7 +318,7 @@ When `GET /export?format=archive` carries an item, the server MUST carry the `wr
 
 When `POST /restore` writes an archived item, the server MUST keep as writers the ones the archive names for each snapshot and for the current version, and `null` where it names none.
 
-**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it.
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the owner or the local command restores (`search-and-filters/restore-operator`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
 
 **Tests:** `compliance/version-writers.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`.
 
