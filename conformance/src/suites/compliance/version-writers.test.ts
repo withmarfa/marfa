@@ -236,7 +236,7 @@ function endSignIn(browser: Browser, id: string): Promise<Response> {
 }
 
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 
 describe("who wrote each version", () => {
   it("names the key that wrote each version by its id and label", async () => {
@@ -645,25 +645,32 @@ describe("who wrote each version", () => {
     }
   });
 
-  it("bounds a writer's name to 200 characters with no control characters", async () => {
-    const label = `long\tlabel\u0007${"k".repeat(300)}`;
-    const minted = await mintKey(label);
-    const id = await createNote(minted.key);
-    await changeNote(minted.key, id, 1, "second");
-    const [snapshot] = await versionsOf(minted.key, id);
-    expect(snapshot!.writer!.kind).toBe("key");
-    expect(Array.from(snapshot!.writer!.name).length).toBe(200);
-    expect(snapshot!.writer!.name).not.toMatch(CONTROL);
-    expect(snapshot!.writer!.name.startsWith("long label k")).toBe(true);
-
-    const appName = `app\u0001${"a".repeat(400)}`;
+  it("names a key or an app whose chosen name is unprintable or too long as the listing does", async () => {
     const browser = await signIn();
-    const app = await approveApp(browser, appName);
+    for (const label of [
+      `long\tlabel\u0007`,
+      `over\u202eride`,
+      "k".repeat(201),
+    ]) {
+      const minted = await mintKey(label);
+      const id = await createNote(minted.key);
+      await changeNote(minted.key, id, 1, "second");
+      const listed = (await signIns(browser)).find(
+        (row) => row.id === minted.id,
+      );
+      // The witness: the listing gives this key its id, not its label.
+      expect(listed?.name).toBe(minted.id);
+      expect(writers(await versionsOf(minted.key, id))).toEqual([
+        { kind: "key", id: minted.id, name: minted.id },
+      ]);
+    }
+
+    const app = await approveApp(browser, `app\u0001${"a".repeat(400)}`);
     const note = await createNote(app.accessToken);
     await changeNote(app.accessToken, note, 1, "second");
     const [byApp] = await versionsOf(app.accessToken, note);
-    expect(byApp!.writer!.kind).toBe("app");
-    expect(Array.from(byApp!.writer!.name).length).toBeLessThanOrEqual(200);
-    expect(byApp!.writer!.name).not.toMatch(CONTROL);
+    expect(byApp!.writer).toMatchObject({ kind: "app", name: app.clientId });
+    expect(byApp!.writer!.name.length).toBeLessThanOrEqual(200);
+    expect(byApp!.writer!.name).not.toMatch(UNPRINTABLE);
   });
 });

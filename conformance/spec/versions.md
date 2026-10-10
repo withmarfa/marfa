@@ -266,17 +266,17 @@ The server MUST give a browser, an app or a key that wrote a version the `id` th
 
 ### `versions/writer-name`
 
-When the server records a version's writer, the server MUST give it the `name` that `GET /owner/sign-ins` gives that sign-in at that moment, held to `versions/writer-name-bounds`, and `Local command` for the private local command.
+When the server records a version's writer, the server MUST give it the `name` that `GET /owner/sign-ins` gives that sign-in at that moment, and `Local command` for the private local command.
 
 **Tests:** `compliance/version-writers.test.ts › names the key that wrote each version by its id and label`, `› names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`.
 
 ### `versions/writer-name-bounds`
 
-The server MUST hold a writer's `name` to at most 200 characters and to no control characters.
+The server MUST hold a writer's `name` to at most 200 characters, none of them a control character or a bidirectional formatting character.
 
-**Reason:** a browser's `User-Agent`, an app's registered name and a key's label are text a client chose.
+**Reason:** a browser's `User-Agent`, an app's registered name and a key's label are text a client chose, which the listing replaces where it is unprintable or too long (`keys-and-oauth/sign-ins-unprintable-name`).
 
-**Tests:** `compliance/version-writers.test.ts › bounds a writer's name to 200 characters with no control characters`.
+**Tests:** `compliance/version-writers.test.ts › names a key or an app whose chosen name is unprintable or too long as the listing does`.
 
 ### `versions/writer-kept`
 
@@ -324,7 +324,7 @@ When `POST /restore` writes an archived item, the server MUST keep as writers th
 
 ### `versions/writer-restore-invalid`
 
-If an archive names a writer that is neither `null` nor an object holding a `kind` of `browser`, `app`, `key` or `local`, an `id` of 1 to 200 characters and a `name` that `versions/writer-name-bounds` admits, then the server MUST answer `400 validation_error`.
+If an archive names a writer that is neither `null` nor an object holding a `kind` of `browser`, `app`, `key` or `local`, an `id` of 1 to 200 characters and a `name` of at least one character that `versions/writer-name-bounds` admits with no space at either end, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/version-writers.test.ts › refuses an archive that names a malformed writer`.
 
