@@ -1420,7 +1420,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.
+         * @description Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.
          */
         delete: operations["endSignIn"];
         options?: never;
@@ -3992,7 +3992,7 @@ export interface components {
              */
             kind: "browser" | "app" | "key";
             /**
-             * @description A readable name for the sign-in. A browser's comes from its `user_agent`, an app's is the name the owner gave it or else the name it registered with, and a key's is its `label`.
+             * @description A readable name: a browser's from its `user_agent`, an app's the owner's name for it or else its registered name, a key's its `label`. A name with a control or bidirectional character, or over 200 characters, gives way to the ID.
              * @example Safari on macOS
              */
             name: string;
@@ -4020,6 +4020,8 @@ export interface components {
             ip_address: string | null;
             /** @description The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none. */
             user_agent: string | null;
+            /** @description For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended. */
+            minted_by: string | null;
         };
         /** @description An error response. */
         SignInNotFoundRefusal: {
@@ -20274,7 +20276,10 @@ export interface operations {
     };
     endSignIn: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it. */
+                revoke_keys?: "true" | "false";
+            };
             header?: never;
             path: {
                 /** @description The ID of the sign-in. */
@@ -20298,7 +20303,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            /** @description - `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20471,7 +20476,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `name` is missing.
-             *     - `validation_error`: `name` is empty or too long, the body has another field, or the ID names a browser, whose name comes from the browser.
+             *     - `validation_error`: `name` is empty, too long or holds a control or bidirectional formatting character, the body has another field, or the ID names a browser, whose name comes from the browser.
              */
             400: {
                 headers: {

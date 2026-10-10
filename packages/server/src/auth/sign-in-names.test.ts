@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { appSignInName, browserSignInName } from "./sign-in-names.js";
+import {
+  appSignInName,
+  browserSignInName,
+  keySignInName,
+  SIGN_IN_NAME_MAX,
+  usableSignInName,
+} from "./sign-in-names.js";
 
 describe("a browser's sign-in name", () => {
   it.each([
@@ -65,6 +71,8 @@ describe("a browser's sign-in name", () => {
     const name = browserSignInName(`${"x".repeat(500)}/1.0`);
     expect(name.length).toBeLessThanOrEqual(40);
     expect(browserSignInName("bad\u0000name/1")).toBe("A browser");
+    expect(browserSignInName("curl\u202e/1")).toBe("A browser");
+    expect(browserSignInName("curl\u0085/1")).toBe("A browser");
   });
 });
 
@@ -78,5 +86,38 @@ describe("an app's sign-in name", () => {
     );
     expect(appSignInName(undefined, null, "c1")).toBe("c1");
     expect(appSignInName("  ", "  ", "c1")).toBe("c1");
+  });
+});
+
+describe("a name a sign-in can be shown by", () => {
+  it.each([
+    [
+      "a carriage return and an erase-line escape",
+      "marfa\r\u001b[2Kforged row",
+    ],
+    ["a newline", "line one\nline two"],
+    ["a C1 control", "next\u0085line"],
+    ["a right-to-left override", "evil\u202eexe.txt"],
+    ["a first-strong isolate", "evil\u2068name"],
+    ["more than the longest name", "x".repeat(SIGN_IN_NAME_MAX + 1)],
+    ["only spaces", "   "],
+  ])("is no name when it holds %s", (_what, name) => {
+    expect(usableSignInName(name)).toBeUndefined();
+    expect(appSignInName(undefined, name, "client-1")).toBe("client-1");
+    expect(appSignInName(name, "registered", "client-1")).toBe("registered");
+    expect(keySignInName(name, "key-1")).toBe("key-1");
+  });
+
+  it("is the name, trimmed, when it holds printable text up to the longest name", () => {
+    expect(usableSignInName("  Marfa app on MacBook Pro  ")).toBe(
+      "Marfa app on MacBook Pro",
+    );
+    expect(usableSignInName("x".repeat(SIGN_IN_NAME_MAX))).toHaveLength(
+      SIGN_IN_NAME_MAX,
+    );
+    expect(keySignInName("Work laptop", "key-1")).toBe("Work laptop");
+    expect(usableSignInName("Café \u{1F600} naïve")).toBe(
+      "Café \u{1F600} naïve",
+    );
   });
 });

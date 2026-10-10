@@ -6005,7 +6005,7 @@
           },
           "name": {
             "type": "string",
-            "description": "A readable name for the sign-in. A browser's comes from its `user_agent`, an app's is the name the owner gave it or else the name it registered with, and a key's is its `label`.",
+            "description": "A readable name: a browser's from its `user_agent`, an app's the owner's name for it or else its registered name, a key's its `label`. A name with a control or bidirectional character, or over 200 characters, gives way to the ID.",
             "example": "Safari on macOS"
           },
           "current": {
@@ -6047,6 +6047,13 @@
               "null"
             ],
             "description": "The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none."
+          },
+          "minted_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended."
           }
         },
         "required": [
@@ -6058,7 +6065,8 @@
           "last_used_at",
           "expires_at",
           "ip_address",
-          "user_agent"
+          "user_agent",
+          "minted_by"
         ],
         "description": "A sign-in is one way the owner's Marfa can be reached."
       },
@@ -39222,7 +39230,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` is empty or too long, the body has another field, or the ID names a browser, whose name comes from the browser.",
+            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` is empty, too long or holds a control or bidirectional formatting character, the body has another field, or the ID names a browser, whose name comes from the browser.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39498,7 +39506,7 @@
             "ownerSession": []
           }
         ],
-        "description": "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+        "description": "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.",
         "parameters": [
           {
             "schema": {
@@ -39509,6 +39517,20 @@
             "description": "The ID of the sign-in.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it."
+            },
+            "required": false,
+            "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it.",
+            "name": "revoke_keys",
+            "in": "query"
           }
         ],
         "responses": {
@@ -39540,7 +39562,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key.",
             "content": {
               "application/json": {
                 "schema": {

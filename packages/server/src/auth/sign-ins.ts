@@ -1,15 +1,20 @@
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type { Storage } from "../storage/interface.js";
+import type { StoredApiKey, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
+import { withConsentLock } from "./consent-lock.js";
 import {
   listActiveAppGrants,
   revokeProjectedGrant,
 } from "./grant-lifecycle.js";
 import type { MarfaAuth } from "./instance.js";
 import type { KeysInReach } from "./key-reach.js";
-import { appSignInName, browserSignInName } from "./sign-in-names.js";
+import {
+  appSignInName,
+  browserSignInName,
+  keySignInName,
+} from "./sign-in-names.js";
 
 /**
  * The owner's sign-ins: every way the owner's Marfa can be reached. A browser
@@ -29,6 +34,8 @@ export interface SignIn {
   expiresAt: string | null;
   ipAddress: string | null;
   userAgent: string | null;
+  /** For a key an app minted, that app's sign-in while it is live. */
+  mintedBy: string | null;
 }
 
 /** Who asks, for the audit rows the changes write. */
@@ -37,9 +44,6 @@ export interface SignInActor {
   keyId: string;
   clientIp: string | null;
 }
-
-/** The longest name the owner can give a sign-in. */
-export const SIGN_IN_NAME_MAX = 200;
 
 /** The app grant `item` is, when it is a live one of the owner. */
 function ownersLiveApp(
@@ -80,7 +84,39 @@ async function appSignIn(storage: Storage, item: Item): Promise<SignIn> {
     expiresAt: null,
     ipAddress: null,
     userAgent: null,
+    mintedBy: null,
   };
+}
+
+function keySignIn(key: StoredApiKey, mintedBy: string | null): SignIn {
+  return {
+    id: key.id,
+    kind: "key",
+    name: keySignInName(key.label, key.id),
+    createdAt: key.created_at,
+    lastUsedAt: key.last_used_at ?? null,
+    expiresAt: key.expires_at ?? null,
+    ipAddress: null,
+    userAgent: null,
+    mintedBy,
+  };
+}
+
+/** The live app sign-in of the owner that `clientId` names, if any. */
+async function liveAppOf(
+  storage: Storage,
+  ownerId: string | null,
+  clientId: string | undefined,
+): Promise<string | null> {
+  if (!ownerId || !clientId) return null;
+  const itemId = await storage.oauthProvider?.findGrantItemId({
+    clientId,
+    authUserId: ownerId,
+  });
+  if (!itemId) return null;
+  return ownersLiveApp(await storage.items.get(itemId), ownerId)
+    ? itemId
+    : null;
 }
 
 /**
@@ -104,21 +140,25 @@ export async function listSignIns(
     expiresAt: session.expiresAt.toISOString(),
     ipAddress: session.ipAddress,
     userAgent: session.userAgent,
+    mintedBy: null,
   }));
-  const apps: SignIn[] = [];
-  for (const item of await listActiveAppGrants(storage)) {
-    if (ownersLiveApp(item, ownerId)) apps.push(await appSignIn(storage, item));
-  }
-  const keyRows: SignIn[] = (await keys.list()).map((key) => ({
-    id: key.id,
-    kind: "key",
-    name: key.label,
-    createdAt: key.created_at,
-    lastUsedAt: key.last_used_at ?? null,
-    expiresAt: key.expires_at ?? null,
-    ipAddress: null,
-    userAgent: null,
-  }));
+  const grants = (await listActiveAppGrants(storage)).filter(
+    (item) => ownersLiveApp(item, ownerId) !== null,
+  );
+  const apps = await Promise.all(
+    grants.map((item) => appSignIn(storage, item)),
+  );
+  const appByClient = new Map(
+    grants.map((item) => [item.properties.client_id as string, item.id]),
+  );
+  const keyRows = (await keys.list()).map((key) =>
+    keySignIn(
+      key,
+      key.oauth_client_id === undefined
+        ? null
+        : (appByClient.get(key.oauth_client_id) ?? null),
+    ),
+  );
   return [...browsers, ...apps, ...keyRows].sort(
     (a, b) =>
       Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
@@ -127,12 +167,19 @@ export async function listSignIns(
 }
 
 /**
+ * What an end did: the kind it ended, `"not_app"` where `revoke_keys` named
+ * a live browser or key, or null where no live sign-in of the owner has the
+ * id.
+ */
+export type EndOutcome = SignInKind | "not_app" | null;
+
+/**
  * End the live sign-in `id` of the owner, through the same change its own
  * door makes: a browser's session is deleted, an app's grant is revoked with
  * its tokens, refresh tokens, consent and device codes, and a key is revoked.
- * Each looks the sign-in up and ends it in one transaction, so of two ends of
- * one sign-in only the first ends it. Answers the kind it ended, or null when
- * no live sign-in of the owner has the id.
+ * The keys an app minted go with it only where `revokeKeys` says so, as at
+ * Disconnect. Each looks the sign-in up and ends it in one transaction, so of
+ * two ends of one sign-in only the first ends it.
  */
 export async function endSignIn(
   storage: Storage,
@@ -141,8 +188,13 @@ export async function endSignIn(
   ownerId: string | null,
   id: string,
   actor: SignInActor,
-): Promise<SignInKind | null> {
-  if (ownerId && (await auth.endBrowserSession(ownerId, id, actor.clientIp)))
+  options: { revokeKeys: boolean },
+): Promise<EndOutcome> {
+  if (
+    !options.revokeKeys &&
+    ownerId &&
+    (await auth.endBrowserSession(ownerId, id, actor.clientIp))
+  )
     return "browser";
 
   const grant = ownersLiveApp(await storage.items.get(id), ownerId);
@@ -151,6 +203,7 @@ export async function endSignIn(
       itemId: id,
       clientId: grant.clientId,
       authUserId: grant.authUserId,
+      revokeKeys: options.revokeKeys,
       stillApplies: async () =>
         ownersLiveApp(await storage.items.get(id), ownerId) !== null,
       audit: {
@@ -163,11 +216,17 @@ export async function endSignIn(
           client_id: grant.clientId,
           user_id: grant.authUserId,
           grant_item_id: id,
+          revoke_keys: options.revokeKeys,
         },
       },
     });
-    return revoked ? "app" : null;
+    if (revoked) return "app";
   }
+
+  if (options.revokeKeys)
+    return (await isLiveBrowserOrKey(auth, keys, ownerId, id))
+      ? "not_app"
+      : null;
 
   const revoked = await runAuditedTransaction(
     storage,
@@ -188,10 +247,12 @@ export async function endSignIn(
 
 /**
  * Give the live app or key `id` of the owner a new name. An app keeps it on
- * its grant's projection, beside the name it registered with; a key's name is
- * its label. A browser is named from what it reports and has no name of its
- * own to change. Answers the renamed sign-in, `"browser"` for a browser, or
- * null when no live sign-in of the owner has the id.
+ * its grant's projection, beside the name it registered with, written under
+ * the grant's consent lock so it cannot land on a grant revoked a moment
+ * earlier; a key's name is its label. A browser is named from what it
+ * reports and has no name of its own to change. Answers the renamed sign-in,
+ * `"browser"` for a live browser, or null when no live sign-in of the owner
+ * has the id.
  */
 export async function renameSignIn(
   storage: Storage,
@@ -202,42 +263,38 @@ export async function renameSignIn(
   name: string,
   actor: SignInActor,
 ): Promise<SignIn | "browser" | null> {
-  if (
-    ownerId &&
-    (await auth.listBrowserSessions(ownerId)).some((s) => s.id === id)
-  )
-    return "browser";
-
-  const renamedApp = await runAuditedTransaction(
-    storage,
-    async (): Promise<Item | null> => {
-      const grant = ownersLiveApp(await storage.items.get(id), ownerId);
-      if (!grant) return null;
-      const written = await writeItem(
+  const seen = ownersLiveApp(await storage.items.get(id), ownerId);
+  if (seen) {
+    const renamed = await withConsentLock(seen.clientId, seen.authUserId, () =>
+      runAuditedTransaction(
         storage,
-        { kind: "platform" },
-        { op: "update", id, properties: { name } },
-      );
-      if (written.outcome !== "updated")
-        throw new Error("The sign-in's name was not written");
-      return written.item;
-    },
-    (item) =>
-      item
-        ? {
-            client_ip: actor.clientIp,
-            key_id: actor.keyId,
-            action: "auth.grant.rename",
-            resource_type: "oauth_grant",
-            resource_id:
-              typeof item.properties.client_id === "string"
-                ? item.properties.client_id
-                : id,
-            details: { grant_item_id: id },
-          }
-        : null,
-  );
-  if (renamedApp) return appSignIn(storage, renamedApp);
+        async (): Promise<Item | null> => {
+          const grant = ownersLiveApp(await storage.items.get(id), ownerId);
+          if (grant?.clientId !== seen.clientId) return null;
+          const written = await writeItem(
+            storage,
+            { kind: "platform" },
+            { op: "update", id, properties: { name } },
+          );
+          if (written.outcome !== "updated")
+            throw new Error("The sign-in's name was not written");
+          return written.item;
+        },
+        (item) =>
+          item
+            ? {
+                client_ip: actor.clientIp,
+                key_id: actor.keyId,
+                action: "auth.grant.rename",
+                resource_type: "oauth_grant",
+                resource_id: seen.clientId,
+                details: { grant_item_id: id },
+              }
+            : null,
+      ),
+    );
+    if (renamed) return appSignIn(storage, renamed);
+  }
 
   const renamedKey = await runAuditedTransaction(
     storage,
@@ -254,17 +311,31 @@ export async function renameSignIn(
           }
         : null,
   );
-  if (!renamedKey) return null;
-  return {
-    id: renamedKey.id,
-    kind: "key",
-    name: renamedKey.label,
-    createdAt: renamedKey.created_at,
-    lastUsedAt: renamedKey.last_used_at ?? null,
-    expiresAt: renamedKey.expires_at ?? null,
-    ipAddress: null,
-    userAgent: null,
-  };
+  if (renamedKey)
+    return keySignIn(
+      renamedKey,
+      await liveAppOf(storage, ownerId, renamedKey.oauth_client_id),
+    );
+
+  return ownerId &&
+    (await auth.listBrowserSessions(ownerId)).some((s) => s.id === id)
+    ? "browser"
+    : null;
+}
+
+/** Whether `id` names a live browser session of the owner or a live key. */
+async function isLiveBrowserOrKey(
+  auth: MarfaAuth,
+  keys: KeysInReach,
+  ownerId: string | null,
+  id: string,
+): Promise<boolean> {
+  if (
+    ownerId &&
+    (await auth.listBrowserSessions(ownerId)).some((s) => s.id === id)
+  )
+    return true;
+  return (await keys.list()).some((key) => key.id === id);
 }
 
 /** What `work` answers, or null where it found no live key with the id. */

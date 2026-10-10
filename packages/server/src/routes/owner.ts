@@ -25,9 +25,9 @@ import {
   endSignIn,
   listSignIns,
   renameSignIn,
-  SIGN_IN_NAME_MAX,
   type SignIn,
 } from "../auth/sign-ins.js";
+import { SIGN_IN_NAME_MAX, UNPRINTABLE } from "../auth/sign-in-names.js";
 const failure = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
   description: string,
@@ -133,7 +133,7 @@ const SignInSchema = z
     name: z
       .string()
       .describe(
-        "A readable name for the sign-in. A browser's comes from its `user_agent`, an app's is the name the owner gave it or else the name it registered with, and a key's is its `label`.",
+        "A readable name: a browser's from its `user_agent`, an app's the owner's name for it or else its registered name, a key's its `label`. A name with a control or bidirectional character, or over 200 characters, gives way to the ID.",
       )
       .openapi({ example: "Safari on macOS" }),
     current: z.boolean().describe("`true` if this sign-in sent the request."),
@@ -169,6 +169,12 @@ const SignInSchema = z
       .nullable()
       .describe(
         "The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none.",
+      ),
+    minted_by: z
+      .string()
+      .nullable()
+      .describe(
+        "For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended.",
       ),
   })
   .describe("A sign-in is one way the owner's Marfa can be reached.")
@@ -231,6 +237,10 @@ const renameSignInRoute = createRoute({
               .trim()
               .min(1)
               .max(SIGN_IN_NAME_MAX)
+              .refine((name) => !UNPRINTABLE.test(name), {
+                message:
+                  "name can't hold a control or bidirectional formatting character",
+              })
               .describe(
                 "The sign-in's new name. Marfa trims spaces from each end.",
               )
@@ -247,7 +257,7 @@ const renameSignInRoute = createRoute({
     },
     400: failure(
       ["missing_required_field", "validation_error"],
-      "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` is empty or too long, the body has another field, or the ID names a browser, whose name comes from the browser.",
+      "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` is empty, too long or holds a control or bidirectional formatting character, the body has another field, or the ID names a browser, whose name comes from the browser.",
     ),
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
@@ -266,10 +276,18 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+    "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
+    }),
+    query: z.object({
+      revoke_keys: z
+        .enum(["true", "false"])
+        .optional()
+        .describe(
+          "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it.",
+        ),
     }),
   },
   responses: {
@@ -277,6 +295,10 @@ const endSignInRoute = createRoute({
       content: { "application/json": { schema: OkResponseSchema } },
       description: "Returns `ok: true`. The sign-in has ended.",
     },
+    400: failure(
+      ["validation_error"],
+      "- `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key.",
+    ),
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
       ["forbidden"],
@@ -297,6 +319,7 @@ function signInWire(signIn: SignIn, currentSessionId: string | undefined) {
     expires_at: signIn.expiresAt,
     ip_address: signIn.ipAddress,
     user_agent: signIn.userAgent,
+    minted_by: signIn.mintedBy,
   };
 }
 export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
@@ -363,6 +386,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     requireRecentOwnerAuthentication(c);
     const authority = c.get("authority");
     const { id } = c.req.valid("param");
+    const { revoke_keys } = c.req.valid("query");
     const owner = await storage.owner?.find();
     const ended = await endSignIn(
       storage,
@@ -374,7 +398,13 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         keyId: authorityId(c),
         clientIp: c.get("clientIp") ?? null,
       },
+      { revokeKeys: revoke_keys === "true" },
     );
+    if (ended === "not_app")
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "revoke_keys applies only to an app; this ID names a browser or a key.",
+      );
     if (ended === null)
       throw new MarfaError(
         ErrorCode.SIGN_IN_NOT_FOUND,
