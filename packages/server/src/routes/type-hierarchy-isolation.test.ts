@@ -21,7 +21,7 @@ function childSchema(): { id: string; [k: string]: unknown } {
   counter += 1;
   return {
     id: `user.isolation_child_${String(counter)}`,
-    name: "Isolation child",
+    label: "Isolation child",
     description: "Declares core.note as its parent from another namespace.",
     parent: "core.note",
     version: 1,

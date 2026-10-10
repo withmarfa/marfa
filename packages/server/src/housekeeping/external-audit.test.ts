@@ -193,7 +193,7 @@ async function archive(
         JSON.stringify({
           type: {
             id: typeId,
-            name: "Restored",
+            label: "Restored",
             description: "Restored test type",
             version: 1,
             fields: {

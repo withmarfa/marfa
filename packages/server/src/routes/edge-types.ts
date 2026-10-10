@@ -13,6 +13,7 @@ import {
   TYPE_ROLES,
   ROLE_CONSTRAINT_PREFIX,
   FIELD_TYPES,
+  unreadKeys,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -81,7 +82,7 @@ const EdgePropertyFormatSchema = z
 
 /** One property an edge of the type carries, as registration takes it and
  *  the type answers it. */
-const EdgePropertyDefinitionSchema = z
+export const EdgePropertyDefinitionSchema = z
   .object({
     type: EdgePropertyTypeSchema,
     description: z.string().optional().describe("What the property holds."),
@@ -222,6 +223,25 @@ export function assertEdgeNamesFree(
 }
 
 /**
+ * Refuses a key the edge type, or one of its properties, does not take.
+ *
+ * The request schema strips what it does not declare, so it answers a
+ * misspelt rule as though it had been sent right: the edge type registers
+ * without it. The keys are asked of the body as it was sent, and a refusal
+ * names each one's path. The route and an archive restore share it, so
+ * neither is the laxer door.
+ */
+export function refuseUnreadEdgeTypeKeys(
+  sent: unknown,
+  message = "Invalid edge type schema",
+): void {
+  const errors = unreadKeys(sent, "edge");
+  if (errors.length > 0) {
+    throw new MarfaError(ErrorCode.INVALID_SCHEMA, message, { errors });
+  }
+}
+
+/**
  * The schema a registration stores, from a body the request schema accepted.
  * The route and an archive restore both build it here, so a type that
  * round-trips through an export compares equal and neither door is the laxer
@@ -328,7 +348,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
+        "- `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the edge type or a property doesn't define (`details.errors` names each key's path).",
     },
     403: {
       content: {
@@ -490,6 +510,7 @@ export function edgeTypeRoutes(storage: Storage) {
         "A registered edge type does not support `extends`",
       );
     }
+    refuseUnreadEdgeTypeKeys(rawBody);
 
     // Names are checked under the writer lock so concurrent registrations
     // cannot both take the same forward or reverse name.

@@ -129,7 +129,7 @@ const TYPES: Entry = {
       JSON.stringify({
         type: {
           id: TYPE,
-          name: "Bounds note",
+          label: "Bounds note",
           description: "A type the archive registers",
           version: 1,
           fields: { body: { type: "string", description: "Body" } },
@@ -875,7 +875,7 @@ describe("POST /restore all or nothing", () => {
         key: ctx.workingKey,
         body: {
           id,
-          name: "Other",
+          label: "Other",
           version: 1,
           fields: { body: { type: "string" } },
         },

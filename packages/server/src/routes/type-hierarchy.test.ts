@@ -37,7 +37,7 @@ function crossNamespaceChild(): { id: string; [k: string]: unknown } {
   childCounter += 1;
   return {
     id: `user.annotated_note_${String(childCounter)}`,
-    name: "Annotated note",
+    label: "Annotated note",
     description: "A note that declares core.note as its parent by name only.",
     parent: "core.note",
     version: 1,
