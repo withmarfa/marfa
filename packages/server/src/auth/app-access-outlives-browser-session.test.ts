@@ -11,10 +11,10 @@ import { recoverOwnerPassword } from "./instance-claim.js";
  * **Every door is driven, not one.** The sweep is the provider's own, run
  * from a hook on session deletion, and each door reaches deletion by its own
  * route: sign-out, the owner ending one session, the two revocations, a
- * password change and the lookup of an expired session. Disabling one hook would leave the others. The
- * provider's end-session verifies its hint by fetching the instance's own
- * keys over HTTP, which a test app cannot do, so the conformance fixture
- * drives that door.
+ * password change and the lookup of an expired session. Disabling one hook
+ * would leave the others. The provider's end-session verifies its hint by
+ * fetching the instance's own keys over HTTP, which a test app cannot do, so
+ * the conformance fixture drives that door.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";

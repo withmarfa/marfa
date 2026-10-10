@@ -4,7 +4,8 @@
  * do in production while every time the server reads is the test's.
  *
  * The provider's own refresh renews a session only once its renewal is a day
- * old, so a session used the day after sign-in still ends a week after sign-in.
+ * old, so a session used within a day of sign-in still ends a week after
+ * sign-in.
  * The first case tells the two apart: it is used inside that day and asked
  * again a week after sign-in, when only a clock kept from the last use admits
  * it. A use is recorded at most once a minute, and a session lasts a week and
