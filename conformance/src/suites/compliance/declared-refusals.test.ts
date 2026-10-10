@@ -740,9 +740,9 @@ describe("a query key no door declares", () => {
       template === "/restore"
     ) {
       const response = await getOwnerClient().rawRequest(`${path}?${STRAY}=1`, {
-        method: method as "GET" | "POST" | "DELETE",
+        method: method as "GET" | "POST" | "PATCH" | "DELETE",
         headers: { "Content-Type": "application/json" },
-        ...(method === "POST" ? { body: "{}" } : {}),
+        ...(method === "POST" || method === "PATCH" ? { body: "{}" } : {}),
       });
       return {
         status: response.status,
