@@ -19,7 +19,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `keys.manage`       | Listing and revoking keys across the instance, and changing their metadata or narrowing access.                                                         |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.           |
-| `webhooks.manage`   | Reading, registering and removing the outbound subscriptions that send an instance's events out.                                                        |
+| `webhooks.manage`   | Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.             |
 
 <!-- permissions-table:end -->
 

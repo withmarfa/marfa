@@ -84,7 +84,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "schema.write":
     "Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.",
   "webhooks.manage":
-    "Reading, registering and removing the outbound subscriptions that send an instance's events out.",
+    "Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.",
 };
 
 /** When each event is sent, written for this table from the stream's own frame descriptions. */
@@ -100,9 +100,9 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
   "edge.updated": "An edge's properties change.",
   "edge.deleted": "An edge is deleted.",
   stream_cursor:
-    "First on every stream: where the log stood when the stream opened.",
+    "First, when the stream read the log as it opened: where the log stood then.",
   stream_live:
-    "Once the catch-up is over: everything up to its cursor has been sent, and what follows is live.",
+    "Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.",
   stream_incomplete:
     "Last, when the stream can no longer deliver what it opened with.",
   catchup_too_old:

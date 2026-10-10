@@ -4,7 +4,7 @@ An edge is a typed, directed relationship from a source item to a target item, w
 
 ## Shipped edge types
 
-Every instance ships these edge types, each a row of the table below, which is written from the shipped edge type definitions and so cannot differ from them. The source and target columns name the item types an edge of that type may join.
+Every instance ships these edge types, each a row of the table below, which is written from the shipped edge type definitions and so cannot differ from them. The source and target columns are the type constraints each edge type declares.
 
 <!-- edge-types-table:start -->
 
