@@ -1,21 +1,20 @@
 /**
  * The PDF reader's version is a security property, so it is asserted.
  *
- * `officeparser` pins `pdfjs-dist` to an exact version, and the version it
- * pins carries an advisory for arbitrary JavaScript execution on opening a
- * malicious document. No published release of `officeparser` admits the
- * patched reader, so the version is forced by a package-manager override.
+ * `officeparser` pins `pdfjs-dist` to an exact version, and releases of the
+ * reader before 6.2.108 carry an advisory for arbitrary JavaScript execution
+ * on opening a malicious document. The extraction sweeper opens any uploaded
+ * PDF with it.
  *
- * An override is invisible. Nothing fails if a future contributor drops it,
- * if an `officeparser` bump re-pins the reader, or if an install resolves it
- * differently — the extractor keeps working and quietly parses attacker-
- * supplied documents with a vulnerable reader again. This test is the only
- * thing that would notice.
+ * Nothing else fails if an `officeparser` update re-pins the reader to an
+ * older release: the extractor keeps working and quietly parses
+ * attacker-supplied documents with a vulnerable reader again. This test is
+ * what notices.
  *
- * It deliberately resolves the reader the way `officeparser` does, from
- * `officeparser`'s own location, rather than from this package. Asserting on
- * what the server resolves would pass while the parser that actually opens
- * the bytes loaded something else.
+ * It resolves the reader the way `officeparser` does, from `officeparser`'s
+ * own location, rather than from this package. Asserting on what the server
+ * resolves would pass while the parser that opens the bytes loaded something
+ * else.
  */
 
 import { describe, expect, it } from "vitest";
@@ -51,8 +50,8 @@ describe("the PDF reader behind the document extractor", () => {
     expect(
       isAtLeast(parse(version), MINIMUM_SAFE),
       `the document extractor resolved pdfjs-dist ${version}, below the ` +
-        `patched ${MINIMUM_SAFE.join(".")}. The override that forces it has ` +
-        `been lost, or officeparser re-pinned the reader.`,
+        `patched ${MINIMUM_SAFE.join(".")}. officeparser re-pinned the ` +
+        `reader, or an install resolved it differently.`,
     ).toBe(true);
   });
 });
