@@ -701,9 +701,16 @@ export interface ItemStore {
   restoreDates(id: string, dates: ArchivedDates): Promise<void>;
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
-  /** The sign-in that wrote the row's current version, in any state; null
-   *  where none did or no row has the id. */
-  currentWriter(id: string): Promise<VersionWriter | null>;
+  /**
+   * The sign-in that wrote each row at the version named, keyed by id: the
+   * row's own writer where it still holds that version, else its snapshot's.
+   * One statement, so a write landing meanwhile cannot lend a later
+   * version's writer. An id absent from the map has neither, such as a
+   * snapshot the thinner removed.
+   */
+  writersAt(
+    rows: readonly { id: string; version: number }[],
+  ): Promise<Map<string, VersionWriter | null>>;
   /**
    * Fetch many items by id, as a map keyed by id; an id that resolves to
    * nothing is absent from the map rather than an error.

@@ -133,6 +133,7 @@ import { isFileType, stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem, rowWriter, writerColumns } from "./helpers.js";
+import type { WriterColumns } from "./helpers.js";
 
 // The stored properties column is SQLite's binary JSONB encoding. Every read
 // projects it back to JSON text via json() so rowToItem can parse it; every
@@ -875,17 +876,29 @@ export class SqliteItemStore implements ItemStore {
     return rowToItem(row);
   }
 
-  async currentWriter(id: string): Promise<VersionWriter | null> {
-    const row = await this.db
-      .select({
-        writer_kind: items.writer_kind,
-        writer_id: items.writer_id,
-        writer_name: items.writer_name,
-      })
-      .from(items)
-      .where(eq(items.id, id))
-      .get();
-    return row ? rowWriter(row) : null;
+  async writersAt(
+    rows: readonly { id: string; version: number }[],
+  ): Promise<Map<string, VersionWriter | null>> {
+    const found = new Map<string, VersionWriter | null>();
+    if (rows.length === 0) return found;
+    const wanted = JSON.stringify(rows.map((row) => [row.id, row.version]));
+    const read = await this.db.all<WriterColumns & { id: string }>(sql`
+      WITH wanted(id, version) AS (
+        SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]')
+        FROM json_each(${wanted})
+      )
+      SELECT items.id AS id, items.writer_kind AS writer_kind,
+        items.writer_id AS writer_id, items.writer_name AS writer_name
+      FROM items JOIN wanted
+        ON items.id = wanted.id AND items.version = wanted.version
+      UNION ALL
+      SELECT versions.item_id, versions.writer_kind, versions.writer_id,
+        versions.writer_name
+      FROM versions JOIN wanted
+        ON versions.item_id = wanted.id AND versions.version = wanted.version
+    `);
+    for (const row of read) found.set(row.id, rowWriter(row));
+    return found;
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
