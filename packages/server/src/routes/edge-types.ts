@@ -346,7 +346,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the edge type or a property doesn't define (`details.errors` names each key's path).",
+        "- `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).",
     },
     403: {
       content: {

@@ -222,7 +222,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.\n- `invalid_schema`: an archived type or edge type is invalid, or carries a key the schema doesn't define (`details.errors` names each key's path).",
+        "- `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.\n- `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.",
     },
     413: {
       content: {

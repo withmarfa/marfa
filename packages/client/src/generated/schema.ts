@@ -10990,9 +10990,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.
+             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.
              *     - `missing_required_field`: `id` or `cardinality` is missing.
-             *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the edge type or a property doesn't define (`details.errors` names each key's path).
+             *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).
              */
             400: {
                 headers: {
@@ -11478,8 +11478,8 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `fields` is missing.
              *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
-             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field, or a key the schema doesn't define, such as `minimum` on a field (`details.errors` names each key's path).
-             *     - `property_shadows_field`: a field is named like one every item has, such as `source_id`.
+             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `property_shadows_field`: a field is named like one every item has.
              *     - `inheritance_violation`: the type reshapes an inherited field.
              */
             400: {
@@ -11818,8 +11818,8 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `fields` is missing.
-             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.
-             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field, or a key the schema doesn't define, such as `minimum` on a field (`details.errors` names each key's path).
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.
+             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
              *     - `property_shadows_field`: a field has the name of one every item has.
              *     - `inheritance_violation`: a field's shape differs in a parent or subtype.
              */
@@ -19307,9 +19307,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
+             * @description - `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.
              *     - `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.
-             *     - `invalid_schema`: an archived type or edge type is invalid, or carries a key the schema doesn't define (`details.errors` names each key's path).
+             *     - `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.
              */
             400: {
                 headers: {

@@ -566,7 +566,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field, or a key the schema doesn't define, such as `minimum` on a field (`details.errors` names each key's path).\n- `property_shadows_field`: a field is named like one every item has, such as `source_id`.\n- `inheritance_violation`: the type reshapes an inherited field.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
     },
     401: {
       content: {
@@ -679,7 +679,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field, or a key the schema doesn't define, such as `minimum` on a field (`details.errors` names each key's path).\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
     },
     401: {
       content: {
