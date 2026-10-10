@@ -3,10 +3,10 @@ import { getCookie, deleteCookie } from "hono/cookie";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import {
   directAuthorityOnly,
-  ownerBrowserOnly,
   requireRecentOwnerAuthentication,
 } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
+import type { Context } from "hono";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -173,9 +173,9 @@ const listSignInsRoute = createRoute({
   tags: ["Access"],
   summary: "List sign-ins",
   security: [{ ownerSession: [] }],
-  middleware: ownerBrowserOnly,
+  middleware: directAuthorityOnly,
   description:
-    "Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session.",
+    "Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session or local process authority.",
   responses: {
     200: {
       content: { "application/json": { schema: SignInListSchema } },
@@ -184,7 +184,7 @@ const listSignInsRoute = createRoute({
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
       ["forbidden"],
-      "- `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session.",
+      "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority.",
     ),
   },
 });
@@ -195,9 +195,9 @@ const endSignInRoute = createRoute({
   tags: ["Access"],
   summary: "End a sign-in",
   security: [{ ownerSession: [] }],
-  middleware: ownerBrowserOnly,
+  middleware: directAuthorityOnly,
   description:
-    "Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner's browser session, signed in within the last five minutes.",
+    "Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires local process authority or the owner's browser session, signed in within the last five minutes.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
@@ -211,7 +211,7 @@ const endSignInRoute = createRoute({
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
       ["forbidden"],
-      "- `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session, or the browser signed in more than five minutes ago.",
+      "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority, or the browser signed in more than five minutes ago.",
     ),
     404: failure(
       ["sign_in_not_found"],
@@ -234,17 +234,24 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       );
     return c.json(ownerWire(owner), 200);
   });
-  router.openapi(listSignInsRoute, async (c) => {
+  /** The owner the sign-in doors act for, and the browser session asking. */
+  const asking = async (
+    c: Context<AppEnv>,
+  ): Promise<{ ownerId: string | undefined; sessionId?: string }> => {
     const authority = c.get("authority");
-    if (authority?.kind !== "owner")
-      throw new MarfaError(ErrorCode.FORBIDDEN, "Sign in in a browser.");
-    const sessions = await auth.listBrowserSessions(authority.userId);
+    if (authority?.kind === "owner")
+      return { ownerId: authority.userId, sessionId: authority.sessionId };
+    return { ownerId: (await storage.owner?.find())?.id };
+  };
+  router.openapi(listSignInsRoute, async (c) => {
+    const { ownerId, sessionId } = await asking(c);
+    const sessions = ownerId ? await auth.listBrowserSessions(ownerId) : [];
     return c.json(
       {
         data: sessions.map((session) => ({
           id: session.id,
           kind: "browser" as const,
-          current: session.id === authority.sessionId,
+          current: session.id === sessionId,
           created_at: session.createdAt.toISOString(),
           last_used_at: session.lastUsedAt.toISOString(),
           expires_at: session.expiresAt.toISOString(),
@@ -258,22 +265,17 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   });
   router.openapi(endSignInRoute, async (c) => {
     requireRecentOwnerAuthentication(c);
-    const authority = c.get("authority");
-    if (authority?.kind !== "owner")
-      throw new MarfaError(ErrorCode.FORBIDDEN, "Sign in in a browser.");
+    const { ownerId, sessionId } = await asking(c);
     const { id } = c.req.valid("param");
     if (
-      !(await auth.endBrowserSession(
-        authority.userId,
-        id,
-        c.get("clientIp") ?? null,
-      ))
+      !ownerId ||
+      !(await auth.endBrowserSession(ownerId, id, c.get("clientIp") ?? null))
     )
       throw new MarfaError(
         ErrorCode.SIGN_IN_NOT_FOUND,
         "No live sign-in has this ID.",
       );
-    if (id === authority.sessionId)
+    if (id === sessionId)
       c.header("set-cookie", await auth.clearedSessionCookie(), {
         append: true,
       });

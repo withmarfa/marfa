@@ -1397,7 +1397,7 @@ export interface paths {
         };
         /**
          * List sign-ins
-         * @description Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session.
+         * @description Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session or local process authority.
          */
         get: operations["listSignIns"];
         put?: never;
@@ -1420,7 +1420,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner's browser session, signed in within the last five minutes.
+         * @description Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires local process authority or the owner's browser session, signed in within the last five minutes.
          */
         delete: operations["endSignIn"];
         options?: never;
@@ -20185,7 +20185,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20319,7 +20319,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key, an app's token or a local command's authority rather than the owner's browser session, or the browser signed in more than five minutes ago. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or local process authority, or the browser signed in more than five minutes ago. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
