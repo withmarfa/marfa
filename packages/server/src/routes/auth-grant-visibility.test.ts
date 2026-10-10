@@ -3,7 +3,7 @@
  *
  * A `system.connection { kind: "app" }` row carries two lifecycle axes, and
  * both read surfaces that offer a Disconnect button require both: `GET
- * /grants` and the security page each list with `state: "active"` and then
+ * /auth/grants` and the Manage Marfa page built on it list with `state: "active"` and then
  * skip anything whose `properties.status` is not `"active"`. A row failing
  * either axis is listed by neither and cannot be revoked through any
  * interface the product has.

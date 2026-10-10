@@ -18,7 +18,7 @@ import type { Item } from "@withmarfa/shared";
  * projection and the plugin's consent row, with the app's tokens hanging
  * off the pair. Removing or retiring the projection leaves the tokens live
  * and the consent row standing, so the app keeps working and the next
- * authorize is answered silently, while the security page has nothing left
+ * authorize is answered silently, while the Manage Marfa page has nothing left
  * to show a Disconnect button for. `DELETE /auth/grants/{id}` and its
  * form-friendly twin run the cascade that drops all of it first.
  *

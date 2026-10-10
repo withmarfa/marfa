@@ -6,7 +6,7 @@
  * `system.connection` projection, and the plugin's revoke endpoint used to
  * reach neither: it marked the presented refresh token revoked and deleted
  * the access tokens under it, and stopped. The app had done the one thing
- * RFC 7009 gives it for "forget me", the security page still listed it,
+ * RFC 7009 gives it for "forget me", the Manage Marfa page still listed it,
  * the consent row still stood, and the next authorize was answered
  * silently with a fresh code. The credential adapter runs the same cascade
  * as the person's own Disconnect in the provider mutation's transaction.
@@ -730,7 +730,7 @@ describe("a token carrying no reference_id", () => {
   it("still ends the grant it belongs to when the client revokes it", async () => {
     // The cascade used to key on the presented token's `reference_id`, and
     // this token has none. Keyed on the token alone the lookup finds nothing, `revokeProjectedGrant` takes its no-op arm, and
-    // the endpoint answers 200 over a grant the security page still lists as
+    // the endpoint answers 200 over a grant the Manage Marfa page still lists as
     // active. A revoke that reports success and ends nothing is the failure
     // this whole change exists to close.
     ctx = await createTestContext({});

@@ -620,14 +620,9 @@ function callerOwner(c: Context<AppEnv>): WebhookOwner {
   const key = requireAuth(c);
   if (c.get("authType") !== "oauth") return { kind: "key", keyId: key.id };
   const grant = c.get("oauthGrant");
-  // Every grant this server issues has a person behind it; a token without
-  // one names no grant a subscription could belong to.
-  if (!grant?.authUserId) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "This sign-in names no grant a subscription could belong to",
-    );
-  }
+  // Authentication sets the grant with the oauth auth type, and refuses a
+  // sign-in naming no person before it gets here.
+  if (!grant) throw new Error("An oauth request carries its grant");
   return {
     kind: "grant",
     clientId: grant.clientId,

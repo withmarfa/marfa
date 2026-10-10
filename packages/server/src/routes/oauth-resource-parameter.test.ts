@@ -15,7 +15,7 @@
  * confidential client and mint through `client_credentials`, which was the
  * cheapest way to reach the token endpoint. That grant is gone: a machine
  * acting on this server uses an API key, and a machine token would carry
- * nothing on the security page and no way for the person
+ * nothing on the Manage Marfa page and no way for the person
  * accountable for it to end it. So the client registers the way a real MCP
  * client registers, through dynamic registration carrying a signed-in
  * session, and the code flow runs end to end. That is slower, and it is also

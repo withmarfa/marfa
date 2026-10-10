@@ -1698,9 +1698,6 @@ export interface MintTokenPairInput {
 }
 
 export interface OauthProviderStore {
-  /** Look up a registered client's friendly name by its `client_id`.
-   *  Returns `undefined` if the client doesn't exist. */
-  getClientName(clientId: string): Promise<string | undefined>;
   /** Full client row by business key. Used by the device-flow initiation
    *  path to validate `redirect_uri` and resolve a display name. */
   getClient(clientId: string): Promise<OauthClientRow | null>;
@@ -1832,7 +1829,7 @@ export interface OauthProviderStore {
    * That mattered more than the ten-minute code lifetime suggests, because
    * redeeming a code after the revoke yields a refresh token that rotates
    * indefinitely — a short race converting into a permanent grant while the
-   * user's own security page reports the app as revoked.
+   * user's own Manage Marfa page shows the app as gone.
    *
    * Called by `revokeTokensForGrant`, so every revocation path gets it.
    * Idempotent.
@@ -1886,8 +1883,8 @@ export interface OauthProviderStore {
     userId: string;
     revoked: boolean;
   } | null>;
-  /** Insert an access + refresh token pair from the device-flow terminal
-   *  step. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`
+  /** Insert an access + refresh token pair directly. The product mints
+   *  tokens through the plugin; this is a seam for tests. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`
    *  with the same shape the plugin's `/oauth2/token` path would produce,
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;

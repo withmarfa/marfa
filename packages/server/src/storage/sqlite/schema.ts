@@ -316,9 +316,7 @@ export const apiKeys = sqliteTable(
     default_tier: text("default_tier").notNull().default("library"),
 
     permissions: text("permissions").notNull().default("[]"),
-    type_permissions: text("type_permissions")
-      .notNull()
-      .default('{"*":"write"}'),
+    type_permissions: text("type_permissions").notNull(),
     extension_permissions: text("extension_permissions")
       .notNull()
       .default("{}"),
@@ -343,7 +341,7 @@ export const apiKeys = sqliteTable(
     /**
      * The app origin, inherited through every descendant key.
      * A key minted through a grant belongs to the app that asked for it, so
-     * the keys page groups it there and revoking the app offers to revoke it.
+     * revoking the app offers to revoke it.
      */
     oauth_client_id: text("oauth_client_id"),
     created_at: text("created_at").notNull(),

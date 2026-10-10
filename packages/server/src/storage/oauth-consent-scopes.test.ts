@@ -12,7 +12,7 @@ import { sameScopeSet } from "./consent-scopes.js";
  * for), then writes the read-back set again. That value is stale by
  * construction, so the write carries the value it expects to find. If the
  * grant moved on in the meantime — narrowed on the consent screen,
- * revoked from `/auth/security`, or rewritten by another server process
+ * revoked from the Manage Marfa page, or rewritten by another server process
  * — the restoration is declined rather than applied over the top.
  *
  * `scopes` is a JSON text column, and the guard has to hold on it.

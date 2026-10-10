@@ -49,7 +49,7 @@ async function seed(path: string, sql: string): Promise<void> {
 }
 
 const A_ROW =
-  "\nINSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z');";
+  "\nINSERT INTO api_keys (id, key_hash, label, source, type_permissions, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '{}', '2026-01-01T00:00:00.000Z');";
 
 function digest(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");

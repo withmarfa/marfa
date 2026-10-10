@@ -5,7 +5,7 @@
  * A key an app minted is standing access that outlives every token the grant
  * issued, so a person disconnecting an app and leaving one behind has not
  * finished disconnecting it. The offer is a choice rather than a consequence,
- * because the key is theirs — it appears on their own keys page and a script
+ * because the key is theirs — it appears in their own key list and a script
  * of theirs may be holding it — so the sweep runs only when the door was asked
  * for it.
  *

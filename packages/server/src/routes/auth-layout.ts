@@ -37,7 +37,7 @@ interface AuthLayoutParams {
   /**
    * When `true`, the card uses the wider variant (`max-width: 520px`).
    * Used by surfaces that show longer scope lists / diff sections —
-   * consent today, the security page once it ships.
+   * consent and the Manage Marfa page.
    */
   wide?: boolean;
   /**

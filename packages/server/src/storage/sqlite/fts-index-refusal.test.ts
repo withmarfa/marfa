@@ -100,7 +100,7 @@ describe("the full-text index is refused when it predates the schema", () => {
     const path = scratch();
     const first = await createConnection(path);
     await first.raw.execute(
-      "INSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z')",
+      "INSERT INTO api_keys (id, key_hash, label, source, type_permissions, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '{}', '2026-01-01T00:00:00.000Z')",
     );
     await first.raw.execute("DROP TABLE item_search_keys");
     await first.close();

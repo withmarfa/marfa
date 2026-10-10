@@ -2,7 +2,7 @@
  * Human names for the permissions, in the two shapes the surfaces need.
  *
  * One home because three surfaces read them — the consent screen, the
- * device-approval screen, and the security page's revoke line — and a
+ * device-approval screen, and the Manage Marfa page's key form — and a
  * permission whose name differs between the screen that grants it and the
  * screen that revokes it is worse than one with no name at all.
  *

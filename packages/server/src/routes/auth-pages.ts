@@ -126,8 +126,8 @@ async function createUserAppGrant(
       // what this approval asked for.
       //
       // **Both axes, because both read surfaces filter on both.**
-      // `GET /grants` and the security page each list with `state: "active"`
-      // and then skip a row whose `properties.status` is not "active", so a
+      // `GET /auth/grants` and the Manage Marfa page built on it list with
+      // `state: "active"` and then skip a row whose `properties.status` is not "active", so a
       // row failing either axis is beyond the Disconnect button while the
       // token step below still mints against it.
       //
