@@ -1086,7 +1086,7 @@ const settingsShape = {
   RATE_LIMIT_ENABLED: on(true, "Whether the rate limiter is on."),
   RATE_LIMIT_REQUESTS: count(
     1000,
-    "The requests one credential may make in each window.",
+    "The requests one credential may make to one group of operations in each window. A `GET` may make twice as many, except in a group that another setting caps.",
   ),
   RATE_LIMIT_WINDOW_MS: count(60_000, "The length of a rate-limit window.", {
     max: MAX_RETENTION_MS,
