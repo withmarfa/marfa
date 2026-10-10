@@ -730,7 +730,7 @@ describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
    * Skipping is the escalation. The code is minted from the REQUEST, so the
    * token carries `*:write` with nothing holding it down, and the middleware
    * then permits a write the standing grant refused. Meanwhile the consent
-   * record is restored to the wider standing set, so `/auth/security` goes on
+   * record is restored to the wider standing set, so `GET /auth/grants` goes on
    * showing a grant narrower than the live token.
    */
   it("a request that drops the narrower half of a grant is not covered by it", async () => {

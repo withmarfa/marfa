@@ -1481,7 +1481,7 @@ describe("permission labels", () => {
 
   it("keeps the inline forms comma-free, since they are joined into a list", () => {
     // A label carrying its own comma turns one item into two when the
-    // security page lists several in a sentence.
+    // consent screen lists several in a sentence.
     for (const literal of PERMISSIONS) {
       expect(PERMISSION_SHORT[literal]).not.toContain(",");
     }

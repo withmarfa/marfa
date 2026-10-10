@@ -72,7 +72,7 @@ export async function resolveLiveCredential(
 /**
  * Resolve a signed-in app's grant, the pair of app and person it was
  * consented between, or null where it no longer stands: revoked from the
- * security page, from the app's own revocation, or retired for inactivity,
+ * Manage Marfa page, from the app's own revocation, or retired for inactivity,
  * each of which removes the consent.
  *
  * **The grant rather than any one token**, for work that outlives the token

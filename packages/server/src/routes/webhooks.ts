@@ -25,6 +25,7 @@ import type {
 } from "../storage/interface.js";
 import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { WIRE_EVENT_NAMES, type WireEventName } from "../pubsub.js";
 import { DELIVERY_CANCELED, ownerCredential } from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
@@ -56,17 +57,12 @@ export const MIN_WEBHOOK_SECRET_LENGTH = 32;
 /**
  * Every event an outbound webhook may subscribe to.
  *
- * **The one statement of the vocabulary, and the specification is generated
- * from it rather than describing it separately.** It was a `Set` here and
- * `z.array(z.string())` in the schema, so the constraint was real, enforced,
- * and invisible: a generated client got `string`, an editor offered no
- * completion, and the only way to learn a valid name was to send a wrong one
- * and read the 400. A specification that accepts any string where the runtime
- * accepts ten is wrong rather than incomplete.
- *
- * Restating the list in the schema would have fixed that and reintroduced the
- * drift one layer along, which is why `EventNameSchema` derives from this
- * rather than repeating it.
+ * **Derived from the events the bus carries, so no copy of the list is kept
+ * here, and the specification is generated from it rather than describing it
+ * separately.** A generated client gets the names as an enum and an editor
+ * offers them, instead of a bare `string` that is learned by sending a wrong
+ * one and reading the 400. `EventNameSchema` derives from this list rather
+ * than repeating it.
  *
  * **`*` is not a member.** It was offered here and accepted at registration,
  * and dispatch matches a stored name against an event's own literally, so a
@@ -76,18 +72,10 @@ export const MIN_WEBHOOK_SECRET_LENGTH = 32;
  * name here is one dispatch can match, which is what makes this list a
  * vocabulary rather than a menu.
  */
-export const WEBHOOK_EVENTS = [
-  "item.created",
-  "item.updated",
-  "item.deleted",
-  "item.restored",
-  "item.purged",
-  "item.state_changed",
-  "metadata.changed",
-  "edge.created",
-  "edge.updated",
-  "edge.deleted",
-] as const;
+export const WEBHOOK_EVENTS = Object.values(WIRE_EVENT_NAMES) as [
+  WireEventName,
+  ...WireEventName[],
+];
 
 /**
  * The vocabulary as the request schemas see it, which is what puts the names
@@ -620,14 +608,9 @@ function callerOwner(c: Context<AppEnv>): WebhookOwner {
   const key = requireAuth(c);
   if (c.get("authType") !== "oauth") return { kind: "key", keyId: key.id };
   const grant = c.get("oauthGrant");
-  // Every grant this server issues has a person behind it; a token without
-  // one names no grant a subscription could belong to.
-  if (!grant?.authUserId) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "This sign-in names no grant a subscription could belong to",
-    );
-  }
+  // Authentication sets the grant with the oauth auth type, and refuses a
+  // sign-in naming no person before it gets here.
+  if (!grant) throw new Error("An oauth request carries its grant");
   return {
     kind: "grant",
     clientId: grant.clientId,

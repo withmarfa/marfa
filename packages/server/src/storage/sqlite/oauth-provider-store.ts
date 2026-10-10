@@ -189,16 +189,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     `);
   }
 
-  async getClientName(clientId: string): Promise<string | undefined> {
-    const rows = await this.db
-      .select({ name: auth_oauth_client.name })
-      .from(auth_oauth_client)
-      .where(eq(auth_oauth_client.clientId, clientId))
-      .limit(1);
-    const row = rows[0];
-    return row?.name ?? undefined;
-  }
-
   async validateAccessToken(
     tokenHash: string,
   ): Promise<OauthAccessTokenRow | null> {
@@ -606,8 +596,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * caller either re-establishes the grant, stamps it, or names it in an
    * audit row, and each of those describes a record a person is supposed to
    * be able to find and disconnect. The two surfaces that offer that button
-   * — `GET /grants` and the security page — list a row only when its `state`
-   * is active AND its `properties.status` is active, so a row failing
+   * — `GET /auth/grants` and the Manage Marfa page built on it — list a row
+   * only when its `state` is active AND its `properties.status` is active, so a row failing
    * either axis is beyond every revoke interface the product has.
    *
    * Without this predicate the lookup would hand such a row back and the

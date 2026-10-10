@@ -568,10 +568,7 @@ async function resolveGrantItemId(
   c: Context<AppEnv>,
 ): Promise<string | null> {
   const grant = c.get("oauthGrant");
-  if (
-    !grant?.authUserId ||
-    typeof storage.oauthProvider?.findGrantItemId !== "function"
-  ) {
+  if (!grant || typeof storage.oauthProvider?.findGrantItemId !== "function") {
     return null;
   }
   try {

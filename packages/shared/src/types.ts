@@ -311,8 +311,8 @@ export interface ApiKey {
    * The registered client that minted this key, when a signed-in app did.
    *
    * A key minted through a grant belongs to the app that asked for it, so
-   * the keys page groups it under that app and revoking the app offers to
-   * revoke it. Inherited by every descendant key. Absent only when no app is in its origin.
+   * revoking the app offers to revoke it. Inherited by every descendant key.
+   * Absent only when no app is in its origin.
    */
   oauth_client_id?: string;
   created_at: string;

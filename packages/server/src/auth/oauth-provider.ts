@@ -976,7 +976,7 @@ export function resolvePresentedClientId(input: {
  * the presented row revoked and deletes the access tokens under it, and
  * nothing more: the consent row stands, so the next authorize is answered
  * silently with a fresh code, and the `system.connection` projection
- * stands, so the security page keeps listing an app that has asked to be
+ * stands, so the Manage Marfa page keeps listing an app that has asked to be
  * forgotten. And when the presented token is a rotated-out one, which is
  * the ordinary state after any refresh because rotation marks the old row
  * and keeps it, the plugin treats the request as a replay and deletes the
@@ -2096,7 +2096,7 @@ async function guardDeviceCodeGrant(
  * bounds only when the code can be redeemed. What redemption yields is not
  * bounded: with `offline_access` the exchange returns a refresh token that
  * rotates indefinitely. A short race converts into a permanent grant, and
- * the user's own security page reports the app as revoked the whole time.
+ * the user's own Manage Marfa page shows the app as gone the whole time.
  *
  * Fails open on a lookup error and on an unrecognized code: the plugin owns
  * the real validation, and a transient database blip must not turn a

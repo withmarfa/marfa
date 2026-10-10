@@ -170,7 +170,7 @@ export class SqliteSearchStore implements SearchStore {
   async index(
     itemId: string,
     properties: Record<string, unknown>,
-    typeId?: string,
+    typeId: string,
   ): Promise<void> {
     const text = extractSearchableText(properties, typeId);
     // Keep the key and FTS replacement atomic even when called without an

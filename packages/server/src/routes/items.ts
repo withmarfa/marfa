@@ -1692,14 +1692,12 @@ export function itemRoutes(storage: Storage) {
     // The shorthand and the full form are one expression by this point,
     // so one pass over it covers both. `GET /search` makes the same call.
     assertFilterEdgeTermsReadable(c, filter);
-    // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
-    const rawTier = c.req.query("tier");
-    const tier: "library" | "feed" | undefined =
-      rawTier === "library"
-        ? "library"
-        : rawTier === "feed"
-          ? "feed"
-          : undefined;
+    // The validated query holds only `library`, `feed` or `all`, and `all`
+    // narrows nothing.
+    const tier =
+      query.tier === "library" || query.tier === "feed"
+        ? query.tier
+        : undefined;
     // system.* is excluded by default and opted back in by the token or by a
     // type filter that names the namespace. Through the shared rule rather
     // than restated here, so no door matches rows its siblings hide.

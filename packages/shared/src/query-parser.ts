@@ -83,8 +83,7 @@ const SYSTEM_FIELDS = new Set([
   "version",
   "id",
   // The provenance path a client stored the item under. Filterable so a
-  // prefix query can express "everything under this folder" — the path is
-  // the only hierarchy the model has, since folders are not items.
+  // prefix query can express "everything under this folder".
   "source_id",
 ]);
 
@@ -348,7 +347,7 @@ function parseFieldRef(token: Token): FieldRef {
     if (path.includes(".")) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `Nested property paths are not supported in v1. Use "properties.<field>" at position ${String(token.pos)}`,
+        `Nested property paths are not supported. Use "properties.<field>" at position ${String(token.pos)}`,
       );
     }
     if (!PROPERTY_PATH_RE.test(path)) {

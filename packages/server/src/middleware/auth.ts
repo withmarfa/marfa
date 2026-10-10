@@ -45,7 +45,7 @@ export interface AppEnv extends Record<string, unknown> {
       | {
           scopes: readonly string[];
           clientId: string;
-          authUserId: string | null;
+          authUserId: string;
         }
       | undefined;
     boundCredential: BoundCredential | undefined;
@@ -425,13 +425,12 @@ export function authMiddleware(storage: Storage, salt: string) {
     // without an extra DB roundtrip.
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
       // The plugin's `storeTokens.hash` strips the `prefix.opaqueAccessToken`
-      // before calling our hasher (verified in
-      // @better-auth/oauth-provider@1.6.13 —
+      // before calling our hasher (in the plugin's source,
       // `tokenValue.replace(opts.prefix.opaqueAccessToken, "")` runs before
       // `getStoredToken` invokes our hash function). To stay symmetric with
       // the plugin's stored hash, we ALSO strip the prefix before hashing
-      // for lookup. Device-flow's `mintTokenPair` callers (in `routes/auth-pages.ts`
-      // + `test-utils.ts`) match the same convention.
+      // for lookup. The tests' `mintTokenPair` seam matches the same
+      // convention.
       const bare = token.slice(ACCESS_TOKEN_PREFIX.length);
       const hash = hashApiKey(bare, salt);
       const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
@@ -461,12 +460,10 @@ export function authMiddleware(storage: Storage, salt: string) {
         authUserId: oauthToken.userId,
       });
 
-      if (oauthToken.userId) {
-        void stampOAuthGrantLastUsedByGrantKey(storage, {
-          clientId: oauthToken.clientId,
-          authUserId: oauthToken.userId,
-        });
-      }
+      void stampOAuthGrantLastUsedByGrantKey(storage, {
+        clientId: oauthToken.clientId,
+        authUserId: oauthToken.userId,
+      });
 
       return next();
     }

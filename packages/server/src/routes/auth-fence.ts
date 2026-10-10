@@ -17,13 +17,13 @@
  * two records here, and Marfa's own routes are the only writers that keep
  * them in step. The consent decision and the revoke cascade write the
  * plugin's `auth_oauth_consent` row and the `system.connection` projection
- * together, and every reader (the security page, `/auth/grants`, the device
+ * together, and every reader (the Manage Marfa page, `/auth/grants`, the device
  * token step, the consent skip) trusts that they agree. The plugin's consent
  * endpoints write one of the two. Driven against staging, `update-consent`
  * added a scope to the consent row with no consent screen and no audit row,
  * and the next authorize for that scope was answered silently;
  * `delete-consent` removed the row while the tokens, the refresh token and
- * the security page listing all survived. The plugin's `consent` endpoint is
+ * the Manage Marfa page listing all survived. The plugin's `consent` endpoint is
  * the same writer one step earlier. Marfa's consent screen posts to
  * `/auth/authorize/decision`, which accepts through the plugin in-process,
  * so nothing legitimate reaches the HTTP endpoint. The client-management

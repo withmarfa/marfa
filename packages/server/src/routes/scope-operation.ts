@@ -35,12 +35,10 @@
  * somebody approve more than they think they are approving.
  *
  * **The word is "write", not "change", and that is a decision rather than a
- * preference.** Two other surfaces already describe the same authority to
- * the same person: `/auth/security` says "read and write your data" about a
- * standing grant, and the self-serve key form offers "read and write your
- * content". A third word here would describe one grant two ways depending on
- * which screen a person happened to be looking at, and the security page is
- * where somebody goes to review a grant the consent screen took. "Change" is
+ * preference.** Another surface already describes the same authority to
+ * the same person: the Manage Marfa page's key form offers "Read and write
+ * all content". A different word here would describe one grant two ways
+ * depending on which screen a person happened to be looking at. "Change" is
  * also the weaker claim of the two: `DELETE /items/{id}` gates on write, and
  * the cascade planner takes an item's neighbors with it, so a person told an
  * app may change their notes has not been told it may delete them.
@@ -79,8 +77,8 @@ export function scopeOperation(scope: ParsedScope): Operation | undefined {
       // scope, and the breadth that makes the category different is a
       // question for `isOpenEnded`, not for this one. The exhaustiveness
       // guard below is what surfaced it: `content` would otherwise have
-      // been answered `undefined`, which reads on the security page as a
-      // family the page cannot characterize.
+      // been answered `undefined`, which reads on the consent screen as a
+      // family it cannot characterize.
       return scope.operation === "none" ? undefined : scope.operation;
     case "oidc":
     case "permission":

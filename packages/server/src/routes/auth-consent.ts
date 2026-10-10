@@ -18,8 +18,7 @@ import type { AuditLogEntry } from "../storage/interface.js";
  *   &exp=<ts>&sig=<hmac>`
  *
  * (No pre-minted code — the plugin signs the params and forwards.
- * Verified in @better-auth/oauth-provider@1.6.13 —
- * `redirectWithPromptCode` + `signParams`.)
+ * The plugin's `redirectWithPromptCode` and `signParams` do this.)
  *
  * This route:
  *   - verifies that signature before anything else, including before
@@ -78,7 +77,7 @@ import type { AuditLogEntry } from "../storage/interface.js";
  * so it runs under `withConsentLock` for the (client, user) pair and the
  * write itself carries the value it expects to find. Both exist for one
  * reason: an act that genuinely does withdraw permission — a narrowing on
- * the consent screen, a revoke from `/auth/security` — must never be
+ * the consent screen, a revoke from the Manage Marfa page — must never be
  * undone by a restoration computed before the user performed it. See
  * `auth/consent-lock.ts` for what each of the two fences covers.
  */
@@ -556,8 +555,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   // system.connection projection + audit row only after the plugin has
   // returned a verified, code-bearing callback to the registered client.
   //
-  // The plugin's /oauth2/consent body shape (verified in source
-  // @better-auth/oauth-provider@1.6.13):
+  // The plugin's /oauth2/consent body shape (from the plugin's source):
   //   { accept: boolean, scope?: string, oauth_query: string }
   // where `oauth_query` is the full signed query string the plugin
   // redirected us here with. Plugin's before-hook verifies the sig
@@ -1134,7 +1132,7 @@ function buildPromptNoneErrorRedirect(
  * So the standing grant wins: the code just minted carries only the
  * scopes the client asked for, and the record keeps the wider set the
  * user actually approved. Narrowing a grant stays a deliberate act,
- * available on the consent screen and on `/auth/security`.
+ * available on the consent screen.
  *
  * Awaited rather than fired and forgotten — the window where the stored
  * row disagrees with the projection should not outlive the request. A

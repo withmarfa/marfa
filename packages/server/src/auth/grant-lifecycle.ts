@@ -12,7 +12,7 @@ import { withConsentLock } from "./consent-lock.js";
  * and the `system.connection { kind: "app" }` projection Marfa keeps beside
  * it. Every transition has to move both, or the two disagree and the
  * disagreement is invisible: a consent row with no projection answers the
- * next authorize silently while the security page shows nothing to revoke,
+ * next authorize silently while the Manage Marfa page shows nothing to revoke,
  * and a projection with no consent row lists an app whose tokens the
  * plugin has already forgotten. The functions here are the one writer per
  * transition, called from the user-facing routes and from the plugin
@@ -65,10 +65,10 @@ export async function revokeProjectedGrant(
      * Also revoke the keys this app minted.
      *
      * Off unless the caller asks, because a key is not a token: it was minted
-     * deliberately, it appears on the person's own keys page, and it is meant
-     * to outlive the session that made it. So the security page asks and the
-     * API door takes an explicit flag, and the expiry sweep — which has nobody
-     * to ask — leaves them alone.
+     * deliberately, it appears in the person's own key list, and it is meant
+     * to outlive the session that made it. So the Manage Marfa page offers it
+     * as a separate button and the API door takes an explicit flag, and the
+     * expiry sweep, which has nobody to ask, leaves them alone.
      */
     revokeKeys?: boolean;
     audit?: AuditLogEntry;

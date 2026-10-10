@@ -18,7 +18,7 @@ import {
   storedFrame,
   subscribeAll,
   type LiveFrame,
-  wireEventName,
+  WIRE_EVENT_NAMES,
 } from "../pubsub.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { trackStream } from "./open-streams.js";
@@ -38,21 +38,8 @@ import {
 const BATCH_SIZE = EVENT_LIMITS.replayBatchSize;
 const MAX_HELD_FRAMES = BATCH_SIZE;
 const MAX_EVENT_ID = 9223372036854775807n;
-const COPY_EVENT_TYPES = new Set(
-  (
-    [
-      "created",
-      "updated",
-      "deleted",
-      "restored",
-      "purged",
-      "state_changed",
-      "metadata_changed",
-      "edge_created",
-      "edge_updated",
-      "edge_deleted",
-    ] as const
-  ).map(wireEventName),
+const COPY_EVENT_TYPES: ReadonlySet<string> = new Set(
+  Object.values(WIRE_EVENT_NAMES),
 );
 
 export function copyStreamRequest(c: Context<AppEnv>): {

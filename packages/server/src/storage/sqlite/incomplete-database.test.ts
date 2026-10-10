@@ -73,7 +73,7 @@ function digest(path: string): string {
 }
 
 const ROW =
-  "INSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z');";
+  "INSERT INTO api_keys (id, key_hash, label, source, type_permissions, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '{}', '2026-01-01T00:00:00.000Z');";
 
 describe("a database this build began creating and did not finish", () => {
   it("is completed when it holds no rows, and ends as a fresh file does", async () => {

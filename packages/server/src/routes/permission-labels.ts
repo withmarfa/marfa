@@ -2,9 +2,9 @@
  * Human names for the permissions, in the two shapes the surfaces need.
  *
  * One home because three surfaces read them — the consent screen, the
- * device-approval screen, and the security page's revoke line — and a
- * permission whose name differs between the screen that grants it and the
- * screen that revokes it is worse than one with no name at all.
+ * device-approval screen, and the Manage Marfa page's key form — and a
+ * permission whose name differs from one of those screens to the next is
+ * worse than one with no name at all.
  *
  * Both maps are keyed on `Permission` rather than `string`, so adding a
  * permission fails to compile until it has been named in both. That is

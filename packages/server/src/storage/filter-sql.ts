@@ -264,13 +264,6 @@ function edgeFieldSql(
   }
 }
 
-/** libsql cannot bind booleans natively (the column is INTEGER under the
- * hood); coerce to 0/1. */
-function bindable(value: unknown): unknown {
-  if (typeof value === "boolean") return value ? 1 : 0;
-  return value;
-}
-
 function systemComparisonValue(
   column: string,
   op: ComparisonOp,
@@ -292,20 +285,19 @@ function systemComparisonValue(
 }
 
 function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
-  const v = bindable(value);
   switch (op) {
     case "eq":
-      return sql`${col} = ${v}`;
+      return sql`${col} = ${value}`;
     case "neq":
-      return sql`${col} != ${v}`;
+      return sql`${col} != ${value}`;
     case "gt":
-      return sql`${col} > ${v}`;
+      return sql`${col} > ${value}`;
     case "gte":
-      return sql`${col} >= ${v}`;
+      return sql`${col} >= ${value}`;
     case "lt":
-      return sql`${col} < ${v}`;
+      return sql`${col} < ${value}`;
     case "lte":
-      return sql`${col} <= ${v}`;
+      return sql`${col} <= ${value}`;
     case "contains":
       return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
