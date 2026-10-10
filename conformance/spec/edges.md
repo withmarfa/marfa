@@ -1133,9 +1133,9 @@ Where one registration meets more than one rule of this section, `edges/types-re
 
 ### `edges/types-register-order`
 
-When `POST /edge-types` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a key without `metadata.edge_types:write`; a missing field; a shipped `id`; an `id` that is not an edge type identifier; an `id` or `reverse_name` the key's edge map does not grant; `extends`; an `id` a registered edge type holds.
+When `POST /edge-types` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a key without `metadata.edge_types:write`; a missing field; a shipped `id`; an `id` that is not an edge type identifier; an `id` or `reverse_name` the key's edge map does not grant; `extends`; a key the edge type does not define; an `id` a registered edge type holds.
 
-**Tests:** `compliance/edge-types.test.ts › refuses a key without metadata.edge_types:write before it answers a shipped id`, `› answers a shipped id as a conflict before it refuses extends`, `› answers a shipped id as a conflict before it asks the key's edge map`, `› refuses an id that is not an edge type identifier before it asks the key's edge map`, `› refuses an id the key's edge map does not grant before it refuses extends`.
+**Tests:** `compliance/edge-types.test.ts › refuses a key without metadata.edge_types:write before it answers a shipped id`, `› answers a shipped id as a conflict before it refuses extends`, `› answers a shipped id as a conflict before it asks the key's edge map`, `› refuses an id that is not an edge type identifier before it asks the key's edge map`, `› refuses an id the key's edge map does not grant before it refuses extends`, `› refuses extends before a key the edge type does not define`, `› refuses a key the edge type does not define before it answers an id a registered edge type holds`.
 
 ### `edges/types-shipped`
 
@@ -1276,6 +1276,14 @@ If `POST /edge-types` names a property whose `type` is neither `thumbnail` nor a
 **Reason:** the code a type's field of an unknown type gets (`types/field-grammar`).
 
 **Tests:** `compliance/edge-types.test.ts › refuses an edge property of an unknown type with the code a type's field gets`.
+
+### `edges/types-register-unknown-key`
+
+If `POST /edge-types` names a key the edge type does not define, at the top level or in a property of `property_schema`, which takes only `type`, `description`, `required`, `enum_values`, `items_type` and `format`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+
+**Reason:** the code a type's field gets for the same fault (`types/unknown-key`). A key the server ignored would let a misspelled rule register as though it held.
+
+**Tests:** `compliance/edge-types.test.ts › refuses a key the edge type or one of its properties does not define, naming each path`.
 
 ### `edges/types-register-extends`
 

@@ -32,6 +32,7 @@ import {
   EdgeTypeRequestSchema,
   assertEdgeNamesFree,
   edgeTypeFromRequest,
+  refuseUnreadEdgeTypeKeys,
 } from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
@@ -227,6 +228,10 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           { errors: parsed.error.issues },
         );
       }
+      refuseUnreadEdgeTypeKeys(
+        entry.edge_type,
+        `Archive carries an invalid edge type schema for "${String(raw.id)}"`,
+      );
       const body = parsed.data;
       // The same grammar the live route applies. This copy carried the same
       // hyphen escape hatch, against a file a caller supplies, so a restore

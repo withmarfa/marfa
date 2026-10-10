@@ -1364,6 +1364,14 @@ If an archive carries a core edge type, then the server MUST answer `409 conflic
 
 **Tests:** `compliance/declared-refusals.test.ts › cannot be deleted, and cannot be redefined by an archive`.
 
+### `search-and-filters/restore-type-unknown-key`
+
+If an archive registers a type with a key `types/unknown-key` refuses, or an edge type with a key `edges/types-register-unknown-key` refuses, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+
+**Reason:** an archive is held to what the registration doors take, so a registration they would refuse cannot come in by restore.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses a type and an edge type that carry one, naming its path, and restores the same archive without it`.
+
 ### `search-and-filters/restore-nothing`
 
 When `POST /restore` takes an archive that carries no row, the server MUST answer `200` with `imported` of 0.

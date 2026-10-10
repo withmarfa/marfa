@@ -25,6 +25,8 @@ export {
   ALWAYS_SEARCHED_FIELDS,
   EDGE_CARDINALITIES,
   EDGE_CASCADES,
+  EDGE_PROPERTY_KEYS,
+  EDGE_TYPE_SCHEMA_KEYS,
   FIELD_FORMATS,
   FIELD_TYPES,
   MERGE_STRATEGIES,
@@ -33,6 +35,7 @@ export {
   isRoleConstraint,
   normalizeFieldDefinition,
   roleFromConstraint,
+  unreadKeys,
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "./schema-validation.js";

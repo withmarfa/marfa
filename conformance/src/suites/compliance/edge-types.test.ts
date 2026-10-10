@@ -426,6 +426,41 @@ describe("custom edge-type registration", () => {
     trackEdgeType(ctx, etId);
   });
 
+  it("refuses a key the edge type or one of its properties does not define, naming each path", async () => {
+    const id = `mock.unread-key.${ctx.runId}`;
+    const refused = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+      cascade: "orphan",
+      property_schema: {
+        rank: { type: "number", minimum: 0, maximum: 5 },
+        note: { type: "string", maxLength: 10 },
+      },
+    } as never);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const errors = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.map((e) => e.field)).toEqual([
+      "cascade",
+      "property_schema.rank.minimum",
+      "property_schema.rank.maximum",
+      "property_schema.note.maxLength",
+    ]);
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain(id);
+
+    // The witness: the same edge type without those keys registers.
+    const mended = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+      cascade_on_delete: "orphan",
+      property_schema: { rank: { type: "number" }, note: { type: "string" } },
+    });
+    expect(mended.status).toBe(201);
+    trackEdgeType(ctx, id);
+  });
+
   it("ships in-folder from any item to a system.folder, carrying its path", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
@@ -1298,6 +1333,43 @@ describe("the order POST /edge-types asks its refusals in", () => {
     });
     expect(alone.status).toBe(400);
     expect(alone.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a key the edge type does not define before it answers an id a registered edge type holds", async () => {
+    const id = `mock.order-unread.${ctx.runId}`;
+    const first = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+    });
+    expect(first.status).toBe(201);
+    trackEdgeType(ctx, id);
+
+    const unread = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+      cascade: "orphan",
+    } as never);
+    expect(unread.status).toBe(400);
+    expect(unread.error?.error.code).toBe("invalid_schema");
+
+    // The witness: without the key, the same body is the held id's conflict.
+    const alone = await client.registerEdgeType({
+      id,
+      cardinality: "many-to-many",
+    });
+    expect(alone.status).toBe(409);
+    expect(alone.error?.error.code).toBe("conflict");
+  });
+
+  it("refuses extends before a key the edge type does not define", async () => {
+    const both = await client.registerEdgeType({
+      id: `mock.order-extends-unread.${ctx.runId}`,
+      cardinality: "many-to-many",
+      cascade: "orphan",
+      ...extending,
+    } as never);
+    expect(both.status).toBe(400);
+    expect(both.error?.error.code).toBe("validation_error");
   });
 
   it("refuses a key without metadata.edge_types:write before it answers a shipped id", async () => {

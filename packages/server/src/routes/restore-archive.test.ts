@@ -316,7 +316,7 @@ describe("POST /restore", () => {
           JSON.stringify({
             type: {
               id: "user.garbage_spool",
-              name: "Garbage",
+              label: "Garbage",
               description: "Field type is not a field type.",
               version: 1,
               fields: { title: { type: "not-a-real-type", description: "T." } },

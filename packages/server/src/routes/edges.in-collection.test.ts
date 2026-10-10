@@ -92,7 +92,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
   await registerType({
     id: COLLECTION_TYPE,
-    name: "Collection",
+    label: "Collection",
     description: "A named set of items.",
     version: 1,
     roles: ["container"],
@@ -102,7 +102,7 @@ beforeAll(async () => {
   });
   await registerType({
     id: SMART_COLLECTION_TYPE,
-    name: "Smart collection",
+    label: "Smart collection",
     description: "A collection whose membership is computed.",
     parent: COLLECTION_TYPE,
     version: 1,

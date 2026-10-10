@@ -284,6 +284,14 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`.
 
+### `types/unknown-key`
+
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `items_type`, `format`, `searchable`, `maxLength` and `maxItems`), or in `display_hints`, `version_policy` or `merge_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+
+**Reason:** a key the server ignored would let a misspelled rule, or a `minimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse. No field definition has a `minimum` or a `maximum`.
+
+**Tests:** `compliance/types.test.ts › refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path`, `› refuses a key the type schema does not define on a replacement, and keeps the type as it was`.
+
 ### `types/format-collapses`
 
 When a `string` field names a `format` of `url`, `email`, `datetime`, `date` or `thumbnail`, the server MUST store the field as that type, and an `array` of strings naming one of the first four as an array of that type.

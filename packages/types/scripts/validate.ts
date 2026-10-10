@@ -5,9 +5,8 @@
  * and `core/edges/`, resolves each family in dependency order,
  * and runs `validateTypeSchema` / `validateEdgeTypeSchema` — the same
  * functions the registration routes call. A schema that passes here is one a
- * client could submit over the wire unchanged. It also asks
- * `unreadTopLevelKeys`, which the wire does not, so a file cannot carry a key
- * nothing reads.
+ * client could submit over the wire unchanged, and a file carries no key
+ * nothing reads, because the validators refuse one.
  *
  * Usage: pnpm --filter @withmarfa/types validate
  */
@@ -16,7 +15,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { TypeSchema } from "../src/schema-types.js";
 import {
-  unreadTopLevelKeys,
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "../src/schema-validation.js";
@@ -82,7 +80,6 @@ for (const family of FAMILIES) {
   );
   for (const raw of raws) {
     checked++;
-    report(`${family.name}/${raw.file}`, unreadTopLevelKeys(raw.data, "type"));
     const result = validateTypeSchema(raw.data, {
       resolveSchema: (id) => registry.get(id),
     });
@@ -119,7 +116,6 @@ const edgeNames = new Map<string, string>();
 counts.edge = edgeRaws.length;
 for (const raw of edgeRaws) {
   checked++;
-  report(`edge/${raw.file}`, unreadTopLevelKeys(raw.data, "edge"));
   const result = validateEdgeTypeSchema(raw.data);
   if (!result.success) {
     report(`edge/${raw.file}`, result.errors);

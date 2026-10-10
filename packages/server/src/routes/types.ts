@@ -133,7 +133,7 @@ const FieldDefinitionSchema = z
   .openapi("FieldDefinition");
 
 const DisplayHintsSchema = z
-  .object({
+  .looseObject({
     title_field: z
       .string()
       .optional()
@@ -201,8 +201,10 @@ export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
  * A type as the two authoring doors take it.
  *
  * The objects are loose, so a key the declaration does not name reaches the
- * validator as it was sent, and `refuseAsTheValidatorWould` answers the
- * shape check with this door's codes rather than a generic one.
+ * validator as it was sent, which refuses it as `invalid_schema` naming its
+ * path. A strict object would strip the key instead and register the type
+ * without it. `refuseAsTheValidatorWould` answers the shape check with this
+ * door's codes rather than a generic one.
  *
  * The declaration is the tighter of the two on three axes the validator
  * leaves to normalization: a `description`, a `required` flag or an
@@ -564,7 +566,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field is named like one every item has, such as `source_id`.\n- `inheritance_violation`: the type reshapes an inherited field.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
     },
     401: {
       content: {
@@ -677,7 +679,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
     },
     401: {
       content: {

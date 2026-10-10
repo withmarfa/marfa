@@ -125,13 +125,12 @@ describe("the type doors answer a body they cannot take", () => {
       body: {
         id: "user.accepted-shape",
         fields: { title: { type: "string", required: true } },
-        // The two forms `compatible_with` takes, the top-level `required`
-        // array, and a key inside a policy block that the validator stores
-        // whole: each is a body the server accepts, so the declaration must
+        // The two forms `compatible_with` takes and the top-level `required`
+        // array: each is a body the server accepts, so the declaration must
         // not refuse it.
         required: ["title"],
-        version_policy: { recent_days: 3, zzz_unknown: 9 },
-        merge_policy: { default: "last_writer_wins", zzz_unknown: 9 },
+        version_policy: { recent_days: 3 },
+        merge_policy: { default: "last_writer_wins" },
       },
     });
     expect(created.status).toBe(201);

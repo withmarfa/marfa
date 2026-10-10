@@ -12,6 +12,8 @@ import {
   ALWAYS_SEARCHED_FIELDS,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  EDGE_PROPERTY_KEYS,
+  EDGE_TYPE_SCHEMA_KEYS,
   FIELD_FORMATS,
   FIELD_TYPES,
   RESERVED_ITEM_FIELDS,
@@ -20,6 +22,7 @@ import {
   TYPE_ROLES,
   isRoleConstraint,
   roleFromConstraint,
+  unreadKeys,
   validateTypeSchema as validateTypeSchemaShape,
 } from "@withmarfa/types";
 import type {
@@ -82,6 +85,12 @@ export {
 // reason: the door that declares what a field definition looks like reads
 // the validator's own lists rather than restating them.
 export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
+
+// The keys an edge type and its properties take, and the check that names a
+// key outside them. The edge doors read a request through a schema that
+// strips what it does not declare, so they ask this of the body as it was
+// sent.
+export { EDGE_PROPERTY_KEYS, EDGE_TYPE_SCHEMA_KEYS, unreadKeys };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)

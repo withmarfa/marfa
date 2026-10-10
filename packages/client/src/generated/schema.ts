@@ -1876,6 +1876,8 @@ export interface components {
             title_field?: string;
             /** @description The field that holds an item's body for display. */
             body_field?: string;
+        } & {
+            [key: string]: unknown;
         };
         /** @description How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults. */
         VersionPolicy: {
@@ -3813,14 +3815,14 @@ export interface components {
             inbound_pending_retention_days?: number;
         };
         /** @description An error response. */
-        InvalidPropertiesOrValidationErrorRefusal: {
+        InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "invalid_properties" | "validation_error";
+                code: "invalid_properties" | "invalid_schema" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -10988,9 +10990,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.
+             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.
              *     - `missing_required_field`: `id` or `cardinality` is missing.
-             *     - `invalid_schema`: a property's `type` isn't a field type.
+             *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).
              */
             400: {
                 headers: {
@@ -11476,8 +11478,8 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `fields` is missing.
              *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
-             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.
-             *     - `property_shadows_field`: a field is named like one every item has, such as `source_id`.
+             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `property_shadows_field`: a field is named like one every item has.
              *     - `inheritance_violation`: the type reshapes an inherited field.
              */
             400: {
@@ -11816,8 +11818,8 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `fields` is missing.
-             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.
-             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.
+             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
              *     - `property_shadows_field`: a field has the name of one every item has.
              *     - `inheritance_violation`: a field's shape differs in a parent or subtype.
              */
@@ -19305,8 +19307,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
+             * @description - `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.
              *     - `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.
+             *     - `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.
              */
             400: {
                 headers: {
@@ -19319,7 +19322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidPropertiesOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

@@ -507,7 +507,7 @@ describe("archives carry type registrations", () => {
         JSON.stringify({
           type: {
             id: "core.evil",
-            name: "Evil",
+            label: "Evil",
             description: "Should never register.",
             version: 1,
             fields: {
@@ -539,7 +539,7 @@ describe("archives carry type registrations", () => {
         JSON.stringify({
           type: {
             id: `user.garbage_${uniqueSuffix()}`,
-            name: "Garbage",
+            label: "Garbage",
             description: "Field type is not a field type.",
             version: 1,
             fields: {
@@ -586,7 +586,7 @@ describe("archives carry type registrations", () => {
       JSON.stringify({
         type: {
           id: link(n),
-          name: `Deep ${String(n)}`,
+          label: `Deep ${String(n)}`,
           description: "One link of a chain built to outrun the cap.",
           version: 1,
           ...(n > 0 ? { parent: link(n - 1) } : {}),
@@ -833,6 +833,73 @@ describe("archives carry type registrations", () => {
         `an archive registered an edge type whose property is ${JSON.stringify(property)}`,
       ).toBe(400);
       expect(await destination.storage.edgeTypes.list()).toHaveLength(0);
+    }
+  });
+
+  it("refuses an archive carrying a key a type or an edge type does not define, and registers the same archive without it", async () => {
+    const source = await newContext();
+    await itemWrites(source.storage).create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-uk",
+      source_id: "uk1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const typeLine = (field: Record<string, unknown>) => ({
+      type: {
+        id: `user.unread_${uniqueSuffix()}`,
+        version: 1,
+        fields: { serves: { type: "integer", ...field } },
+      },
+    });
+    const edgeLine = (property: Record<string, unknown>) => ({
+      edge_type: {
+        id: `user.unread-${uniqueSuffix()}`,
+        cardinality: "many-to-many",
+        property_schema: { rank: { type: "number", ...property } },
+      },
+    });
+
+    const cases: [string, Record<string, unknown>, Record<string, unknown>][] =
+      [
+        ["a type", typeLine({ minimum: 1 }), typeLine({})],
+        ["an edge type", edgeLine({ minimum: 1 }), edgeLine({})],
+      ];
+    for (const [what, bad, mended] of cases) {
+      const witness = await newContext();
+      const accepted = await restore(
+        witness,
+        await repack(entries, {
+          "types.ndjson": JSON.stringify(mended) + "\n",
+        }),
+      );
+      expect(accepted.status, `${what}: ${await accepted.clone().text()}`).toBe(
+        200,
+      );
+
+      const destination = await newContext();
+      const refused = await restore(
+        destination,
+        await repack(entries, { "types.ndjson": JSON.stringify(bad) + "\n" }),
+      );
+      expect(refused.status, what).toBe(400);
+      const body = (await refused.json()) as {
+        error: { code: string; details: { errors: { field: string }[] } };
+      };
+      expect(body.error.code, what).toBe("invalid_schema");
+      expect(
+        body.error.details.errors.map((error) => error.field),
+        what,
+      ).toEqual([
+        what === "a type"
+          ? "fields.serves.minimum"
+          : "property_schema.rank.minimum",
+      ]);
+      expect(await destination.storage.edgeTypes.list(), what).toHaveLength(0);
+      expect(
+        await destination.storage.types.listRegistered(),
+        what,
+      ).toHaveLength(0);
     }
   });
 

@@ -530,6 +530,108 @@ describe("type registration and listing", () => {
     expect(unknownTarget.error?.error.code).toBe("compatible_with_violation");
   });
 
+  it("refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path", async () => {
+    const fields = { title: { type: "string" }, serves: { type: "integer" } };
+    const bodies: {
+      what: string;
+      bad: object;
+      paths: string[];
+      mended: object;
+    }[] = [
+      {
+        what: "a top-level key",
+        bad: { fields, requird: ["title"] },
+        paths: ["requird"],
+        mended: { fields, required: ["title"] },
+      },
+      {
+        what: "a bound on an integer field",
+        bad: {
+          fields: {
+            ...fields,
+            serves: { type: "integer", minimum: 1, maximum: 12 },
+          },
+        },
+        paths: ["fields.serves.minimum", "fields.serves.maximum"],
+        mended: { fields },
+      },
+      {
+        what: "a misspelled rule of a string field",
+        bad: { fields: { title: { type: "string", max_length: 10 } } },
+        paths: ["fields.title.max_length"],
+        mended: { fields: { title: { type: "string", maxLength: 10 } } },
+      },
+      {
+        what: "a key in display_hints, version_policy and merge_policy",
+        bad: {
+          fields,
+          display_hints: { title_field: "title", subtitle: "title" },
+          version_policy: { max_versions: 5, keep_forever: true },
+          merge_policy: { default: "last_writer_wins", fallback: "x" },
+        },
+        paths: [
+          "display_hints.subtitle",
+          "version_policy.keep_forever",
+          "merge_policy.fallback",
+        ],
+        mended: {
+          fields,
+          display_hints: { title_field: "title" },
+          version_policy: { max_versions: 5 },
+          merge_policy: { default: "last_writer_wins" },
+        },
+      },
+    ];
+    for (const [index, { what, bad, paths, mended }] of bodies.entries()) {
+      const id = `user.unread-key-${ctx.runId}-${String(index)}`;
+      const refused = await client.registerType({ id, ...bad } as never);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("invalid_schema");
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(
+        errors?.map((e) => e.field),
+        what,
+      ).toEqual(paths);
+      expect((await client.getType(id)).status, what).toBe(404);
+
+      // The witness: the same body with only those keys mended registers.
+      const registered = await client.registerType({ id, ...mended } as never);
+      expect(
+        registered.status,
+        `${what}: ${JSON.stringify(registered.error)}`,
+      ).toBe(201);
+    }
+  });
+
+  it("refuses a key the type schema does not define on a replacement, and keeps the type as it was", async () => {
+    const id = `user.unread-key-replace-${ctx.runId}`;
+    const fields = { serves: { type: "integer" as const } };
+    const registered = await client.registerType({ id, fields });
+    expect(registered.status).toBe(201);
+
+    const refused = await client.replaceType(id, {
+      fields: { serves: { type: "integer", minimum: 1 } },
+      lable: "Recipe",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const errors = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.map((e) => e.field)).toEqual([
+      "lable",
+      "fields.serves.minimum",
+    ]);
+    expect((await client.getType(id)).data.fields).toEqual(fields);
+
+    // The witness: the same replacement without the keys is taken.
+    const mended = await client.replaceType(id, {
+      fields,
+      label: "Recipe",
+    });
+    expect(mended.status).toBe(200);
+  });
+
   it("writes and reads items of a type whose fields share a name with an object's built-in members", async () => {
     const names = ["toString", "valueOf", "constructor", "hasOwnProperty"];
     const id = `user.builtin-names-${ctx.runId}`;

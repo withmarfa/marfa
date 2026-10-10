@@ -842,6 +842,80 @@ describe("what a restore answers", () => {
   });
 });
 
+describe("a restore of a registration carrying a key the schema does not define", () => {
+  it("refuses a type and an edge type that carry one, naming its path, and restores the same archive without it", async () => {
+    const lines = (key: Record<string, unknown>, ids: [string, string]) => [
+      {
+        type: {
+          id: ids[0],
+          label: "Unread",
+          version: 1,
+          fields: { serves: { type: "integer", ...key } },
+        },
+      },
+      {
+        edge_type: {
+          id: ids[1],
+          cardinality: "many-to-many",
+          property_schema: { rank: { type: "number", ...key } },
+        },
+      },
+    ];
+    const archive = (key: Record<string, unknown>, ids: [string, string]) =>
+      withEntry(
+        itemsArchive([]),
+        "types.ndjson",
+        lines(key, ids)
+          .map((line) => `${JSON.stringify(line)}\n`)
+          .join(""),
+      );
+
+    const refusedIds: [string, string] = [
+      `user.restoreunread${ctx.runId}`,
+      `restoreunread.${ctx.runId}`,
+    ];
+    for (const [what, path] of [
+      ["type", "fields.serves.minimum"],
+      ["edge type", "property_schema.rank.minimum"],
+    ] as const) {
+      const refused = await owner.restoreArchive(
+        withEntry(
+          itemsArchive([]),
+          "types.ndjson",
+          `${JSON.stringify(
+            lines({ minimum: 1 }, refusedIds)[what === "type" ? 0 : 1],
+          )}\n`,
+        ),
+      );
+      expect(refused.status, `${what}: ${JSON.stringify(refused.error)}`).toBe(
+        400,
+      );
+      expect(refused.error?.error.code, what).toBe("invalid_schema");
+      expect(
+        (refused.error?.error.details?.errors as { field: string }[]).map(
+          (error) => error.field,
+        ),
+        what,
+      ).toEqual([path]);
+    }
+    expect((await client.getType(refusedIds[0])).status).toBe(404);
+
+    // The witness: the same two registrations without the key restore.
+    const mendedIds: [string, string] = [
+      `user.restoremended${ctx.runId}`,
+      `restoremended.${ctx.runId}`,
+    ];
+    trackType(ctx, mendedIds[0]);
+    trackEdgeType(ctx, mendedIds[1]);
+    const restored = await owner.restoreArchive(archive({}, mendedIds));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data).toMatchObject({
+      types_registered: 1,
+      edge_types_registered: 1,
+    });
+  });
+});
+
 describe("a restore refused after it began", () => {
   it("leaves no row, type, edge type, blob, event or audit record behind when a later row is refused", async () => {
     const ids = {
