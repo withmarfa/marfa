@@ -22,7 +22,7 @@ use clap::{Parser, Subcommand};
 use crate::commands::{
     audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
     housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, restore,
-    search, status, types, webhooks, whoami,
+    search, sign_ins, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, Exit, exit_codes_help};
@@ -93,6 +93,12 @@ enum Command {
     Owner {
         #[command(subcommand)]
         command: owner::OwnerCommand,
+    },
+    /// The owner's browser sessions: list them and end one.
+    #[command(name = "sign-ins")]
+    SignIns {
+        #[command(subcommand)]
+        command: sign_ins::SignInsCommand,
     },
     /// Items: create, read, change, tag, link, attach, and the bulk operations.
     Items {
@@ -341,6 +347,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
+        Command::SignIns { command } => sign_ins::run(command, &remote()?, &out),
         Command::Setup { command } => {
             let setup_remote = match &cli.socket {
                 Some(path) => Remote::local(path)?,

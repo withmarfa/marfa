@@ -118,6 +118,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("revokeFolder", "folders revoke"),
     reached("registerOAuthClient", "login"),
     reached("getOwner", "owner show"),
+    reached("listSignIns", "sign-ins list"),
+    reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
 ];
 
