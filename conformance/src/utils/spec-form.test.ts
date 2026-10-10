@@ -298,6 +298,7 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** waiting on #1.",
     "",
+    // The tool's subject before the CLI was named; it stays refused.
     "### `sample/old-subject`",
     "",
     "When asked, the command MUST answer.",

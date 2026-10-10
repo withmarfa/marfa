@@ -91,8 +91,8 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// For an error from a request the CLI itself sent, where a mismatch
-    /// is worded for the CLI. A device command keeps the core's own
+    /// For an error from a command's own request, where a mismatch is
+    /// worded for the CLI. A device command keeps the core's own
     /// words, which say what became of a queued write.
     pub fn direct(error: CoreError) -> Self {
         match error {

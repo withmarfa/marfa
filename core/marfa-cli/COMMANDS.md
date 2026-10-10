@@ -1,6 +1,6 @@
 <!-- Generated from the command tree by `MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin marfa reference`. Do not edit by hand. -->
 
-# marfa command reference
+# Command reference
 
 Global options, which every command accepts, and the exit codes:
 

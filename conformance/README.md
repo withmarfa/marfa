@@ -56,7 +56,7 @@ export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
 set -a; . .marfa-state/env; set +a
 pnpm test:conformance
 
-# The scenario suite: the binary as the reference client, end to end
+# The scenario suite: the CLI as the reference client, end to end
 pnpm test:cli
 
 # Hold what the run observed to what the document declares. Before

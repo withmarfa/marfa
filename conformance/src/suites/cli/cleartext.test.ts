@@ -11,14 +11,14 @@ import { cliContext, once, releaseHeld } from "./harness.js";
 import type { Cli, CliContext } from "./harness.js";
 
 /**
- * A key goes to a plain `http` address on another host only after the command
+ * A key goes to a plain `http` address on another host only after the CLI
  * has said so on standard error, and only silently where the caller said it
  * is intended or the address is this machine's.
  *
  * The addresses are listeners of this file's own, because the real server
  * is on this machine. A listener answers nothing a Marfa server would, so
- * the command ends in the environment's exit code once it has sent; what a
- * scenario reads is what reached the listener and what the command said
+ * the CLI ends in the environment's exit code once it has sent; what a
+ * scenario reads is what reached the listener and what the CLI said
  * first. A listener holds each request unanswered for a moment, so the
  * command is still waiting when the scenario reads what it has said, which
  * is how "before it sends" is seen.
