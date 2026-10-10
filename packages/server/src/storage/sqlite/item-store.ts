@@ -875,7 +875,6 @@ export class SqliteItemStore implements ItemStore {
     return rowToItem(row);
   }
 
-  // Internal get that includes trashed items (for restore, delete, transition)
   async currentWriter(id: string): Promise<VersionWriter | null> {
     const row = await this.db
       .select({
@@ -889,6 +888,7 @@ export class SqliteItemStore implements ItemStore {
     return row ? rowWriter(row) : null;
   }
 
+  // Internal get that includes trashed items (for restore, delete, transition)
   private async getRaw(id: string): Promise<Item | null> {
     const row = await this.db
       .select(itemColumns)
