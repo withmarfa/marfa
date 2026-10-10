@@ -1763,7 +1763,7 @@ The server MUST NOT list a browser session of anyone but the owner at `GET /owne
 
 If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
 
-**Reason:** Neither a key nor an app holds a right to the owner's sign-ins, and one that could end them could leave itself the only way in. The owner's browser session and the private local command do.
+**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/auth/grants`, within the permissions it holds. The owner's browser session and the private local command hold the right to every sign-in.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403, and no credential 401`.
 
