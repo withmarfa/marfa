@@ -20,6 +20,7 @@ import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
 import { OwnerSchema, ownerWire } from "./owner-wire.js";
 import { NextCursorSchema } from "./_schemas.js";
+import { keysInReach } from "../auth/key-reach.js";
 import {
   endSignIn,
   listSignIns,
@@ -265,7 +266,7 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Ends a sign-in at once: its next request is refused, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+    "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
@@ -316,7 +317,12 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   router.openapi(listSignInsRoute, async (c) => {
     const authority = c.get("authority");
     const owner = await storage.owner?.find();
-    const signIns = await listSignIns(storage, auth, owner?.id ?? null);
+    const signIns = await listSignIns(
+      storage,
+      auth,
+      keysInReach(storage, c),
+      owner?.id ?? null,
+    );
     const current =
       authority?.kind === "owner" ? authority.sessionId : undefined;
     return c.json(
@@ -335,6 +341,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     const renamed = await renameSignIn(
       storage,
       auth,
+      keysInReach(storage, c),
       owner?.id ?? null,
       id,
       name,
@@ -357,10 +364,17 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     const authority = c.get("authority");
     const { id } = c.req.valid("param");
     const owner = await storage.owner?.find();
-    const ended = await endSignIn(storage, auth, owner?.id ?? null, id, {
-      keyId: authorityId(c),
-      clientIp: c.get("clientIp") ?? null,
-    });
+    const ended = await endSignIn(
+      storage,
+      auth,
+      keysInReach(storage, c),
+      owner?.id ?? null,
+      id,
+      {
+        keyId: authorityId(c),
+        clientIp: c.get("clientIp") ?? null,
+      },
+    );
     if (ended === null)
       throw new MarfaError(
         ErrorCode.SIGN_IN_NOT_FOUND,

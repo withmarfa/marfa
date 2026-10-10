@@ -1,3 +1,4 @@
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Storage } from "../storage/interface.js";
@@ -7,6 +8,7 @@ import {
   revokeProjectedGrant,
 } from "./grant-lifecycle.js";
 import type { MarfaAuth } from "./instance.js";
+import type { KeysInReach } from "./key-reach.js";
 import { appSignInName, browserSignInName } from "./sign-in-names.js";
 
 /**
@@ -89,6 +91,7 @@ async function appSignIn(storage: Storage, item: Item): Promise<SignIn> {
 export async function listSignIns(
   storage: Storage,
   auth: MarfaAuth,
+  keys: KeysInReach,
   ownerId: string | null,
 ): Promise<SignIn[]> {
   const sessions = ownerId ? await auth.listBrowserSessions(ownerId) : [];
@@ -106,7 +109,7 @@ export async function listSignIns(
   for (const item of await listActiveAppGrants(storage)) {
     if (ownersLiveApp(item, ownerId)) apps.push(await appSignIn(storage, item));
   }
-  const keys: SignIn[] = (await storage.keys.list()).map((key) => ({
+  const keyRows: SignIn[] = (await keys.list()).map((key) => ({
     id: key.id,
     kind: "key",
     name: key.label,
@@ -116,7 +119,7 @@ export async function listSignIns(
     ipAddress: null,
     userAgent: null,
   }));
-  return [...browsers, ...apps, ...keys].sort(
+  return [...browsers, ...apps, ...keyRows].sort(
     (a, b) =>
       Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
       (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -134,6 +137,7 @@ export async function listSignIns(
 export async function endSignIn(
   storage: Storage,
   auth: MarfaAuth,
+  keys: KeysInReach,
   ownerId: string | null,
   id: string,
   actor: SignInActor,
@@ -165,11 +169,11 @@ export async function endSignIn(
     return revoked ? "app" : null;
   }
 
-  const outcome = await runAuditedTransaction(
+  const revoked = await runAuditedTransaction(
     storage,
-    () => storage.keys.revoke(id),
+    () => unlessNoKey(keys.revoke(id).then(() => true)),
     (result) =>
-      result === "revoked"
+      result
         ? {
             client_ip: actor.clientIp,
             key_id: actor.keyId,
@@ -179,7 +183,7 @@ export async function endSignIn(
           }
         : null,
   );
-  return outcome === "revoked" ? "key" : null;
+  return revoked ? "key" : null;
 }
 
 /**
@@ -192,6 +196,7 @@ export async function endSignIn(
 export async function renameSignIn(
   storage: Storage,
   auth: MarfaAuth,
+  keys: KeysInReach,
   ownerId: string | null,
   id: string,
   name: string,
@@ -236,10 +241,7 @@ export async function renameSignIn(
 
   const renamedKey = await runAuditedTransaction(
     storage,
-    async () => {
-      if (!(await storage.keys.get(id))) return null;
-      return storage.keys.update(id, { label: name });
-    },
+    () => unlessNoKey(keys.change(id, () => ({ label: name }))),
     (key) =>
       key
         ? {
@@ -263,4 +265,18 @@ export async function renameSignIn(
     ipAddress: null,
     userAgent: null,
   };
+}
+
+/** What `work` answers, or null where it found no live key with the id. */
+async function unlessNoKey<T>(work: Promise<T>): Promise<T | null> {
+  try {
+    return await work;
+  } catch (error) {
+    if (
+      error instanceof MarfaError &&
+      error.code === ErrorCode.API_KEY_NOT_FOUND
+    )
+      return null;
+    throw error;
+  }
 }

@@ -1420,7 +1420,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: its next request is refused, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.
+         * @description Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. Ending a browser leaves apps signed in. Requires the owner's browser session, signed in within the last five minutes, or the local command.
          */
         delete: operations["endSignIn"];
         options?: never;
