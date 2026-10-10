@@ -175,7 +175,7 @@ const listSignInsRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: ownerBrowserOnly,
   description:
-    "Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner signed in in a browser.",
+    "Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session.",
   responses: {
     200: {
       content: { "application/json": { schema: SignInListSchema } },
@@ -197,7 +197,7 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: ownerBrowserOnly,
   description:
-    "Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner signed in in a browser within the last five minutes.",
+    "Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner's browser session, signed in within the last five minutes.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),

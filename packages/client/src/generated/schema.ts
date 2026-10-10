@@ -1397,7 +1397,7 @@ export interface paths {
         };
         /**
          * List sign-ins
-         * @description Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner signed in in a browser.
+         * @description Returns the browser sessions the owner is signed in with, marking the one that sent the request. Requires the owner's browser session.
          */
         get: operations["listSignIns"];
         put?: never;
@@ -1420,7 +1420,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner signed in in a browser within the last five minutes.
+         * @description Ends a browser session at once, so that browser must sign in again. Connected apps keep their access. Requires the owner's browser session, signed in within the last five minutes.
          */
         delete: operations["endSignIn"];
         options?: never;
