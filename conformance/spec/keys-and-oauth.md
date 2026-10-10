@@ -1789,7 +1789,7 @@ When the server records a use of a browser session in an answer that succeeds, t
 
 ### `keys-and-oauth/session-idle-kept`
 
-While a browser session's last use was less than seven days ago, the server MUST admit a request on it.
+While a browser session that nothing has ended was last used less than seven days ago, the server MUST admit a request on it.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › admits a session last used just under a week ago`.
 
