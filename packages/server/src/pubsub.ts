@@ -243,8 +243,8 @@ export function wireEventName(type: PubsubEvent["type"]): WireEventName {
 /**
  * The wire string for a type read back from the event log, which holds
  * whatever the writing build stored. A type this build does not carry comes
- * back unchanged, so a reader that checks the name against the vocabulary
- * refuses it rather than failing on it.
+ * back unchanged: webhook delivery then refuses it through the vocabulary
+ * check, and the event stream sends it as stored.
  */
 export function loggedWireEventName(type: string): string {
   return Object.hasOwn(WIRE_EVENT_NAMES, type)

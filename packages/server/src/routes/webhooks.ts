@@ -59,16 +59,10 @@ export const MIN_WEBHOOK_SECRET_LENGTH = 32;
  *
  * **Derived from the events the bus carries, so no copy of the list is kept
  * here, and the specification is generated from it rather than describing it
- * separately.** It was a `Set` here and
- * `z.array(z.string())` in the schema, so the constraint was real, enforced,
- * and invisible: a generated client got `string`, an editor offered no
- * completion, and the only way to learn a valid name was to send a wrong one
- * and read the 400. A specification that accepts any string where the runtime
- * accepts ten is wrong rather than incomplete.
- *
- * Restating the list in the schema would have fixed that and reintroduced the
- * drift one layer along, which is why `EventNameSchema` derives from this
- * rather than repeating it.
+ * separately.** A generated client gets the names as an enum and an editor
+ * offers them, instead of a bare `string` that is learned by sending a wrong
+ * one and reading the 400. `EventNameSchema` derives from this list rather
+ * than repeating it.
  *
  * **`*` is not a member.** It was offered here and accepted at registration,
  * and dispatch matches a stored name against an event's own literally, so a
