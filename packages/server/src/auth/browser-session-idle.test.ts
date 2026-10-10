@@ -300,7 +300,7 @@ describe("a browser session's idle week", () => {
     expect(signedIn.status).toBe(200);
     const sessionLine = signedIn.headers
       .getSetCookie()
-      .find((line) => /session_token=/.test(line))!;
+      .find((line) => line.includes("session_token="))!;
     expect(sessionLine).toBeDefined();
     expect(sessionLine).not.toMatch(/max-age/i);
     const cookie = signedIn.headers
@@ -330,10 +330,8 @@ describe("a browser session's idle week", () => {
     at(T0);
     const cookie = await signIn(c);
     const runInTransaction = c.storage.runInTransaction.bind(c.storage);
-    c.storage.runInTransaction = (() =>
-      Promise.reject(
-        new Error("not a storage fault"),
-      )) as typeof c.storage.runInTransaction;
+    c.storage.runInTransaction = () =>
+      Promise.reject(new Error("not a storage fault"));
     at(T0 + DAY);
     try {
       expect((await use(c, cookie)).status).toBe(500);
