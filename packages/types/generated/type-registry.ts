@@ -549,6 +549,7 @@ const systemConnection: TypeSchema = {
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app"] },
     client_id: { type: "string", description: "OAuth client identifier" },
+    name: { type: "string", description: "The owner's own name for this sign-in, set when they rename it. Unset, the app's registered client name names it" },
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
     status: { type: "enum", description: "Lifecycle status", required: true, enum_values: ["active", "revoked"] },
     granted_at: { type: "datetime", description: "When the grant was approved", required: true },
@@ -1844,6 +1845,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "last_used_at": {
         "type": "datetime"
+      },
+      "name": {
+        "type": "string"
       },
       "revoked_at": {
         "type": "datetime"

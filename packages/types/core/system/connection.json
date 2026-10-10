@@ -15,6 +15,10 @@
       "type": "string",
       "description": "OAuth client identifier"
     },
+    "name": {
+      "type": "string",
+      "description": "The owner's own name for this sign-in, set when they rename it. Unset, the app's registered client name names it"
+    },
     "scopes": {
       "type": "array",
       "items_type": "string",
