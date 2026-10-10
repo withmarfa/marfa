@@ -570,7 +570,7 @@ const VersionWriterSchema = z.object({
   id: z
     .string()
     .describe(
-      "The ID the sign-in has in `GET /owner/sign-ins`, or `local` for the local command. It stays the same after the sign-in ends.",
+      "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
     )
     .openapi({ example: "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M" }),
   name: z
@@ -598,7 +598,7 @@ export const VersionSchema = z
     occurred_at: z.string().describe(AT_THIS_VERSION.occurred_at),
     source_id: z.string().nullable().describe(AT_THIS_VERSION.source_id),
     writer: VersionWriterSchema.nullable().describe(
-      "The sign-in that wrote this version, named as it was then, even after it ends. `null` if no sign-in wrote it, such as when Marfa reads a file's text.",
+      "The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text.",
     ),
     created_at: z
       .string()
