@@ -2982,7 +2982,7 @@ When the folder directory is missing, the CLI MUST refuse `folders status`, `fol
 
 When a folder inventory is incomplete because an entry cannot be read or identified, a device MUST defer already journaled item deletions until a complete walk succeeds.
 
-**Tests:** `device/folders-contract-a.test.ts › sends no journaled deletion from an incomplete walk and resumes after a complete walk`, `device/folders-contract-a.test.ts › unidentified cross-directory moves and older deletions`.
+**Tests:** `device/folders-contract-a.test.ts › sends no journaled deletion from an incomplete walk and resumes after a complete walk`, `device/folders-one-mac.test.ts › holds cross-directory moves and older deletions behind an unidentified %s`.
 
 ### `folders/walk-prior-directory-removal`
 
@@ -4472,7 +4472,7 @@ When a folder directory is admitted, a device MUST retain that opened directory 
 
 When opening a folder or any directory below it, a device MUST refuse symbolic links in every path component.
 
-**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
+**Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
 
 ### `folders/replacement-root-no-deletion`
 

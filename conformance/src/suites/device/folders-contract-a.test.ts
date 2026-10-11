@@ -7,11 +7,9 @@ import {
   rmSync,
   readFileSync,
   readdirSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1048,111 +1046,6 @@ describe("remaining document field boundaries", () => {
 });
 
 describe("deletion guards", () => {
-  describe("unidentified cross-directory moves and older deletions", () => {
-    it
-      .skipIf(process.platform !== "darwin")
-      .each(["directory", "file", "unreadable file"])(
-      "holds cross-directory moves and older deletions behind an unidentified %s",
-      async (kind) => {
-        const moved = "01a00000-0000-7000-8000-000000000ae1";
-        const missing = "01a00000-0000-7000-8000-000000000ae2";
-        harness = await folderHarness(`contract-unidentified-${kind}`, {
-          rows: {
-            "core.note": [
-              {
-                item: {
-                  id: moved,
-                  properties: { title: "Moved", body: "moved body\n" },
-                },
-              },
-              {
-                item: {
-                  id: missing,
-                  properties: { title: "Missing", body: "missing body\n" },
-                },
-              },
-              {
-                item: {
-                  id: "01a00000-0000-7000-8000-000000000ae3",
-                  properties: { title: "Stable", body: "stable body\n" },
-                },
-              },
-            ],
-          },
-        });
-        expect((await harness.folder.pull()).ok).toBe(true);
-        rmSync(join(harness.dir, "Missing.md"));
-        const complete = await harness.folder.scan();
-        expect(complete.ok && complete.value.missing).toBe(1);
-        const child = join(harness.dir, "child");
-        mkdirSync(child);
-        const target = join(child, "Moved.md");
-        renameSync(join(harness.dir, "Moved.md"), target);
-        const bytes = readFileSync(target);
-        const affected = kind === "directory" ? child : target;
-        const originalBirth = statSync(affected, { bigint: true }).birthtimeNs;
-        const setBirth = (birth: bigint) =>
-          execFileSync("python3", [
-            "-c",
-            `
-import ctypes, os, sys
-class AttrList(ctypes.Structure):
-    _fields_ = [("count", ctypes.c_uint16), ("reserved", ctypes.c_uint16), ("common", ctypes.c_uint32), ("volume", ctypes.c_uint32), ("dir", ctypes.c_uint32), ("file", ctypes.c_uint32), ("fork", ctypes.c_uint32)]
-class Timespec(ctypes.Structure):
-    _fields_ = [("seconds", ctypes.c_long), ("nanos", ctypes.c_long)]
-attrs = AttrList(5, 0, 0x200, 0, 0, 0, 0)
-stamp = Timespec(*divmod(int(sys.argv[2]), 1000000000))
-lib = ctypes.CDLL(None, use_errno=True)
-if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(stamp), ctypes.sizeof(stamp), 0) != 0:
-    raise OSError(ctypes.get_errno(), "setattrlist creation time")
-`,
-            affected,
-            birth.toString(),
-          ]);
-        setBirth(0n);
-        expect(statSync(affected).birthtimeMs).toBe(0);
-        expect(statSync(harness.dir).birthtimeMs).toBeGreaterThan(0);
-        if (kind === "unreadable file") chmodSync(target, 0o000);
-        const stable = join(harness.dir, "Stable.md");
-        writeFileSync(
-          stable,
-          readFileSync(stable, "utf8").replace(
-            "stable body",
-            "edited stable body",
-          ),
-        );
-        try {
-          const first = await harness.folder.scan();
-          expect(first.ok && first.value.updated).toBe(1);
-          await new Promise((resolve) => setTimeout(resolve, 6000));
-          const held = await harness.folder.scan();
-          const queued = await harness.folder.device().queue();
-          expect(held.ok, JSON.stringify(held)).toBe(true);
-          expect(queued.ok, JSON.stringify(queued)).toBe(true);
-          expect(held.ok && held.value.deleted, JSON.stringify(queued)).toBe(0);
-          expect(
-            queued.ok &&
-              queued.value.filter((entry) => entry.kind === "delete_item"),
-          ).toEqual([]);
-          expect(first.ok && first.value.missing).toBe(0);
-        } finally {
-          if (kind === "unreadable file") chmodSync(target, 0o600);
-          setBirth(originalBirth);
-        }
-        expect(readFileSync(target)).toEqual(bytes);
-        const resumed = await harness.folder.scan();
-        expect(resumed.ok && resumed.value.deleted).toBe(1);
-        const queued = await harness.folder.device().queue();
-        expect(
-          queued.ok &&
-            queued.value
-              .filter((entry) => entry.kind === "delete_item")
-              .map((entry) => entry.item_id),
-        ).toEqual([missing]);
-      },
-    );
-  });
-
   it("sends no journaled deletion from an incomplete walk and resumes after a complete walk", async () => {
     const ids = [
       "01a00000-0000-7000-8000-000000000ac1",

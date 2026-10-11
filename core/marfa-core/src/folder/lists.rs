@@ -663,7 +663,7 @@ pub(super) fn is_package_at(path: &Path, directory: &crate::directory::Directory
         || system::marks(extension, directory.file())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn is_package(path: &Path) -> bool {
     crate::directory::Directory::open(&path.canonicalize().unwrap())
         .is_ok_and(|directory| is_package_at(path, &directory))
