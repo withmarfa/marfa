@@ -144,95 +144,34 @@ describe("restore", () => {
     expect(item.data.item.properties.blob_ref).toBe(hash);
   });
 
-  it("refuses an archive recording a source no credential can hold, and writes nothing", async () => {
-    // The restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses the reserved prefix precisely so no key can
-    // stamp one. Without this the restore would be the way around that: a
-    // row could be planted carrying `oauth:`, and would read ever after as
-    // written by a grant that never existed.
-    //
-    // Refused whole, like the state check beside it, so the answer is
-    // never half a restore.
-    const fine = uuidv7();
-    const planted = uuidv7();
-    const refused = await owner.restoreArchive(
-      itemsArchive([
-        {
-          id: fine,
-          type: "core.note",
-          source: ctx.source,
-          properties: { body: "an ordinary row ahead of the bad one" },
-        },
-        {
-          id: planted,
-          type: "core.note",
-          source: "oauth:client:person",
-          properties: { body: "a row claiming an app wrote it" },
-        },
-      ]),
-    );
-    expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.error?.error.message).toContain(planted);
-    expect((await client.getItem(fine)).status).toBe(404);
-    expect((await client.getItem(planted)).status).toBe(404);
-
-    // **Before anything is written, and the blob is what proves it.**
-    // The items are the last thing a restore writes: its blobs and its
-    // type registrations land first, so a check that ran late would
-    // still answer `400` while leaving both behind. A refused archive
-    // that has already put bytes in the store is a refusal in name.
-    const bytes = new TextEncoder().encode(
-      `a blob no refused archive should land ${ctx.runId}`,
-    );
-    const hash = blobHash(bytes);
-    expect((await owner.downloadBlob(hash)).status).toBe(404);
-
-    const withBlob = await owner.restoreArchive(
-      itemsArchive(
-        [
+  it("rewrites app sources exactly and accepts previously restored sources", async () => {
+    for (const source of [
+      "oauth:client:person",
+      " OAuth:client:person ",
+      "restored:oauth:client:person",
+      " Restored:oauth:client:person ",
+    ]) {
+      const id = uuidv7();
+      const restored = await owner.restoreArchive(
+        itemsArchive([
           {
-            id: uuidv7(),
+            id,
             type: "core.note",
-            source: "oauth:client:person",
-            properties: { body: "a row claiming an app wrote it" },
+            source,
+            properties: { body: "app history" },
           },
-        ],
-        [{ data: bytes, mime_type: "text/plain" }],
-      ),
-    );
-    expect(withBlob.status).toBe(400);
-    expect(withBlob.error?.error.code).toBe("validation_error");
-    expect(
-      (await owner.downloadBlob(hash)).status,
-      "a refused archive left its blob bytes in the store",
-    ).toBe(404);
-
-    // The witness. The same two rows with an ordinary source restore, so
-    // what was refused is the source and not the archive.
-    const okFine = uuidv7();
-    const okOther = uuidv7();
-    const restored = await owner.restoreArchive(
-      itemsArchive([
-        {
-          id: okFine,
-          type: "core.note",
-          source: ctx.source,
-          properties: { body: "an ordinary row ahead of the bad one" },
-        },
-        {
-          id: okOther,
-          type: "core.note",
-          source: ctx.source,
-          properties: { body: "a row claiming an app wrote it" },
-        },
-      ]),
-    );
-    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
-    trackItem(ctx, okFine);
-    trackItem(ctx, okOther);
-    expect((await client.getItem(okFine)).status).toBe(200);
-    expect((await client.getItem(okOther)).status).toBe(200);
+        ]),
+      );
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      trackItem(ctx, id);
+      const row = await client.getItem(id);
+      expect(row.status).toBe(200);
+      expect(row.data.item.source).toBe(
+        source.trim().toLowerCase().startsWith("oauth:")
+          ? `restored:${source}`
+          : source,
+      );
+    }
   });
 
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {

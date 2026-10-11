@@ -1432,11 +1432,25 @@ When `POST /restore` takes a canonical row in a state that its lifecycle contain
 
 ### `search-and-filters/restore-source`
 
-If an archive records a row with a `source` that no credential can hold, which is one that starts with the reserved prefix `oauth:`, then the server MUST answer `400 validation_error` naming the row.
+When restoring an item whose `source`, after trimming whitespace and ignoring case, starts with `oauth:`, the server MUST store `restored:` followed by the exact archived source.
 
-**Reason:** the restore is the one operation that copies `source` verbatim, and the key operations refuse that prefix (`keys-and-oauth/claims-reserved`), so without this refusal a row planted through the restore would read ever after as written by an authority that never existed. An archive that legitimately records one is unrestorable, and deliberately.
+**Reason:** An archive carries history but no app credentials. A restored source cannot belong to a credential (`keys-and-oauth/claims-reserved`), so a later app sign-in cannot overwrite the archived item's natural key.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a source no credential can hold, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers.test.ts › restores app-written items twice with their writers and separate natural keys`.
+
+### `search-and-filters/restore-source-again`
+
+When restoring an item whose `source` starts with `restored:`, the server MUST preserve that source unchanged.
+
+**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers.test.ts › restores app-written items twice with their writers and separate natural keys`.
+
+### `search-and-filters/restore-app-connection`
+
+When restoring a `system.connection` item whose `kind` property is `app`, the server MUST set its current `status` property to `revoked`.
+
+**Reason:** A restored app connection records past access, not a live grant. Its other fields and archived version writers remain part of that history (`versions/writer-restore`).
+
+**Tests:** `compliance/version-writers.test.ts › marks restored app connections inactive without changing their recorded fields`.
 
 ### `search-and-filters/restore-scalars`
 

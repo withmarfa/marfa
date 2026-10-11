@@ -1298,7 +1298,12 @@ describe("a key's claims", () => {
   });
 
   it("refuses a reserved prefix, even to the owner", async () => {
-    for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
+    for (const reserved of [
+      "oauth:client:person",
+      "OAuth:client:person",
+      "restored:oauth:client:person",
+      " Restored:oauth:client:person ",
+    ]) {
       const refused = await owner.createKey({
         label: "reserved",
         source: `${ctx.source}-reserved`,
@@ -1334,7 +1339,7 @@ describe("a key's claims", () => {
     trackKey(ctx, target.data.id);
 
     const refusedUpdate = await owner.updateKey(target.data.id, {
-      sources: [folder, "oauth:client:person"],
+      sources: [folder, "restored:oauth:client:person"],
     });
     expect(
       refusedUpdate.status,
@@ -1352,7 +1357,7 @@ describe("a key's claims", () => {
   });
 
   it("grants a source under any other prefix, connector: included", async () => {
-    // Only `oauth:` names an identity a key cannot earn. A connector holds
+    // The OAuth and restored prefixes cannot be held by keys. A connector holds
     // a key like any other writer, so its source is the key's own choice.
     const own = `connector:${ctx.source}`;
     const claim = `connector:${ctx.source}-claim`;

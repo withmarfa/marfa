@@ -1,3 +1,4 @@
+import { v7 as uuidv7 } from "uuid";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
@@ -11,6 +12,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { connect, issuerOrigin, registerApp } from "../../utils/signed-in.js";
 import {
+  itemsArchive,
   listTarGzEntries,
   readTarGzEntry,
   tarGz,
@@ -556,6 +558,148 @@ describe("who wrote each version", () => {
     expect(
       writers(await versionsOf(target.workingKey, id, target.apiUrl)),
     ).toEqual([byFirst, bySecond, byFirst]);
+  });
+
+  it("marks restored app connections inactive without changing their recorded fields", async () => {
+    const properties = {
+      kind: "app",
+      client_id: "archived-client",
+      user_id: "archived-owner",
+      scopes: [],
+      status: "active",
+      granted_at: "2026-01-01T00:00:00.000Z",
+    };
+    const id = uuidv7();
+    const owner = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: "",
+      ownerCookie: target.ownerCookie,
+      ownerCredentials: OWNER,
+    });
+    const restored = await owner.restoreArchive(
+      itemsArchive([
+        { id, type: "system.connection", source: "marfa/oauth", properties },
+      ]),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const row = await new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: target.workingKey,
+    }).getItem(id);
+    expect(row.status).toBe(200);
+    expect(row.data.item.properties).toEqual({
+      ...properties,
+      status: "revoked",
+    });
+  });
+
+  it("restores app-written items twice with their writers and separate natural keys", async () => {
+    const app = await approvedApp(server, ["core.note:write"]);
+    const sourceId = `restore-app-${String(Date.now())}`;
+    const created = await call(app.token, "POST", "/items", {
+      type: "core.note",
+      source_id: sourceId,
+      properties: { body: "old app" },
+    });
+    expect(created.status).toBe(201);
+    const row = created.body.item as { id: string; source: string };
+    await changeNote(app.token, row.id, 1, "old app second version");
+    const before = await versionsOf(app.token, row.id);
+    const exporter = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    });
+    const archive = await exporter.exportArchive({ source: row.source });
+    expect(archive.status).toBe(200);
+    const owner = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: "",
+      ownerCookie: target.ownerCookie,
+      ownerCredentials: OWNER,
+    });
+    const restored = await owner.restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(
+      (
+        await new MarfaClient({
+          baseUrl: target.apiUrl,
+          apiKey: target.workingKey,
+        }).getItem(row.id)
+      ).data.item.source,
+    ).toBe(`restored:${row.source}`);
+    expect(
+      writers(await versionsOf(target.workingKey, row.id, target.apiUrl)),
+    ).toEqual(writers(before));
+    const nextApp = await approvedApp(target, ["core.note:write"]);
+    const next = await call(
+      nextApp.token,
+      "POST",
+      "/items",
+      {
+        type: "core.note",
+        source_id: sourceId,
+        properties: { body: "new app" },
+      },
+      target.apiUrl,
+    );
+    expect(next.status).toBe(201);
+    expect((next.body.item as { id: string }).id).not.toBe(row.id);
+    const reader = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: target.workingKey,
+    });
+    const again = await reader.exportArchive({
+      source: `restored:${row.source}`,
+    });
+    expect(again.status).toBe(200);
+    const secondTarget = await bootFreshServer("app-restore-again");
+    try {
+      const secondOwner = new MarfaClient({
+        baseUrl: secondTarget.apiUrl,
+        apiKey: "",
+        ownerCookie: secondTarget.ownerCookie,
+        ownerCredentials: OWNER,
+      });
+      const second = await secondOwner.restoreArchive(again.data);
+      expect(second.status, JSON.stringify(second.error)).toBe(200);
+      expect(second.data.imported).toBe(1);
+      expect(
+        (
+          await new MarfaClient({
+            baseUrl: secondTarget.apiUrl,
+            apiKey: secondTarget.workingKey,
+          }).getItem(row.id)
+        ).data.item.source,
+      ).toBe(`restored:${row.source}`);
+      expect(
+        writers(
+          await versionsOf(
+            secondTarget.workingKey,
+            row.id,
+            secondTarget.apiUrl,
+          ),
+        ),
+      ).toEqual(writers(before));
+      const changed = await call(
+        secondTarget.workingKey,
+        "PATCH",
+        `/items/${row.id}`,
+        { version: 2, properties: { body: "after second restore" } },
+        secondTarget.apiUrl,
+      );
+      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+      expect(
+        writers(
+          await versionsOf(
+            secondTarget.workingKey,
+            row.id,
+            secondTarget.apiUrl,
+          ),
+        ),
+      ).toEqual([...writers(before), before[0]!.writer]);
+    } finally {
+      await secondTarget.stop();
+    }
   });
 
   it("restores an archive that names no writer with none", async () => {
