@@ -256,6 +256,19 @@ describe("the settings schema", () => {
     );
   });
 
+  it("bounds the blob read idle deadline to a positive native timer interval", () => {
+    expect(loadConfig({}).blobReadIdleTimeoutMs).toBe(30_000);
+    expect(
+      loadConfig({ MARFA_BLOB_READ_IDLE_TIMEOUT_MS: "500" })
+        .blobReadIdleTimeoutMs,
+    ).toBe(500);
+    for (const raw of ["0", "-1", "1.5", "2147483648"]) {
+      expect(refusal({ MARFA_BLOB_READ_IDLE_TIMEOUT_MS: raw }), raw).toContain(
+        "MARFA_BLOB_READ_IDLE_TIMEOUT_MS",
+      );
+    }
+  });
+
   it("caches the OCR model beside the database unless told otherwise", () => {
     expect(
       loadConfig({ SQLITE_PATH: "/data/marfa.db" }).enrichmentTessdataDir,

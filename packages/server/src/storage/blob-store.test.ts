@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createReadStream, unlinkSync } from "node:fs";
 import {
   mkdtemp,
@@ -11,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { BlobHashMismatch, DiskBlobStore, resolveRange } from "./blob-store.js";
 
 const dirs: string[] = [];
@@ -150,6 +152,61 @@ describe("DiskBlobStore", () => {
   });
 
   describe("get", () => {
+    it("survives garbage collection of an unread response on the running Node version", async () => {
+      const moduleUrl = new URL("./blob-store.ts", import.meta.url).href;
+      const script = `
+        import { mkdtemp, rm } from "node:fs/promises";
+        import { tmpdir } from "node:os";
+        import { join } from "node:path";
+        import { createHash } from "node:crypto";
+        import { Readable } from "node:stream";
+        import { DiskBlobStore } from ${JSON.stringify(moduleUrl)};
+        const dir = await mkdtemp(join(tmpdir(), "blob-gc-test-"));
+        try {
+          const store = new DiskBlobStore(dir, 50);
+          await store.attach();
+          const bytes = Buffer.alloc(8 * 1024 * 1024, 42);
+          const hash = "sha256:" + createHash("sha256").update(bytes).digest("hex");
+          await store.put(hash, { stream: Readable.from(bytes), size_bytes: bytes.length });
+          await (async () => {
+            const read = await store.get(hash);
+            new Response(Readable.toWeb(read.stream));
+          })();
+          for (let i = 0; i < 10; i++) {
+            global.gc();
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          console.log("survived");
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      `;
+      const result = await promisify(execFile)(process.execPath, [
+        "--expose-gc",
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        script,
+      ]);
+      expect(result.stdout.trim()).toBe("survived");
+      expect(result.stderr).toBe("");
+    });
+
+    it("closes an unread large blob after its idle deadline", async () => {
+      const store = new DiskBlobStore(await freshDir(), 30);
+      await store.attach();
+      const bytes = Buffer.alloc(1024 * 1024, 42);
+      await store.put(hashOf(bytes), {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      const read = (await store.get(hashOf(bytes)))!;
+      await vi.waitFor(() => {
+        expect(read.stream.destroyed).toBe(true);
+      });
+    });
+
     it("streams the whole blob, or one range of it, and null when absent", async () => {
       const store = new DiskBlobStore(await freshDir());
       await store.attach();

@@ -310,6 +310,23 @@ describe("S3BlobStore", () => {
   });
 
   describe("get", () => {
+    it("closes an unread object body's socket after its idle deadline", async () => {
+      const store = await attached({ ...defaultConfig, readIdleTimeoutMs: 30 });
+      const body = new Readable({
+        read() {
+          this.push(Buffer.alloc(64 * 1024));
+        },
+      });
+      mockSend.mockResolvedValueOnce({
+        Body: body,
+        ContentLength: 1024 * 1024,
+      });
+      const read = (await store.get("sha256:abc"))!;
+      await vi.waitFor(() => {
+        expect(body.destroyed).toBe(true);
+      });
+      expect(read.stream.destroyed).toBe(true);
+    });
     it("streams the whole object", async () => {
       const store = await attached();
       mockSend.mockResolvedValueOnce({

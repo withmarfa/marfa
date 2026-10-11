@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
+import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
 import {
@@ -201,6 +202,8 @@ export interface AppConfig {
    *  fewer is refused. A positive integer; default 1; env override
    *  `MARFA_BLOB_MIN_COPIES`. */
   blobMinCopies?: number;
+  /** Idle lifetime of a blob read before its file or socket is closed. */
+  blobReadIdleTimeoutMs?: number;
   /** The free bytes an upload or a restore must leave on the disk store's
    *  volume. A non-negative integer; default 134_217_728 (128 MiB); env
    *  override `MARFA_DISK_RESERVE_BYTES`. */
@@ -953,6 +956,11 @@ const settingsShape = {
     1,
     "The fewest live copies a blob keeps. A drop that would leave fewer is refused.",
   ),
+  MARFA_BLOB_READ_IDLE_TIMEOUT_MS: count(
+    DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
+    "How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
   MARFA_BLOB_REPLICATE_INTERVAL_MS: count(
     60_000,
     "How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.",
@@ -1647,6 +1655,7 @@ export function loadConfig(
     blobCleanupIntervalMs: s.MARFA_BLOB_CLEANUP_INTERVAL_MS,
     blobCleanupGraceMs: s.MARFA_BLOB_CLEANUP_GRACE_MS,
     blobMinCopies: s.MARFA_BLOB_MIN_COPIES,
+    blobReadIdleTimeoutMs: s.MARFA_BLOB_READ_IDLE_TIMEOUT_MS,
     diskReserveBytes: s.MARFA_DISK_RESERVE_BYTES,
     blobReplicateIntervalMs: s.MARFA_BLOB_REPLICATE_INTERVAL_MS,
     blobReplicateBatch: s.MARFA_BLOB_REPLICATE_BATCH,
