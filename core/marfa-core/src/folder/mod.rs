@@ -2282,8 +2282,13 @@ impl Folder {
                 }
             }
         }
-        let unchanged = (!whole || properties.len() == held.properties.len())
-            && properties.iter().all(|(field, value)| {
+        let effective_properties = catalog.projected_properties(
+            changes.r#type.as_deref().unwrap_or(&held.r#type),
+            &properties,
+            whole,
+        );
+        let unchanged = (!whole || effective_properties.len() == held.properties.len())
+            && effective_properties.iter().all(|(field, value)| {
                 held.properties
                     .get(field)
                     .is_some_and(|held| document::same_value(value, held))
@@ -4184,6 +4189,7 @@ impl Folder {
             front.insert(VERSION_FIELD.into(), Value::from(line));
         }
         if let Some(typed) = typed {
+            fields::keep_empty_properties(&mut front, &typed.front, edge_types, body_field);
             fields::keep_equivalent(&mut front, &typed.front, edge_types);
         }
         Ok(Rendered {

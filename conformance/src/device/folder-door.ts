@@ -1,6 +1,7 @@
 import { v7 as uuidv7 } from "uuid";
 import {
   answers,
+  SCRIPTED_TYPES,
   refusal,
   wireEdge,
   wireItem,
@@ -118,6 +119,35 @@ export class FolderDoor {
     for (const [id, row] of seeded) this.rows.set(id, row);
   }
 
+  private properties(
+    typeId: string | undefined,
+    properties: Record<string, unknown>,
+    update = false,
+  ): Record<string, unknown> {
+    const type = SCRIPTED_TYPES.find(
+      (type) => type.id === (typeId ?? "core.note"),
+    );
+    const fields = type?.fields as
+      Record<string, { required?: boolean }> | undefined;
+    return fields === undefined
+      ? properties
+      : Object.fromEntries(
+          Object.entries(properties).filter(
+            ([name, value]) =>
+              value !== null ||
+              (!update && !Object.hasOwn(fields, name)) ||
+              fields[name]?.required === true,
+          ),
+        );
+  }
+
+  private store(id: string, row: DoorRow): void {
+    this.rows.set(id, {
+      ...row,
+      properties: this.properties(row.type, row.properties),
+    });
+  }
+
   /** The row a natural key names, if the door holds one. */
   keyed(source: string | undefined, sourceId: string): string | undefined {
     return [...this.rows].find(
@@ -126,6 +156,7 @@ export class FolderDoor {
   }
 
   create(sent: DoorCreate): DoorDecision {
+    sent = { ...sent, properties: this.properties(sent.type, sent.properties) };
     if (sent.source !== undefined && !this.claims(sent.source)) {
       return {
         answer: refusal(
@@ -164,6 +195,10 @@ export class FolderDoor {
     }
     if (incumbent !== undefined) {
       const held = this.rows.get(incumbent)!;
+      sent = {
+        ...sent,
+        properties: this.properties(held.type, sent.properties, true),
+      };
       // Asked before anything else about the row, and answered without
       // naming it: the key learns its key is taken and nothing more.
       if (!this.reads(held.type ?? "core.note")) {
@@ -219,7 +254,7 @@ export class FolderDoor {
             ),
           );
           this.remember(incumbent, held);
-          this.rows.set(incumbent, {
+          this.store(incumbent, {
             ...held,
             properties: { ...held.properties, ...changed },
             version: held.version + 1,
@@ -249,11 +284,11 @@ export class FolderDoor {
         version: held.version + 1,
       };
       this.remember(incumbent, held);
-      this.rows.set(incumbent, now);
+      this.store(incumbent, now);
       return { answer: answers.upserted(this.wire(incumbent)) };
     }
     const id = sent.id ?? uuidv7();
-    this.rows.set(id, {
+    this.store(id, {
       properties: sent.properties,
       source: sent.source,
       source_id: sent.source_id ?? null,
@@ -301,7 +336,11 @@ export class FolderDoor {
     if (!this.shows(before)) {
       return answers.itemNotFound(id);
     }
-    const sentProperties = sent.properties ?? {};
+    const sentProperties = this.properties(
+      sent.type ?? before.type,
+      sent.properties ?? {},
+      true,
+    );
     // Under replace the body is the row's whole properties, so a field it
     // leaves out is one it clears (`items/update-replace`).
     const replace = sent.properties_mode === "replace";
@@ -391,7 +430,7 @@ export class FolderDoor {
       }
       if (kept.length > 0) {
         sibling = uuidv7();
-        this.rows.set(sibling, {
+        this.store(sibling, {
           properties: {
             ...before.properties,
             ...Object.fromEntries(kept.map((side) => [side.field, side.mine])),
@@ -408,7 +447,7 @@ export class FolderDoor {
     this.remember(id, before);
     const properties = { ...before.properties, ...applied };
     for (const field of cleared) delete properties[field];
-    this.rows.set(id, {
+    this.store(id, {
       ...before,
       ...moves,
       properties,

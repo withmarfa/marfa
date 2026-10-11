@@ -396,6 +396,79 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("holds optional null property coercion to the server's", async () => {
+    const door = new FolderDoor();
+    const body = {
+      type: "core.note",
+      properties: {
+        body: "text",
+        title: null,
+        custom: null,
+        language: "en",
+        keep: "value",
+      },
+    };
+    const real = await client.rawRequest<Record<string, unknown>>("/items", {
+      method: "POST",
+      body,
+    });
+    expect(real.ok).toBe(true);
+    if (!real.ok) return;
+    const realItem = real.data.item as {
+      id: string;
+      properties: Record<string, unknown>;
+      version: number;
+    };
+    trackItem(ctx, realItem.id);
+    const scripted = door.create(body);
+    const id = scripted.minted!;
+    expectFidelity(
+      "optional nulls on create",
+      { status: real.status, body: real.data },
+      scripted.answer,
+      { same: ["item.properties"], shape: ["item.id"] },
+    );
+    expect(realItem.properties).toEqual({
+      body: "text",
+      language: "en",
+      custom: null,
+      keep: "value",
+    });
+    for (const mode of ["merge", "replace"] as const) {
+      const patch = {
+        version: mode === "merge" ? 1 : 2,
+        properties_mode: mode,
+        properties: {
+          body: "text",
+          language: null,
+          title: null,
+          custom: null,
+          keep: null,
+        },
+      };
+      const updated = await client.rawRequest<Record<string, unknown>>(
+        `/items/${realItem.id}`,
+        { method: "PATCH", body: patch },
+      );
+      expect(updated.ok).toBe(true);
+      expectFidelity(
+        `optional nulls on ${mode}`,
+        {
+          status: updated.status,
+          body: updated.ok ? updated.data : updated.error,
+        },
+        door.update(id, patch),
+        { same: ["item.properties", "item.version"], shape: ["item.id"] },
+      );
+      expect(door.rows.get(id)?.properties).toEqual({
+        body: "text",
+        ...(mode === "merge"
+          ? { language: "en", custom: null, keep: "value" }
+          : {}),
+      });
+    }
+  });
+
   it("holds the scripted folder door's decisions to the server's", async () => {
     // A folder fixture's server decides with `FolderDoor` (`folders.shared.ts`),
     // and so does a queue fixture about an edit behind an edit

@@ -346,6 +346,23 @@ pub(super) fn keep_equivalent(
     }
 }
 
+pub(super) fn keep_empty_properties(
+    front: &mut Map<String, Value>,
+    before: &Map<String, Value>,
+    edge_types: &EdgeTypes,
+    body_field: &str,
+) {
+    for (name, value) in before {
+        if value.is_null()
+            && name != body_field
+            && !reserved(name, edge_types)
+            && !front.contains_key(name)
+        {
+            front.insert(name.clone(), Value::Null);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -401,6 +418,15 @@ mod tests {
             keep_equivalent(&mut wanted, &before, &edge_types());
             assert_eq!(wanted, before);
         }
+    }
+
+    #[test]
+    fn empty_property_lines_survive_only_without_a_carried_value() {
+        let before = front(json!({"blank": null, "filled": null, "removed": "old",
+            "body": null, "type": null, "cites": null}));
+        let mut wanted = front(json!({"filled": "new"}));
+        keep_empty_properties(&mut wanted, &before, &edge_types(), "body");
+        assert_eq!(wanted, front(json!({"filled": "new", "blank": null})));
     }
 
     #[test]

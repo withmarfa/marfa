@@ -3296,6 +3296,68 @@ describe("what frontmatter says", () => {
     expect(rows.get(id)?.properties).toEqual({ title: "Held", body: "held\n" });
   });
 
+  it.each(["   # waiting", " null # unset", " ~  # empty"])(
+    "keeps empty property lines through pushes, pulls and later clears",
+    async (empty) => {
+      harness = await folderHarness("folder-empty-properties");
+      const rows = scriptFolderWrites(harness);
+      const blanks = `language:${empty}\r\nnotes: null # unset\r\ntilde: ~  # empty\r\n`;
+      put(
+        harness,
+        "Empty.md",
+        `---\r\ntitle: Empty\r\n${blanks}status: draft\r\n---\r\nb\r\n`,
+      );
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [create] = sentCreates(harness);
+      const id = [...rows.keys()][0]!;
+      expect(create?.properties).toMatchObject({ status: "draft" });
+      expect(rows.get(id)?.properties).not.toHaveProperty("language");
+      expect(read(harness, "Empty.md")).toContain(blanks);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(read(harness, "Empty.md")).toContain(blanks);
+
+      const first = read(harness, "Empty.md");
+      writeFileSync(
+        join(harness.dir, "Empty.md"),
+        first.replace(`language:${empty}`, "language: en # waiting"),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(rows.get(id)?.properties.language).toBe("en");
+      const filled = read(harness, "Empty.md");
+      expect(filled).toContain("language: en # waiting");
+      writeFileSync(
+        join(harness.dir, "Empty.md"),
+        filled
+          .replace("language: en # waiting", `language:${empty}`)
+          .replace("status: draft", "status: null # cleared"),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(rows.get(id)?.properties).not.toHaveProperty("language");
+      expect(rows.get(id)?.properties).not.toHaveProperty("status");
+      expect(read(harness, "Empty.md")).toContain(blanks);
+      expect(read(harness, "Empty.md")).toContain("status: null # cleared\r\n");
+
+      const cleared = read(harness, "Empty.md");
+      writeFileSync(
+        join(harness.dir, "Empty.md"),
+        cleared
+          .replace("notes: null # unset\r\n", "")
+          .replace("b\r\n", "changed\r\n"),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(read(harness, "Empty.md")).not.toContain("notes:");
+      expect(read(harness, "Empty.md")).toContain(`language:${empty}\r\n`);
+      writeFileSync(
+        join(harness.dir, "Empty.md"),
+        read(harness, "Empty.md").replace("# empty", "# still empty"),
+      );
+      const presentation = await harness.folder.scan();
+      expect(presentation.ok, JSON.stringify(presentation)).toBe(true);
+      if (presentation.ok) expect(presentation.value.updated).toBe(0);
+    },
+  );
+
   it("clears a property whose line was taken out of a versioned file", async () => {
     const id = "01a00000-0000-7000-8000-0000000013b1";
     harness = await folderHarness("folder-clears-a-line", {
