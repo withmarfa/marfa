@@ -526,6 +526,56 @@ describe("who reaches these doors", () => {
 });
 
 describe("source problems", () => {
+  it.each([
+    { kind: "non-string", invalid: 3 },
+    { kind: "oversized", invalid: "x".repeat(501) },
+  ])(
+    "refuses opaque __proto__ messages that are $kind without changing stored state or problems",
+    async ({ invalid }) => {
+      const { key, connector: mine } = await connector();
+      await hold(key, mine.id);
+      const write = (state: unknown, message: unknown) =>
+        request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+          key,
+          body: {
+            process: "p",
+            state,
+            problems: Object.fromEntries([["__proto__", message]]),
+          },
+        });
+      const legal = "😀".repeat(250);
+      const accepted = await write({ cursor: "kept" }, legal);
+      expect(accepted.status).toBe(200);
+      const witnessed = await json(accepted);
+      expect(witnessed).toMatchObject({
+        problems: Object.fromEntries([["__proto__", legal]]),
+      });
+      const refused = await write({ cursor: "refused" }, invalid);
+      expect(refused.status).toBe(400);
+      expect(await json(refused)).toMatchObject({
+        error: { code: "validation_error" },
+      });
+      expect(
+        await json(
+          await request(ctx.app, "GET", `/connectors/${mine.id}/state`, {
+            key,
+          }),
+        ),
+      ).toEqual(witnessed);
+      const registration = await request(
+        ctx.app,
+        "GET",
+        `/connectors/${mine.id}`,
+        {
+          key: ctx.managementKey,
+        },
+      );
+      expect(registration.status).toBe(200);
+      expect(await json<Connector>(registration)).toMatchObject({
+        problems: Object.fromEntries([["__proto__", legal]]),
+      });
+    },
+  );
   it("publishes problems with state, preserves omission, clears explicitly and survives registration replacement", async () => {
     const { key, connector: mine } = await connector();
     await hold(key, mine.id);

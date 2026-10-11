@@ -2,6 +2,7 @@ import {
   ConnectorProblemsSchema,
   MAX_PROBLEMS_BYTES,
   MAX_PROBLEMS,
+  MAX_PROBLEM_LENGTH,
 } from "./_connector-problems.js";
 import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -539,11 +540,15 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     if (
       problems !== undefined &&
       (Object.keys(problems).length > MAX_PROBLEMS ||
+        Object.values(problems).some(
+          (message: unknown) =>
+            typeof message !== "string" || message.length > MAX_PROBLEM_LENGTH,
+        ) ||
         serializedBytes(problems) > MAX_PROBLEMS_BYTES)
     ) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "A problems map has at most 200 entries and 512 KiB serialized",
+        "A problems map has at most 200 string messages of 500 UTF-16 code units each and 512 KiB serialized",
         { field: "problems" },
       );
     }
