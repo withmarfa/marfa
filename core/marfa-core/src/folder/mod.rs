@@ -226,13 +226,10 @@ impl Folder {
         let root = root.as_ref().to_path_buf();
         let root_dir = Directory::create(&root).map_err(io_error)?;
         crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
-        let fresh = match root_dir.child(Path::new(STATE_DIR), false) {
-            Ok(state) => state.contains_no_files().unwrap_or(false),
-            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-        };
         let state_dir = root_dir
             .child(Path::new(STATE_DIR), true)
             .map_err(io_error)?;
+        let fresh = state_dir.contains_no_files().unwrap_or(false);
         swap_root(&root, "replace-root-before-store-open");
         let added = Folder::bind(
             root,

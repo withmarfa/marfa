@@ -39,6 +39,12 @@ A copy saves before it has reached a server. `device types declare` takes the ty
 
 Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
 
+## Folder directories
+
+A folder remains bound to the directory it opened. If that directory or its state is replaced during a pass, the pass reports `root_gone` and a watch waits for the original binding to return. Admission checks each path component without following symbolic links, including components before `..`.
+
+`marfa folders remove` removes the folder's database, cache, and settings while preserving its item files. It leaves empty administrative directories, including `.marfa`, in place. An empty `.marfa` does not identify a nested folder or prevent adding the directory again. Folder storage is supported on Apple platforms and Linux; other platforms refuse folder admission before creating state.
+
 ## Claim and recover locally
 
 Run the CLI as the server's operating-system account, using the absolute path in `MARFA_CONTROL_SOCKET`:

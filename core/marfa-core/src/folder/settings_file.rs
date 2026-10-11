@@ -167,6 +167,7 @@ impl Folder {
     /// of bytes that are not only names the edit, and is never sent.
     fn edited_settings(&self) -> Result<Option<(String, Option<&'static str>)>> {
         self.settle_settings()?;
+        super::swap_root(&self.root, "replace-root-before-settings-read");
         let Ok(found) = self.state_dir.read(std::path::Path::new(SETTINGS_FILE)) else {
             return Ok(None);
         };

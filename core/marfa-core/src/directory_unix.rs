@@ -49,6 +49,14 @@ impl Directory {
             match part {
                 Component::Normal(name) => directory = directory.child(Path::new(name), create)?,
                 Component::CurDir => {}
+                Component::ParentDir => {
+                    directory = Self::from_fd(fs::openat(
+                        directory.file(),
+                        "..",
+                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                        Mode::empty(),
+                    )?);
+                }
                 _ => return Err(invalid_path()),
             }
         }
@@ -290,6 +298,25 @@ fn invalid_path() -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn admission_traverses_parent_components_without_skipping_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap();
+        std::fs::create_dir(path.join("child")).unwrap();
+        std::fs::write(path.join("proof"), b"original").unwrap();
+        let witness = Directory::open(&path).unwrap();
+        assert_eq!(witness.read(Path::new("proof")).unwrap(), b"original");
+        let through_parent = Directory::open(&path.join("child/..")).unwrap();
+        assert!(witness.same(&through_parent).unwrap());
+        assert_eq!(
+            through_parent.read(Path::new("proof")).unwrap(),
+            b"original"
+        );
+        assert!(witness.child(Path::new("child/.."), false).is_err());
+        std::os::unix::fs::symlink(path.join("child"), path.join("link")).unwrap();
+        assert!(Directory::open(&path.join("link/..")).is_err());
+    }
+
     #[test]
     fn retained_children_ignore_root_replacements_and_refuse_symlinks() {
         let temp = tempfile::tempdir().unwrap();

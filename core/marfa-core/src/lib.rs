@@ -2452,6 +2452,78 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn captured_binary_upload_does_not_reopen_the_replacement_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("owned");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(root.join(".marfa")).unwrap();
+        let admitted = directory::Directory::open(&root).unwrap();
+        let state = admitted.child(Path::new(".marfa"), false).unwrap();
+        let core = Core::open_directory(&state, &root.join(".marfa/core.sqlite"), None).unwrap();
+        store::replace_types(
+            &core.conn().unwrap(),
+            &[store::testing::wire_type("core.file", None, Some("title"))],
+        )
+        .unwrap();
+        let path = root.join("source.bin");
+        std::fs::write(&path, b"original binary").unwrap();
+        let mut file = admitted.capture_file(Path::new("source.bin")).unwrap();
+        let size = file.metadata().unwrap().len();
+        let mut captured = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut captured).unwrap();
+        assert_eq!(captured.len() as u64, size);
+        let draft = Draft {
+            r#type: "core.file".into(),
+            ..Default::default()
+        };
+        let witness = core
+            .create_file_item_from(&path, &captured[..], &draft)
+            .unwrap()
+            .item_id
+            .unwrap();
+        assert_eq!(
+            core.get(&witness).unwrap().unwrap().properties["blob_ref"],
+            blob::name_of(&captured)
+        );
+        std::fs::rename(&root, temp.path().join("original")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(root.join(".marfa")).unwrap();
+        std::fs::write(root.join(".marfa/core.sqlite"), b"foreign database").unwrap();
+        std::fs::write(&path, b"foreign replacement").unwrap();
+        let queued = core
+            .create_file_item_from(&path, &captured[..], &draft)
+            .unwrap()
+            .item_id
+            .unwrap();
+        assert_eq!(
+            core.get(&queued).unwrap().unwrap().properties["blob_ref"],
+            blob::name_of(&captured)
+        );
+        core.update_file_item_from(
+            &queued,
+            &path,
+            &b"captured update"[..],
+            &Edit {
+                base_version: Some(core.get(&queued).unwrap().unwrap().version),
+                ..Edit::default()
+            },
+            Based::OnHeld,
+        )
+        .unwrap();
+        assert_eq!(
+            core.get(&queued).unwrap().unwrap().properties["blob_ref"],
+            blob::name_of(b"captured update")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"foreign replacement");
+        assert_eq!(
+            std::fs::read(root.join(".marfa/core.sqlite")).unwrap(),
+            b"foreign database"
+        );
+        assert_eq!(std::fs::read_dir(root.join(".marfa")).unwrap().count(), 1);
+    }
+
     #[test]
     fn local_fields_distinguish_an_absent_type_from_a_known_empty_type() {
         let core = held_copy();

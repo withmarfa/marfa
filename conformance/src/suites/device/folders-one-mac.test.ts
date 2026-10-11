@@ -1785,6 +1785,26 @@ describe("folders on one Mac", () => {
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   });
 
+  it("admits parent components without skipping a preceding symlink", async () => {
+    harness = await folderHarness("parent-components");
+    mkdirSync(join(harness.dir, "child"));
+    const at = (path: string) =>
+      new CliFolder(path, {
+        binary: requireBinary(),
+        url: harness!.server.url,
+        key: KEY,
+      });
+    // Keep the raw spelling: path.join would erase the component under test.
+    const admitted = await at(`${harness.dir}/child/..`).add(
+      harness.settings.id,
+    );
+    expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+    symlinkSync(join(harness.dir, "child"), join(harness.dir, "link"));
+    const refused = await at(`${harness.dir}/link/..`).add(harness.settings.id);
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    expect((await harness.folder.status()).ok).toBe(true);
+  });
+
   it("refuses a folder reached through a symlink and preserves its registry identity", async () => {
     harness = await folderHarness("renamed-folder");
     const root = harness.dir;

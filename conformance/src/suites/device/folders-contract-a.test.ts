@@ -672,6 +672,50 @@ describe("settings and folder reporting", () => {
     },
   );
 
+  it("ignores replacement settings installed immediately before their read", async () => {
+    harness = await folderHarness("contract-settings-admission-swap");
+    const sent = changes(harness);
+    const root = harness.dir;
+    const file = settingsPath(harness);
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace("title: folder", "title: accepted"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sent, JSON.stringify(sent)).toHaveLength(1);
+    const original = `${root}.original`;
+    const replacement = `${root}.replacement`;
+    cpSync(root, replacement, { recursive: true });
+    const foreign = join(replacement, ".marfa", "folder.yaml");
+    writeFileSync(
+      foreign,
+      readFileSync(foreign, "utf8").replace(
+        "title: accepted",
+        "title: ignored",
+      ),
+    );
+    const before = treeBytes(replacement);
+    try {
+      const pushed = await withFault("replace-root-before-settings-read", () =>
+        harness!.folder.push(),
+      );
+      expect(sent, JSON.stringify(sent)).toHaveLength(1);
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (pushed.ok)
+        expect(pushed.value.scan.root_gone).toContain(
+          "no longer the directory",
+        );
+      expect(treeBytes(root)).toEqual(before);
+    } finally {
+      if (existsSync(original)) {
+        rmSync(root, { recursive: true, force: true });
+        renameSync(original, root);
+      }
+      if (existsSync(replacement))
+        rmSync(replacement, { recursive: true, force: true });
+    }
+  });
+
   it("admits contents beside empty administrative directories", async () => {
     harness = await folderHarness("empty-administrative-directory");
     mkdirSync(join(harness.dir, "nested", ".marfa", "cache"), {

@@ -4466,7 +4466,7 @@ When a folder directory is admitted, a device MUST retain that opened directory 
 
 **Reason:** A pathname can name a replacement directory after admission.
 
-**Tests:** `device/folders-contract-a.test.ts › ignores a replacement installed at %s`, `device/folders-contract-a.test.ts › leaves replacement state untouched when the root changes before its store opens`, `device/folders-contract-a.test.ts › leaves every replacement byte intact at %s`.
+**Tests:** `device/folders-contract-a.test.ts › ignores a replacement installed at %s`, `device/folders-contract-a.test.ts › leaves replacement state untouched when the root changes before its store opens`, `device/folders-contract-a.test.ts › ignores replacement settings installed immediately before their read`, `device/folders-contract-a.test.ts › leaves every replacement byte intact at %s`.
 
 ### `folders/directory-components-no-follow`
 
