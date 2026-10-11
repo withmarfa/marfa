@@ -33,6 +33,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
+      - name: Witness concurrent HTTP reads
+        run: pnpm exec vitest run packages/server/src/read-concurrency.test.ts
+
       - name: Boot the server from this checkout
         working-directory: conformance
         run: |

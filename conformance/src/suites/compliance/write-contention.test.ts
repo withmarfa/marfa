@@ -9,6 +9,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HeldLock } from "../../utils/held-lock.js";
+import { witnessWriteAdmission } from "../../utils/write-admission.js";
 import { codeOf, idOf, send } from "../../utils/inbound-sender.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
@@ -98,14 +99,14 @@ describe("contention on the write lock", () => {
       await lock.release();
     }
 
-    await probeWriteAdmission(impatient!.sqlitePath);
+    await witnessWriteAdmission(impatient!.sqlitePath);
     const admitted = await HeldLock.take(impatient!.sqlitePath);
     try {
       await expectWriteLocked(impatient!.sqlitePath);
     } finally {
       await admitted.release();
     }
-    await probeWriteAdmission(impatient!.sqlitePath);
+    await witnessWriteAdmission(impatient!.sqlitePath);
   }, 120_000);
 
   it("answers 503 write_contention, never 500", async () => {
@@ -277,7 +278,7 @@ describe("contention on the write lock", () => {
       await lock.release();
     }
 
-    await probeWriteAdmission(impatient!.sqlitePath);
+    await witnessWriteAdmission(impatient!.sqlitePath);
     const served = await read();
     expect(served.status).toBe(200);
     await served.json();
