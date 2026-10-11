@@ -302,7 +302,7 @@ impl Folders {
     /// not there. Its first sync waits: `sync` says what it will do, and
     /// `confirm_first_sync` lets it go.
     pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
-        let added = marfa_core::Folder::add(&dir, &folder, self.server.clone())?;
+        let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)?;
         Ok(ListedFolder {
             dir: registry::resolved(added.root()).display().to_string(),
             folder: added.folder_id().to_string(),

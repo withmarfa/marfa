@@ -530,6 +530,70 @@ fn current_copy(core: &Core) {
 }
 
 #[test]
+fn relocation_preserves_deferred_body_checks_after_readback_commit() {
+    let server = Scripted::start();
+    server.on("/", vec![scripted::root(OTHER_INSTANCE)]);
+    let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+    current_copy(&core);
+    let target_write = core.create_item(&crate::stop_tests::note(None)).unwrap();
+    let target = target_write.item_id.unwrap();
+    let host_write = core.create_item(&crate::stop_tests::note(None)).unwrap();
+    let host = host_write.item_id.unwrap();
+    {
+        let conn = core.conn().unwrap();
+        conn.execute("UPDATE queue SET verdict = 'accepted'", [])
+            .unwrap();
+        conn.execute("UPDATE items SET version = 2", []).unwrap();
+    }
+    core.update_item_as_read(
+        &host,
+        &crate::Edit {
+            properties: serde_json::json!({"body": format!("[[{target}]]")})
+                .as_object()
+                .unwrap()
+                .clone(),
+            base_version: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    {
+        let conn = core.conn().unwrap();
+        // The previous process committed the accepted edit and its read-back,
+        // then stopped before the deferred body check was applied.
+        conn.execute("UPDATE queue SET verdict = 'accepted'", [])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM body_checks", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        conn.execute(
+            "UPDATE items SET properties = json_set(properties, '$.body', ?2) WHERE id = ?1",
+            rusqlite::params![host, format!("[[{target}]]")],
+        )
+        .unwrap();
+        assert!(store::waiting_writes(&conn).unwrap().is_empty());
+        assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+        assert!(!crate::body::rule::waiting(&conn).unwrap());
+    }
+    let before = core.queue().unwrap();
+    assert!(matches!(core.drain(), Err(CoreError::WrongServer { .. })));
+    assert_eq!(server.asked(), 1);
+    assert_eq!(core.queue().unwrap(), before);
+    assert_eq!(
+        core.conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM body_checks", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(origin(&core), OLD_ORIGIN);
+}
+
+#[test]
 fn relocation_wrong_server_preserves_self_clearing_queue_verdicts() {
     let server = Scripted::start();
     server.on("/", vec![scripted::root(OTHER_INSTANCE)]);
@@ -636,4 +700,65 @@ fn relocation_unavailable_server_preserves_blocked_queue_and_empty_pass_is_offli
     core.drain().unwrap();
     assert_eq!(server.asked(), 1);
     assert_eq!(origin(&core), OLD_ORIGIN);
+}
+
+#[test]
+fn relocation_preserves_deferred_body_edges_and_releasable_pins() {
+    for pins in [false, true] {
+        let server = Scripted::start();
+        server.on("/", vec![scripted::root(OTHER_INSTANCE)]);
+        let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+        current_copy(&core);
+        let target = core
+            .create_item(&crate::stop_tests::note(None))
+            .unwrap()
+            .item_id
+            .unwrap();
+        if pins {
+            let conn = core.conn().unwrap();
+            store::pin(&conn, &target).unwrap();
+            conn.execute("INSERT INTO body_pins (item_id) VALUES (?1)", [&target])
+                .unwrap();
+        } else {
+            let mut host = crate::stop_tests::note(None);
+            host.properties
+                .insert("body".into(), serde_json::json!(format!("[[{target}]]")));
+            core.create_item(&host).unwrap();
+            assert_eq!(
+                core.conn()
+                    .unwrap()
+                    .query_row("SELECT count(*) FROM body_edges", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+        }
+        let before = {
+            let conn = core.conn().unwrap();
+            conn.execute("UPDATE queue SET verdict = 'accepted'", [])
+                .unwrap();
+            assert!(store::waiting_writes(&conn).unwrap().is_empty());
+            assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+            assert!(!crate::body::rule::waiting(&conn).unwrap());
+            store::item_by_id(&conn, &target).unwrap()
+        };
+        let queue = core.queue().unwrap();
+        assert!(matches!(core.drain(), Err(CoreError::WrongServer { .. })));
+        assert_eq!(server.asked(), 1);
+        assert_eq!(core.queue().unwrap(), queue);
+        assert_eq!(
+            store::item_by_id(&core.conn().unwrap(), &target).unwrap(),
+            before
+        );
+        assert_eq!(origin(&core), OLD_ORIGIN);
+        let table = if pins { "body_pins" } else { "body_edges" };
+        assert_eq!(
+            core.conn()
+                .unwrap()
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 }

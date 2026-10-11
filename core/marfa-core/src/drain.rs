@@ -556,7 +556,13 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
     let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
     let names_wait = crate::body::rule::waiting(&*core.conn()?)?;
-    if !waiting.is_empty() || owed || names_wait {
+    let body_answers = crate::body::rule::has_answer_work(&*core.conn()?)?;
+    if waiting.is_empty() && !owed && !names_wait && !body_answers {
+        // This pass has no work. Return before later reads could observe a
+        // concurrent edit and apply its deferred work without admission.
+        return Ok(report);
+    }
+    {
         // A relocation must be admitted before this pass changes local queue
         // verdicts or resolves body dependencies. Same-origin transport has
         // no relocation gate, and an empty pass still makes no request.

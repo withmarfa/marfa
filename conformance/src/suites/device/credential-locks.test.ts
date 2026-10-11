@@ -14,8 +14,14 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedServer, type Answer } from "../../device/scripted-server.js";
 import { keychainEnv } from "../../utils/keychain.js";
-import { hydratedHarness, requireBinary } from "./harness.js";
 import {
+  folderItem,
+  hydratedHarness,
+  requireBinary,
+  scriptHydration,
+} from "./harness.js";
+import {
+  answers,
   SCRIPTED_INSTANCE,
   SCRIPTED_TYPES,
 } from "../../device/marfa-answers.js";
@@ -379,6 +385,103 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
     await server.stop();
     keychain.remove();
   });
+  it("renews an expired stored token before folder binding completes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marfa-folder-renewal-"));
+    const folder = {
+      id: randomUUID(),
+      version: 1,
+      settings: { search: { types: ["core.note"] } },
+    };
+    scriptHydration(server, { head: "1", edges: {} });
+    server.copyAnswer(
+      "GET",
+      `/items/${folder.id}`,
+      {
+        kind: "json",
+        status: 401,
+        body: { error: { code: "unauthorized", message: "expired" } },
+      },
+      answers.updated(folderItem(folder)),
+    );
+    keepInKeychain(keychain.path, server.url, signIn(server, "", null, 1));
+    server.answer("POST", "/token", {
+      kind: "json",
+      status: 200,
+      body: {
+        access_token: "folder-renewed-fixture",
+        refresh_token: "folder-next-fixture",
+        expires_in: 3600,
+        scope: "*:read",
+      },
+    });
+    try {
+      const added = await marfaAt(keychain.path, server.url, [
+        "folders",
+        "add",
+        dir,
+        "--folder",
+        folder.id,
+        "--yes",
+      ]).done;
+      expect(added.code, added.stdout + added.stderr).toBe(0);
+      const rows = server.requests.filter(
+        (request) => request.pathname === `/items/${folder.id}`,
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows[0]!.headers.authorization).toBe("Bearer marfa_at_fixture");
+      expect(rows[1]!.headers.authorization).toBe(
+        "Bearer folder-renewed-fixture",
+      );
+      expect(
+        server.requests.filter((request) => request.pathname === "/token"),
+      ).toHaveLength(1);
+      const hydrated = await marfaAt(keychain.path, server.url, [
+        "folders",
+        "hydrate",
+        dir,
+      ]).done;
+      expect(hydrated.code, hydrated.stdout + hydrated.stderr).toBe(0);
+      const before = await marfaAt(keychain.path, server.url, [
+        "folders",
+        "status",
+        dir,
+      ]).done;
+      const wrong = await ScriptedServer.start();
+      try {
+        wrong.answer("GET", "/", ROOT);
+        keepInKeychain(keychain.path, wrong.url, signIn(wrong, "", null, 1));
+        const refused = await marfaAt(keychain.path, wrong.url, [
+          "folders",
+          "add",
+          dir,
+          "--folder",
+          folder.id,
+          "--yes",
+        ]).done;
+        expect(refused.code).toBe(4);
+        expect(JSON.parse(refused.stderr)).toMatchObject({
+          error: { code: "wrong_server" },
+        });
+        expect(
+          wrong.requests.map(
+            (request) => `${request.method} ${request.pathname}`,
+          ),
+        ).toEqual(["GET /"]);
+        expect(wrong.requests[0]!.headers.authorization).toBeUndefined();
+        const after = await marfaAt(keychain.path, server.url, [
+          "folders",
+          "status",
+          dir,
+        ]).done;
+        expect(after).toEqual(before);
+      } finally {
+        await wrong.stop();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("defers working-copy token renewal until the new origin confirms its identity", async () => {
     const copy = await hydratedHarness("relocation-stale-credential");
     const prefix = `/relocation-${randomUUID()}`;

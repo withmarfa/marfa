@@ -145,7 +145,7 @@ fn added_tagged(dir: &Path, through: Server) -> (Folder, String) {
         "defaults": { "tags": [tag] },
     });
     let id = seed(&["folder", &nonce(), &settings.to_string()]);
-    let folder = Folder::add(dir, &id, Some(through)).unwrap();
+    let folder = Folder::add(dir, &id, Some(through), None).unwrap();
     folder.confirm_first_sync().unwrap();
     (folder, tag)
 }

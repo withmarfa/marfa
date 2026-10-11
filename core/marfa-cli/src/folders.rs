@@ -104,8 +104,8 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
     match command {
         FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
-            let folder = Folder::add(&dir, &folder, Some(session.server)).map_err(held(&dir))?;
-            renewing(folder.core(), session.renew);
+            let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
+                .map_err(held(&dir))?;
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
             let (mut plan, mut confirmed, mut unread) = (None, true, None);
