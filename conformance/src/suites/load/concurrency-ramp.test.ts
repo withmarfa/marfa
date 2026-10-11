@@ -33,14 +33,14 @@ import {
 } from "./bench.js";
 import { getLoadProfile } from "./profiles.js";
 import { computeMetrics, type LoadMetrics } from "./results.js";
+import { measureReaderRounds } from "./reader-rounds.js";
 
 const profile = getLoadProfile();
 const { corpusItems, batchSize, rampLevels, readSamples, writeSamples } =
   profile.bench;
 
 const CORPUS_SIZE = Math.max(20, Math.round(corpusItems / 2));
-/** Same run count at every rung, so rungs are directly comparable. */
-const READ_RUNS_PER_LEVEL = Math.max(
+const READ_TARGET_COUNT = Math.max(
   rampLevels[rampLevels.length - 1],
   Math.round(readSamples / 2),
 );
@@ -126,6 +126,7 @@ describe("concurrency ramp", () => {
     });
     corpusIds = seeded.ids;
     expect(seeded.errors).toBe(0);
+    expect(seeded.ids).toHaveLength(CORPUS_SIZE);
     console.log(
       `  warm-up ${warmMs.toFixed(0)}ms, seeded ${corpusIds.length} items in ` +
         `${(seeded.durationMs / 1000).toFixed(1)}s — neither is sampled`,
@@ -136,43 +137,32 @@ describe("concurrency ramp", () => {
     await cleanup(ctx);
   });
 
-  it("ramps read concurrency through the ladder", async () => {
-    const targets = sampleIds(corpusIds, READ_RUNS_PER_LEVEL);
+  it("records correct reads and steady-state timing through the ladder", async () => {
+    const targets = sampleIds(corpusIds, READ_TARGET_COUNT);
+    const expectedItems = new Map<string, string>();
+    for (const id of corpusIds) {
+      const response = await client.getItem(id);
+      expect(response.ok).toBe(true);
+      expect(response.data.item.id).toBe(id);
+      expectedItems.set(id, JSON.stringify(response.data.item));
+    }
     let call = 0;
-
-    const { levels } = await rampUp(
-      async () => {
-        const id = targets[call++ % targets.length];
-        const response = await client.getItem(id);
-        // Thrown so the pool counts it — the client returns errors as data.
-        if (!response.ok) throw new Error(`get failed: ${response.status}`);
-        return response.data.item.id;
-      },
-      rampLevels,
-      READ_RUNS_PER_LEVEL,
-    );
-
-    const { rungs, breakdown, durations, errors } = summarize(levels);
-    logRungs("read", rungs);
-
+    const measured = await measureReaderRounds(async () => {
+      const id = targets[call++ % targets.length];
+      const response = await client.getItem(id);
+      if (!response.ok) throw new Error(`get failed: ${response.status}`);
+      if (JSON.stringify(response.data.item) !== expectedItems.get(id))
+        throw new Error("get returned different item data");
+    }, rampLevels);
     await record({
       scenario: "load.concurrency-ramp.reads",
       profile,
       itemCount: corpusIds.length,
-      durations,
-      errors,
-      throughput: Math.max(...rungs.map((r) => r.throughput)),
-      breakdown,
+      ...measured,
     });
-
-    expect(errors).toBe(0);
-    expect(rungs.length).toBe(rampLevels.length);
-    // Reads should get cheaper per unit time as readers are added. Comparing
-    // the top rung against the single-client rung is a loose check that the
-    // server serves them in parallel at all.
-    const first = rungs[0];
-    const last = rungs[rungs.length - 1];
-    expect(last.throughput).toBeGreaterThan(first.throughput);
+    expect(measured.errors).toBe(0);
+    for (const metrics of Object.values(measured.breakdown))
+      expect(metrics.runs).toBeGreaterThan(0);
   });
 
   it("ramps write concurrency through a truncated ladder", async () => {

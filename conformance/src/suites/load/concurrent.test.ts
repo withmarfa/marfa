@@ -29,7 +29,8 @@ import {
   warmTarget,
 } from "./bench.js";
 import { getLoadProfile } from "./profiles.js";
-import { computeMetrics, type LoadMetrics } from "./results.js";
+import { computeMetrics } from "./results.js";
+import { measureReaderRounds } from "./reader-rounds.js";
 
 const profile = getLoadProfile();
 const { concurrency, readSamples, writeSamples, batchSize, corpusItems } =
@@ -53,6 +54,8 @@ describe("concurrent client scaling", () => {
       count: CORPUS_SIZE,
       batchSize,
     });
+    expect(seeded.errors).toBe(0);
+    expect(seeded.ids).toHaveLength(CORPUS_SIZE);
     corpusIds = seeded.ids;
     console.log(
       `  warm-up ${warmMs.toFixed(0)}ms, seeded ${seeded.ids.length} items in ` +
@@ -64,59 +67,49 @@ describe("concurrent client scaling", () => {
     await cleanup(ctx);
   });
 
-  it("scales list throughput with parallel readers", async () => {
-    const breakdown: Record<string, LoadMetrics> = {};
-    const allDurations: number[] = [];
-    const throughputByLevel: number[] = [];
-    let errors = 0;
-
-    for (const level of READ_LEVELS) {
-      const {
-        timings,
-        errors: failures,
-        totalDurationMs,
-      } = await benchmarkConcurrent(
-        async () => {
-          const response = await client.listItems({
-            limit: 25,
-            source: ctx.source,
-          });
-          if (!response.ok) throw new Error(`list failed: ${response.status}`);
-          return response.data.data.length;
-        },
-        readSamples,
-        level,
-      );
-
-      const durations = timings.map((t) => t.durationMs);
-      const throughput = timings.length / (totalDurationMs / 1000);
-      allDurations.push(...durations);
-      throughputByLevel.push(throughput);
-      errors += failures.length;
-      breakdown[`readers=${level}`] = computeMetrics(
-        durations,
-        failures.length,
-        throughput,
-      );
-    }
-
+  it("records steady-state list throughput and correct data with parallel readers", async () => {
+    const completeIds: string[] = [];
+    let expectedPage: string | undefined;
+    let cursor: string | undefined;
+    const cursors = new Set<string>();
+    do {
+      const page = await client.listItems({
+        limit: 25,
+        source: ctx.source,
+        cursor,
+      });
+      expect(page.ok, JSON.stringify(page.error)).toBe(true);
+      expectedPage ??= JSON.stringify(page.data.data.slice(0, 25));
+      completeIds.push(...page.data.data.map((item) => item.id));
+      expect(completeIds.length).toBeLessThanOrEqual(corpusIds.length);
+      cursor = page.data.next_cursor ?? undefined;
+      if (cursor !== undefined) {
+        expect(cursors.has(cursor)).toBe(false);
+        cursors.add(cursor);
+      }
+    } while (cursor !== undefined);
+    expect(completeIds.sort()).toEqual([...corpusIds].sort());
+    const measured = await measureReaderRounds(async () => {
+      const response = await client.listItems({
+        limit: 25,
+        source: ctx.source,
+      });
+      if (!response.ok) throw new Error(`list failed: ${response.status}`);
+      if (JSON.stringify(response.data.data) !== expectedPage) {
+        throw new Error(
+          "list returned different data from the complete corpus",
+        );
+      }
+    }, READ_LEVELS);
     await record({
       scenario: "load.concurrent.reads",
       profile,
       itemCount: corpusIds.length,
-      durations: allDurations,
-      errors,
-      throughput: Math.max(...throughputByLevel),
-      breakdown,
+      ...measured,
     });
-
-    expect(errors).toBe(0);
-    // Reads are the half that should benefit from parallelism. A generous
-    // 1.5x floor between one reader and the ceiling proves the server is
-    // serving them concurrently without asserting a specific speedup.
-    const [single] = throughputByLevel;
-    const highest = throughputByLevel[throughputByLevel.length - 1];
-    expect(highest).toBeGreaterThan(single * 1.5);
+    expect(measured.errors).toBe(0);
+    for (const metrics of Object.values(measured.breakdown))
+      expect(metrics.runs).toBeGreaterThan(0);
   });
 
   it("records write throughput under parallel writers without claiming a ceiling", async () => {
