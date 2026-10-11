@@ -463,3 +463,99 @@ it("rechecks a browser revoked between admission and the registration write", as
   expect(list.status).toBe(200);
   expect(await list.json()).toEqual([]);
 });
+
+it("uses the verified registration identity and keeps removal effective", async () => {
+  const ctx = await signedOwner(),
+    device = testAuthenticator();
+  const registered = await ctx.register(device, "First");
+  const challenge = await ctx.options("register");
+  const response = device.registration(challenge.body.challenge, origin);
+  response.id = response.rawId = Buffer.from(
+    "alternate outer identity",
+  ).toString("base64url");
+  const duplicate = await ctx.post(
+    "/auth/passkey/verify-registration",
+    { name: "Second", response },
+    challenge.cookie,
+  );
+  expect.soft(duplicate.status).toBe(409);
+  expect(
+    (
+      await ctx.post(
+        "/auth/passkey/delete-passkey",
+        { id: registered.id },
+        ctx.ownerCookie,
+      )
+    ).status,
+  ).toBe(200);
+  const authentication = await ctx.options("authenticate");
+  const login = await ctx.post(
+    "/auth/passkey/verify-authentication",
+    { response: device.authentication(authentication.body.challenge, origin) },
+    authentication.cookie,
+  );
+  expect(login.status).toBe(401);
+});
+
+it("includes every credential in the inventory and both ceremony options", async () => {
+  const ctx = await signedOwner();
+  const devices = Array.from({ length: 101 }, () => testAuthenticator());
+  const rows = [];
+  for (const [index, device] of devices.entries())
+    rows.push(await ctx.register(device, `Passkey ${String(index)}`));
+  const list = await ctx.app.request(
+    origin + "/auth/passkey/list-user-passkeys",
+    { headers: { origin, cookie: ctx.ownerCookie } },
+  );
+  expect(list.status).toBe(200);
+  const listed = (await list.json()) as { id: string }[];
+  expect
+    .soft(listed.map((row) => row.id).sort())
+    .toEqual(rows.map((row) => row.id).sort());
+  for (const [kind, field] of [
+    ["register", "excludeCredentials"],
+    ["authenticate", "allowCredentials"],
+  ] as const) {
+    const response = await ctx.app.request(
+      origin + `/auth/passkey/generate-${kind}-options`,
+      { headers: { origin, cookie: ctx.ownerCookie } },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, { id: string }[]>;
+    expect
+      .soft(body[field]?.map((row) => row.id).sort())
+      .toEqual(devices.map((device) => device.id).sort());
+  }
+  const last = devices.at(-1),
+    lastRow = rows.at(-1);
+  if (!last || !lastRow) throw new Error("Missing final credential");
+  const challenge = await ctx.options("authenticate");
+  expect(
+    (
+      await ctx.post(
+        "/auth/passkey/verify-authentication",
+        { response: last.authentication(challenge.body.challenge, origin) },
+        challenge.cookie,
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await ctx.post(
+        "/auth/passkey/delete-passkey",
+        { id: lastRow.id },
+        ctx.ownerCookie,
+      )
+    ).status,
+  ).toBe(200);
+  const removed = await ctx.options("authenticate");
+  expect(
+    (
+      await ctx.post(
+        "/auth/passkey/verify-authentication",
+        { response: last.authentication(removed.body.challenge, origin, 2) },
+        removed.cookie,
+      )
+    ).status,
+  ).toBe(401);
+});

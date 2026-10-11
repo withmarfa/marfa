@@ -35,8 +35,9 @@ export function buildPasskeyPlugin(
     },
     registration: {
       requireSession: true,
-      afterVerification: async ({ ctx, verification, user, clientData }) => {
-        requireVerified(verification.registrationInfo?.userVerified === true);
+      afterVerification: async ({ ctx, verification, user }) => {
+        const registration = verification.registrationInfo;
+        requireVerified(registration?.userVerified === true);
         requireVerified(
           await verifiedPhase(
             async () => (await storage.owner?.find())?.id === user.id,
@@ -46,7 +47,9 @@ export function buildPasskeyPlugin(
           async () =>
             !!(await ctx.context.adapter.findOne({
               model: "passkey",
-              where: [{ field: "credentialID", value: clientData.id }],
+              where: [
+                { field: "credentialID", value: registration.credential.id },
+              ],
             })),
         );
         if (duplicate)
@@ -97,7 +100,7 @@ export function buildPasskeyPlugin(
   };
 }
 
-function requireVerified(valid: boolean): void {
+function requireVerified(valid: boolean): asserts valid {
   if (!valid)
     throw new APIError("UNAUTHORIZED", {
       message: "Verify the owner with your passkey provider to continue.",

@@ -203,6 +203,7 @@ interface AdapterArgs {
   data?: Record<string, unknown>;
   update?: Record<string, unknown>;
   where?: unknown[];
+  limit?: number;
 }
 type Operation = (args: AdapterArgs) => Promise<unknown>;
 type Adapter = Record<string, unknown> & {
@@ -457,8 +458,20 @@ export function withCredentialAudit<
         const request = credentialRequest.getStore();
         if (request && !request.active)
           return Promise.reject(new Error("Credential request is closed"));
+        // All passkey readers need the complete inventory. SQLite's negative
+        // LIMIT prevents the provider's default 100-row cap in one statement.
+        const readArgs =
+          read === "findMany" &&
+          args.model === "passkey" &&
+          args.limit === undefined
+            ? { ...args, limit: -1 }
+            : args;
         const work = async () =>
-          withDeviceOffer(request, args, await (original as Operation)(args));
+          withDeviceOffer(
+            request,
+            args,
+            await (original as Operation)(readArgs),
+          );
         return request?.phase?.run(false, work) ?? work();
       };
     }

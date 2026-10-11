@@ -119,15 +119,17 @@ describe("owner passkeys", () => {
     firstId = (await register(first, "First")).id;
     await register(second, "Second");
     const duplicateChallenge = await options("register");
+    const response = first.registration(
+      duplicateChallenge.body.challenge,
+      server.url,
+      new URL(server.url).hostname,
+    );
+    response.id = response.rawId = Buffer.from(
+      "alternate outer identity",
+    ).toString("base64url");
     const duplicate = await post(
       "/auth/passkey/verify-registration",
-      {
-        response: first.registration(
-          duplicateChallenge.body.challenge,
-          server.url,
-          new URL(server.url).hostname,
-        ),
-      },
+      { response },
       duplicateChallenge.cookie,
     );
     expect(duplicate.status).toBe(409);
