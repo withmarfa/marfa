@@ -722,6 +722,7 @@ const invocations: Record<string, () => string[]> = {
   "edge-types delete": () => ["user.e"],
   "types list": () => [],
   "types register": () => ["--body", '{"id":"user.t"}'],
+  "types normalize": () => ["--body", '{"id":"user.t","fields":{}}'],
   "types get": () => ["core.note"],
   "types replace": () => ["--body", '{"id":"user.t"}', "user.t"],
   "types delete": () => ["user.t"],

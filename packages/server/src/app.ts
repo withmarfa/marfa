@@ -1,3 +1,4 @@
+import { ConnectorProblemsSchema } from "./routes/_connector-problems.js";
 import { requireSecureOwnerTransport } from "./auth/owner-browser.js";
 import { controlRoutes } from "./control/routes.js";
 import { setupRoutes } from "./routes/setup.js";
@@ -86,7 +87,11 @@ import {
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
-import { bodyCapFor, bulkBodyCap } from "./middleware/body-cap.js";
+import {
+  bodyCapFor,
+  bulkBodyCap,
+  CONNECTOR_STATE_BODY_CAP,
+} from "./middleware/body-cap.js";
 import { jsonDepthLimit } from "./middleware/json-depth.js";
 import { CONTRACT_VERSION } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
@@ -343,12 +348,17 @@ export function createApp(
     maxSize: bulkBodyCap(config),
     onError: tooLarge,
   });
+  const connectorStateBodyLimit = bodyLimit({
+    maxSize: CONNECTOR_STATE_BODY_CAP,
+    onError: tooLarge,
+  });
   app.use(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const cap = bodyCapFor(c.req.path);
       if (cap === "none" || cap === "inbound") return next();
       if (cap === "bulk") return bulkBodyLimit(c, next);
+      if (cap === "connector-state") return connectorStateBodyLimit(c, next);
       return requestBodyLimit(c, next);
     }),
   );
@@ -806,6 +816,7 @@ export function createApp(
     ...DESCRIBED_ONLY_BY_REFERENCE,
     ...ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE,
     ...TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE,
+    ConnectorProblems: ConnectorProblemsSchema,
     ...BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE,
   })) {
     app.openAPIRegistry.register(name, schema);

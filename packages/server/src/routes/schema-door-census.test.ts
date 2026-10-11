@@ -211,7 +211,12 @@ const CHANGING: Record<string, Driver> = {
 };
 
 /** Doors that read a registry and change nothing. */
-const READING = ["GET /types", "GET /types/:id", "GET /edge-types"];
+const READING = [
+  "POST /types/normalize",
+  "GET /types",
+  "GET /types/:id",
+  "GET /edge-types",
+];
 
 /** Doors requiring management grants or direct authority. */
 const MANAGEMENT_OR_DIRECT = [

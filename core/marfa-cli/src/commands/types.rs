@@ -17,6 +17,8 @@ pub enum TypesCommand {
     },
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
+    /// Normalize a definition and compare it with the registered type. Any authenticated key can use this command.
+    Normalize(BodySource),
     /// Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
     ///
     /// `metadata.types:write` alone covers adding optional fields that no stored row holds a value under, and changing the label, description, display hints and version. Any other change, removing a field included, needs `schema.write`.
@@ -55,6 +57,10 @@ pub fn register_request(definition: serde_json::Value) -> Request {
     Request::post(&["types"]).json(definition)
 }
 
+pub fn normalize_request(definition: serde_json::Value) -> Request {
+    Request::post(&["types", "normalize"]).json(definition)
+}
+
 pub fn replace_request(id: &str, definition: serde_json::Value) -> Request {
     Request::put(&["types", id]).json(definition)
 }
@@ -76,6 +82,7 @@ pub fn run(command: TypesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
         TypesCommand::Register(body) => register_request(body.read()?),
+        TypesCommand::Normalize(body) => normalize_request(body.read()?),
         TypesCommand::Replace { id, body } => replace_request(id, body.read()?),
         TypesCommand::Delete { id, force } => delete_request(id, *force),
         TypesCommand::Drift => drift_request(),

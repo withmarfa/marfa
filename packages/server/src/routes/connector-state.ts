@@ -1,3 +1,9 @@
+import {
+  ConnectorProblemsSchema,
+  MAX_PROBLEMS_BYTES,
+  MAX_PROBLEMS,
+  MAX_PROBLEM_LENGTH,
+} from "./_connector-problems.js";
 import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
@@ -61,6 +67,9 @@ const WAITING =
 
 const ConnectorStateSchema = z
   .object({
+    problems: ConnectorProblemsSchema.describe(
+      "The source's current problems, by opaque key; `{}` if there are none.",
+    ),
     state: JsonObject.describe(
       "The document as last written; `{}` if none was.",
     ),
@@ -75,6 +84,9 @@ const ConnectorStateSchema = z
   .openapi("ConnectorState");
 
 const WrittenStateSchema = z.object({
+  problems: ConnectorProblemsSchema.describe(
+    "The source's current problems, by opaque key; `{}` if there are none.",
+  ),
   state: JsonObject.describe("The document as written."),
   updated_at: z.string().describe("When it was written."),
 });
@@ -97,6 +109,9 @@ const HoldInputSchema = z.object({ process: ProcessSchema });
 
 const StateInputSchema = z.object({
   process: HolderSchema,
+  problems: ConnectorProblemsSchema.optional().describe(
+    "The source's current problems. Leave it out to preserve the current map; send `{}` to clear it.",
+  ),
   state: JsonObject.describe(
     `The new document, a JSON object of at most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. It replaces the whole document.`,
   ),
@@ -299,7 +314,7 @@ const putStateRoute = createRoute({
       description: "Returns the document as written.",
     },
     ...badRequest(
-      `- \`missing_required_field\`: \`process\` or \`state\` is missing.\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, \`state\` isn't a JSON object or is over ${String(MAX_STATE_BYTES / 1024)} KiB serialized, or ${UNKNOWN_FIELD}.`,
+      `- \`missing_required_field\`: \`process\` or \`state\` is missing.\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, \`state\` isn't a JSON object or is over ${String(MAX_STATE_BYTES / 1024)} KiB serialized, a problems map is over its entry, message or serialized size limits, or ${UNKNOWN_FIELD}.`,
     ),
     ...ownKeyResponses,
     ...fencedResponse,
@@ -313,7 +328,7 @@ const deleteStateRoute = createRoute({
   tags: ["Connectors"],
   summary: "Delete the state document",
   description:
-    "Deletes the state document and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
+    "Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -515,10 +530,28 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
-    const sent = await c.req.json<{ state: Record<string, unknown> }>();
+    const sent = await c.req.json<{
+      state: Record<string, unknown>;
+      problems?: Record<string, string>;
+    }>();
     refuseUnknownBodyKeys(sent, StateInputSchema);
     const { process } = c.req.valid("json");
-    const { state } = sent;
+    const { state, problems } = sent;
+    if (
+      problems !== undefined &&
+      (Object.keys(problems).length > MAX_PROBLEMS ||
+        Object.values(problems).some(
+          (message: unknown) =>
+            typeof message !== "string" || message.length > MAX_PROBLEM_LENGTH,
+        ) ||
+        serializedBytes(problems) > MAX_PROBLEMS_BYTES)
+    ) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "A problems map has at most 200 string messages of 500 UTF-16 code units each and 512 KiB serialized",
+        { field: "problems" },
+      );
+    }
     if (serializedBytes(state) > MAX_STATE_BYTES) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -527,9 +560,10 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       );
     }
     const written = await storage.connectorState.putState(
-      { connectorId: connector.id, process },
+      { connectorId: connector.id, keyId: key.id, process },
       connector.source,
       state,
+      problems,
     );
     if (!("state" in written)) throw held(written.expires_at);
     return c.json(written, 200);
@@ -585,7 +619,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       );
     }
     const written = await storage.connectorState.writeAgreements(
-      { connectorId: connector.id, process: body.process },
+      { connectorId: connector.id, keyId: key.id, process: body.process },
       connector.source,
       { set, clear },
       (type) => mayReadType(key, type),

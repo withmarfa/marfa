@@ -1,7 +1,6 @@
 // Server-side resolvers for inheritance-aware views of a type schema. Walk the
 // type's inheritance chain and merge block-by-block. Pure functions — used at
-// 409-response assembly time (merge policy) and at both type reads (full
-// schema, and roles on the list) so callers always see a fully-resolved view.
+// 409-response assembly time (merge policy), type reads and normalization.
 //
 // Codegen resolves merge_policy at build time for shipped types
 // (`packages/types/scripts/generate.ts`), and these mirror it. Roles are not
@@ -99,8 +98,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * Resolves the effective type schema for `typeId` by walking its parent chain
  * and returning an inheritance-resolved view:
  *
- * - `fields` — merged root→leaf, per-key. Children cannot redeclare ancestor
- *   fields (enforced at POST /types), so per-key merge is equivalent to union.
+ * - `fields`: merged root→leaf, per-key, preserving child-owned refinements.
  * - `display_hints` — nearest-ancestor-wins. The first ancestor with a
  *   non-undefined block (starting from the leaf) supplies the whole block.
  * - `version_policy` — merged root→leaf, per-key, which is

@@ -728,7 +728,7 @@ When `PUT /connectors/{id}/state` names a `state` of exactly 512 KiB serialized,
 
 ### `connectors/state-body-over-cap`
 
-If a body sent to `PUT /connectors/{id}/state` is larger than the request cap, 1048576 bytes unless `MARFA_MAX_REQUEST_BYTES` names another, then the server MUST answer `413 request_too_large`.
+If a body sent to `PUT /connectors/{id}/state` is larger than the state request cap of 1049211 bytes, then the server MUST answer `413 request_too_large`.
 
 **Reason:** a state of more than 512 KiB serialized in a body within the request cap is the state's own refusal, `connectors/state-over-cap`, and a larger body is the cap's.
 
@@ -736,7 +736,7 @@ If a body sent to `PUT /connectors/{id}/state` is larger than the request cap, 1
 
 ### `connectors/state-body-at-cap`
 
-When a body sent to `PUT /connectors/{id}/state` is exactly the request cap and names a `state` within its own cap, the server MUST take it.
+When a body sent to `PUT /connectors/{id}/state` is exactly the state request cap of 1049211 bytes and names a `state` within its own cap, the server MUST take it.
 
 **Tests:** `compliance/connector-bounds.test.ts › takes a state body of exactly the request cap, refuses a state over its own cap inside it, and answers 413 to one byte more`.
 
@@ -1269,3 +1269,83 @@ If the connector's own key sends `PUT /connectors/{id}/state` or `POST /connecto
 If the connector's own key sends, for a process that holds no live hold, `PUT /connectors/{id}/state` with a state of more than 512 KiB, or `POST /connectors/{id}/agreements` with a batch that names a row twice or holds a record of more than 16 KiB, then the server MUST answer `400 validation_error` and not `409 connector_held`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a state or a batch the door refuses 400 before the fence's 409`.
+
+## Current problems
+
+### `connectors/problems-source`
+
+When `GET /connectors`, `GET /connectors/{id}`, `POST /connectors` or `GET /connectors/{id}/state` returns a connector, the server MUST include the source's current `problems` as an object of string messages by opaque key, initially `{}`.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-state-write`
+
+When the connector's own key sends `PUT /connectors/{id}/state` with a valid `problems` map under its process's live hold, the server MUST replace the source's state document and current problems in the same transaction.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-omitted`
+
+When `PUT /connectors/{id}/state` omits `problems`, the server MUST preserve the source's current problems.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-clear`
+
+When `PUT /connectors/{id}/state` carries `problems: {}`, the server MUST clear the source's current problems.
+
+**Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
+
+### `connectors/problems-lifetime`
+
+When a registration is repeated or deleted, its key is revoked, a successor key registers under its source, or the server restarts, the server MUST preserve the source's current problems.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-unrelated-success`
+
+When a connector sends a heartbeat or reports a succeeded run, the server MUST preserve its source's current problems.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-delete-state`
+
+When an authorized caller sends `DELETE /connectors/{id}/state`, the server MUST clear the source's current problems together with its state and agreements.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-bounds`
+
+If a `problems` map in `PUT /connectors/{id}/state` exceeds 200 entries, 500 UTF-16 code units in one message or 512 KiB serialized as UTF-8 within the state request cap, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
+
+### `connectors/problems-independent-cap`
+
+When `PUT /connectors/{id}/state` carries a state and a problems map each within its own 512 KiB serialized UTF-8 cap, with a valid process name of at most 100 UTF-16 code units, the server MUST admit their combined compact JSON envelope within its state request cap of 1049211 bytes.
+
+**Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
+
+### `connectors/problems-refused-unchanged`
+
+If `PUT /connectors/{id}/state` is refused, then the server MUST preserve the source's current problems and state document.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`, `› accepts independent maximum documents and rejects problem bounds without partial writes`.
+
+### `connectors/fence-current-key`
+
+When a process writes state, problems or agreements, the server MUST check the registration's owning key is still unrevoked and unexpired in the transaction that commits the write.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-private-state`
+
+When a registration is returned, the server MUST omit its source's private state document.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+
+### `connectors/problems-cli`
+
+When `marfa connectors list` returns a registration, the CLI MUST include its current problems.
+
+**Tests:** `cli/connectors.test.ts › registers, heartbeats, reports a run, and is removed by the operator`.

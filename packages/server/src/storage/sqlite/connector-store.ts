@@ -13,7 +13,12 @@ import {
   decodeKeyedCursor,
   encodeKeyedCursor,
 } from "../interface.js";
-import { connectorHolds, connectorRuns, connectors } from "./schema.js";
+import {
+  connectorHolds,
+  connectorRuns,
+  connectors,
+  connectorStates,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /** Runs kept per connector: a bound on the table, not a retention. */
@@ -56,7 +61,15 @@ export class SqliteConnectorStore implements ConnectorStore {
         ),
       )
       .get();
+    const state = await this.db
+      .select({ problems: connectorStates.problems })
+      .from(connectorStates)
+      .where(eq(connectorStates.source, row.source))
+      .get();
     return {
+      problems: state
+        ? (JSON.parse(state.problems) as Record<string, string>)
+        : {},
       id: row.id,
       key_id: row.key_id,
       source: row.source,

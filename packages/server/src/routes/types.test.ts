@@ -1,3 +1,4 @@
+import { canonicalTypeDefinition } from "./_canonical-type.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -1209,4 +1210,189 @@ describe("type versions", () => {
     const givenBody = (await given.json()) as { type: { version: number } };
     expect(givenBody.type.version).toBe(4);
   });
+});
+
+describe("POST /types/normalize", () => {
+  it("normalizes without write grants, mutation or audit and compares declared and resolved forms", async () => {
+    const keyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.workingKey,
+      body: {
+        label: "reader",
+        source: "normalize-reader",
+        permissions: [],
+        type_permissions: {},
+        metadata_permissions: {},
+      },
+    });
+    const { key } = (await keyRes.json()) as { key: string };
+    const input = {
+      id: "demo.normalize_candidate",
+      fields: {
+        address: { type: "string", format: "url" },
+        tags: {
+          type: "array",
+          items_type: "string",
+          format: "email",
+          searchable: false,
+        },
+        title: { type: "string" },
+      },
+      required: ["title"],
+    };
+    const send = () =>
+      request(ctx.app, "POST", "/types/normalize", { key, body: input });
+    const first = await send();
+    expect(first.status).toBe(200);
+    const normalized = (await first.json()) as {
+      type: TypeSchema;
+      registered_type: unknown;
+      resolved_type: unknown;
+    };
+    expect(normalized).toMatchObject({
+      type: {
+        label: "Normalize Candidate",
+        version: 0,
+        fields: {
+          address: { type: "url", searchable: true },
+          tags: { type: "array", items_type: "email", searchable: false },
+          title: { required: true },
+        },
+      },
+      registered_type: null,
+      resolved_type: null,
+    });
+    expect(
+      (
+        await request(ctx.app, "GET", "/types/demo.normalize_candidate", {
+          key,
+        })
+      ).status,
+    ).toBe(404);
+    expect(await (await send()).json()).toEqual(normalized);
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: input,
+    });
+    expect(registered.status).toBe(201);
+    const repeat = await send();
+    expect(repeat.status).toBe(200);
+    const result = (await repeat.json()) as typeof normalized;
+    expect(result.type).toEqual(result.registered_type);
+    expect(result.resolved_type).toEqual(
+      canonicalTypeDefinition(
+        (await (
+          await request(ctx.app, "GET", "/types/demo.normalize_candidate", {
+            key,
+          })
+        ).json()) as TypeSchema,
+      ),
+    );
+  });
+  it("refuses unknown fields and missing parents without saving a type", async () => {
+    for (const body of [
+      { id: "demo.normalize_invalid", fields: {}, unexpected: true },
+      {
+        id: "demo.normalize_invalid",
+        fields: {},
+        parent: "demo.absent_parent",
+      },
+    ]) {
+      const res = await request(ctx.app, "POST", "/types/normalize", {
+        key: ctx.workingKey,
+        body,
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(
+      (
+        await request(ctx.app, "GET", "/types/demo.normalize_invalid", {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(404);
+  });
+});
+
+it("keeps child-owned refinements declared while resolving the registered parent", async () => {
+  const parent = {
+    id: "demo.normalize_parent",
+    fields: {
+      title: { type: "string", maxLength: 100, searchable: false },
+      parent_only: { type: "string" },
+    },
+    roles: ["container"],
+    merge_policy: { fields: { title: "last_writer_wins" } },
+  };
+  expect(
+    (
+      await request(ctx.app, "POST", "/types", {
+        key: ctx.workingKey,
+        body: parent,
+      })
+    ).status,
+  ).toBe(201);
+  const candidate = {
+    id: "demo.normalize_child",
+    parent: parent.id,
+    version: 7,
+    fields: {
+      title: {
+        type: "string",
+        required: true,
+        maxLength: 100,
+        searchable: false,
+      },
+    },
+    display_hints: { title_field: "title" },
+    version_policy: { max_versions: 20 },
+  };
+  expect(
+    (
+      await request(ctx.app, "POST", "/types", {
+        key: ctx.workingKey,
+        body: candidate,
+      })
+    ).status,
+  ).toBe(201);
+  const before = await ctx.storage.types.get(candidate.id);
+  const audits = async () =>
+    (
+      ctx.storage as unknown as {
+        __sqliteAll: (sql: string) => Promise<unknown[]>;
+      }
+    ).__sqliteAll(
+      `SELECT * FROM audit_log WHERE resource_id = '${candidate.id}'`,
+    );
+  const witnessed = await audits();
+  expect(witnessed.length).toBeGreaterThan(0);
+  const response = await request(ctx.app, "POST", "/types/normalize", {
+    key: ctx.workingKey,
+    body: candidate,
+  });
+  expect(response.status).toBe(200);
+  const result = (await response.json()) as {
+    type: TypeSchema;
+    registered_type: TypeSchema;
+    resolved_type: TypeSchema;
+  };
+  expect(result.type).toEqual(result.registered_type);
+  expect(result.registered_type.fields).not.toHaveProperty("parent_only");
+  expect(result.registered_type.fields.title).toMatchObject({
+    required: true,
+    maxLength: 100,
+    searchable: false,
+  });
+  expect(result.resolved_type).toEqual(
+    canonicalTypeDefinition(
+      (await (
+        await request(ctx.app, "GET", `/types/${candidate.id}`, {
+          key: ctx.workingKey,
+        })
+      ).json()) as TypeSchema,
+    ),
+  );
+  expect(result.resolved_type.fields).toHaveProperty("parent_only");
+  expect(result.resolved_type.roles).toContain("container");
+  expect(await ctx.storage.types.get(candidate.id)).toEqual(before);
+  expect(await audits()).toEqual(witnessed);
 });

@@ -1077,14 +1077,14 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
     assert_eq!(query(&released, "process").as_deref(), Some("p1"));
     assert_eq!(released.body, Body::None);
 
-    let put = connectors::state_put_request("c1", "p1", json!({ "cursor": "c" })).unwrap();
+    let put = connectors::state_put_request("c1", "p1", json!({ "cursor": "c" }), None).unwrap();
     assert_eq!(put.method, Method::Put);
     assert_eq!(put.path(), "/connectors/c1/state");
     assert_eq!(
         put.body,
         Body::Json(json!({ "process": "p1", "state": { "cursor": "c" } }))
     );
-    let not_an_object = connectors::state_put_request("c1", "p1", json!([1]));
+    let not_an_object = connectors::state_put_request("c1", "p1", json!([1]), None);
     assert!(
         matches!(not_an_object, Err(CliError::Invalid(_))),
         "{not_an_object:?}"
@@ -1230,6 +1230,36 @@ mod dispatch {
     const QUIET: Printer = Printer { json: true };
 
     #[test]
+    fn type_normalization_sends_the_declared_input_to_its_read_door() {
+        let definition = json!({
+            "id": "user.normalized",
+            "fields": { "title": { "type": "string" } },
+            "required": ["title"]
+        });
+        let door = Door::open(vec![Answer::json(
+            "200 OK",
+            r#"{"type":{},"registered_type":null,"resolved_type":null}"#,
+        )]);
+        types::run(
+            types::TypesCommand::Normalize(BodySource {
+                body: Some(definition.to_string()),
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/types/normalize");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            definition
+        );
+    }
+
+    #[test]
     fn a_delete_carries_the_idempotency_key_it_was_given() {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(
@@ -1367,4 +1397,21 @@ fn the_key_doors_send_the_selector_they_were_given() {
         body(&moved),
         &json!({ "type": "t", "links": ["v"], "settled_at": "2026-01-01T00:00:00Z" })
     );
+}
+
+#[test]
+fn connector_state_can_publish_and_clear_current_problems() {
+    let problems =
+        connectors::state_put_request("c1", "p1", json!({}), Some(r#"{"feed":"Unavailable"}"#))
+            .unwrap();
+    assert_eq!(
+        problems.body,
+        Body::Json(json!({"process":"p1","state":{},"problems":{"feed":"Unavailable"}}))
+    );
+    let clear = connectors::state_put_request("c1", "p1", json!({}), Some("{}")).unwrap();
+    assert_eq!(
+        clear.body,
+        Body::Json(json!({"process":"p1","state":{},"problems":{}}))
+    );
+    assert!(connectors::state_put_request("c1", "p1", json!({}), Some(r#"{"feed":3}"#)).is_err());
 }

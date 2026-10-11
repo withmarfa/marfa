@@ -175,6 +175,7 @@ const OPEN_BY_ROW: Record<string, string> = {
   "GET /connectors/:id": PRIVATE_READ,
   "GET /connectors/:id/runs": PRIVATE_READ,
   "GET /types": EVERYONE,
+  "POST /types/normalize": EVERYONE,
   "GET /types/:id": EVERYONE,
   "GET /edge-types": EVERYONE,
   "GET /connectors/:id/agreements": OWNER,
@@ -490,6 +491,8 @@ function rank(door: string): number {
 
 /** A body naming the seeded rows where the door looks rows up by body. */
 function withSeededRows(door: string, body: unknown): unknown {
+  if (door === "POST /types/normalize")
+    return { id: "user.census_normalize", fields: {} };
   if (door === "POST /connectors/:id/deliveries/handled") {
     return { ...(body as object), ids: [ROWS.delivery] };
   }

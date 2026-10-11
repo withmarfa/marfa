@@ -981,7 +981,11 @@ export class MarfaClient {
 
   async replaceConnectorState(
     id: string,
-    input: { process: string; state: Record<string, unknown> },
+    input: {
+      process: string;
+      state: Record<string, unknown>;
+      problems?: Record<string, string>;
+    },
   ): Promise<ApiResponse<ConnectorStateWritten>> {
     return this.request<ConnectorStateWritten>(`/connectors/${id}/state`, {
       method: "PUT",

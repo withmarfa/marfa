@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { LiveFrame } from "../pubsub.js";
 import {
   __resetEventLogForTests,
@@ -523,4 +523,246 @@ describe("who reaches these doors", () => {
       });
     }
   });
+});
+
+describe("source problems", () => {
+  it.each([
+    { kind: "non-string", invalid: 3 },
+    { kind: "oversized", invalid: "x".repeat(501) },
+  ])(
+    "refuses opaque __proto__ messages that are $kind without changing stored state or problems",
+    async ({ invalid }) => {
+      const { key, connector: mine } = await connector();
+      await hold(key, mine.id);
+      const write = (state: unknown, message: unknown) =>
+        request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+          key,
+          body: {
+            process: "p",
+            state,
+            problems: Object.fromEntries([["__proto__", message]]),
+          },
+        });
+      const legal = "😀".repeat(250);
+      const accepted = await write({ cursor: "kept" }, legal);
+      expect(accepted.status).toBe(200);
+      const witnessed = await json(accepted);
+      expect(witnessed).toMatchObject({
+        problems: Object.fromEntries([["__proto__", legal]]),
+      });
+      const refused = await write({ cursor: "refused" }, invalid);
+      expect(refused.status).toBe(400);
+      expect(await json(refused)).toMatchObject({
+        error: { code: "validation_error" },
+      });
+      expect(
+        await json(
+          await request(ctx.app, "GET", `/connectors/${mine.id}/state`, {
+            key,
+          }),
+        ),
+      ).toEqual(witnessed);
+      const registration = await request(
+        ctx.app,
+        "GET",
+        `/connectors/${mine.id}`,
+        {
+          key: ctx.managementKey,
+        },
+      );
+      expect(registration.status).toBe(200);
+      expect(await json<Connector>(registration)).toMatchObject({
+        problems: Object.fromEntries([["__proto__", legal]]),
+      });
+    },
+  );
+  it("publishes problems with state, preserves omission, clears explicitly and survives registration replacement", async () => {
+    const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
+    const problems = JSON.parse(
+      '{"__proto__":"Opaque key", "vendor/feed":"Feed unavailable"}',
+    ) as Record<string, string>;
+    const write = (body: Record<string, unknown>) =>
+      request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+        key,
+        body: { process: "p", state: { private: "cursor" }, ...body },
+      });
+    expect((await write({ problems })).status).toBe(200);
+    const get = async () =>
+      json<{ problems: Record<string, string> }>(
+        await request(ctx.app, "GET", `/connectors/${mine.id}/state`, { key }),
+      );
+    expect((await get()).problems).toEqual(problems);
+    expect(
+      (
+        await json<Connector>(
+          await request(ctx.app, "GET", `/connectors/${mine.id}`, { key }),
+        )
+      ).problems,
+    ).toEqual(problems);
+    expect((await write({})).status).toBe(200);
+    expect((await get()).problems).toEqual(problems);
+    expect((await write({ process: "other", problems: {} })).status).toBe(409);
+    expect((await get()).problems).toEqual(problems);
+    const repeated = await request(ctx.app, "POST", "/connectors", {
+      key,
+      body: { name: "Repeated" },
+    });
+    expect((await json<Connector>(repeated)).problems).toEqual(problems);
+    expect(
+      (await request(ctx.app, "DELETE", `/connectors/${mine.id}`, { key }))
+        .status,
+    ).toBe(200);
+    const replacement = await json<Connector>(
+      await request(ctx.app, "POST", "/connectors", {
+        key,
+        body: { name: "Replacement" },
+      }),
+    );
+    expect(replacement.problems).toEqual(problems);
+    await hold(key, replacement.id);
+    expect(
+      (
+        await request(ctx.app, "PUT", `/connectors/${replacement.id}/state`, {
+          key,
+          body: { process: "p", state: {}, problems: {} },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await json<Connector>(
+          await request(ctx.app, "GET", `/connectors/${replacement.id}`, {
+            key,
+          }),
+        )
+      ).problems,
+    ).toEqual({});
+  });
+  it("accepts both maximum documents and rejects message, count and UTF-8 map bounds atomically", async () => {
+    const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
+    const state = { bytes: "x".repeat(512 * 1024 - 12) };
+    const legal = { ["k".repeat(512 * 1024 - 7)]: "" };
+    const write = (problems: unknown) =>
+      request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+        key,
+        body: { process: "p", state, problems },
+      });
+    expect((await write(legal)).status).toBe(200);
+    for (const problems of [
+      { bad: "x".repeat(501) },
+      Object.fromEntries(
+        Array.from({ length: 201 }, (_, i) => [String(i), "bad"]),
+      ),
+      { ["é".repeat(256 * 1024)]: "bad" },
+      { bad: 3 },
+    ])
+      expect((await write(problems)).status).toBe(400);
+    expect(
+      (
+        await json<{ problems: unknown }>(
+          await request(ctx.app, "GET", `/connectors/${mine.id}/state`, {
+            key,
+          }),
+        )
+      ).problems,
+    ).toEqual(legal);
+  });
+});
+
+it("refuses a revoked key's in-flight state write after a successor publishes problems", async () => {
+  const { key, keyId, connector: mine } = await connector();
+  await hold(key, mine.id);
+  const original = ctx.storage.connectorState.putState.bind(
+    ctx.storage.connectorState,
+  );
+  let entered!: () => void;
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spy = vi
+    .spyOn(ctx.storage.connectorState, "putState")
+    .mockImplementationOnce(async (...args) => {
+      entered();
+      await blocked;
+      return original(...args);
+    });
+  const stale = request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+    key,
+    body: {
+      process: "p",
+      state: { cursor: "old" },
+      problems: { feed: "Old problem" },
+    },
+  });
+  try {
+    await reached;
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/keys/${keyId}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const minted = await request(ctx.app, "POST", "/keys", {
+      key: ctx.workingKey,
+      body: { label: "successor", source: mine.source },
+    });
+    expect(minted.status).toBe(201);
+    const { key: successorKey } = await json<{ key: string }>(minted);
+    const successor = await json<Connector>(
+      await request(ctx.app, "POST", "/connectors", {
+        key: successorKey,
+        body: { name: "successor" },
+      }),
+    );
+    await hold(successorKey, successor.id);
+    expect(
+      (
+        await request(ctx.app, "PUT", `/connectors/${successor.id}/state`, {
+          key: successorKey,
+          body: {
+            process: "p",
+            state: { cursor: "new" },
+            problems: { feed: "New problem" },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    release();
+    expect((await stale).status).toBe(401);
+    expect(
+      await json(
+        await request(ctx.app, "GET", `/connectors/${successor.id}/state`, {
+          key: successorKey,
+        }),
+      ),
+    ).toMatchObject({
+      state: { cursor: "new" },
+      problems: { feed: "New problem" },
+    });
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/connectors/${successor.id}/state`, {
+          key: successorKey,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      await json(
+        await request(ctx.app, "GET", `/connectors/${successor.id}/state`, {
+          key: successorKey,
+        }),
+      ),
+    ).toEqual({ state: {}, problems: {}, updated_at: null });
+  } finally {
+    release();
+    await stale;
+    spy.mockRestore();
+  }
 });

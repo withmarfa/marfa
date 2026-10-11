@@ -1,3 +1,7 @@
+import {
+  canonicalTypeDefinition,
+  labelledTypeDefinition as labelled,
+} from "./_canonical-type.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -37,7 +41,7 @@ import {
   requireTypeReplacement,
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
-import { MergePolicySchema, wholeListOf } from "./_schemas.js";
+import { MergePolicySchema, nullableRef, wholeListOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -279,7 +283,7 @@ const TypeDefinitionInputSchema = z
       .string()
       .describe("The type's identifier, such as `acme.deal` or `user.recipe`."),
   })
-  .describe("A type to register.")
+  .describe("A declared item type.")
   .openapi("TypeDefinitionInput");
 
 /**
@@ -342,17 +346,6 @@ const refuseAsTheValidatorWould = (
     })),
   });
 };
-
-/** Gives a schema naming no label one made from its identifier's last segment. */
-function labelled<T extends { id: string; label?: string }>(schema: T): T {
-  if (!schema.label) {
-    const lastSegment = schema.id.split(".").pop() ?? schema.id;
-    schema.label = lastSegment
-      .replace(/[_-]/g, " ")
-      .replace(/\b\w/g, (ch) => ch.toUpperCase());
-  }
-  return schema;
-}
 
 /** The refusal both authoring doors give a schema the validator refused. */
 function schemaRefusal(errors: SchemaValidationIssue[]): MarfaError {
@@ -609,6 +602,52 @@ const registerTypeRoute = createRoute({
   },
 });
 
+const normalizeTypeRoute = createRoute({
+  operationId: "normalizeType",
+  method: "post",
+  path: "/normalize",
+  tags: ["Types"],
+  summary: "Normalize a type",
+  description:
+    "Normalizes a candidate definition and returns its declared form, the registered declared definition and the registered resolved definition. It does not register or replace a type.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: { "application/json": { schema: TypeDefinitionInputSchema } },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              type: TypeSchemaResponse.describe(
+                "The normalized candidate's declared definition, including its label and defaults.",
+              ),
+              registered_type: nullableRef(TypeSchemaResponse).describe(
+                "The canonical registered type's declared definition; `null` if its identifier is not registered.",
+              ),
+              resolved_type: nullableRef(TypeSchemaResponse).describe(
+                "The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`; `null` if its identifier is not registered.",
+              ),
+            })
+            .describe(
+              "Canonical definitions from one registry view, with field defaults made explicit as `required: false` and `searchable: true`.",
+            )
+            .openapi("NormalizedType"),
+        },
+      },
+      description:
+        "Returns the normalized candidate and the registered definitions.",
+    },
+    400: registerTypeRoute.responses[400],
+    401: registerTypeRoute.responses[401],
+    409: getTypeRoute.responses[409],
+    422: registerTypeRoute.responses[422],
+  },
+});
+
 const replaceTypeRoute = createRoute({
   operationId: "replaceType",
   method: "put",
@@ -845,6 +884,40 @@ export function typeRoutes(storage: Storage) {
     }
     return c.json(schema, 200);
   });
+
+  router.openapi(
+    normalizeTypeRoute,
+    async (c) => {
+      requireAuth(c);
+      const body = c.req.valid("json");
+      if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
+        throw malformedTypeIdentifier(
+          "id",
+          `Invalid type identifier: ${body.id}`,
+        );
+      }
+      const result = await storage.runInReadSnapshot(
+        () => {
+          const validated = validateTypeSchema(body);
+          if (!validated.success) throw schemaRefusal(validated.errors);
+          const type = canonicalTypeDefinition(validated.data);
+          if (type.parent) validateParentChain(type.id, type.parent);
+          const stored = getTypeSchema(type.id);
+          const registered_type = stored
+            ? canonicalTypeDefinition(stored)
+            : null;
+          const resolved = resolveTypeSchema(type.id, getTypeSchema);
+          const resolved_type = resolved
+            ? canonicalTypeDefinition(resolved)
+            : null;
+          return { type, registered_type, resolved_type };
+        },
+        { signal: c.req.raw.signal },
+      );
+      return c.json(result, 200);
+    },
+    refuseAsTheValidatorWould,
+  );
 
   router.openapi(
     registerTypeRoute,

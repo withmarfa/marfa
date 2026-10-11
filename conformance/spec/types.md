@@ -771,3 +771,59 @@ If `DELETE /platform-types/{id}` names an identifier no registry row carries, th
 If a credential lacking `instance.read` sends `GET /platform-types/drift`, or one lacking `instance.maintain` sends `DELETE /platform-types/{id}`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/platform-types.test.ts › refuses removal without instance.maintain`, `› refuses the listing without instance.read and to no credential`.
+
+## Normalizing a candidate
+
+### `types/normalize-authenticated`
+
+When an authenticated caller sends `POST /types/normalize`, the server MUST admit the request without requiring type or metadata write permissions.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-answer`
+
+When a valid candidate is sent to `POST /types/normalize`, the server MUST return its canonical declared definition in `type`, the canonical declared registered definition in `registered_type` and the canonical registered definition resolved as on `GET /types/{id}` in `resolved_type`, from one registry view.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-absent`
+
+When a candidate's identifier is not registered, the server MUST return `null` for `registered_type` and `resolved_type` from `POST /types/normalize`.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-defaults`
+
+When `POST /types/normalize` returns a definition, the server MUST make field defaults explicit as `required: false` and `searchable: true`, derive a missing label as on registration and use registration's default version of 0.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-declared-refinements`
+
+When `POST /types/normalize` returns `type` or `registered_type`, the server MUST preserve the leaf's own inherited-field refinements, policies, roles and version without adding fields declared only by its ancestors.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-validation`
+
+If a candidate sent to `POST /types/normalize` fails registration's schema or parent-chain validation, then the server MUST refuse it with the same validation status and code as registration.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-no-write`
+
+When `POST /types/normalize` succeeds or is refused, the server MUST leave the type registry unchanged.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-no-audit`
+
+When `POST /types/normalize` succeeds or is refused, the server MUST create no audit entry.
+
+**Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-cli`
+
+When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
+
+**Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.

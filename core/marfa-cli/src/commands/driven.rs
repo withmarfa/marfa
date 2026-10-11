@@ -300,7 +300,9 @@ fn file_body(words: &[String]) -> &'static str {
         ["items", "bulk"] => r#"{"items":[]}"#,
         ["edges", "bulk"] => r#"{"edges":[]}"#,
         ["connectors", "agreements", "write"] => r#"{"clear":[]}"#,
-        ["types", "register"] | ["edge-types", "register"] => r#"{"id":"user.x"}"#,
+        ["types", "register"] | ["types", "normalize"] | ["edge-types", "register"] => {
+            r#"{"id":"user.x"}"#
+        }
         _ => "{}",
     }
 }

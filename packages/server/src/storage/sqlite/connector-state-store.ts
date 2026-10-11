@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type {
   ConnectorAgreement,
@@ -11,6 +12,8 @@ import {
   encodeKeyedCursor,
 } from "../interface.js";
 import {
+  apiKeys,
+  connectors,
   connectorAgreements,
   connectorHolds,
   connectorStates,
@@ -33,9 +36,25 @@ function toAgreement(row: AgreementRow): ConnectorAgreement {
 /** Read inside the write's own transaction, so no hold changes between. */
 async function unheld(
   tx: SqliteTxContext,
-  fence: { connectorId: string; process: string },
+  fence: { connectorId: string; keyId: string; process: string },
   now: string,
 ): Promise<ConnectorHeld | null> {
+  const authority = await tx
+    .select({ key: apiKeys })
+    .from(connectors)
+    .innerJoin(apiKeys, eq(apiKeys.id, connectors.key_id))
+    .where(eq(connectors.id, fence.connectorId))
+    .get();
+  if (
+    authority?.key.id !== fence.keyId ||
+    authority.key.revoked_at !== null ||
+    (authority.key.expires_at !== null && authority.key.expires_at <= now)
+  ) {
+    throw new MarfaError(
+      ErrorCode.UNAUTHORIZED,
+      "The connector's key no longer has authority",
+    );
+  }
   const hold = await tx
     .select()
     .from(connectorHolds)
@@ -49,48 +68,80 @@ async function unheld(
 export class SqliteConnectorStateStore implements ConnectorStateStore {
   constructor(private db: DrizzleDb) {}
 
-  async getState(
-    source: string,
-  ): Promise<{ state: Record<string, unknown>; updated_at: string | null }> {
+  async getState(source: string): Promise<{
+    state: Record<string, unknown>;
+    problems: Record<string, string>;
+    updated_at: string | null;
+  }> {
     const row = await this.db
       .select()
       .from(connectorStates)
       .where(eq(connectorStates.source, source))
       .get();
     return row === undefined
-      ? { state: {}, updated_at: null }
+      ? { state: {}, problems: {}, updated_at: null }
       : {
           state: JSON.parse(row.state) as Record<string, unknown>,
+          problems: JSON.parse(row.problems) as Record<string, string>,
           updated_at: row.updated_at,
         };
   }
 
   async putState(
-    fence: { connectorId: string; process: string },
+    fence: { connectorId: string; keyId: string; process: string },
     source: string,
     state: Record<string, unknown>,
+    problems?: Record<string, string>,
   ): Promise<
-    { state: Record<string, unknown>; updated_at: string } | ConnectorHeld
+    | {
+        state: Record<string, unknown>;
+        problems: Record<string, string>;
+        updated_at: string;
+      }
+    | ConnectorHeld
   > {
     return this.db.transaction(async (tx) => {
       const now = new Date().toISOString();
       const refused = await unheld(tx, fence, now);
       if (refused !== null) return refused;
+      const previous =
+        problems === undefined
+          ? await tx
+              .select({ problems: connectorStates.problems })
+              .from(connectorStates)
+              .where(eq(connectorStates.source, source))
+              .get()
+          : undefined;
+      const currentProblems =
+        problems ??
+        (previous
+          ? (JSON.parse(previous.problems) as Record<string, string>)
+          : {});
       const serialized = JSON.stringify(state);
+      const serializedProblems = JSON.stringify(currentProblems);
       await tx
         .insert(connectorStates)
-        .values({ source, state: serialized, updated_at: now })
+        .values({
+          source,
+          state: serialized,
+          problems: serializedProblems,
+          updated_at: now,
+        })
         .onConflictDoUpdate({
           target: connectorStates.source,
-          set: { state: serialized, updated_at: now },
+          set: {
+            state: serialized,
+            problems: serializedProblems,
+            updated_at: now,
+          },
         })
         .run();
-      return { state, updated_at: now };
+      return { state, problems: currentProblems, updated_at: now };
     });
   }
 
   async writeAgreements(
-    fence: { connectorId: string; process: string },
+    fence: { connectorId: string; keyId: string; process: string },
     source: string,
     batch: {
       set: {

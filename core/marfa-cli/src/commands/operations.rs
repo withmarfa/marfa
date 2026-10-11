@@ -54,6 +54,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("deleteEdgeType", "edge-types delete"),
     reached("listTypes", "types list"),
     reached("registerType", "types register"),
+    reached("normalizeType", "types normalize"),
     reached("getType", "types get"),
     reached("replaceType", "types replace"),
     reached("deleteType", "types delete"),

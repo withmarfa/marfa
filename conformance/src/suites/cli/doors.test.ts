@@ -3,6 +3,7 @@ import {
   cleanup,
   trackEdgeType,
   trackItem,
+  trackKey,
   trackType,
 } from "../../utils/setup.js";
 import { cliContext, once, releaseHeld, unique } from "./harness.js";
@@ -39,6 +40,71 @@ async function note(title: string, body = "b"): Promise<string> {
 }
 
 describe("types and edge types", () => {
+  it("normalizes an inline or stdin declaration with a read-only key and compares the registered definition", async () => {
+    const minted = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "type-reader",
+      "--source",
+      unique("cli-normalize"),
+      "--metadata-permission",
+      "types=read",
+    ]);
+    trackKey(c.ctx, minted.id);
+    const reader = c.cli.as(minted.key);
+    const id = `user.${unique("clinormalize").replace(/-/g, "")}`;
+    const input = {
+      id,
+      fields: { address: { type: "string", format: "url" } },
+      required: ["address"],
+    };
+    interface Normalized {
+      type: Record<string, unknown>;
+      registered_type: unknown;
+      resolved_type: unknown;
+    }
+    const first = await reader.json<Normalized>([
+      "types",
+      "normalize",
+      "--body",
+      JSON.stringify(input),
+    ]);
+    expect(first).toMatchObject({
+      type: {
+        id,
+        version: 0,
+        fields: { address: { type: "url", required: true, searchable: true } },
+      },
+      registered_type: null,
+      resolved_type: null,
+    });
+    const absent = await reader.refused(["types", "get", id]);
+    expect(absent.envelope.error.server?.code).toBe("type_not_found");
+    const refused = await reader.refused([
+      "types",
+      "register",
+      "--body",
+      JSON.stringify(input),
+    ]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+    await c.cli.json(["types", "register", "--body", JSON.stringify(input)]);
+    trackType(c.ctx, id);
+    const registered = await reader.json<Normalized>(
+      ["types", "normalize", "--file", "-"],
+      { stdin: JSON.stringify(input) },
+    );
+    expect(registered.type).toEqual(first.type);
+    expect(registered.registered_type).toEqual(first.type);
+    expect(registered.resolved_type).toEqual(first.type);
+    const invalid = await reader.refused([
+      "types",
+      "normalize",
+      "--body",
+      JSON.stringify({ ...input, stray: true }),
+    ]);
+    expect(invalid.envelope.error.server?.status).toBe(400);
+  });
   it("lists the shipped types, reads one, and registers, replaces and removes one of its own", async () => {
     const listed = await c.cli.json<unknown>(["types", "list"]);
     const ids = JSON.stringify(listed);

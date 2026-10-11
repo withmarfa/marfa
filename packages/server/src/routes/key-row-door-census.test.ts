@@ -73,6 +73,8 @@ const NOT_A_DOOR: Record<string, string> = {
 const KEY_TABLE: Record<string, string> = {
   "storage/sqlite/schema.ts": "declares the table",
   "storage/sqlite/key-store.ts": "the key store",
+  "storage/sqlite/connector-state-store.ts":
+    "revalidates the presented writing key's liveness and ownership of its connector inside the state or agreement transaction, as the bearer check does; it exposes no key metadata and looks up no arbitrary key ID",
   "storage/sqlite/inbound-store.ts":
     "resolves an inbound webhook endpoint only while its connector's key is live, which authenticates the delivery and acts for no caller",
   "storage/stored-value-scan.ts":
