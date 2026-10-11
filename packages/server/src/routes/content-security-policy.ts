@@ -7,7 +7,7 @@
  * can do. A script runs, and a style applies, only if it carries this
  * response's nonce.
  *
- * **Nothing is allowed by origin, and that is the point of naming a nonce on
+ * **No script or style is allowed by origin, which is why a nonce is named on
  * the static files too.** The same origin serves a blob's bytes at its link
  * door, without a credential and under whatever type the uploader named, so a
  * `'self'` source would let an injection load an uploaded script or
@@ -15,8 +15,12 @@
  * tags, and use no inline style: a style attribute takes no nonce, so it
  * could only be allowed by allowing every inline style.
  *
- * **`form-action` is not set.** The consent decision answers a form post with
- * a redirect to the app's own callback, and a browser holds that redirect to
+ * Pages that fetch their own endpoints add `connect-src 'self'`; this does
+ * not allow scripts or styles by origin.
+ *
+ * **The baseline leaves `form-action` unset.** The consent decision answers
+ * a form post with a redirect to the app's own callback, and a browser holds
+ * that redirect to
  * `form-action` too, so naming this origin would stop every approval.
  *
  * **The policy is added after the door has answered, and only where the door
