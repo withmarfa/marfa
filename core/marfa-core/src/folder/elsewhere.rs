@@ -87,7 +87,9 @@ impl OnDisk {
 impl Peer {
     fn open(entry: Registered) -> Peer {
         let root = entry.dir;
-        let mut root_dir = Directory::open(&root).ok();
+        let mut root_dir = Directory::open(&root)
+            .ok()
+            .filter(|root| super::admitted_root(root).is_ok());
         let folder = root_dir.as_ref().and_then(|root_dir| {
             let state_dir = root_dir.child(Path::new(STATE_DIR), false).ok()?;
             let core =

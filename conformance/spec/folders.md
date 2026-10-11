@@ -4493,3 +4493,11 @@ When removing a folder's administrative state, a device MUST clear files through
 When a directory contains an empty `.marfa` directory without `core.sqlite`, a device MUST admit its eligible contents as ordinary folder contents.
 
 **Tests:** `device/folders-contract-a.test.ts › admits contents beside empty administrative directories`.
+
+### `folders/root-birth-identity-required`
+
+When a folder root has no usable nonzero birth timestamp, a device MUST refuse admission before creating administrative state.
+
+**Reason:** Reopening an entry by device and inode alone cannot exclude inode reuse after the original descriptor closes.
+
+**Tests:** `device/folders-contract-a.test.ts › refuses a root with %s birth identity before creating administrative state`.

@@ -603,6 +603,25 @@ describe("settings and folder reporting", () => {
     ).toBe(true);
   });
 
+  it.each(["missing", "zero"])(
+    "refuses a root with %s birth identity before creating administrative state",
+    async (birth) => {
+      harness = await folderHarness(`contract-root-birth-${birth}`);
+      const state = join(harness.dir, ".marfa");
+      expect(existsSync(join(state, "core.sqlite"))).toBe(true);
+      rmSync(state, { recursive: true });
+      const refused = await withFault(`root-birth-time=${birth}`, () =>
+        harness!.folder.add(harness!.settings.id),
+      );
+      expect(refused.ok).toBe(false);
+      expect(JSON.stringify(refused)).toContain("birth");
+      expect(existsSync(state)).toBe(false);
+      const admitted = await harness.folder.add(harness.settings.id);
+      expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+      expect(existsSync(join(state, "core.sqlite"))).toBe(true);
+    },
+  );
+
   it("leaves replacement state untouched when the root changes before its store opens", async () => {
     harness = await folderHarness("contract-store-admission-swap");
     const root = harness.dir;

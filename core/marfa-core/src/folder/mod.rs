@@ -225,6 +225,7 @@ impl Folder {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
         let root_dir = Directory::create(&root).map_err(io_error)?;
+        admitted_root(&root_dir).map_err(io_error)?;
         crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
         let state_dir = root_dir
             .child(Path::new(STATE_DIR), true)
@@ -328,6 +329,7 @@ impl Folder {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
+        admitted_root(&root_dir).map_err(io_error)?;
         let state_dir = root_dir
             .child(Path::new(STATE_DIR), false)
             .map_err(|_| not_a_folder(&root))?;
@@ -367,6 +369,7 @@ impl Folder {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
+        admitted_root(&root_dir).map_err(io_error)?;
         let state_dir = root_dir
             .child(Path::new(STATE_DIR), false)
             .map_err(|_| not_a_folder(&root))?;
@@ -651,6 +654,25 @@ fn io_error(error: std::io::Error) -> CoreError {
     CoreError::Io(error.to_string())
 }
 
+fn require_birth(birth: Option<u128>) -> std::io::Result<()> {
+    if same_birth(birth, birth) {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "folder identity requires a nonzero birth timestamp; use a filesystem that reports file and directory creation times",
+    ))
+}
+
+fn admitted_root(directory: &Directory) -> std::io::Result<()> {
+    let birth = match crate::fault::named("root-birth-time").as_deref() {
+        Some("missing") => None,
+        Some("zero") => Some(0),
+        _ => identity::born(&directory.metadata()?),
+    };
+    require_birth(birth)
+}
+
 fn read_file(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
     let mut file = file.try_clone()?;
     file.rewind()?;
@@ -848,6 +870,16 @@ struct Walked {
 }
 
 impl Walked {
+    fn file_birth(&mut self, root: &Path, dir: &Path, birth: Option<u128>) -> bool {
+        match require_birth(birth) {
+            Ok(()) => true,
+            Err(error) => {
+                self.unreadable(root, dir, &error);
+                false
+            }
+        }
+    }
+
     fn passed_over(&self, relative: &str) -> bool {
         self.directories.iter().any(|dir| {
             dir.path.is_empty()
@@ -901,7 +933,9 @@ impl WalkRoute {
         for (name, expected) in &self.steps {
             directory = directory.child(Path::new(name), false)?;
             if !same_file(expected, &directory.metadata()?) {
-                return Err(std::io::Error::other("walked directory was replaced"));
+                return Err(std::io::Error::other(
+                    "walked directory identity cannot be confirmed",
+                ));
             }
         }
         Ok(directory)
@@ -909,7 +943,9 @@ impl WalkRoute {
 
     fn child(&self, name: &std::ffi::OsStr, directory: &Directory) -> std::io::Result<Self> {
         let mut route = self.clone();
-        route.steps.push((name.to_owned(), directory.metadata()?));
+        let metadata = directory.metadata()?;
+        require_birth(identity::born(&metadata))?;
+        route.steps.push((name.to_owned(), metadata));
         Ok(route)
     }
 }
@@ -919,7 +955,11 @@ fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     left.dev() == right.dev()
         && left.ino() == right.ino()
-        && left.created().ok() == right.created().ok()
+        && same_birth(identity::born(left), identity::born(right))
+}
+
+fn same_birth(left: Option<u128>, right: Option<u128>) -> bool {
+    left.is_some_and(|birth| birth > 0) && left == right
 }
 
 #[cfg(not(unix))]
@@ -938,18 +978,31 @@ impl Captured {
         let directory = self.route.open()?;
         let file = directory.capture_file(Path::new(&self.name))?;
         let metadata = file.metadata()?;
+        require_birth(identity::born(&self.metadata.borrow()))?;
+        require_birth(identity::born(&metadata))?;
         if !same_file(&self.metadata.borrow(), &metadata) {
-            return Err(std::io::Error::other("walked file was replaced"));
+            return Err(std::io::Error::other(
+                "walked file identity cannot be confirmed",
+            ));
         }
         *self.metadata.borrow_mut() = metadata;
         Ok(file)
     }
 
-    fn read(&self) -> std::io::Result<Vec<u8>> {
+    fn read_settled(&self, settle: Option<Duration>) -> std::io::Result<Option<Vec<u8>>> {
         let mut file = self.open()?;
+        if settle.is_some_and(|settle| changed_within(&self.metadata.borrow(), settle)) {
+            return Ok(None);
+        }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        Ok(bytes)
+        Ok(Some(bytes))
+    }
+
+    fn read(&self) -> std::io::Result<Vec<u8>> {
+        Ok(self
+            .read_settled(None)?
+            .expect("a read without a settling interval never waits"))
     }
 }
 
@@ -1035,7 +1088,10 @@ fn walk_at(
                         name: name.clone(),
                     })
                 }) {
-                    walked.opened.insert(path.clone(), captured);
+                    let born = identity::born(&captured.metadata.borrow());
+                    if walked.file_birth(root, dir, born) {
+                        walked.opened.insert(path.clone(), captured);
+                    }
                 } else if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
                     && let Some(identity) = identity::Identity::from_parts(device, inode, born)
                 {
@@ -1392,30 +1448,29 @@ impl Folder {
                     walked.opened.get(&path),
                 )
             };
-            if let Some(settle) = settle
-                && !is_document(&path)
-                && walked
-                    .opened
-                    .get(&path)
-                    .is_some_and(|captured| changed_within(&captured.metadata.borrow(), settle))
-            {
-                files.push(deferred()?);
-                report.settling.push(identity::relative(&self.root, &path)?);
-                continue;
-            }
             // Unreadable now, a dataless placeholder say: the next scan reads
             // it, and the folder holds what it last agreed with meanwhile.
             let bytes = match early.remove(&path) {
                 Some(bytes) => bytes,
                 None => {
-                    let Ok(bytes) = walked
+                    let read = walked
                         .opened
                         .get(&path)
                         .ok_or_else(|| std::io::Error::other("file not opened"))
-                        .and_then(Captured::read)
-                    else {
-                        files.push(deferred()?);
-                        continue;
+                        .and_then(|captured| {
+                            captured.read_settled(settle.filter(|_| !is_document(&path)))
+                        });
+                    let bytes = match read {
+                        Ok(Some(bytes)) => bytes,
+                        Ok(None) => {
+                            files.push(deferred()?);
+                            report.settling.push(identity::relative(&self.root, &path)?);
+                            continue;
+                        }
+                        Err(_) => {
+                            files.push(deferred()?);
+                            continue;
+                        }
                     };
                     if let Some(stat) = walked
                         .opened
@@ -5211,6 +5266,70 @@ mod tests {
             std::fs::read(root.join("replacement/note.md")).unwrap(),
             b"replacement"
         );
+    }
+
+    #[test]
+    fn reopened_identity_requires_a_known_nonzero_birth_time() {
+        assert!(same_birth(Some(1), Some(1)));
+        assert!(!same_birth(Some(1), Some(2)));
+        assert!(!same_birth(None, None));
+        assert!(!same_birth(Some(0), Some(0)));
+        assert!(require_birth(Some(1)).is_ok());
+        assert_eq!(
+            require_birth(None).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        assert_eq!(
+            require_birth(Some(0)).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn a_binary_changed_after_walking_waits_for_settling() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("file.bin");
+        std::fs::write(&path, b"original").unwrap();
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let captured = &walked.opened[&path];
+        let settle = Duration::from_millis(200);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while changed_within(&captured.metadata.borrow(), settle) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            captured.read_settled(Some(settle)).unwrap(),
+            Some(b"original".to_vec())
+        );
+        std::fs::write(&path, b"still writing").unwrap();
+        assert!(changed_within(&std::fs::metadata(&path).unwrap(), settle));
+        assert_eq!(captured.read_settled(Some(settle)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_without_birth_identity_makes_its_parent_inventory_incomplete() {
+        let root = Path::new("root");
+        let child = root.join("child");
+        let mut complete = Walked::default();
+        assert!(complete.file_birth(root, &child, Some(1)));
+        assert!(!complete.passed_over("child/old-name.md"));
+        for birth in [None, Some(0)] {
+            let mut partial = Walked::default();
+            assert!(!partial.file_birth(root, &child, birth));
+            assert!(partial.passed_over("child/old-name.md"));
+            assert_eq!(partial.directories[0].flag, "unreadable");
+            assert!(!partial.passed_over("elsewhere/note.md"));
+        }
     }
 
     fn held_at(occurred_at: &str) -> Item {
