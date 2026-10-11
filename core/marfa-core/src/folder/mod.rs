@@ -2282,6 +2282,13 @@ impl Folder {
                 }
             }
         }
+        if let Err(error) = crate::validation::property_names(&properties) {
+            let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+            flagged.push(Flagged::of(&file.key, &held_for));
+            return self
+                .bind_held(file, item_id, bound, held_for)
+                .map(|()| false);
+        }
         let mut effective_properties = catalog.projected_properties(
             changes.r#type.as_deref().unwrap_or(&held.r#type),
             &properties,

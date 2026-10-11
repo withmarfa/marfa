@@ -3296,6 +3296,45 @@ describe("what frontmatter says", () => {
     expect(rows.get(id)?.properties).toEqual({ title: "Held", body: "held\n" });
   });
 
+  it.each(["", " null", " ~ # empty"])(
+    "refuses an empty null property name before deciding a save is unchanged",
+    async (empty) => {
+      harness = await folderHarness("folder-empty-null-name");
+      const rows = scriptFolderWrites(harness);
+      put(
+        harness,
+        "Item.md",
+        "---\ntitle: Item\nlanguage: null # empty\n---\nbody\n",
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      const before = read(harness, "Item.md");
+      expect(before).toContain("language: null # empty\n");
+      const invalid = before.replace("title: Item", `title: Item\n"":${empty}`);
+      for (const text of [invalid, invalid.replace("body\n", "changed\n")]) {
+        writeFileSync(join(harness.dir, "Item.md"), text);
+        const scanned = await harness.folder.scan();
+        expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+        if (!scanned.ok) continue;
+        expect(scanned.value.updated).toBe(0);
+        expect(scanned.value.flagged).toHaveLength(1);
+        expect(scanned.value.flagged[0]?.reason).toContain(
+          "A property name must not be empty",
+        );
+        expect(read(harness, "Item.md")).toBe(text);
+        expect(sentUpdates(harness)).toEqual([]);
+      }
+      const id = [...rows.keys()][0]!;
+      expect(rows.get(id)?.properties.body).toBe("body\n");
+      writeFileSync(
+        join(harness.dir, "Item.md"),
+        before.replace("body\n", "corrected\n"),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(rows.get(id)?.properties.body).toBe("corrected\n");
+      expect(read(harness, "Item.md")).toContain("language: null # empty\n");
+    },
+  );
+
   it.each(["   # waiting", " null # unset", " ~  # empty"])(
     "keeps empty property lines through pushes, pulls and later clears",
     async (empty) => {

@@ -345,6 +345,32 @@ describe("a folder round trip", () => {
       folder,
     ]);
     expect(afterCollections.updated).toBe(0);
+    const invalid = rearranged.replace(
+      "# Authored café\r\n",
+      '# Authored café\r\n"": null # invalid name\r\n',
+    );
+    for (const text of [
+      invalid,
+      invalid.replace("Body\r\n", "Changed body\r\n"),
+    ]) {
+      writeFileSync(path, text);
+      const refused = await c.cli.json<{
+        updated: number;
+        flagged: Array<{ reason: string }>;
+      }>(["folders", "scan", folder]);
+      expect(refused.updated).toBe(0);
+      expect(refused.flagged).toHaveLength(1);
+      expect(refused.flagged[0]?.reason).toContain(
+        "A property name must not be empty",
+      );
+      expect(readFileSync(path, "utf8")).toBe(text);
+    }
+    writeFileSync(path, rearranged);
+    const corrected = await c.cli.json<{ updated: number; flagged: unknown[] }>(
+      ["folders", "scan", folder],
+    );
+    expect(corrected.updated).toBe(0);
+    expect(corrected.flagged).toEqual([]);
   });
 
   it("is in step after the one push that writes its files", async () => {
