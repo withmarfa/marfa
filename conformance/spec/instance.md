@@ -822,6 +822,18 @@ When another listener accepts connections at the configured private control sock
 
 **Tests:** `compliance/control-socket.test.ts › refuses a live control socket and preserves its listener`.
 
+### `instance/control-start-concurrent`
+
+When multiple processes concurrently start their private control listeners on the same stale socket path, the server MUST allow at most one process to start successfully.
+
+**Tests:** `compliance/control-socket.test.ts › allows only one concurrent restart on a stale control socket`.
+
+### `instance/control-close-excludes-start`
+
+While another process is closing its private control listener at the configured socket path, the server MUST refuse to start its own private control listener at that path until the closing process finishes its socket cleanup.
+
+**Tests:** `compliance/control-socket.test.ts › refuses startup until a closing listener has finished its socket cleanup`.
+
 ### `instance/control-nonsocket-refused`
 
 When the configured private control socket path holds a file that is not a socket, the server MUST refuse to start without removing that file.

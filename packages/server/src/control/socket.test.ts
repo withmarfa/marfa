@@ -14,6 +14,7 @@ import {
   link,
   writeFile,
   readFile,
+  unlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,6 +45,68 @@ function get(socketPath: string): Promise<string> {
   });
 }
 describe("private control socket", () => {
+  it("uses the exact socket path when it contains URL punctuation", async () => {
+    const socketPath = (await path()).replace("control.sock", "s #?.sock");
+    const server = await startControlSocket(
+      socketPath,
+      () => new Response("exact"),
+    );
+    try {
+      expect(await get(socketPath)).toBe("exact");
+      const lock = await lstat(`${socketPath}.lock`);
+      expect(lock.isFile()).toBe(true);
+      expect(lock.mode & 0o777).toBe(0o600);
+      await expect(
+        startControlSocket(socketPath, () => new Response()),
+      ).rejects.toThrow(/already in use/);
+      expect(await get(socketPath)).toBe("exact");
+    } finally {
+      await new Promise<void>((done) =>
+        server.close(() => {
+          done();
+        }),
+      );
+    }
+  });
+  it("refuses a symbolic-link startup lock without touching its target", async () => {
+    const socketPath = await path();
+    await mkdir(join(socketPath, ".."), { mode: 0o700 });
+    const target = join(socketPath, "..", "target");
+    await writeFile(target, "keep this file");
+    await symlink(target, `${socketPath}.lock`);
+    await expect(
+      startControlSocket(socketPath, () => new Response()),
+    ).rejects.toThrow();
+    expect(await readFile(target, "utf8")).toBe("keep this file");
+    expect((await lstat(`${socketPath}.lock`)).isSymbolicLink()).toBe(true);
+  });
+  it.each([0o644, 0o660])(
+    "refuses a startup lock with mode %s",
+    async (mode) => {
+      const socketPath = await path();
+      await mkdir(join(socketPath, ".."), { mode: 0o700 });
+      const lockPath = `${socketPath}.lock`;
+      await writeFile(lockPath, "keep this file");
+      await chmod(lockPath, mode);
+      await expect(
+        startControlSocket(socketPath, () => new Response()),
+      ).rejects.toThrow(/private regular file/);
+      expect(await readFile(lockPath, "utf8")).toBe("keep this file");
+    },
+  );
+  it("refuses a hard-linked startup lock without touching either name", async () => {
+    const socketPath = await path();
+    await mkdir(join(socketPath, ".."), { mode: 0o700 });
+    const lockPath = `${socketPath}.lock`;
+    const otherPath = join(socketPath, "..", "other.lock");
+    await writeFile(lockPath, "keep this file", { mode: 0o600 });
+    await link(lockPath, otherPath);
+    await expect(
+      startControlSocket(socketPath, () => new Response()),
+    ).rejects.toThrow(/private regular file/);
+    expect(await readFile(lockPath, "utf8")).toBe("keep this file");
+    expect(await readFile(otherPath, "utf8")).toBe("keep this file");
+  });
   it("publishes only one listener when two startups race", async () => {
     const socketPath = await path();
     const results = await Promise.allSettled([
@@ -108,6 +171,20 @@ describe("private control socket", () => {
       startControlSocket(socketPath, () => new Response()),
     ).rejects.toThrow(socketPath);
     expect(await readFile(socketPath, "utf8")).toBe("keep this file");
+    await unlink(socketPath);
+    const server = await startControlSocket(
+      socketPath,
+      () => new Response("retry"),
+    );
+    try {
+      expect(await get(socketPath)).toBe("retry");
+    } finally {
+      await new Promise<void>((done) =>
+        server.close(() => {
+          done();
+        }),
+      );
+    }
   });
   it("serves only after restricting its directory and socket", async () => {
     const socketPath = await path();
@@ -126,6 +203,8 @@ describe("private control socket", () => {
         }),
       );
     }
+    await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(`${socketPath}.lock`)).isFile()).toBe(true);
   });
   it("refuses a live collision without disrupting the first listener", async () => {
     const socketPath = await path();
@@ -136,7 +215,7 @@ describe("private control socket", () => {
     try {
       await expect(
         startControlSocket(socketPath, () => new Response("second")),
-      ).rejects.toThrow(/already exists/);
+      ).rejects.toThrow(/already in use/);
       expect(await get(socketPath)).toBe("first");
     } finally {
       await new Promise<void>((r) =>
