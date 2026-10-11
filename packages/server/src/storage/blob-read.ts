@@ -17,13 +17,13 @@ export function boundBlobRead(
     if (sourceFinished) return;
     clear();
     timer = setTimeout(() => {
-      const error = Object.assign(
+      const idleError = Object.assign(
         new Error("Blob read idle deadline exceeded"),
         {
           code: "ERR_BLOB_READ_IDLE",
         },
       );
-      output.destroy(error);
+      output.destroy(idleError);
     }, idleTimeoutMs);
     timer.unref();
   };
