@@ -181,7 +181,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
   });
 
-  it("limits device code lookups per address, on the entry form and the consent screen alike", async () => {
+  it("limits anonymous device code entry per address and owner consent per owner", async () => {
     const enter = async (code: string, address: string) => {
       const response = await postForm(
         "/auth/device",
@@ -204,8 +204,6 @@ describe("the sign-in surface", () => {
       "error=invalid_code",
     );
 
-    // A signed-in browser looks codes up on the consent screen and its
-    // decision, and those lookups count in the same limit.
     const signedIn = await signIn(OWNER.password, "198.51.100.31");
     expect(signedIn.status).toBe(200);
     const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(

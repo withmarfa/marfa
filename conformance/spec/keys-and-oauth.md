@@ -1523,17 +1523,63 @@ If a sign-in limit holds an address at the owner's account, then the server MUST
 
 ### `keys-and-oauth/device-lookup-address-limit`
 
-If one address has looked device codes up ten times in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup with `error=too_many_attempts` before the code is looked up.
+If one address has made ten device code lookups without direct owner browser authority in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits device code lookups per address, on the entry form and the consent screen alike`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 
-If every address together has made a hundred counted device code lookups in fifteen minutes, then the server MUST redirect the next lookup from any address with `error=too_many_attempts`.
+If every address together has made a hundred counted device code lookups without direct owner browser authority in fifteen minutes, then the server MUST redirect the next lookup without that authority from any address with `error=too_many_attempts` before the code is looked up.
 
 **Reason:** A sweep tries each code once, so a count per code never fires. A lookup one address makes past its own limit is not counted here.
 
 **Tests:** `compliance/sign-in-limits.test.ts › hold every address together to a hundred in fifteen minutes, counting none an address made past its own limit`.
+
+### `keys-and-oauth/device-lookup-owner-lane`
+
+When a caller with a verified, live browser session of the claimed owner acting as direct owner authority looks a device code up on the entry form, the consent screen or its decision, the server MUST count the lookup in an owner lane independent of the anonymous address and instance limits.
+
+**Reason:** Anonymous callers cannot close the owner's device approval path by spending its address or instance allowance.
+
+**Tests:** `compliance/device-owner-limits.test.ts › admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion`.
+
+### `keys-and-oauth/device-lookup-owner-limit`
+
+If the claimed owner has made ten counted device code lookups in fifteen minutes, across browser sessions, addresses, the entry form, the consent screen and its decision, then the server MUST redirect the owner's next lookup with `error=too_many_attempts` before the code is looked up.
+
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
+
+### `keys-and-oauth/device-lookup-owner-instance-limit`
+
+If the owner lane has made a hundred counted device code lookups in fifteen minutes, excluding lookups refused by the owner's own limit, then the server MUST redirect the next owner lookup with `error=too_many_attempts` before the code is looked up.
+
+**Reason:** Both lanes have a collective bound, even though one claimed owner reaches the per-owner bound first.
+
+**Tests:** `compliance/device-owner-limits.test.ts › holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+
+### `keys-and-oauth/device-lookup-owner-proof`
+
+If a device code lookup carries only an unverified, expired or revoked owner cookie, an ordinary key or an OAuth access token, including a bearer beside a live owner cookie, then the server MUST NOT count it in the owner lane.
+
+**Tests:** `compliance/device-owner-limits.test.ts › keeps a %s cookie in the anonymous lane`, `› admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion`.
+
+### `keys-and-oauth/device-lookup-owner-concurrent`
+
+When concurrent device code lookups use direct owner browser authority, the server MUST admit no more lookups than remain in the owner's fifteen-minute allowance.
+
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
+
+### `keys-and-oauth/device-lookup-owner-persistent`
+
+When the server restarts within a device code lookup window, the server MUST retain the owner's counted lookups and the owner lane's counted lookups for the rest of that window.
+
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+
+### `keys-and-oauth/device-lookup-owner-window`
+
+When an owner's device code lookup window or the owner lane's collective window reaches fifteen minutes, the server MUST count its next lookup in a fresh window.
+
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
 
 ## The sign-in library's routes
 
