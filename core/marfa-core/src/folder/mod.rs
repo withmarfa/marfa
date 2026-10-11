@@ -792,20 +792,61 @@ impl Folder {
     /// directory put in its place. Every file would then read as deleted, so
     /// a pass reads and writes nothing until it is back.
     fn root_gone(&self) -> Option<String> {
-        let current = Directory::open(&self.root).ok();
-        if current.as_ref().is_some_and(|root| {
-            self.root_dir.same(root).unwrap_or(false)
-                && root.child(Path::new(STATE_DIR), false).is_ok_and(|state| {
-                    self.state_dir.same(&state).unwrap_or(false)
-                        && state.entry_identity(Path::new("core.sqlite")).ok()
-                            == Some(self.store_mark)
-                })
-        }) {
-            return None;
+        let unavailable = |path: &Path, error: std::io::Error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "{} cannot be found, so nothing in the folder is read or written; restore the original directory and state to resume",
+                    path.display()
+                )
+            } else {
+                format!(
+                    "{} cannot be checked ({error}), so nothing in the folder is read or written; check access and restore the original directory and state to resume",
+                    path.display()
+                )
+            }
+        };
+        let same = |left: &Directory, right: &Directory| -> std::io::Result<bool> {
+            let matches = left.same(right)?;
+            if !matches {
+                // A missing birth identity cannot establish replacement.
+                require_birth(identity::born(&left.metadata()?))?;
+                require_birth(identity::born(&right.metadata()?))?;
+            }
+            Ok(matches)
+        };
+        let current = match Directory::open(&self.root) {
+            Ok(current) => current,
+            Err(error) => return Some(unavailable(&self.root, error)),
+        };
+        match same(&self.root_dir, &current) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Some(format!(
+                    "{} is no longer the directory this folder opened, so nothing in it is read or written; restore the original directory to resume",
+                    self.root.display()
+                ));
+            }
+            Err(error) => return Some(unavailable(&self.root, error)),
+        }
+        let state_path = self.root.join(STATE_DIR);
+        let state = match current.child(Path::new(STATE_DIR), false) {
+            Ok(state) => state,
+            Err(error) => return Some(unavailable(&state_path, error)),
+        };
+        let state_matches = match same(&self.state_dir, &state) {
+            Ok(matches) => matches,
+            Err(error) => return Some(unavailable(&state_path, error)),
+        };
+        if state_matches {
+            match state.entry_identity(Path::new("core.sqlite")) {
+                Ok(mark) if mark == self.store_mark => return None,
+                Ok(_) => {}
+                Err(error) => return Some(unavailable(&state_path.join("core.sqlite"), error)),
+            }
         }
         Some(format!(
-            "{} is no longer the directory this folder opened, so nothing in it is read or written; restore the original directory to resume",
-            self.root.display()
+            "{} is no longer the administrative state this folder opened, so nothing in the folder is read or written; restore the original state to resume",
+            state_path.display()
         ))
     }
 
