@@ -275,6 +275,13 @@ describe("device code entry limits", () => {
     );
     const count = vi.spyOn(c.storage.rateLimits, "incrementWindow");
     const lookup = vi.spyOn(c.auth, "deviceVerify");
+    expect(
+      await submit(c, codeFor(0), "192.0.2.1", { cookie: c.owner.cookie }),
+    ).toContain("error=invalid_code");
+    expect(count).toHaveBeenCalled();
+    expect(lookup).toHaveBeenCalledTimes(1);
+    count.mockClear();
+    lookup.mockClear();
     const transaction = c.storage.runInTransaction.bind(c.storage);
     vi.spyOn(c.storage, "runInTransaction").mockImplementationOnce(
       async (work, options) => {
