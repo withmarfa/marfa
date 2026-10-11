@@ -202,7 +202,7 @@ When a device opens a working copy at another origin, a device MUST open the cop
 
 While a copy records another origin, a device MUST send no credentials, credential renewal, reads or writes to the offered origin except an anonymous `GET /` until that root confirms the copy's recorded instance identity.
 
-**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› follows the same instance to a new origin without replacing its copy or queue`, `› confirms a changed path prefix anonymously and refuses another instance there`.
+**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› follows the same instance to a new origin without replacing its copy or queue`, `› confirms a changed path prefix anonymously and refuses another instance there`, `device/credential-locks.test.ts › defers working-copy token renewal until the new origin confirms its identity`, `› renews an expired stored token before folder binding completes`.
 
 ### `device/origin-confirm-recorded`
 
