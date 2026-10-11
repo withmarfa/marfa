@@ -204,13 +204,13 @@ When the settings change to require another slice during a running watch, a devi
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST retain the file’s bytes.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/invalid-document-flagged`
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST flag the local refusal.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/invalid-document-scan-continues`
 
@@ -222,7 +222,7 @@ When a folder document fails local field validation or names a type absent from 
 
 When a refused folder document is corrected or its type becomes available in the held catalog, a device MUST retry admission at a later scan.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/first-sync-waits`
 
