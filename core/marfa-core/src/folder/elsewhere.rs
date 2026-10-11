@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone, resolved};
 use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
+use crate::directory::Directory;
 use crate::{Core, Result, store};
 
 const META_STORE: &str = "folder_store";
@@ -45,6 +46,7 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
 
 pub(super) struct Peer {
     root: PathBuf,
+    root_dir: Option<Directory>,
     /// Its store, read only; `None` where it cannot be opened.
     folder: Option<Folder>,
     members: OnceCell<Option<HashSet<String>>>,
@@ -62,6 +64,7 @@ struct Walked {
 struct OnDisk {
     key: String,
     path: PathBuf,
+    file: std::fs::File,
     mark: Option<String>,
     id: Option<String>,
     hash: OnceCell<Option<String>>,
@@ -71,7 +74,7 @@ impl OnDisk {
     fn hash(&self) -> Option<&str> {
         self.hash
             .get_or_init(|| {
-                std::fs::read(&self.path)
+                super::read_file(&self.file)
                     .ok()
                     .map(|bytes| state::hash(&bytes))
             })
@@ -80,22 +83,42 @@ impl OnDisk {
 }
 
 impl Peer {
-    fn open(root: PathBuf) -> Peer {
-        let folder = Core::open_reader(root.join(STATE_DIR).join("core.sqlite"))
-            .ok()
-            .and_then(|core| {
-                let folder = super::settings_file::bound(&core).ok()??;
-                Some(Folder {
-                    root: root.clone(),
-                    folder,
-                    core,
-                    key: std::sync::Mutex::new(None),
-                    permissions: std::sync::OnceLock::new(),
-                    store_mark: super::store_mark(&root.join(STATE_DIR)),
+    fn open(entry: Registered) -> Peer {
+        let root = entry.dir;
+        let mut root_dir = Directory::open(&root).ok();
+        let folder = root_dir.as_ref().and_then(|root_dir| {
+            let state_dir = root_dir.child(Path::new(STATE_DIR), false).ok()?;
+            let core =
+                Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")).ok()?;
+            let folder = super::settings_file::bound(&core).ok()??;
+            if folder != entry.folder
+                || entry.store.as_ref().is_some_and(|expected| {
+                    core.conn()
+                        .ok()
+                        .and_then(|conn| store::meta_get(&conn, META_STORE).ok().flatten())
+                        .as_ref()
+                        != Some(expected)
                 })
-            });
+            {
+                return None;
+            }
+            Some(Folder {
+                root: root.clone(),
+                root_dir: root_dir.clone(),
+                store_mark: state_dir.entry_identity(Path::new("core.sqlite")).ok()?,
+                state_dir,
+                folder,
+                core,
+                key: std::sync::Mutex::new(None),
+                permissions: std::sync::OnceLock::new(),
+            })
+        });
+        if folder.is_none() {
+            root_dir = None;
+        }
         Peer {
             root,
+            root_dir,
             folder,
             members: OnceCell::new(),
             walked: OnceCell::new(),
@@ -149,13 +172,21 @@ impl Peer {
     }
 
     fn present(&self, key: &str) -> bool {
-        plainly_inside(&self.root, key) && self.root.join(key).is_file()
+        self.root_dir.as_ref().is_some_and(|root| {
+            plainly_inside(root, key) && root.entry_metadata(Path::new(key)).is_ok()
+        })
     }
 
     fn walked(&self) -> &Walked {
         self.walked.get_or_init(|| {
             let mut walked = super::Walked::default();
-            let partial = if self.root.is_dir() {
+            let partial = if self
+                .folder
+                .as_ref()
+                .is_some_and(|folder| folder.root_gone().is_some())
+            {
+                Some("the other folder is no longer at its admitted directory".into())
+            } else if let Some(root_dir) = &self.root_dir {
                 let include = self
                     .folder
                     .as_ref()
@@ -164,7 +195,7 @@ impl Peer {
                     .unwrap_or_default();
                 match Lists::wider(&include) {
                     Ok(lists) => {
-                        super::walk(&self.root, &self.root, &lists, &mut walked);
+                        super::walk(&self.root, &self.root, root_dir, &lists, &mut walked);
                         walked
                             .directories
                             .iter()
@@ -184,14 +215,15 @@ impl Peer {
                 .into_iter()
                 .filter_map(|path| {
                     let key = identity::relative(&self.root, &path).ok()?;
-                    let mark = std::fs::symlink_metadata(&path)
-                        .ok()
-                        .and_then(|metadata| identity::of(&metadata))
-                        .map(|found| found.key());
-                    let id = carries_frontmatter(&path).then(|| id_of(&path)).flatten();
+                    let captured = walked.opened.remove(&path)?;
+                    let mark = identity::of(&captured.metadata).map(|found| found.key());
+                    let id = carries_frontmatter(&path)
+                        .then(|| id_of_file(captured.file.try_clone().ok()?))
+                        .flatten();
                     Some(OnDisk {
                         key,
                         path,
+                        file: captured.file,
                         mark,
                         id,
                         hash: OnceCell::new(),
@@ -209,8 +241,9 @@ impl Peer {
 
 /// The `marfa_id` line of a Markdown file, read no further than its
 /// frontmatter, so a walk does not read every body.
-fn id_of(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
+fn id_of_file(mut file: std::fs::File) -> Option<String> {
+    use std::io::Seek;
+    file.rewind().ok()?;
     let mut lines = BufReader::new(file).lines();
     let line = lines.next()?.ok()?;
     let first = line.strip_prefix(super::document::MARK).unwrap_or(&line);
@@ -287,13 +320,7 @@ impl<'a> Peers<'a> {
             if let (Some(conn), Ok(json)) = (&conn, serde_json::to_string(&others)) {
                 let _ = store::meta_set(conn, META_OTHERS, &json);
             }
-            (
-                others
-                    .into_iter()
-                    .map(|entry| Peer::open(entry.dir))
-                    .collect(),
-                None,
-            )
+            (others.into_iter().map(Peer::open).collect(), None)
         })
     }
 
@@ -455,7 +482,7 @@ impl<'a> Peers<'a> {
     }
 
     /// A file another folder let go of, holding the bytes it wrote, to take in.
-    pub(super) fn let_go(&self, item_id: &str) -> Option<(PathBuf, state::Bound)> {
+    pub(super) fn let_go(&self, item_id: &str) -> Option<(super::transfer::Entry, state::Bound)> {
         for peer in self.all() {
             let Some(bound) = peer.bound_to(item_id) else {
                 continue;
@@ -470,12 +497,29 @@ impl<'a> Peers<'a> {
                 continue;
             }
             let path = peer.root.join(&bound.path);
-            if std::fs::read(&path).is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash) {
-                return Some((path, bound));
+            let root = peer.root_dir.as_ref()?;
+            let (directory, name) = root.parent(Path::new(&bound.path), false).ok()?;
+            if directory
+                .read(Path::new(&name))
+                .is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash)
+            {
+                return Some((
+                    super::transfer::Entry {
+                        directory,
+                        name: name.into(),
+                        label: path,
+                    },
+                    bound,
+                ));
             }
         }
         None
     }
+}
+
+#[cfg(test)]
+fn id_of(path: &Path) -> Option<String> {
+    id_of_file(std::fs::File::open(path).ok()?)
 }
 
 #[cfg(test)]

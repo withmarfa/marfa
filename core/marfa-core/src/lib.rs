@@ -1400,6 +1400,7 @@ impl Core {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&draft.tags, &draft.properties)?;
@@ -1433,6 +1434,7 @@ impl Core {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn update_file_item(
         &self,
         id: &str,

@@ -1,4 +1,6 @@
-use std::fs::File;
+use crate::directory::Directory;
+use crate::directory::{Mode, OFlags};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -68,7 +70,7 @@ impl Registry {
     fn unnamed() -> Option<Registry> {
         static OWN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
         let dir = OWN.get_or_init(|| {
-            tempfile::tempdir()
+            tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap())
                 .expect("a temporary directory for the tests' folder registry")
                 .keep()
         });
@@ -157,14 +159,24 @@ impl Registry {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        std::fs::create_dir_all(parent)
+        let directory = Directory::create(parent)
             .map_err(|error| self.failed("make the directory of", &error))?;
+        let name = Path::new(
+            self.path
+                .file_name()
+                .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?,
+        );
         // Two folders registering at once would each write back a list
         // missing the other's entry.
-        let lock = File::create(self.path.with_extension("lock"))
+        let lock = directory
+            .open_file(
+                &name.with_extension("lock"),
+                OFlags::WRONLY | OFlags::CREATE,
+                Mode::from_raw_mode(0o600),
+            )
             .map_err(|error| self.failed("lock", &error))?;
         lock.lock().map_err(|error| self.failed("lock", &error))?;
-        let (mut listing, replaced) = match std::fs::read(&self.path) {
+        let (mut listing, replaced) = match directory.read(name) {
             Ok(bytes) => match serde_json::from_slice::<Listing>(&bytes) {
                 Ok(listing) => (listing, false),
                 Err(_) if unreadable == Unreadable::Replace => (Listing::default(), true),
@@ -196,15 +208,15 @@ impl Registry {
         listing.folders = tidied;
         let edited = edit(&mut listing.folders);
         if changed || edited {
-            self.write(&listing)?;
+            self.write(&directory, name, &listing)?;
         }
         Ok((listing.folders, edited))
     }
 
     /// Held under the lock, so whatever is there is this process's to replace.
-    fn write(&self, listing: &Listing) -> Result<()> {
+    fn write(&self, directory: &Directory, name: &Path, listing: &Listing) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(listing)?;
-        super::landing::write(&self.path, &bytes, |_| true)
+        super::landing::land_at(directory, name, |file, _| file.write_all(&bytes), |_| true)
             .map_err(|unlanded| self.failed("write", &unlanded.into()))
     }
 
@@ -230,28 +242,22 @@ fn machine_path(home: &Path) -> PathBuf {
     base.join(FILE_NAME)
 }
 
-/// A directory as the registry names it: resolved as far as it exists, so
-/// two spellings of one directory are one folder, missing or not.
+/// The admitted spelling made absolute, without following a renamed directory
+/// or a symlink into a different folder.
 pub fn resolved(dir: &Path) -> PathBuf {
-    for base in dir.ancestors() {
-        if let Ok(found) = std::fs::canonicalize(base) {
-            return match dir.strip_prefix(base) {
-                Ok(rest) if !rest.as_os_str().is_empty() => found.join(rest),
-                _ => found,
-            };
-        }
-    }
-    dir.to_path_buf()
+    std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
-/// Whether a listed folder is gone: its directory reads, and holds no
-/// folder. One missing or unreadable is kept, since it cannot be told from
-/// one renamed, unmounted or shut for now.
+/// Missing or unreadable roots are kept, since a disconnected volume or a
+/// replaced root cannot establish that the admitted folder was removed.
 pub(super) fn gone(entry: &Registered) -> bool {
+    let Ok(root) = Directory::open(&entry.dir) else {
+        return false;
+    };
     matches!(
-        std::fs::metadata(entry.dir.join(STATE_DIR).join("core.sqlite")),
+        root.child(Path::new(STATE_DIR), false).and_then(|state| state.entry_identity(Path::new("core.sqlite"))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound
-    ) && std::fs::read_dir(&entry.dir).is_ok()
+    )
 }
 
 #[cfg(test)]
@@ -272,13 +278,17 @@ mod tests {
         assert_eq!(machine.file_name(), Some(FILE_NAME.as_ref()));
         let unnamed = Registry::unnamed().unwrap();
         assert_ne!(unnamed.path(), machine);
-        assert!(unnamed.path().starts_with(std::env::temp_dir()));
+        assert!(
+            unnamed
+                .path()
+                .starts_with(std::env::temp_dir().canonicalize().unwrap())
+        );
         assert_ne!(Registry::located().unwrap().path(), machine);
     }
 
     #[test]
     fn a_registry_that_cannot_be_read_is_left_by_a_listing_and_written_afresh_by_an_add() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let registry = Registry::at(root.path().join(FILE_NAME));
         let one = folder_at(root.path(), "one");
         std::fs::write(registry.path(), b"").unwrap();

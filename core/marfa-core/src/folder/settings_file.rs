@@ -153,7 +153,10 @@ impl Folder {
         if landing.is_none() {
             return Ok(());
         }
-        let found = std::fs::read(self.settings_path()).ok();
+        let found = self
+            .state_dir
+            .read(std::path::Path::new(SETTINGS_FILE))
+            .ok();
         if found.is_some() && found.as_deref() == written.as_deref().map(str::as_bytes) {
             return store::meta_delete(&*self.core.conn()?, META_LANDING);
         }
@@ -164,7 +167,7 @@ impl Folder {
     /// of bytes that are not only names the edit, and is never sent.
     fn edited_settings(&self) -> Result<Option<(String, Option<&'static str>)>> {
         self.settle_settings()?;
-        let Ok(found) = std::fs::read(self.settings_path()) else {
+        let Ok(found) = self.state_dir.read(std::path::Path::new(SETTINGS_FILE)) else {
             return Ok(None);
         };
         let (found, not_text) = match super::text_of(&found) {
@@ -222,7 +225,7 @@ impl Folder {
             )
         };
         if version.as_deref() == Some(row.version.to_string().as_str())
-            && self.settings_path().exists()
+            && self.exists(self.settings_path())
         {
             return Ok(SettingsFileReport::default());
         }

@@ -60,9 +60,9 @@ pub struct Landing {
 /// where the bytes are on the disk; what the path was bound as before, where
 /// they are not; or nothing, where it was bound as nothing. `None` where the
 /// binding waits on no write, or the disk cannot be read now.
-pub fn settled(row: &Bound, root: &std::path::Path) -> Option<Option<Bound>> {
+pub(crate) fn settled(row: &Bound, root: &crate::directory::Directory) -> Option<Option<Bound>> {
     let landing = row.writes.landing.as_ref()?;
-    let found = match std::fs::read(root.join(&row.path)) {
+    let found = match root.read(std::path::Path::new(&row.path)) {
         Ok(found) => Some(hash(&found)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return None,
@@ -77,7 +77,10 @@ pub fn settled(row: &Bound, root: &std::path::Path) -> Option<Option<Bound>> {
 
 /// Settles every write a crash cut off between its binding and its landing,
 /// so the file there is never read as the person's edit nor as deleted.
-pub fn settle_landings(conn: &Connection, root: &std::path::Path) -> Result<(), CoreError> {
+pub(crate) fn settle_landings(
+    conn: &Connection,
+    root: &crate::directory::Directory,
+) -> Result<(), CoreError> {
     for row in every_bound(conn)? {
         match settled(&row, root) {
             None => {}

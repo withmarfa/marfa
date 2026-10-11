@@ -155,9 +155,9 @@ impl Folder {
         events: &mpsc::Receiver<Wake>,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<(), WatchError<E>> {
-        // macOS reports resolved paths (`/private/var/...`); unresolved, every
-        // strip below fails and the folder wakes itself through `.marfa` writes.
-        let dir = &std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let absolute = std::path::absolute(&self.root)
+            .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
+        let dir = &absolute;
         let mut watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(Wake::File(event));
         })

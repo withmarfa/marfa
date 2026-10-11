@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,9 @@ import { join } from "node:path";
  * projects make it in their global setup and remove it in its teardown.
  */
 export default function makeRegistry(): () => void {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-conformance-registry-"));
+  const folder = mkdtempSync(
+    join(realpathSync(tmpdir()), "marfa-conformance-registry-"),
+  );
   process.env.MARFA_FOLDER_REGISTRY = join(folder, "folders.json");
   return () => {
     rmSync(folder, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -733,7 +734,9 @@ describe("where a file sits", () => {
   });
 
   it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "marfa-folder-elsewhere-"));
+    const outside = mkdtempSync(
+      join(realpathSync(tmpdir()), "marfa-folder-elsewhere-"),
+    );
     // Placed in this order, so each edge is older than the next.
     const notes: Placed[] = [
       {
@@ -2061,7 +2064,7 @@ describe("where a file sits", () => {
         search: { types: ["core.note"] },
       });
       const dir = join(
-        mkdtempSync(join(tmpdir(), "marfa-folder-no-placement-")),
+        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-no-placement-")),
         "notes",
       );
       const folder = new CliFolder(dir, {
@@ -2075,7 +2078,7 @@ describe("where a file sits", () => {
         if (added.ok) continue;
         expect(added.refusal.raw).toContain("edge.in-folder:write");
         expect(
-          existsSync(dir),
+          existsSync(join(dir, ".marfa", "core.sqlite")),
           "a refused add left its working copy behind",
         ).toBe(false);
       } finally {

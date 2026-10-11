@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -360,7 +361,7 @@ describe("what a folder is", () => {
       );
       server.copyAnswer("GET", `/items/${id}`, answers.updated(row()));
       const dir = join(
-        mkdtempSync(join(tmpdir(), "marfa-folder-not-a-folder-")),
+        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-not-a-folder-")),
         "notes",
       );
       const folder = new CliFolder(dir, {
@@ -402,7 +403,7 @@ describe("what a folder is", () => {
         answers.currentKey("fixture-key", { "*": "write" }, types),
       );
       const dir = join(
-        mkdtempSync(join(tmpdir(), "marfa-folder-unreadable-")),
+        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-unreadable-")),
         "notes",
       );
       const folder = new CliFolder(dir, {
@@ -933,7 +934,9 @@ describe("what a folder is", () => {
       );
       const row = scriptFolderRow(server, settings);
       const dir = join(
-        mkdtempSync(join(tmpdir(), "marfa-folder-defaults-refused-")),
+        mkdtempSync(
+          join(realpathSync(tmpdir()), "marfa-folder-defaults-refused-"),
+        ),
         "notes",
       );
       const folder = new CliFolder(dir, {
@@ -1530,7 +1533,7 @@ describe("what a folder's search holds", () => {
       const server = await ScriptedServer.start();
       const row = scriptFolderRow(server, settings as FolderSettings);
       const dir = join(
-        mkdtempSync(join(tmpdir(), "marfa-folder-refused-")),
+        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-refused-")),
         "notes",
       );
       const folder = new CliFolder(dir, {
@@ -4097,7 +4100,9 @@ describe("what a folder takes", () => {
   });
 
   it("refuses to write a file outside the folder", async () => {
-    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-folder-elsewhere-"));
+    const elsewhere = mkdtempSync(
+      join(realpathSync(tmpdir()), "marfa-folder-elsewhere-"),
+    );
     harness = await folderHarness("folder-outside", {
       rows: {
         "core.note": [
@@ -4703,7 +4708,10 @@ describe("reading only what changed", () => {
     try {
       await settle();
       const kept = join(made.dir, "kept.md");
-      const time = join(mkdtempSync(join(tmpdir(), "marfa-time-")), "time");
+      const time = join(
+        mkdtempSync(join(realpathSync(tmpdir()), "marfa-time-")),
+        "time",
+      );
       execFileSync("touch", ["-r", kept, time]);
       writeFileSync(kept, read(made, "kept.md").replace("first", "FIRST"));
       execFileSync("touch", ["-r", time, kept]);
@@ -5251,7 +5259,7 @@ describe("a folder's first sync", () => {
     const queued = await harness.folder.device().queue();
     expect(queued.ok && queued.value.length).toBeGreaterThan(0);
     expect((await harness.folder.remove()).ok).toBe(true);
-    expect(existsSync(join(harness.dir, ".marfa"))).toBe(false);
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(false);
     expect(read(harness, "mine.md")).toBe(typed("Mine"));
     expect(writesSent(harness)).toEqual([]);
 

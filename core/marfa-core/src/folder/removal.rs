@@ -45,7 +45,7 @@ impl Folder {
         let members = OnceCell::new();
         for path in &disk {
             // A file put back since is not gone, whatever the pause recorded.
-            if self.root.join(path).exists() {
+            if self.exists(self.root.join(path)) {
                 continue;
             }
             if let Some((_, item_id, _)) = journaled.iter().find(|(at, _, _)| at == path) {

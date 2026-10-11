@@ -3446,9 +3446,9 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 ### `folders/registry-registers-folder`
 
-When a folder is added, a device MUST list its resolved directory, followed `system.folder` and store identity in the machine’s folder registry.
+When a folder is added, a device MUST list its admitted absolute directory spelling, followed `system.folder` and store identity in the machine’s folder registry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`, `device/folders-one-mac.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`.
+**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`.
 
 ### `folders/registry-independent-stores`
 
@@ -3476,7 +3476,7 @@ When adding a folder would enclose or fall inside another listed folder, a devic
 
 ### `folders/nested-folder-not-scanned`
 
-When a folder scan encounters a directory holding another folder’s `.marfa/` state, a device MUST exclude that directory’s contents from admission.
+When a folder scan encounters a directory holding another folder’s `.marfa/core.sqlite` state, a device MUST exclude that directory’s contents from admission.
 
 **Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`, `device/folders-one-mac.test.ts › holds a bound file whose directory becomes a folder inside this one, and trashes nothing`.
 
@@ -3506,9 +3506,9 @@ When a confirmed folder has unanswered or blocked queued writes, a device MUST r
 
 ### `folders/registry-one-directory`
 
-When the same resolved directory is registered through another spelling or for another `system.folder`, a device MUST retain only its current registry entry.
+When the same admitted directory is registered through an equivalent absolute spelling or for another `system.folder`, a device MUST retain only its current registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists a folder reached through a symlink once, and never as another`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
 
 ### `folders/registry-removed-state`
 
@@ -4459,3 +4459,37 @@ When a `folders watch` pass reports new activity, the CLI MUST NOT repeat a stan
 When a standing notice changes during `folders watch`, the CLI MUST report the changed notice in the pass that observes it.
 
 **Tests:** `device/folders.test.ts › says a refused secret in words once while watching`.
+
+### `folders/admitted-directory-capability`
+
+When a folder directory is admitted, a device MUST retain that opened directory as the authority for traversal, reads, writes, publication, storage, and cleanup until the operation ends.
+
+**Reason:** A pathname can name a replacement directory after admission.
+
+**Tests:** `device/folders-contract-a.test.ts › ignores a replacement installed at %s`, `device/folders-contract-a.test.ts › leaves replacement state untouched when the root changes before its store opens`, `device/folders-contract-a.test.ts › leaves every replacement byte intact at %s`.
+
+### `folders/directory-components-no-follow`
+
+When opening a folder or any directory below it, a device MUST refuse symbolic links in every path component.
+
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
+
+### `folders/replacement-root-no-deletion`
+
+While the admitted root or its state directory is absent or replaced, a device MUST suppress missing-file and deletion conclusions.
+
+**Tests:** `device/folders-contract-a.test.ts › ignores a replacement installed at %s`, `device/folders-contract-a.test.ts › reports root_gone and ignores a replacement directory while watching`.
+
+### `folders/cleanup-retains-empty-directories`
+
+When removing a folder's administrative state, a device MUST clear files through retained directories without removing the directory entries themselves.
+
+**Reason:** Checking a child's identity and then removing its pathname cannot atomically exclude a replacement child. Empty administrative directories retain no folder state.
+
+**Tests:** `device/folders-contract-a.test.ts › leaves every replacement byte intact at %s`, `device/folders.test.ts › is canceled by removing the folder, which leaves its files`.
+
+### `folders/empty-state-not-nested-folder`
+
+When a directory contains an empty `.marfa` directory without `core.sqlite`, a device MUST admit its eligible contents as ordinary folder contents.
+
+**Tests:** `device/folders-contract-a.test.ts › admits contents beside empty administrative directories`.

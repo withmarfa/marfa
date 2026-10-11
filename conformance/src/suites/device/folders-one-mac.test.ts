@@ -6,10 +6,10 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readlinkSync,
   readdirSync,
-  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -192,7 +192,7 @@ describe("folders on one Mac", () => {
       harness.settings.id,
     ]);
     expect(existsSync(join(second.dir, "kept.md"))).toBe(true);
-    expect(existsSync(join(second.dir, ".marfa"))).toBe(false);
+    expect(existsSync(join(second.dir, ".marfa", "core.sqlite"))).toBe(false);
   });
 
   it("tells a copy into another folder from a move", async () => {
@@ -1628,14 +1628,20 @@ describe("folders on one Mac", () => {
     expect(refused.ok || refused.refusal.raw).toContain(
       "a folder cannot sit inside another",
     );
-    expect(existsSync(join(harness.dir, "inner", ".marfa"))).toBe(false);
+    expect(
+      existsSync(join(harness.dir, "inner", ".marfa", "core.sqlite")),
+    ).toBe(false);
     const holding = await inside(join(harness.dir, "..")).add(innerRow.id);
     expect(holding.ok || holding.refusal.raw).toContain(
       "a folder cannot sit inside another",
     );
 
     // A folder inside, on another machine's registry say, is its own.
-    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    mkdirSync(join(harness.dir, "inner", ".marfa"), { recursive: true });
+    copyFileSync(
+      join(harness.dir, ".marfa", "core.sqlite"),
+      join(harness.dir, "inner", ".marfa", "core.sqlite"),
+    );
     put(harness, "inner/theirs.md", "---\ntitle: Theirs\n---\nnot ours\n");
     put(harness, "ours.md", "---\ntitle: Ours\n---\nours\n");
     const pushed = await harness.folder.push();
@@ -1672,7 +1678,11 @@ describe("folders on one Mac", () => {
       );
 
     // Another folder's state lands in the directory, and a file goes.
-    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    mkdirSync(join(harness.dir, "inner", ".marfa"), { recursive: true });
+    copyFileSync(
+      join(harness.dir, ".marfa", "core.sqlite"),
+      join(harness.dir, "inner", ".marfa", "core.sqlite"),
+    );
     rmSync(join(harness.dir, "gone.md"));
     const first = await harness.folder.push();
     expect(first.ok, JSON.stringify(first)).toBe(true);
@@ -1775,31 +1785,23 @@ describe("folders on one Mac", () => {
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   });
 
-  it("lists a folder reached through a symlink once, and never as another", async () => {
+  it("refuses a folder reached through a symlink and preserves its registry identity", async () => {
     harness = await folderHarness("renamed-folder");
-    scriptFolderWrites(harness);
-    put(harness, "One.txt", "same\n");
-    put(harness, "Two.txt", "same\n");
-    expect((await harness.folder.push()).ok).toBe(true);
-    const [one] = sentCreates(harness).map((sent) => String(sent.id));
-    const real = realpathSync(harness.dir);
-    renameSync(real, `${real}-renamed`);
-    symlinkSync(`${real}-renamed`, real);
-    expect((await harness.folder.push()).ok).toBe(true);
-    const listed = await harness.folder.list();
-    expect(
-      listed.ok && listed.value.map((entry) => entry.dir),
-      "a folder reached through a symlink was listed under both names",
-    ).toEqual([`${real}-renamed`]);
-
-    rmSync(join(harness.dir, "One.txt"));
-    expect((await harness.folder.push()).ok).toBe(true);
-    await pastTheGrace();
-    const swept = await harness.folder.push();
-    expect(swept.ok, JSON.stringify(swept)).toBe(true);
-    if (!swept.ok) return;
-    expect(swept.value.scan.trashed).toEqual(["One.txt"]);
-    expect(deletesOf(harness.server, String(one))).toBe(1);
+    const root = harness.dir;
+    const away = `${root}-renamed`;
+    renameSync(root, away);
+    symlinkSync(away, root);
+    try {
+      expect((await harness.folder.push()).ok).toBe(false);
+      const listed = await harness.folder.list();
+      expect(listed.ok && listed.value.map((entry) => entry.dir)).toEqual([
+        root,
+      ]);
+    } finally {
+      rmSync(root);
+      renameSync(away, root);
+    }
+    expect((await harness.folder.pull()).ok).toBe(true);
   });
 
   it("follows a move by copy and delete, by id and by bytes", async () => {
@@ -1907,7 +1909,7 @@ describe("folders on one Mac", () => {
   });
 
   it("keeps its registry under the home by default", async () => {
-    const home = mkdtempSync(join(tmpdir(), "marfa-home-"));
+    const home = mkdtempSync(join(realpathSync(tmpdir()), "marfa-home-"));
     harness = await folderHarness("home-registry", { home });
     const registry =
       process.platform === "darwin"

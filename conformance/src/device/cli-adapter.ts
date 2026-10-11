@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -105,7 +105,7 @@ export interface CliDeviceOptions {
 
 export function newStore(label: string): string {
   return join(
-    mkdtempSync(join(tmpdir(), `marfa-device-${label}-`)),
+    mkdtempSync(join(realpathSync(tmpdir()), `marfa-device-${label}-`)),
     "core.sqlite",
   );
 }

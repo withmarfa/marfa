@@ -1,3 +1,5 @@
+use crate::directory::Directory;
+use crate::directory::{Mode, OFlags};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -35,48 +37,59 @@ impl From<io::Error> for Unlanded {
 }
 
 /// Writes `bytes` over `target` as [`land`] does.
+#[cfg(test)]
 pub(crate) fn write(
     target: &Path,
     bytes: &[u8],
     still: impl FnOnce(Option<&[u8]>) -> bool,
 ) -> Result<(), Unlanded> {
-    land(target, |file, _| file.write_all(bytes), still)
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let dir = Directory::open(parent)?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other("missing target name"))?;
+    land_at(
+        &dir,
+        Path::new(name),
+        |file, _| file.write_all(bytes),
+        still,
+    )
 }
 
 /// Fills a new file beside `target`, in a directory that must exist, syncs it
 /// and renames it over, so a write that fails at any point leaves the old
 /// file whole. `fill` may also set the
-/// new file's permissions and attributes by its path, before it lands.
+/// new file's permissions and attributes through its descriptor, before it lands.
 ///
 /// `still` is asked, just before the rename, whether the target's bytes, or
 /// `None` where there is none, are still what the caller decided to write
 /// over; where they are not, nothing lands. An absent target must stay absent
 /// through the atomic rename. Replacing an existing file still cannot be
 /// conditional on its bytes after that last check.
-pub(crate) fn land(
+pub(crate) fn land_at(
+    dir: &Directory,
     target: &Path,
     fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
     still: impl FnOnce(Option<&[u8]>) -> bool,
 ) -> Result<(), Unlanded> {
-    let dir = target
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
     let (mut file, beside) = beside(dir)?;
     let landed = (|| {
         // A file written anew keeps the permission the one it replaces had,
         // and one its owner made read-only is refused, as a write in place
         // would be, though a rename could replace it.
-        if let Ok(metadata) = std::fs::metadata(target)
-            && metadata.is_file()
+        if let Ok(source) = dir.open_file(target, OFlags::RDONLY, Mode::empty())
+            && let Ok(metadata) = source.metadata()
         {
             if metadata.permissions().readonly() {
                 return Err(Unlanded::Failed(io::Error::from(
                     io::ErrorKind::PermissionDenied,
                 )));
             }
-            std::fs::set_permissions(&beside, metadata.permissions())?;
-            keep_attributes(target, &beside);
+            file.set_permissions(metadata.permissions())?;
+            keep_attributes(&source, &file);
         }
         fill(&mut file, &beside)?;
         if crate::fault::named("sync-failure").is_some_and(|name| {
@@ -90,8 +103,8 @@ pub(crate) fn land(
         }
         file.sync_all()?;
         drop(file);
-        save_meanwhile(target);
-        let found = match std::fs::read(target) {
+        save_meanwhile(dir, target);
+        let found = match dir.read(target) {
             Ok(found) => Some(found),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(Unlanded::Failed(error)),
@@ -101,9 +114,9 @@ pub(crate) fn land(
         }
         crash_if_asked(target);
         crash_if_named(target, "crash-before-copy-publish");
-        appear_if_asked(target, "create-before-rename")?;
+        appear_at(dir, target, "create-before-rename")?;
         if found.is_none() {
-            rename_new(&beside, target).map_err(|error| {
+            rename_new_at(dir, &beside, dir, target).map_err(|error| {
                 if error.kind() == io::ErrorKind::AlreadyExists {
                     Unlanded::Changed
                 } else {
@@ -111,30 +124,29 @@ pub(crate) fn land(
                 }
             })?;
         } else {
-            std::fs::rename(&beside, target)?;
+            dir.rename(&beside, dir, target, false)?;
         }
         Ok(())
     })();
     if landed.is_err() {
-        let _ = std::fs::remove_file(&beside);
+        let _ = dir.unlink(&beside);
         return landed;
     }
     // The rename is only durable once its directory is; a failure here
     // leaves the new file in place all the same.
-    let _ = File::open(dir).and_then(|dir| dir.sync_all());
+    let _ = dir.sync();
     Ok(())
 }
 
 /// Move only into an absent directory entry, including refusing a dangling
 /// symlink. Unsupported kernels or filesystems must not fall back to replacing
 /// a destination after a separate existence check.
-#[cfg(any(
-    target_vendor = "apple",
-    target_os = "linux",
-    target_os = "android",
-    target_os = "redox"
-))]
-pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new_at(
+    from_dir: &Directory,
+    from: &Path,
+    to_dir: &Directory,
+    to: &Path,
+) -> io::Result<()> {
     if crate::fault::named("rename-new-unsupported").is_some_and(|name| {
         to.file_name()
             .is_some_and(|file| file.to_string_lossy() == name)
@@ -144,33 +156,17 @@ pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
             "no-replace publication unavailable in fixture",
         ));
     }
-    rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        from,
-        rustix::fs::CWD,
-        to,
-        rustix::fs::RenameFlags::NOREPLACE,
-    )
-    .map_err(Into::into)
-}
-
-#[cfg(not(any(
-    target_vendor = "apple",
-    target_os = "linux",
-    target_os = "android",
-    target_os = "redox"
-)))]
-pub(crate) fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "atomic no-replace rename is unavailable on this platform",
-    ))
+    from_dir.rename(from, to_dir, to, true)
 }
 
 /// Removes `target` where `still` says its bytes are what the caller decided
 /// to remove. Answers whether it did; a target already gone answers `false`.
-pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> {
-    remove_checked(target, still).map_err(|error| match error {
+pub(crate) fn remove_at(
+    dir: &Directory,
+    target: &Path,
+    still: impl FnOnce(&[u8]) -> bool,
+) -> io::Result<bool> {
+    remove_checked_at(dir, target, still).map_err(|error| match error {
         RemoveError::Read(error) | RemoveError::Remove(error) => error,
     })
 }
@@ -180,12 +176,13 @@ pub(crate) enum RemoveError {
     Remove(io::Error),
 }
 
-pub(crate) fn remove_checked(
+pub(crate) fn remove_checked_at(
+    dir: &Directory,
     target: &Path,
     still: impl FnOnce(&[u8]) -> bool,
 ) -> Result<bool, RemoveError> {
-    save_meanwhile(target);
-    let found = match std::fs::read(target) {
+    save_meanwhile(dir, target);
+    let found = match dir.read(target) {
         Ok(found) => found,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(RemoveError::Read(error)),
@@ -193,7 +190,7 @@ pub(crate) fn remove_checked(
     if !still(&found) {
         return Ok(false);
     }
-    match std::fs::remove_file(target) {
+    match dir.unlink(target) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(RemoveError::Remove(error)),
@@ -217,7 +214,7 @@ pub(crate) fn crash_if_named(target: &Path, fault: &str) {
 }
 
 /// A competing file arriving after the last check, where a debug fixture asks.
-pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
+pub(crate) fn appear_at(dir: &Directory, target: &Path, fault: &str) -> io::Result<()> {
     #[cfg(unix)]
     if fault == "create-before-rename"
         && crate::fault::named("symlink-before-rename").is_some_and(|name| {
@@ -226,37 +223,40 @@ pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
                 .is_some_and(|file| file.to_string_lossy() == name)
         })
     {
-        return std::os::unix::fs::symlink("absent-fixture-target", target);
+        return rustix::fs::symlinkat("absent-fixture-target", dir.file(), target)
+            .map_err(Into::into);
     }
     if crate::fault::named(fault).is_some_and(|name| {
         target
             .file_name()
             .is_some_and(|file| file.to_string_lossy() == name)
     }) {
-        File::options()
-            .write(true)
-            .create_new(true)
-            .open(target)?
-            .write_all(b"appeared meanwhile\n")?;
+        dir.open_file(
+            target,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+            Mode::from_raw_mode(0o666),
+        )?
+        .write_all(b"appeared meanwhile\n")?;
     }
     Ok(())
 }
 
 /// A Finder tag, say, which a file written anew would otherwise lose.
 #[cfg(target_os = "macos")]
-fn keep_attributes(from: &Path, to: &Path) {
-    let Ok(names) = xattr::list(from) else {
+fn keep_attributes(from: &File, to: &File) {
+    use xattr::FileExt;
+    let Ok(names) = from.list_xattr() else {
         return;
     };
     for name in names {
-        if let Ok(Some(value)) = xattr::get(from, &name) {
-            let _ = xattr::set(to, &name, &value);
+        if let Ok(Some(value)) = from.get_xattr(&name) {
+            let _ = to.set_xattr(&name, &value);
         }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn keep_attributes(_from: &Path, _to: &Path) {}
+fn keep_attributes(_from: &File, _to: &File) {}
 
 /// A file a write left beside its target, named for a process no longer
 /// running: what a crash before the rename leaves.
@@ -292,42 +292,69 @@ fn running(_pid: i32) -> bool {
 }
 
 /// A person's save made between the folder's decision and its last look.
-fn save_meanwhile(target: &Path) {
+fn save_meanwhile(dir: &Directory, target: &Path) {
     if crate::fault::named("save-before-last-look").is_some()
         && target
             .extension()
             .is_some_and(|extension| extension == "md")
-        && target.is_file()
+        && dir.entry_metadata(target).is_ok()
     {
-        let _ = std::fs::OpenOptions::new()
-            .append(true)
-            .open(target)
+        let _ = dir
+            .open_file(target, OFlags::WRONLY | OFlags::APPEND, Mode::empty())
             .and_then(|mut file| file.write_all(b"saved meanwhile\n"));
     }
 }
 
 /// Named so the built-in lists never take it (`*.tmp`), and in the target's
 /// own directory, so the rename never crosses a volume.
-fn beside(dir: &Path) -> io::Result<(File, PathBuf)> {
+fn beside(dir: &Directory) -> io::Result<(File, PathBuf)> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     loop {
-        let path = dir.join(format!(
+        let path = PathBuf::from(format!(
             ".marfa-{}-{}.tmp",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        match File::options()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
+        match dir.open_file(
+            &path,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL,
+            Mode::from_raw_mode(0o666),
+        ) {
             Ok(file) => return Ok((file, path)),
             // Left by a crashed process that had this id.
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn land(
+    target: &Path,
+    fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
+    still: impl FnOnce(Option<&[u8]>) -> bool,
+) -> Result<(), Unlanded> {
+    let dir = Directory::open(&target.parent().unwrap().canonicalize()?)?;
+    land_at(&dir, Path::new(target.file_name().unwrap()), fill, still)
+}
+
+#[cfg(test)]
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    rename_new_at(
+        &Directory::open(&from.parent().unwrap().canonicalize()?)?,
+        Path::new(from.file_name().unwrap()),
+        &Directory::open(&to.parent().unwrap().canonicalize()?)?,
+        Path::new(to.file_name().unwrap()),
+    )
+}
+
+#[cfg(test)]
+fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> {
+    remove_at(
+        &Directory::open(&target.parent().unwrap().canonicalize()?)?,
+        Path::new(target.file_name().unwrap()),
+        still,
+    )
 }
 
 #[cfg(test)]
@@ -345,7 +372,8 @@ mod tests {
     #[test]
     fn an_absent_target_cannot_be_replaced_after_its_last_check() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("note.md");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("note.md");
         let failed = write(&target, b"from the server", |found| {
             assert!(found.is_none());
             std::fs::write(&target, b"appeared meanwhile").unwrap();
@@ -390,7 +418,8 @@ mod tests {
     #[test]
     fn a_write_that_fails_part_way_leaves_the_old_file_whole() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("note.md");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("note.md");
         std::fs::write(&target, b"the person's whole text").unwrap();
         let failed = land(
             &target,
@@ -416,7 +445,8 @@ mod tests {
     #[test]
     fn a_target_changed_before_the_rename_is_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("note.md");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("note.md");
         std::fs::write(&target, b"as last written").unwrap();
         let changed = land(
             &target,
@@ -437,7 +467,8 @@ mod tests {
     fn a_file_written_anew_keeps_its_permission_and_gets_a_new_inode() {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("tool.sh");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("tool.sh");
         std::fs::write(&target, b"old").unwrap();
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o750)).unwrap();
         let before = std::fs::metadata(&target).unwrap().ino();
@@ -468,7 +499,8 @@ mod tests {
     #[test]
     fn a_file_written_anew_keeps_its_other_attributes() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("note.md");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("note.md");
         std::fs::write(&target, b"old").unwrap();
         xattr::set(&target, "com.example.kept", b"yes").unwrap();
         write(&target, b"new", |_| true).unwrap();
@@ -481,12 +513,57 @@ mod tests {
     #[test]
     fn removes_only_what_is_still_the_callers() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("note.md");
+        let root = dir.path().canonicalize().unwrap();
+        let target = root.join("note.md");
         std::fs::write(&target, b"edited since").unwrap();
         assert!(!remove(&target, |found| found == b"as written").unwrap());
         assert!(target.exists());
         assert!(remove(&target, |found| found == b"edited since").unwrap());
         assert!(!target.exists());
         assert!(!remove(&target, |_| true).unwrap());
+    }
+    #[test]
+    fn publication_and_failed_temp_cleanup_follow_the_retained_parent() {
+        for fail in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let base = temp.path().canonicalize().unwrap();
+            let path = base.join("child");
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("note.md"), b"owned").unwrap();
+            let directory = Directory::open(&path).unwrap();
+            let result = land_at(
+                &directory,
+                Path::new("note.md"),
+                |file, temporary| {
+                    std::fs::rename(&path, base.join("original"))?;
+                    std::fs::create_dir(&path)?;
+                    std::fs::write(path.join("note.md"), b"replacement")?;
+                    std::fs::write(path.join(temporary), b"replacement temporary")?;
+                    file.write_all(b"published")?;
+                    if fail {
+                        return Err(io::Error::other("fixture stopped before publication"));
+                    }
+                    Ok(())
+                },
+                |found| found == Some(b"owned".as_slice()),
+            );
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(std::fs::read(path.join("note.md")).unwrap(), b"replacement");
+            let names = leftovers(&path);
+            assert_eq!(names.len(), 1);
+            assert_eq!(
+                std::fs::read(path.join(&names[0])).unwrap(),
+                b"replacement temporary"
+            );
+            assert!(leftovers(&base.join("original")).is_empty());
+            assert_eq!(
+                std::fs::read(base.join("original/note.md")).unwrap(),
+                if fail {
+                    b"owned".as_slice()
+                } else {
+                    b"published".as_slice()
+                }
+            );
+        }
     }
 }

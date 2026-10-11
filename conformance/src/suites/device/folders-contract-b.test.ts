@@ -823,7 +823,9 @@ it("keeps a file's permissions when a permission change is refused and continues
 
 it("chooses a bound path before path order when names compare equal", async () => {
   harness = await folderHarness("contract-b-case-sensitive");
-  const scratch = mkdtempSync(join(tmpdir(), "marfa-case-sensitive-"));
+  const scratch = mkdtempSync(
+    join(realpathSync(tmpdir()), "marfa-case-sensitive-"),
+  );
   const mount = join(scratch, "volume");
   mkdirSync(mount);
   let attached = false;
@@ -1112,7 +1114,7 @@ describe.runIf(process.platform === "darwin")("exFAT permissions", () => {
   it("leaves file and item executable values alone on an exFAT volume", async () => {
     harness = await fileHarness("contract-b-exfat");
     expect((await harness.folder.pull()).ok).toBe(true);
-    const scratch = mkdtempSync(join(tmpdir(), "marfa-exfat-"));
+    const scratch = mkdtempSync(join(realpathSync(tmpdir()), "marfa-exfat-"));
     const mount = join(scratch, "volume");
     mkdirSync(mount);
     const image = join(scratch, "volume.sparseimage");

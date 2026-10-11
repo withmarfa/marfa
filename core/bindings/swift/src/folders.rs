@@ -644,7 +644,9 @@ mod tests {
     fn registry() {
         static NAMED: std::sync::Once = std::sync::Once::new();
         NAMED.call_once(|| {
-            let dir = tempfile::tempdir().unwrap().keep();
+            let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+                .unwrap()
+                .keep();
             // SAFETY: under the `Once`, before this test reads the environment.
             unsafe {
                 std::env::set_var(marfa_core::folder::REGISTRY_ENV, dir.join("folders.json"))
@@ -687,7 +689,7 @@ mod tests {
             String::from_utf8_lossy(&made.stderr)
         );
         let id = String::from_utf8(made.stdout).unwrap().trim().to_string();
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = dir.path().display().to_string();
         let folders = Folders::new(Some(url), Some(key)).unwrap();
         folders.add(path.clone(), id).unwrap();
