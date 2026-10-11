@@ -132,12 +132,13 @@ export const FENCED_PLUGIN_ENDPOINTS: readonly string[] = [
 
 /**
  * The census boundaries whose routes the library answers over the wire:
- * password sign-in and the browser session, the key set that signs ID
+ * password and passkey sign-in and the browser session, the key set that signs ID
  * tokens, the OAuth protocol, the device grant's initiation and the
  * discovery and error documents.
  */
 export const SERVED_BOUNDARIES: readonly string[] = [
   "password-session",
+  "passkey-session",
   "signing",
   "oauth-protocol",
   "device",

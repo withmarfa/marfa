@@ -869,6 +869,32 @@ describe("the sign-in routes", () => {
     expect(report.unpublished.size).toBe(0);
   });
 
+  it.each([
+    ["GET", "/auth/passkey/generate-register-options", 400],
+    ["GET", "/auth/passkey/generate-authenticate-options", 200],
+    ["POST", "/auth/passkey/verify-registration", 409],
+    ["POST", "/auth/passkey/verify-authentication", 500],
+    ["GET", "/auth/passkey/list-user-passkeys", 401],
+    ["POST", "/auth/passkey/delete-passkey", 404],
+    ["GET", "/auth/owner/passkeys", 403],
+    ["GET", "/auth/static/passkeys.js", 200],
+  ])("recognises %s %s and its %i response", (method, path, status) => {
+    const line = { method, transport: "http", route: "/auth/*", path };
+    const report = reportStatuses(
+      parseRequestLines(JSON.stringify({ ...line, status })),
+      documentDeclaring([200]),
+    );
+    expect(report.unexplained).toEqual([]);
+    expect(report.undeclared).toEqual([]);
+    const invalid = reportStatuses(
+      parseRequestLines(JSON.stringify({ ...line, status: 418 })),
+      documentDeclaring([200]),
+    );
+    expect(invalid.undeclared.map((entry) => entry.operation)).toEqual([
+      `${method} ${path}`,
+    ]);
+  });
+
   it("are each named with why, and every unpublished sign-in route declares its statuses", () => {
     for (const route of Object.keys(SIGN_IN_ROUTE_STATUSES)) {
       expect(UNPUBLISHED_ROUTES[route], route).toBeDefined();

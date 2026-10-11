@@ -29,5 +29,7 @@
   "GET /auth/owner/manage": "trusted owner management page",
   "GET /auth/owner/restore": "trusted owner archive restore page",
   "GET /auth/owner/password": "owner password form",
-  "POST /auth/owner/password": "same-origin owner password form submission"
+  "POST /auth/owner/password": "same-origin owner password form submission",
+  "GET /auth/owner/passkeys": "owner passkey management page",
+  "GET /auth/static/passkeys.js": "browser passkey ceremony script"
 }

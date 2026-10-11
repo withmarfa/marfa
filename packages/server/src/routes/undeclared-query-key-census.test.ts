@@ -60,6 +60,8 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
     "management page authenticated by direct owner session",
   "GET /auth/owner/restore":
     "restore form authenticated by direct owner session",
+  "GET /auth/owner/passkeys":
+    "passkey management authenticated by the owner session cookie",
   "GET /auth/owner/password":
     "owner password form authenticated by the owner session cookie",
   "POST /auth/owner/password":
@@ -87,6 +89,7 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
   "GET /auth/oauth2/end-session":
     "the logout page, reached with the OAuth request",
   "GET /auth/static/auth.css": "a stylesheet those pages load",
+  "GET /auth/static/passkeys.js": "a script those pages load",
   "GET /auth/static/password-toggle.js": "a script those pages load",
   "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/grants": "the page listing the apps the owner authorized",

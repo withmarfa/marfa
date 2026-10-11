@@ -592,7 +592,7 @@ When the server answers with an HTML page, a page a refusal renders and one give
 
 The server MUST write the `Content-Security-Policy` of an HTML page so that it allows a script or a style only when it carries the nonce the policy names.
 
-**Reason:** no source is allowed by origin, `'self'` included, because the same origin serves a blob's bytes at its link without a credential and under the type its uploader named, and a source allowed by origin would run them. A blob's bytes are not a page of this server and keep the policy of `blobs/download-sandbox`.
+**Reason:** no script or style source is allowed by origin, `'self'` included, because the same origin serves a blob's bytes at its link without a credential and under the type its uploader named, and a source allowed by origin would run them. A blob's bytes are not a page of this server and keep the policy of `blobs/download-sandbox`.
 
 **Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
 

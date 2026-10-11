@@ -123,6 +123,10 @@ export function renderSignInPage(params: SignInPageParams): string {
     ${appCallout}
     ${errorBanner}
     ${passwordForm}
+    <button type="button" id="sign-in-passkey" class="btn" data-return-to="${safeReturnTo}">Sign in with a passkey</button>
+    <p>Passkeys require a secure HTTPS address, or localhost for development. A password lock does not block passkeys.</p>
+    <p id="passkey-status" role="status"></p>
+    <script src="/auth/static/passkeys.js" nonce="${escapeHtml(params.nonce)}"></script>
     <script src="/auth/static/password-toggle.js" nonce="${escapeHtml(params.nonce)}"></script>
     <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
   `;
