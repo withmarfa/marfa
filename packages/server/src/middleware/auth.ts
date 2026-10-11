@@ -531,18 +531,26 @@ export function authMiddleware(storage: Storage, salt: string) {
  * `oauth:` is read as authority: the synthetic key an OAuth access token
  * produces is sourced `oauth:<clientId>:<userId>`, and it is synthesized
  * per request in this file, never persisted. A minted key carrying that
- * shape would read later as a grant it has no binding to.
+ * shape would read later as a grant it has no binding to. `restored:`
+ * records archived provenance without granting a credential authority.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   OAUTH_SOURCE_PREFIX,
+  "restored:",
 ] as const;
+
+export function reservedCredentialSourcePrefix(
+  source: string,
+): (typeof RESERVED_CREDENTIAL_SOURCE_PREFIXES)[number] | undefined {
+  const normalized = source.trim().toLowerCase();
+  return RESERVED_CREDENTIAL_SOURCE_PREFIXES.find((prefix) =>
+    normalized.startsWith(prefix),
+  );
+}
 
 /** Whether `source` claims a reserved prefix. */
 export function isReservedCredentialSource(source: string): boolean {
-  const normalized = source.trim().toLowerCase();
-  return RESERVED_CREDENTIAL_SOURCE_PREFIXES.some((prefix) =>
-    normalized.startsWith(prefix),
-  );
+  return reservedCredentialSourcePrefix(source) !== undefined;
 }
 
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {

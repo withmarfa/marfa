@@ -1635,3 +1635,89 @@ describe("POST /restore scalar preflight", () => {
     expect((await ctx.storage.edges.get(f.edgeId))?.version).toBe(version ?? 1);
   });
 });
+
+describe("POST /restore app sources", () => {
+  it.each([
+    "oauth:client:person",
+    " OAuth:client:person ",
+    "oauth:" + "x".repeat(195),
+  ])("rewrites %s exactly once", async (source) => {
+    const id = generateId();
+    const archive = await buildArchive(
+      manifestFor(),
+      [
+        JSON.stringify({
+          item: {
+            id,
+            type: "core.note",
+            properties: { body: "from an app" },
+            source,
+            source_id: "same",
+          },
+        }),
+      ],
+      [],
+    );
+    const restored = await postArchive(archive);
+    expect(
+      restored.status,
+      restored.status === 200 ? "" : await restored.text(),
+    ).toBe(200);
+    expect((await ctx.storage.items.get(id))?.source).toBe(
+      `restored:${source}`,
+    );
+    const exported = await ctx.app.request(
+      `/export?format=archive&source=${encodeURIComponent(`restored:${source}`)}`,
+      { headers: { Authorization: `Bearer ${ctx.workingKey}` } },
+    );
+    expect(exported.status).toBe(200);
+    const bytes = Buffer.from(await exported.arrayBuffer());
+    const target = await createTestContext();
+    try {
+      const second = await target.ownerRequest("/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/gzip" },
+        body: bytes,
+      });
+      expect(second.status).toBe(200);
+      expect((await target.storage.items.get(id))?.source).toBe(
+        `restored:${source}`,
+      );
+    } finally {
+      await target.cleanup();
+    }
+  });
+  it("deactivates restored app connection projections", async () => {
+    const id = generateId();
+    const restored = await postArchive(
+      await buildArchive(
+        manifestFor(),
+        [
+          JSON.stringify({
+            item: {
+              id,
+              type: "system.connection",
+              source: "marfa/oauth",
+              properties: {
+                kind: "app",
+                client_id: "old",
+                user_id: "old",
+                status: "active",
+                scopes: [],
+                granted_at: "2026-01-01T00:00:00.000Z",
+              },
+            },
+          }),
+        ],
+        [],
+      ),
+    );
+    expect(
+      restored.status,
+      restored.status === 200 ? "" : await restored.text(),
+    ).toBe(200);
+    expect((await ctx.storage.items.get(id))?.properties.status).toBe(
+      "revoked",
+    );
+  });
+});

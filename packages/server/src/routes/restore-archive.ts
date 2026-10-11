@@ -42,7 +42,7 @@ import type { Edge, Item } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  isReservedCredentialSource,
+  reservedCredentialSourcePrefix,
   directAuthorityOnly,
   requireRecentOwnerAuthentication,
   authorityId,
@@ -389,6 +389,22 @@ function oversizedProperties(
   );
 }
 
+function restoredSource(source: unknown): string | undefined {
+  if (typeof source !== "string") return undefined;
+  return reservedCredentialSourcePrefix(source) === "oauth:"
+    ? `restored:${source}`
+    : source;
+}
+
+function restoredProperties(
+  item: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = (item.properties ?? {}) as Record<string, unknown>;
+  return item.type === "system.connection" && properties.kind === "app"
+    ? { ...properties, status: "revoked" }
+    : properties;
+}
+
 /**
  * The refusals that need nothing from the database, asked of one item line.
  *
@@ -430,22 +446,6 @@ function itemRefusal(
       .find((refusal) => refusal !== null) ??
     null;
   if (oversized) return oversized;
-
-  // A row whose `source` claims a reserved credential shape is refused, on
-  // the same terms and for the same reason as the state check below: the
-  // restore is the one door that copies `source` verbatim, and `POST /keys`
-  // refuses that prefix precisely so no credential can stamp one. A row
-  // carrying `oauth:` would otherwise read, ever after, as written by a
-  // grant that never existed, planted through the one door that does not
-  // ask.
-  const source = item.source;
-  if (typeof source === "string" && isReservedCredentialSource(source)) {
-    return new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Item ${String(item.id)} records a source no credential can hold: ${source}`,
-      { item_id: item.id, source },
-    );
-  }
 
   // A row in a state its type's lifecycle cannot produce is refused, the
   // question `POST /items` asks of a caller: `trashed` is a state, and not
@@ -734,11 +734,11 @@ async function restoreRows(
                 version: item.version,
               }),
               type: item.type as string,
-              properties: (item.properties ?? {}) as Record<string, unknown>,
+              properties: restoredProperties(item),
               state: item.state as ItemState | undefined,
               tier: item.tier as Tier | undefined,
               occurred_at: item.occurred_at as string | undefined,
-              source: item.source as string | undefined,
+              source: restoredSource(item.source),
               source_id: item.source_id as string | undefined,
               capture_latitude: item.capture_latitude as number | undefined,
               capture_longitude: item.capture_longitude as number | undefined,

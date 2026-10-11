@@ -225,7 +225,12 @@ describe("minting a key", () => {
   });
 
   it("refuses a reserved prefix to every caller, the direct owner included", async () => {
-    for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
+    for (const reserved of [
+      "oauth:client:person",
+      "OAuth:client:person",
+      "restored:oauth:client:person",
+      " Restored:oauth:client:person ",
+    ]) {
       const res = await request(ctx.app, "POST", "/keys", {
         headers: {
           cookie: ctx.owner.cookie,
@@ -236,7 +241,18 @@ describe("minting a key", () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as RefusalBody;
       expect(body.error.code).toBe("validation_error");
-      expect(body.error.details?.source).toBe(reserved);
+      expect(body.error.details?.source).toBe(reserved.trim());
+      const own = await request(ctx.app, "POST", "/keys", {
+        headers: {
+          cookie: ctx.owner.cookie,
+          origin: new URL(ctx.config.authBaseUrl).origin,
+        },
+        body: mintBody({ source: reserved }),
+      });
+      expect(own.status).toBe(400);
+      expect(((await own.json()) as RefusalBody).error.code).toBe(
+        "validation_error",
+      );
     }
   });
 
@@ -291,14 +307,18 @@ describe("editing a key's claims", () => {
     ]);
   });
 
-  it("refuses a reserved prefix on an edit", async () => {
+  it.each([
+    "oauth:client:person",
+    "restored:oauth:client:person",
+    " Restored:oauth:client:person ",
+  ])("refuses reserved source %s on an edit", async (source) => {
     const target = await seedKey("reserved-edit", []);
     const res = await request(ctx.app, "PATCH", `/keys/${target.id}`, {
       headers: {
         cookie: ctx.owner.cookie,
         origin: new URL(ctx.config.authBaseUrl).origin,
       },
-      body: { sources: ["oauth:client:person"] },
+      body: { sources: [source] },
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as RefusalBody).error.code).toBe(

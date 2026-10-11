@@ -733,9 +733,9 @@ If a mint names as the new key's own `source` one another key claims, and the ca
 
 ### `keys-and-oauth/claims-reserved`
 
-If a mint or an update names a claim or an own `source` starting with `oauth:`, in any case, then the server MUST answer `400 validation_error`, whoever the caller is.
+If a mint or an update names a claim or an own `source` that, after trimming whitespace and ignoring case, starts with `oauth:` or `restored:`, then the server MUST answer `400 validation_error`, whoever the caller is.
 
-**Reason:** A source under that prefix is read as an app's identity, which no key earns by naming it.
+**Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a reserved prefix, even to the owner`.
 
