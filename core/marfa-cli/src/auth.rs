@@ -340,7 +340,7 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     with_credential_lock(origin, || refresh_locked(origin, refused))
 }
 
-pub fn resolve_credential(origin: &str) -> Result<Option<Kept>, CliError> {
+pub fn resolve_credential(origin: &str, renew_stale: bool) -> Result<Option<Kept>, CliError> {
     with_credential_lock(origin, || {
         let found = match credentials::read(origin) {
             Ok(found) => found,
@@ -348,7 +348,7 @@ pub fn resolve_credential(origin: &str) -> Result<Option<Kept>, CliError> {
             Err(error) => return Err(error),
         };
         match found {
-            Some(kept) if is_stale(&kept) => refresh_locked(origin, None).map(Some),
+            Some(kept) if renew_stale && is_stale(&kept) => refresh_locked(origin, None).map(Some),
             found => Ok(found),
         }
     })

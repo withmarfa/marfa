@@ -17,6 +17,8 @@ import {
 import {
   edgeTypeCatalog,
   SCRIPTED_TYPES,
+  SCRIPTED_INSTANCE,
+  typeCatalog,
   snapshotType,
   answers,
   catchupTooOld,
@@ -32,6 +34,7 @@ import {
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
+import { BUILT_FOR } from "../../device/scripted-server.js";
 
 /** One `core.file` row naming `hash`, for a hydration to pull. */
 function hydrateOneFile(server: Harness["server"], hash: string): void {
@@ -1302,7 +1305,7 @@ describe("the working copy holds one slice", () => {
 });
 
 describe("the working copy belongs to one server", () => {
-  it("binds to one origin and refuses a store opened against another", async () => {
+  it("opens offline at a new origin and refuses another instance before sending credentials", async () => {
     harness = await startHarness("origin");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
@@ -1310,7 +1313,24 @@ describe("the working copy belongs to one server", () => {
 
     const elsewhere = await startHarness("origin-other");
     try {
+      expect(
+        (
+          await device.create({
+            type: "core.note",
+            properties: { title: "keep this unsent save", body: "kept" },
+          })
+        ).ok,
+      ).toBe(true);
+      const beforeQueue = await device.queue();
+      const beforeRows = await device.list();
+      elsewhere.server.answer(
+        "GET",
+        "/",
+        answers.root(Number(BUILT_FOR), "00000000-0000-7000-8000-000000000001"),
+      );
       const wrong = device.reopen({ url: elsewhere.server.url });
+      expect((await wrong.status()).ok).toBe(true);
+      expect(elsewhere.server.requests).toEqual([]);
       const refused = await wrong.hydrate(["core.note"], "library");
       expect(
         refused.ok,
@@ -1330,6 +1350,122 @@ describe("the working copy belongs to one server", () => {
           "the refusal did not name the server that was offered",
         ).toContain(elsewhere.server.url);
       }
+      expect(
+        elsewhere.server.requests.map((request) => request.pathname),
+      ).toEqual(["/"]);
+      expect(
+        elsewhere.server.requests[0].headers.authorization,
+      ).toBeUndefined();
+      const drain = await wrong.drain();
+      expect(drain.ok).toBe(false);
+      if (!drain.ok) expect(drain.refusal.code).toBe("wrong_server");
+      expect(
+        elsewhere.server.requests.map((request) => request.pathname),
+      ).toEqual(["/", "/"]);
+      expect(await wrong.queue()).toEqual(beforeQueue);
+      expect(await wrong.list()).toEqual(beforeRows);
+    } finally {
+      await elsewhere.stop();
+    }
+  });
+
+  it("keeps the copy and queue when a new origin cannot confirm its identity", async () => {
+    harness = await startHarness("origin-unconfirmed");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "keep this save", body: "kept" },
+        })
+      ).ok,
+    ).toBe(true);
+    const before = await device.status();
+    const queue = await device.queue();
+    const rows = await device.list();
+    for (const root of [
+      { kind: "json" as const, status: 200, body: {} },
+      refusal(401, "unauthorized", "identity is unavailable"),
+      refusal(503, "service_unavailable", "try later"),
+      {
+        kind: "json" as const,
+        status: 302,
+        body: {},
+        headers: { location: server.url },
+      },
+    ]) {
+      const elsewhere = await startHarness("origin-unconfirmed-peer");
+      try {
+        elsewhere.server.answer("GET", "/", root);
+        const moved = device.reopen({ url: elsewhere.server.url });
+        expect((await moved.servedItemTypes()).ok).toBe(false);
+        expect(
+          elsewhere.server.requests.map((request) => request.pathname),
+        ).toEqual(["/"]);
+        expect(
+          elsewhere.server.requests[0].headers.authorization,
+        ).toBeUndefined();
+        expect(await moved.status()).toEqual(before);
+        expect(await moved.queue()).toEqual(queue);
+        expect(await moved.list()).toEqual(rows);
+      } finally {
+        await elsewhere.stop();
+      }
+    }
+  });
+
+  it("follows the same instance to a new origin without replacing its copy or queue", async () => {
+    harness = await startHarness("origin-moved");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "kept offline", body: "kept" },
+        })
+      ).ok,
+    ).toBe(true);
+    const beforeQueue = await device.queue();
+    const beforeRows = await device.list();
+    const elsewhere = await startHarness("origin-same-instance");
+    try {
+      elsewhere.server.answer(
+        "GET",
+        "/",
+        answers.root(Number(BUILT_FOR), SCRIPTED_INSTANCE),
+      );
+      elsewhere.server.answer("GET", "/types", typeCatalog());
+      elsewhere.server.answer("GET", "/edge-types", edgeTypeCatalog());
+      const moved = device.reopen({ url: elsewhere.server.url });
+      expect((await moved.status()).ok).toBe(true);
+      expect(elsewhere.server.requests).toEqual([]);
+      expect((await moved.servedItemTypes()).ok).toBe(true);
+      expect(elsewhere.server.requests[0].pathname).toBe("/");
+      expect(
+        elsewhere.server.requests[0].headers.authorization,
+      ).toBeUndefined();
+      expect(
+        elsewhere.server.requests
+          .slice(1)
+          .every(
+            (request) => request.headers.authorization === `Bearer ${KEY}`,
+          ),
+      ).toBe(true);
+      const after = await moved.status();
+      expect(after.ok && after.value.server_origin).toBe(elsewhere.server.url);
+      expect(await moved.queue()).toEqual(beforeQueue);
+      expect(await moved.list()).toEqual(beforeRows);
+      const asked = elsewhere.server.requests.length;
+      expect((await moved.reopen().servedItemTypes()).ok).toBe(true);
+      expect(
+        elsewhere.server.requests
+          .slice(asked)
+          .some((request) => request.pathname === "/"),
+      ).toBe(false);
     } finally {
       await elsewhere.stop();
     }
@@ -1350,18 +1486,24 @@ describe("the working copy belongs to one server", () => {
     expect(
       server.requests
         .slice(asked)
+        .filter((request) => request.pathname !== "/")
         .every(
           (request) => request.headers.authorization === "Bearer another-key",
         ),
     ).toBe(true);
   });
 
-  it("refuses a store opened at another path prefix of its host, sending nothing there", async () => {
+  it("confirms a changed path prefix anonymously and refuses another instance there", async () => {
     harness = await startHarness("origin-prefix");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const asked = server.requests.length;
+    server.answer(
+      "GET",
+      "/elsewhere",
+      answers.root(Number(BUILT_FOR), "00000000-0000-7000-8000-000000000001"),
+    );
     const refused = await device
       .reopen({ url: `${server.url}/elsewhere` })
       .catchUp();
@@ -1373,9 +1515,10 @@ describe("the working copy belongs to one server", () => {
       expect(refused.refusal.code).toBe("wrong_server");
       expect(refused.refusal.raw).toContain(`${server.url}/elsewhere`);
     }
-    expect(server.requests.length, "a request reached the other path").toBe(
-      asked,
-    );
+    expect(
+      server.requests.slice(asked).map((request) => request.pathname),
+    ).toEqual(["/elsewhere"]);
+    expect(server.requests[asked].headers.authorization).toBeUndefined();
   });
 
   it("keeps the key out of the store", async () => {

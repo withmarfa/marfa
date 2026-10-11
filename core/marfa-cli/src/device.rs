@@ -1548,7 +1548,7 @@ impl Store {
     }
 
     /// A reader resolves no server: the core refuses server commands on a
-    /// reading handle, and resolving could refresh a stored token for nothing.
+    /// reading handle, so it needs no credential.
     fn open_with_server(&self, named: &Named) -> Result<Core, CliError> {
         if self.reader {
             return self.open(None);

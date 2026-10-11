@@ -65,7 +65,17 @@ pub struct Http {
     renewing: Arc<Mutex<()>>,
     /// Raised by `let_go`: no renewal starts after it.
     let_go: Arc<AtomicBool>,
+    relocation: Arc<OnceLock<Mutex<Relocation>>>,
     view: Option<String>,
+}
+
+type KeepOrigin = Box<dyn Fn(&AtomicBool) -> Result<(), CoreError> + Send + Sync>;
+
+struct Relocation {
+    expected_origin: String,
+    expected_instance: Option<String>,
+    keep: KeepOrigin,
+    verified: bool,
 }
 
 type StreamAgent = Arc<dyn Fn(Arc<RwLock<Option<std::time::Instant>>>) -> Agent + Send + Sync>;
@@ -335,6 +345,7 @@ impl Http {
             renew: Arc::new(OnceLock::new()),
             renewing: Arc::new(Mutex::new(())),
             let_go: Arc::new(AtomicBool::new(false)),
+            relocation: Arc::new(OnceLock::new()),
             view: None,
         })
     }
@@ -379,6 +390,66 @@ impl Http {
     /// Set once; a second is ignored.
     pub fn renew_with(&self, renew: Renew) {
         let _ = self.renew.set(renew);
+    }
+
+    pub(crate) fn relocating(
+        &self,
+        expected_origin: String,
+        expected_instance: Option<String>,
+        keep: KeepOrigin,
+    ) {
+        let _ = self.relocation.set(Mutex::new(Relocation {
+            expected_origin,
+            expected_instance,
+            keep,
+            verified: false,
+        }));
+    }
+
+    pub(crate) fn confirm_origin(&self) -> Result<(), CoreError> {
+        let Some(relocation) = self.relocation.get() else {
+            return Ok(());
+        };
+        let mut relocation = loop {
+            self.refuse_if_let_go()?;
+            match relocation.try_lock() {
+                Ok(held) => break held,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(CoreError::Store(
+                        "the origin confirmation was poisoned".into(),
+                    ));
+                }
+            }
+        };
+        if relocation.verified {
+            return Ok(());
+        }
+        let wrong = || CoreError::WrongServer {
+            expected: relocation.expected_origin.clone(),
+            got: self.origin(),
+        };
+        let Some(expected) = relocation.expected_instance.as_deref() else {
+            return Err(wrong());
+        };
+        let served = self.anonymous_instance_id()?;
+        self.refuse_if_let_go()?;
+        if served != expected {
+            return Err(wrong());
+        }
+        (relocation.keep)(&self.let_go)?;
+        relocation.verified = true;
+        Ok(())
+    }
+
+    fn refuse_if_let_go(&self) -> Result<(), CoreError> {
+        if self.relocation.get().is_some() && self.let_go.load(Ordering::SeqCst) {
+            Err(CoreError::Canceled)
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn authorization(&self) -> String {
@@ -428,6 +499,8 @@ impl Http {
         &self,
         run: impl Fn(&str) -> Result<Response, CoreError>,
     ) -> Result<Response, CoreError> {
+        self.confirm_origin()?;
+        self.refuse_if_let_go()?;
         let sent = self.authorization();
         let response = run(&sent)?;
         if response.status().as_u16() == 401
@@ -435,6 +508,7 @@ impl Http {
                 == Some(CONTRACT_VERSION.to_string().as_str())
             && let Some(fresh) = self.renewed(&sent)?
         {
+            self.refuse_if_let_go()?;
             return run(&fresh);
         }
         Ok(response)
@@ -622,11 +696,54 @@ impl Http {
 
     /// The instance the server says it is, which its root answers to anyone.
     pub fn instance_id(&self) -> Result<String, CoreError> {
+        self.confirm_origin()?;
+        self.refuse_if_let_go()?;
+        self.anonymous_instance_id()
+    }
+
+    fn anonymous_instance_id(&self) -> Result<String, CoreError> {
         #[derive(serde::Deserialize)]
         struct Root {
             instance_id: String,
         }
-        Ok(self.get_json::<Root>(&[], &[])?.instance_id)
+        // ureq derives Basic authorization from URL userinfo even when no
+        // Authorization header was supplied.
+        let mut url = self.url(&[], &[]);
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        let response = self
+            .agent
+            .get(url.as_str())
+            .header("Accept", "application/json")
+            .config()
+            .max_redirects(0)
+            .build()
+            .call()
+            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let status = response.status().as_u16();
+        self.hold(&response, status, false)?;
+        let named = header(&response, CONTRACT_HEADER).is_some();
+        let retry_after = retry_after(&response);
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| CoreError::Network(error.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(if named {
+                refusal(status, &body, retry_after)
+            } else {
+                CoreError::Unnamed {
+                    origin: self.origin(),
+                    status,
+                    retry_after_seconds: retry_after,
+                }
+            });
+        }
+        let root: Root = serde_json::from_str(&body)?;
+        if root.instance_id.is_empty() {
+            return Err(CoreError::Decoding("the root names no instance".into()));
+        }
+        Ok(root.instance_id)
     }
 
     pub fn catalog(&self) -> Result<WireCatalog, CoreError> {
@@ -871,6 +988,8 @@ impl Http {
     /// one. A redirect is an error either way. Every other door is read held,
     /// so an answer this build cannot read is never decoded.
     pub fn fetch(&self, call: Call<'_>, held: bool) -> Result<Reply, CoreError> {
+        self.confirm_origin()?;
+        self.refuse_if_let_go()?;
         let url = self.url(call.segments, call.params);
         let json = matches!(call.body, CallBody::Json(_));
         let deadline = Arc::new(RwLock::new(None));

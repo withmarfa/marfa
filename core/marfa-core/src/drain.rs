@@ -541,12 +541,6 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     crate::catch_up::refuse_if_stopped(stop)?;
     let http = core.http()?;
-    {
-        let conn = core.conn()?;
-        // Before anything is read: left blocked, a self-clearing row would
-        // make this drain skip a dependency that has since been answered.
-        store::unblock_self_clearing(&conn)?;
-    }
     let mut report = DrainReport {
         answered: 0,
         held: 0,
@@ -559,6 +553,38 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         unclaimed_sources: Vec::new(),
         retry_after_seconds: None,
     };
+    let waiting = store::waiting_writes(&*core.conn()?)?;
+    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
+    let names_wait = crate::body::rule::waiting(&*core.conn()?)?;
+    let body_answers = crate::body::rule::has_answer_work(&*core.conn()?)?;
+    if waiting.is_empty() && !owed && !names_wait && !body_answers {
+        // This pass has no work. Return before later reads could observe a
+        // concurrent edit and apply its deferred work without admission.
+        return Ok(report);
+    }
+    {
+        // A relocation must be admitted before this pass changes local queue
+        // verdicts or resolves body dependencies. Same-origin transport has
+        // no relocation gate, and an empty pass still makes no request.
+        match crate::catch_up::read_unless_stopped(stop, http, Http::confirm_origin) {
+            Ok(()) => {}
+            Err(error) if error.is_environmental() => {
+                report.unavailable = Some(format!(
+                    "the server could not say which instance it is, so nothing was sent: {error}"
+                ));
+                report.undelivered = waiting.len();
+                waited(&mut report, error.retry_after().map(|wait| wait.as_secs()));
+                return Ok(report);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    {
+        let conn = core.conn()?;
+        // Left blocked, a self-clearing row would skip a dependency that has
+        // since been answered.
+        store::unblock_self_clearing(&conn)?;
+    }
     // Confirmed once, and only where the pass talks to the server: a pass
     // with nothing to send, read or look up sends nothing at all, and one that cannot
     // confirm the instance is a server that cannot take writes, since a
@@ -585,7 +611,6 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             Err(error) => Err(error),
         }
     };
-    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
     let unconfirmed = owed && !confirm(&mut report)?;

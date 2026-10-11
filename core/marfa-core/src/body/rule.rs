@@ -948,24 +948,36 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
     Ok(())
 }
 
+fn releasable_pins(conn: &Connection) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT item_id FROM body_pins WHERE NOT EXISTS (
+           SELECT 1 FROM edges
+            WHERE (edge_type = ?1 AND target_id = body_pins.item_id)
+               OR (edge_type = ?2 AND source_id = body_pins.item_id))",
+    )?;
+    let rows = statement.query_map([LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Lets go of each row the rule pinned that no `references` edge reaches and
 /// no `attached-to` edge leaves, whoever made the edge.
 fn release_pins(conn: &Connection) -> Result<()> {
-    let pinned: Vec<String> = {
-        let mut statement = conn.prepare(
-            "SELECT item_id FROM body_pins WHERE NOT EXISTS (
-               SELECT 1 FROM edges
-                WHERE (edge_type = ?1 AND target_id = body_pins.item_id)
-                   OR (edge_type = ?2 AND source_id = body_pins.item_id))",
-        )?;
-        let rows = statement.query_map([LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
-        rows.collect::<rusqlite::Result<_>>()?
-    };
-    for id in pinned {
+    for id in releasable_pins(conn)? {
         conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [&id])?;
         crate::unpin_held(conn, &id)?;
     }
     Ok(())
+}
+
+/// Durable inputs that can make `after_answers` change the copy, even after
+/// every queued write and read-back has been settled.
+pub(crate) fn has_answer_work(conn: &Connection) -> Result<bool> {
+    let tracked: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM body_edges) OR EXISTS (SELECT 1 FROM body_checks)",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(tracked || !releasable_pins(conn)?.is_empty())
 }
 
 /// Why a body's edge write must not go, where the body's write it was made

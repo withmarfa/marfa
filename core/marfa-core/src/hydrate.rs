@@ -47,18 +47,6 @@ fn hydrate_inner(
         declared_types(types)?
     };
     let edge_types = declared_edge_types(edge_types)?;
-    {
-        let conn = core.conn()?;
-        if let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
-            && expected != http.origin()
-        {
-            return Err(CoreError::WrongServer {
-                expected,
-                got: http.origin(),
-            });
-        }
-    }
-
     // Nothing is cleared until the copy is about to be replaced, so a stop
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;

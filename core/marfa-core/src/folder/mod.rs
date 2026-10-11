@@ -212,7 +212,13 @@ impl Flagged {
 
 impl Folder {
     /// The directory need not exist.
-    pub fn add(root: impl AsRef<Path>, folder: &str, server: Option<Server>) -> Result<Folder> {
+    /// Installs `renew` before binding makes its first server request.
+    pub fn add(
+        root: impl AsRef<Path>,
+        folder: &str,
+        server: Option<Server>,
+        renew: Option<crate::http::Renew>,
+    ) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
@@ -227,7 +233,7 @@ impl Folder {
         std::fs::create_dir_all(&state).map_err(|error| {
             CoreError::Store(format!("cannot make {}: {error}", state.display()))
         })?;
-        let added = Folder::bind(root, folder, server);
+        let added = Folder::bind(root, folder, server, renew);
         if added.is_err()
             && let Some(made) = made
         {
@@ -236,9 +242,17 @@ impl Folder {
         added
     }
 
-    fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
+    fn bind(
+        root: PathBuf,
+        folder: &str,
+        server: Server,
+        renew: Option<crate::http::Renew>,
+    ) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
+        if let Some(renew) = renew {
+            core.renew_credential_with(renew);
+        }
         let fresh = settings_file::bound(&core)?.is_none();
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder

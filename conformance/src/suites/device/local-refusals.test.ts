@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, Outcome } from "../../device/protocol.js";
+import { BUILT_FOR } from "../../device/scripted-server.js";
 import {
   hydratedHarness,
   scriptHydration,
@@ -403,6 +404,11 @@ describe("a device refuses a write only the server may make", () => {
 
     const elsewhere = await startHarness("bound-store-other");
     try {
+      elsewhere.server.answer(
+        "GET",
+        "/",
+        answers.root(Number(BUILT_FOR), "00000000-0000-7000-8000-000000000001"),
+      );
       scriptHydration(elsewhere.server, { head: "10" });
       const wrong = harness.device.reopen({ url: elsewhere.server.url });
       const refused = await wrong.catchUp();
@@ -418,8 +424,12 @@ describe("a device refuses a write only the server may make", () => {
       }
       expect(
         elsewhere.server.requests,
-        "the device read from the second server before noticing the store was not its own, so a wrong address costs a round trip and puts this dataset into that server's logs",
-      ).toEqual([]);
+        "only the anonymous instance confirmation may reach the other server",
+      ).toHaveLength(1);
+      expect(elsewhere.server.requests[0].pathname).toBe("/");
+      expect(
+        elsewhere.server.requests[0].headers.authorization,
+      ).toBeUndefined();
 
       // And nothing reached the store, which is the half the rule is about:
       // a refusal reported after a row had landed would be a refusal in name.

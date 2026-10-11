@@ -104,7 +104,9 @@ pub struct Named {
 
 impl Named {
     pub fn session(&self) -> Result<Session, CliError> {
-        let remote = Remote::resolve(self)?;
+        // Opening a working copy is offline. Its transport verifies a new
+        // origin before the first call, including a refused token's renewal.
+        let remote = Remote::resolve_with_renewal(self, false)?;
         let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
             origin: remote.origin().to_string(),
         })?;
@@ -229,6 +231,10 @@ fn renewal_error(error: CliError) -> CoreError {
 
 impl Remote {
     pub fn resolve(named: &Named) -> Result<Remote, CliError> {
+        Self::resolve_with_renewal(named, true)
+    }
+
+    fn resolve_with_renewal(named: &Named, renew_stale: bool) -> Result<Remote, CliError> {
         let url = match named
             .url
             .clone()
@@ -249,7 +255,7 @@ impl Remote {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
             None => match non_empty(std::env::var("MARFA_API_KEY").ok()) {
                 Some(key) => (Some(key), Some(CredentialSource::Environment)),
-                None => match auth::resolve_credential(&origin) {
+                None => match auth::resolve_credential(&origin, renew_stale) {
                     Ok(Some(found)) => {
                         let bearer = found.bearer().to_string();
                         kept = Some(found);

@@ -180,12 +180,27 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     assert_eq!(status.hydration, Hydration::Complete);
     assert_eq!(status.event_cursor.as_deref(), Some(quiet.cursor.as_str()));
 
+    let before_rows = core.list(&ListFilters::default(), Sort::default()).unwrap();
+    let before_queue = core.queue().unwrap();
+    drop(core);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let other = Server {
-        url: "http://127.0.0.1:1/".into(),
+        url: format!("http://{}", listener.local_addr().unwrap()),
         key: "marfa_k1_other".into(),
     };
+    drop(listener);
+    let moved = Core::open(&path, Some(other)).unwrap();
+    assert_eq!(moved.status().unwrap(), status);
     assert!(matches!(
-        Core::open(&path, Some(other)).err(),
-        Some(CoreError::WrongServer { .. })
+        moved.server_catalog_until(&std::sync::atomic::AtomicBool::new(false)),
+        Err(CoreError::Network(_))
     ));
+    assert_eq!(moved.status().unwrap(), status);
+    assert_eq!(moved.queue().unwrap(), before_queue);
+    assert_eq!(
+        moved
+            .list(&ListFilters::default(), Sort::default())
+            .unwrap(),
+        before_rows
+    );
 }

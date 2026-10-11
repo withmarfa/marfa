@@ -443,11 +443,11 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async servedItemTypes(): Promise<Outcome<ItemType[]>> {
-    return this.json<ItemType[]>(["types", "served"]);
+    return this.json<ItemType[]>(["types", "served", ...this.server()]);
   }
 
   async servedEdgeTypes(): Promise<Outcome<EdgeType[]>> {
-    return this.json<EdgeType[]>(["edge-types", "served"]);
+    return this.json<EdgeType[]>(["edge-types", "served", ...this.server()]);
   }
 
   /**
