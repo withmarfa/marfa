@@ -2944,7 +2944,7 @@ When a directory disappears during the walk, a device MUST report it in `directo
 
 ### `folders/walk-gone-no-journal`
 
-When a directory disappears during the walk, a device MUST NOT journal missing files from that incomplete walk.
+When a folder inventory is incomplete because an entry cannot be read or identified, a device MUST NOT journal missing files from that incomplete inventory.
 
 **Tests:** `device/folders-identity.test.ts › journals no missing file in a pass a directory went away from while it was walked`.
 
@@ -2980,9 +2980,9 @@ When the folder directory is missing, the CLI MUST refuse `folders status`, `fol
 
 ### `folders/walk-gone-no-deletion`
 
-When a directory disappears during a walk, a device MUST defer already journaled item deletions until a complete walk succeeds.
+When a folder inventory is incomplete because an entry cannot be read or identified, a device MUST defer already journaled item deletions until a complete walk succeeds.
 
-**Tests:** `device/folders-contract-a.test.ts › sends no journaled deletion from an incomplete walk and resumes after a complete walk`.
+**Tests:** `device/folders-contract-a.test.ts › sends no journaled deletion from an incomplete walk and resumes after a complete walk`, `device/folders-contract-a.test.ts › unidentified cross-directory moves and older deletions`.
 
 ### `folders/walk-prior-directory-removal`
 

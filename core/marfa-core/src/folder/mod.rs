@@ -914,8 +914,10 @@ impl Walked {
         }
     }
 
-    fn vanished(&self) -> bool {
-        self.directories.iter().any(|dir| dir.flag == "gone")
+    fn incomplete(&self) -> bool {
+        self.directories
+            .iter()
+            .any(|dir| matches!(dir.flag, "gone" | "unreadable"))
     }
 }
 
@@ -1081,23 +1083,30 @@ fn walk_at(
             if landing::left_behind(&path) {
                 walked.left.push((route.clone(), PathBuf::from(name)));
             } else if lists.takes(&relative) {
-                if let Ok(captured) = directory.capture_file(entry).and_then(|file| {
+                match directory.capture_file(entry).and_then(|file| {
                     Ok(Captured {
                         metadata: RefCell::new(file.metadata()?),
                         route: route.clone(),
                         name: name.clone(),
                     })
                 }) {
-                    let born = identity::born(&captured.metadata.borrow());
-                    if walked.file_birth(root, dir, born) {
-                        walked.opened.insert(path.clone(), captured);
+                    Ok(captured) => {
+                        let born = identity::born(&captured.metadata.borrow());
+                        if walked.file_birth(root, dir, born) {
+                            walked.opened.insert(path.clone(), captured);
+                        }
                     }
-                } else if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
-                    && let Some(identity) = identity::Identity::from_parts(device, inode, born)
-                {
-                    // This observation can hold an unreadable item, never
-                    // supply metadata for bytes from another open.
-                    walked.unread.insert(path.clone(), identity);
+                    Err(error) => {
+                        if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
+                            && let Some(identity) =
+                                identity::Identity::from_parts(device, inode, born)
+                        {
+                            // An identity can prove a move even where unread bytes
+                            // leave the rest of this inventory incomplete.
+                            walked.unread.insert(path.clone(), identity);
+                        }
+                        walked.unreadable(root, dir, &error);
+                    }
                 }
                 walked.files.push(path);
             } else if lists.secret(&relative) {
@@ -1265,6 +1274,7 @@ impl Folder {
                 .expect("install replacement root for fault");
         }
         let walked = self.walked(&lists);
+        let mut incomplete = walked.incomplete();
         swap_root(&self.root, "replace-root-before-capture");
         if let Some(gone) = self.root_gone() {
             report.root_gone = Some(gone);
@@ -1348,6 +1358,7 @@ impl Folder {
                     .ok_or_else(|| std::io::Error::other("file not opened"))
                     .and_then(Captured::read)
                 else {
+                    incomplete = true;
                     continue;
                 };
                 if let Some(stat) = walked
@@ -1468,6 +1479,7 @@ impl Folder {
                             continue;
                         }
                         Err(_) => {
+                            incomplete = true;
                             files.push(deferred()?);
                             continue;
                         }
@@ -1874,16 +1886,16 @@ impl Folder {
                 report.unreached += 1;
                 continue;
             }
-            // A directory that went away during the walk may have taken any
-            // file with it, so this pass trusts no absence.
-            if walked.vanished() {
+            // An unread part of the inventory may hold a file moved from
+            // any other path, so no missing path proves a deletion this pass.
+            if incomplete {
                 continue;
             }
             let conn = self.core.conn()?;
             state::journal_missing(&conn, &row.path, &row.item_id)?;
             report.missing += 1;
         }
-        if !walked.vanished() && self.root_gone().is_none() {
+        if !incomplete && self.root_gone().is_none() {
             self.sweep_journal(&settings, &peers, &mut report)?;
         }
         report.root_gone = report.root_gone.or_else(|| self.root_gone());
@@ -5323,12 +5335,17 @@ mod tests {
         let mut complete = Walked::default();
         assert!(complete.file_birth(root, &child, Some(1)));
         assert!(!complete.passed_over("child/old-name.md"));
+        assert!(!complete.incomplete());
         for birth in [None, Some(0)] {
             let mut partial = Walked::default();
             assert!(!partial.file_birth(root, &child, birth));
             assert!(partial.passed_over("child/old-name.md"));
             assert_eq!(partial.directories[0].flag, "unreadable");
             assert!(!partial.passed_over("elsewhere/note.md"));
+            assert!(
+                partial.incomplete(),
+                "an unresolved move can start outside the unread subtree"
+            );
         }
     }
 
