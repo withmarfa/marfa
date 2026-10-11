@@ -1525,7 +1525,7 @@ If a sign-in limit holds an address at the owner's account, then the server MUST
 
 If one address has made ten device code lookups without direct owner browser authority in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits device code lookups per address, on the entry form and the consent screen alike`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 
