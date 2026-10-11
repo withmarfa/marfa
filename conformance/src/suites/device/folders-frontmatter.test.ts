@@ -3314,6 +3314,14 @@ describe("what frontmatter says", () => {
       expect(create?.properties).toMatchObject({ status: "draft" });
       expect(rows.get(id)?.properties).not.toHaveProperty("language");
       expect(read(harness, "Empty.md")).toContain(blanks);
+      expect(rows.get(id)?.properties.tilde).toBeNull();
+      writeFileSync(
+        join(harness.dir, "Empty.md"),
+        read(harness, "Empty.md").replace("title: Empty", "title: 'Empty'"),
+      );
+      const styled = await harness.folder.scan();
+      expect(styled.ok, JSON.stringify(styled)).toBe(true);
+      if (styled.ok) expect(styled.value.updated).toBe(0);
       expect((await harness.folder.pull()).ok).toBe(true);
       expect(read(harness, "Empty.md")).toContain(blanks);
 

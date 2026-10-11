@@ -2282,11 +2282,18 @@ impl Folder {
                 }
             }
         }
-        let effective_properties = catalog.projected_properties(
+        let mut effective_properties = catalog.projected_properties(
             changes.r#type.as_deref().unwrap_or(&held.r#type),
             &properties,
             whole,
         );
+        // An unchanged stored null is presentation, even though sending it
+        // under replace would clear the property.
+        for (field, value) in &properties {
+            if value.is_null() && held.properties.get(field).is_some_and(Value::is_null) {
+                effective_properties.insert(field.clone(), Value::Null);
+            }
+        }
         let unchanged = (!whole || effective_properties.len() == held.properties.len())
             && effective_properties.iter().all(|(field, value)| {
                 held.properties
