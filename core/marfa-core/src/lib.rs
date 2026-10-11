@@ -1668,8 +1668,8 @@ impl Core {
     }
 
     /// The server's item types and edge types, read from it now, so a caller
-    /// can choose a slice before a first hydration. Nothing in the copy
-    /// changes. Refused `NoServer` for a copy with no server, and ended with
+    /// can choose a slice before a first hydration. Does not hydrate the
+    /// copy. Refused `NoServer` for a copy with no server, and ended with
     /// `Canceled` as soon as `stop` is raised.
     pub fn server_catalog_until(&self, stop: &AtomicBool) -> Result<ServerCatalog> {
         let listed = catch_up::read_unless_stopped(stop, self.http()?, http::Http::catalog)?;
