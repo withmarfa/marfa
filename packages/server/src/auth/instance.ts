@@ -1,3 +1,10 @@
+import { withRequestAuthority } from "./request-authority.js";
+import {
+  buildPasskeyPlugin,
+  PASSKEY_OWNER_PATHS,
+  PASSKEY_SIGN_IN_PATHS,
+  PASSKEY_VERIFY_PATHS,
+} from "./passkeys.js";
 import { rememberRecentAuthentication } from "./request-authority.js";
 import { changeOwnerPassword, requireOwnerSession } from "./instance-claim.js";
 import {
@@ -438,6 +445,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     oauthConsent: sqliteSchema.auth_oauth_consent,
     deviceCode: sqliteSchema.auth_oauth_device_code,
     jwks: sqliteSchema.auth_jwks,
+    passkey: sqliteSchema.auth_passkey,
   };
 
   // Passed explicitly: Better Auth would otherwise fall back to its own
@@ -506,7 +514,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     databaseHooks: {
       session: {
         create: {
-          // Every password sign-in, remembered or not, gets the idle week.
+          // Every browser sign-in, remembered or not, gets the idle week.
           before: (session) =>
             Promise.resolve({
               data: {
@@ -545,6 +553,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       disableSignUp: true,
     },
     plugins: [
+      ...(options.storage
+        ? [buildPasskeyPlugin(options.baseURL, options.storage)]
+        : []),
       // JWT plugin for id_token signing. The oauth-provider plugin
       // requires it (id_tokens are always JWT) unless
       // `disableJwtPlugin: true` is set — which forces id_tokens to
@@ -1079,6 +1090,53 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
       }
       const path = new URL(request.url).pathname.replace(/^\/auth/, "");
+      if (path.startsWith("/passkey/")) {
+        if (!PASSKEY_OWNER_PATHS.has(path) && !PASSKEY_SIGN_IN_PATHS.has(path))
+          throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
+        requireSecureOwnerTransport(facade);
+        if (
+          request.method !== "GET" ||
+          request.headers.get("sec-fetch-site") !== "same-origin" ||
+          request.headers.has("origin")
+        )
+          requireOwnerOrigin(facade, request.headers);
+        if (request.headers.has("authorization"))
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            "Use your owner browser for passkeys.",
+          );
+        if (!options.storage)
+          throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
+        const storage = options.storage;
+        const ownerOperation = PASSKEY_OWNER_PATHS.has(path);
+        const recent = path !== "/passkey/list-user-passkeys";
+        const validate = async () => {
+          if (ownerOperation)
+            await requireOwnerSession(storage, facade, request.headers, {
+              recent,
+            });
+        };
+        await validate();
+        // Challenge consumption is the first write. The credential lookup,
+        // local cryptographic check, counter and session then share its writer.
+        return withRequestAuthority(validate, () =>
+          withCredentialRequest(
+            {
+              path,
+              clientIp: clientAddress,
+              ...(PASSKEY_VERIFY_PATHS.has(path)
+                ? {
+                    phase: new CredentialPersistencePhase(
+                      storage,
+                      "auth.passkey.verified",
+                    ),
+                  }
+                : {}),
+            },
+            () => instance.handler(request),
+          ),
+        );
+      }
       if (path.startsWith("/sign-in/") || path.startsWith("/sign-up/"))
         requireSecureOwnerTransport(facade);
       if (

@@ -3,6 +3,7 @@
  *
  *   - `GET /auth/static/auth.css` — shared auth-page stylesheet.
  *   - `GET /auth/static/password-toggle.js` — show/hide password fields.
+ *   - `GET /auth/static/passkeys.js` — browser passkey ceremonies.
  *   - `GET /auth/static/submit-state.js` — submitting-state + double-submit guard.
  *
  * Public routes — no bearer / cookie required. Every file is inlined
@@ -13,6 +14,7 @@
  * with no body. `Cache-Control: public, max-age=3600` — browsers cache for
  * an hour but the ETag forces revalidation across deploys when bytes shift.
  */
+import { PASSKEYS_JS } from "./auth-static/passkeys-js.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { AUTH_CSS } from "./auth-static/auth-css.js";
@@ -61,6 +63,10 @@ export function authStaticRoutes(): Hono {
     };
   }
 
+  app.get(
+    "/passkeys.js",
+    serveAsset(makeAsset(PASSKEYS_JS, "application/javascript; charset=utf-8")),
+  );
   app.get("/auth.css", serveAsset(CSS));
   app.get("/password-toggle.js", serveAsset(PASSWORD_TOGGLE));
   app.get("/submit-state.js", serveAsset(SUBMIT_STATE));

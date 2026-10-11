@@ -1,3 +1,4 @@
+import { contentSecurityPolicy } from "./content-security-policy.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
@@ -387,6 +388,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // forwarded intact onto the redirect response.
 
   router.get("/sign-in", async (c) => {
+    c.header(
+      "Content-Security-Policy",
+      `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'`,
+    );
     requireSecureOwnerTransport(auth ?? { baseURL: c.var.config.authBaseUrl });
     const url = new URL(c.req.url);
     const error = url.searchParams.get("error") ?? undefined;

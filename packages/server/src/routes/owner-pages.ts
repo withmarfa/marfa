@@ -1,3 +1,5 @@
+import { contentSecurityPolicy } from "./content-security-policy.js";
+import { escapeHtml } from "./auth-html.js";
 import { managementPages } from "./management-pages.js";
 import { Hono } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
@@ -20,6 +22,27 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
     setNoStore(c);
     requireSecureOwnerTransport(auth);
     await next();
+  });
+  router.get("/passkeys", async (c) => {
+    await requireOwnerSession(storage, auth, c.req.raw.headers);
+    c.header(
+      "Content-Security-Policy",
+      `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'; form-action 'self'`,
+    );
+    return c.html(
+      renderAuthLayout({
+        nonce: c.var.cspNonce,
+        title: "Passkeys",
+        bodyHtml: `<h1>Passkeys</h1>
+<p>Sign in with a passkey even when password attempts are locked. Passkeys require a secure HTTPS address, or localhost for development. Use this same address each time you sign in.</p>
+<p>To add or remove a passkey, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fpasskeys">Sign in again</a></p>
+<ul id="passkeys"></ul>
+<label for="passkey-name">Passkey name</label><input id="passkey-name" name="passkey-name" maxlength="200" autocomplete="off">
+<button type="button" id="add-passkey">Add passkey</button><p id="passkey-status" role="status"></p>
+<p><a href="/auth/owner/manage">Manage Marfa</a></p>
+<script src="/auth/static/passkeys.js" nonce="${escapeHtml(c.var.cspNonce)}"></script>`,
+      }),
+    );
   });
   router.get("/password", async (c) => {
     await requireOwnerSession(storage, auth, c.req.raw.headers);

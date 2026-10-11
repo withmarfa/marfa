@@ -1,3 +1,4 @@
+import { withRequestAuthority } from "./request-authority.js";
 import { CredentialPersistencePhase } from "./credential-adapter.js";
 import { afterEach, expect, it } from "vitest";
 import { expectSessionCookieKept, request } from "../test-utils.js";
@@ -394,4 +395,37 @@ it("requires a durable failed-sign-in observation without creating a session", a
   expect(
     (await ctx.storage.audit.list({ action: "auth.sign_in.failed" })).data,
   ).toHaveLength(1);
+});
+
+it("settles rejected phase admission without an unobserved completion rejection", async () => {
+  const ctx = await fixture();
+  const refusal = new Error("authority refused before the writer opened");
+  let entered = false;
+  await withRequestAuthority(
+    () => Promise.reject(refusal),
+    async () => {
+      const phase = new CredentialPersistencePhase(ctx.storage);
+      await expect(
+        phase.run(true, () => {
+          entered = true;
+          return ctx.storage.settings.set("credential.admission", "refused");
+        }),
+      ).rejects.toBe(refusal);
+      await expect(phase.finish(undefined, { error: refusal })).rejects.toBe(
+        refusal,
+      );
+      // Allow an unhandled completion rejection to reach the test runner.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
+  );
+  expect(entered).toBe(false);
+  expect(await ctx.storage.settings.get("credential.admission")).toBeNull();
+  const admitted = new CredentialPersistencePhase(ctx.storage);
+  await admitted.run(true, () =>
+    ctx.storage.settings.set("credential.admission", "accepted"),
+  );
+  expect((await admitted.finish(new Response("accepted"))).status).toBe(200);
+  expect(await ctx.storage.settings.get("credential.admission")).toBe(
+    "accepted",
+  );
 });

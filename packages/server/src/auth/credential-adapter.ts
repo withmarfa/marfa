@@ -83,6 +83,7 @@ export class CredentialPersistencePhase {
   private readonly completed = deferred<Response>();
   private pending?: Promise<Response>;
   private closed = false;
+  private opened = false;
   private sealing = false;
   private readonly operations = new Set<Promise<unknown>>();
   private failure?: { error: unknown };
@@ -117,6 +118,7 @@ export class CredentialPersistencePhase {
           this.storage,
           () =>
             activePhase.run(this, async () => {
+              this.opened = true;
               this.ready.resolve(AsyncLocalStorage.snapshot());
               return this.completed.promise;
             }),
@@ -153,12 +155,16 @@ export class CredentialPersistencePhase {
       };
     if (this.pending) {
       const rejected = this.failure ?? failure;
-      if (rejected) this.completed.reject(rejected.error);
-      else if (response) this.completed.resolve(response);
-      else
-        this.completed.reject(
-          new Error("Credential operation produced no response"),
-        );
+      // Admission can fail before the transaction body starts awaiting the
+      // completion. Rejecting that unobserved promise would escape the request.
+      if (this.opened) {
+        if (rejected) this.completed.reject(rejected.error);
+        else if (response) this.completed.resolve(response);
+        else
+          this.completed.reject(
+            new Error("Credential operation produced no response"),
+          );
+      }
       try {
         return await this.pending;
       } finally {
@@ -418,6 +424,17 @@ export function withCredentialAudit<
                 entry.resource_type = "auth_user";
                 entry.resource_id = request.email;
                 entry.details = { method: "password", email: request.email };
+              }
+              if (
+                args.model === "session" &&
+                operation === "create" &&
+                request?.path === "/passkey/verify-authentication"
+              ) {
+                entry.action = "auth.sign_in.success";
+                entry.resource_type = "auth_user";
+                entry.resource_id =
+                  typeof row?.userId === "string" ? row.userId : undefined;
+                entry.details = { method: "passkey" };
               }
               return entry;
             },
