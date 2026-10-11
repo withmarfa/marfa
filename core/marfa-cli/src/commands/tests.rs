@@ -1077,14 +1077,14 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
     assert_eq!(query(&released, "process").as_deref(), Some("p1"));
     assert_eq!(released.body, Body::None);
 
-    let put = connectors::state_put_request("c1", "p1", json!({ "cursor": "c" })).unwrap();
+    let put = connectors::state_put_request("c1", "p1", json!({ "cursor": "c" }), None).unwrap();
     assert_eq!(put.method, Method::Put);
     assert_eq!(put.path(), "/connectors/c1/state");
     assert_eq!(
         put.body,
         Body::Json(json!({ "process": "p1", "state": { "cursor": "c" } }))
     );
-    let not_an_object = connectors::state_put_request("c1", "p1", json!([1]));
+    let not_an_object = connectors::state_put_request("c1", "p1", json!([1]), None);
     assert!(
         matches!(not_an_object, Err(CliError::Invalid(_))),
         "{not_an_object:?}"
@@ -1367,4 +1367,21 @@ fn the_key_doors_send_the_selector_they_were_given() {
         body(&moved),
         &json!({ "type": "t", "links": ["v"], "settled_at": "2026-01-01T00:00:00Z" })
     );
+}
+
+#[test]
+fn connector_state_can_publish_and_clear_current_problems() {
+    let problems =
+        connectors::state_put_request("c1", "p1", json!({}), Some(r#"{"feed":"Unavailable"}"#))
+            .unwrap();
+    assert_eq!(
+        problems.body,
+        Body::Json(json!({"process":"p1","state":{},"problems":{"feed":"Unavailable"}}))
+    );
+    let clear = connectors::state_put_request("c1", "p1", json!({}), Some("{}")).unwrap();
+    assert_eq!(
+        clear.body,
+        Body::Json(json!({"process":"p1","state":{},"problems":{}}))
+    );
+    assert!(connectors::state_put_request("c1", "p1", json!({}), Some(r#"{"feed":3}"#)).is_err());
 }

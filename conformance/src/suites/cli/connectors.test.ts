@@ -26,6 +26,7 @@ interface Connector {
   description: string | null;
   last_heartbeat_at: string | null;
   last_run: { outcome: string } | null;
+  problems: Record<string, string>;
 }
 
 describe("connectors from the terminal", () => {
@@ -59,6 +60,33 @@ describe("connectors from the terminal", () => {
     expect(registered.key_id).toBe(minted.id);
     expect(registered.last_heartbeat_at).toBeNull();
     expect(registered.last_run).toBeNull();
+    expect(registered.problems).toEqual({});
+    await connector.json([
+      "connectors",
+      "hold",
+      registered.id,
+      "--process",
+      "problems-test",
+    ]);
+    await connector.json([
+      "connectors",
+      "state",
+      "put",
+      registered.id,
+      "--process",
+      "problems-test",
+      "--body",
+      "{}",
+      "--problems",
+      '{"feed":"Feed unavailable"}',
+    ]);
+    const withProblems = await c.operator.json<{ data: Connector[] }>([
+      "connectors",
+      "list",
+    ]);
+    expect(
+      withProblems.data.find((row) => row.id === registered.id)?.problems,
+    ).toEqual({ feed: "Feed unavailable" });
 
     // The same key registering again is the same connector, renamed.
     const renamed = await connector.json<Connector>([
@@ -432,7 +460,7 @@ describe("connectors from the terminal", () => {
     await c.operator.json(["connectors", "state", "delete", registered.id]);
     expect(
       await connector.json(["connectors", "state", "get", registered.id]),
-    ).toEqual({ state: {}, updated_at: null });
+    ).toEqual({ state: {}, problems: {}, updated_at: null });
     const none = await connector.json<{ data: unknown[] }>([
       "connectors",
       "agreements",

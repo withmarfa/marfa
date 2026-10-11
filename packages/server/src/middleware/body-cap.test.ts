@@ -43,7 +43,7 @@ describe("bodyCapFor", () => {
       "/connectors/{id}/agreements": "bulk",
       "/connectors/:id/agreements": "bulk",
       "/connectors/{id}/agreements/lookup": "request",
-      "/connectors/{id}/state": "request",
+      "/connectors/{id}/state": "connector-state",
     });
   });
 });

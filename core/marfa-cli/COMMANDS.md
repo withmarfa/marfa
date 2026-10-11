@@ -6058,8 +6058,8 @@ Usage: marfa connectors state [OPTIONS] <COMMAND>
 Commands:
   get     The state document, `{}` until one is written. Its own key only
   put     Replace the state document with a JSON object. Its own key only
-  delete  Remove the state document and every agreement. The connector's own key, or
-          `connectors.manage`
+  delete  Remove the state document, current problems and every agreement. The connector's own key,
+          or `connectors.manage`
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -6142,6 +6142,9 @@ Options:
       --process <PROCESS>
           The process writing, which must hold the registration
 
+      --problems <JSON>
+          Current problems as a JSON object of messages. Omit to preserve them; `{}` clears them
+
       --file <PATH>
           A file holding the JSON body; `-` reads stdin
 
@@ -6177,7 +6180,8 @@ Output:
 ### marfa connectors state delete
 
 ```text
-Remove the state document and every agreement. The connector's own key, or `connectors.manage`
+Remove the state document, current problems and every agreement. The connector's own key, or
+`connectors.manage`
 
 Usage: marfa connectors state delete [OPTIONS] <ID>
 

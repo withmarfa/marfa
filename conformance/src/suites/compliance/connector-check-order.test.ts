@@ -812,7 +812,7 @@ describe("a credential that is missing, against what the body would be refused f
         method: "PUT",
         path: `/connectors/${connectorId}/state`,
         body: { process: "p", state: {} },
-        cap: REQUEST_CAP,
+        cap: 2 * 512 * 1024 + 100 * 6 + 35,
       },
       {
         label: "POST agreements",

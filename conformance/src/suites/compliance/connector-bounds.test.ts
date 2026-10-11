@@ -25,6 +25,7 @@ let apiUrl: string;
 let client: MarfaClient;
 
 const REQUEST_CAP = 1024 * 1024;
+const STATE_REQUEST_CAP = 2 * 512 * 1024 + 100 * 6 + 35;
 const BULK_CAP = 16 * 1024 * 1024;
 const STATE_CAP = 512 * 1024;
 const RECORD_CAP = 16 * 1024;
@@ -151,9 +152,9 @@ describe("the request cap on the state door", () => {
     // A state far under its own cap, in a body of exactly the request cap.
     const atCap = paddedTo(
       { process, state: { cursor: "at the cap" } },
-      REQUEST_CAP,
+      STATE_REQUEST_CAP,
     );
-    expect(atCap).toHaveLength(REQUEST_CAP);
+    expect(atCap).toHaveLength(STATE_REQUEST_CAP);
     const taken = await post(mine, "PUT", "/state", atCap);
     expect(taken.status).toBe(200);
     const stored = await mine.client.getConnectorState(mine.id);
@@ -162,13 +163,13 @@ describe("the request cap on the state door", () => {
     // A state over its own cap that fits the request cap is the state's
     // refusal, a 400, and not the cap's.
     const bulky = { process, state: { s: "x".repeat(STATE_CAP + 1) } };
-    const overState = paddedTo(bulky, REQUEST_CAP);
-    expect(overState).toHaveLength(REQUEST_CAP);
+    const overState = paddedTo(bulky, STATE_REQUEST_CAP);
+    expect(overState).toHaveLength(STATE_REQUEST_CAP);
     const refused = await post(mine, "PUT", "/state", overState);
     expect(refused.status).toBe(400);
     expect(refused.code).toBe("validation_error");
 
-    const past = await declared(mine, "PUT", "/state", REQUEST_CAP + 1);
+    const past = await declared(mine, "PUT", "/state", STATE_REQUEST_CAP + 1);
     expect(past.status).toBe(413);
     expect(past.code).toBe("request_too_large");
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual(
@@ -212,7 +213,12 @@ describe("the bulk cap on the agreements door", () => {
 
     // The same size at the state door is over its cap: the witness that the
     // two doors answer one body differently.
-    const atState = await declared(mine, "PUT", "/state", REQUEST_CAP + 1);
+    const atState = await declared(
+      mine,
+      "PUT",
+      "/state",
+      STATE_REQUEST_CAP + 1,
+    );
     expect(atState.status).toBe(413);
 
     const atCap = paddedTo({ process, set: [] }, BULK_CAP);

@@ -548,7 +548,7 @@ describe("what a connector keeps on the instance", () => {
     const empty = await mine.client.getConnectorState(mine.id);
     expect(empty.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}/state", 200, empty.data);
-    expect(empty.data).toEqual({ state: {}, updated_at: null });
+    expect(empty.data).toEqual({ state: {}, problems: {}, updated_at: null });
 
     const first = await mine.client.replaceConnectorState(mine.id, {
       process,
@@ -573,6 +573,7 @@ describe("what a connector keeps on the instance", () => {
     );
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: { page: 2 },
+      problems: {},
       updated_at: second.data.updated_at,
     });
 
@@ -686,6 +687,7 @@ describe("what a connector keeps on the instance", () => {
     expect(refused.error?.error.code).toBe("validation_error");
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
 
@@ -1146,6 +1148,7 @@ describe("what a connector keeps on the instance", () => {
     );
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(
@@ -1489,6 +1492,7 @@ describe("what a connector keeps on the instance", () => {
     await unheld();
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(await found(mine, [row.id])).toEqual([]);
@@ -1528,6 +1532,7 @@ describe("what a connector keeps on the instance", () => {
     );
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(await found(mine, [row.id])).toEqual([]);
@@ -1665,6 +1670,7 @@ describe("what a connector keeps on the instance", () => {
     expect(own.data).toEqual({ ok: true });
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(
@@ -1683,6 +1689,7 @@ describe("what a connector keeps on the instance", () => {
     expect(operator.status).toBe(200);
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(
@@ -1766,6 +1773,7 @@ describe("what a connector keeps on the instance", () => {
     expect(aState.status).toBe(200);
     expect((await b.client.getConnectorState(b.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     const bState = await b.client.replaceConnectorState(b.id, {
@@ -1779,6 +1787,7 @@ describe("what a connector keeps on the instance", () => {
     // The witness: A's own went.
     expect((await a.client.getConnectorState(a.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(await found(a, [row.id])).toEqual([]);
@@ -1848,6 +1857,7 @@ describe("what a connector keeps on the instance", () => {
     expect((await operator.deleteConnectorState(first.id)).status).toBe(200);
     expect((await next.client.getConnectorState(next.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(await found(next, [row.id])).toEqual([]);
@@ -1905,6 +1915,7 @@ describe("what a connector keeps on the instance", () => {
     expect((await operator.deleteConnectorState(later.id)).status).toBe(200);
     expect((await later.client.getConnectorState(later.id)).data).toEqual({
       state: {},
+      problems: {},
       updated_at: null,
     });
     expect(await found(later, [row.id])).toEqual([]);

@@ -396,6 +396,7 @@ CREATE INDEX IF NOT EXISTS `idx_connector_runs_connector_reported` ON `connector
 CREATE TABLE IF NOT EXISTS `connector_states` (
 	`source` text PRIMARY KEY NOT NULL,
 	`state` text NOT NULL,
+	`problems` text DEFAULT '{}' NOT NULL,
 	`updated_at` text NOT NULL
 );
 

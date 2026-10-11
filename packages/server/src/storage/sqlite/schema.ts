@@ -1355,6 +1355,7 @@ export const connectorHolds = sqliteTable("connector_holds", {
 export const connectorStates = sqliteTable("connector_states", {
   source: text("source").primaryKey(),
   state: text("state").notNull(),
+  problems: text("problems").notNull().default("{}"),
   updated_at: text("updated_at").notNull(),
 });
 

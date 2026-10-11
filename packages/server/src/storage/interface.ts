@@ -2920,6 +2920,7 @@ export interface Connector {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
+  problems: Record<string, string>;
   /** When the live hold on the registration lapses; null when none is live. */
   hold_expires_at: string | null;
 }
@@ -2980,19 +2981,27 @@ export interface ConnectorHeld {
 
 /** What a connector keeps on the instance, keyed by the registration source. */
 export interface ConnectorStateStore {
-  getState(
-    source: string,
-  ): Promise<{ state: Record<string, unknown>; updated_at: string | null }>;
+  getState(source: string): Promise<{
+    state: Record<string, unknown>;
+    problems: Record<string, string>;
+    updated_at: string | null;
+  }>;
   putState(
-    fence: { connectorId: string; process: string },
+    fence: { connectorId: string; keyId: string; process: string },
     source: string,
     state: Record<string, unknown>,
+    problems?: Record<string, string>,
   ): Promise<
-    { state: Record<string, unknown>; updated_at: string } | ConnectorHeld
+    | {
+        state: Record<string, unknown>;
+        problems: Record<string, string>;
+        updated_at: string;
+      }
+    | ConnectorHeld
   >;
   /** Skips an id naming no stored row or a type `readable` refuses. */
   writeAgreements(
-    fence: { connectorId: string; process: string },
+    fence: { connectorId: string; keyId: string; process: string },
     source: string,
     batch: {
       set: {

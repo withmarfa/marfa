@@ -330,6 +330,7 @@ export interface ConnectorRow {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
+  problems: Record<string, string>;
   hold_expires_at: string | null;
 }
 
@@ -340,11 +341,13 @@ export interface ConnectorHoldTaken {
 }
 
 export interface ConnectorStateRow {
+  problems: Record<string, string>;
   state: Record<string, unknown>;
   updated_at: string | null;
 }
 
 export interface ConnectorStateWritten {
+  problems: Record<string, string>;
   state: Record<string, unknown>;
   updated_at: string;
 }

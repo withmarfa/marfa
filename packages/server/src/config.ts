@@ -87,11 +87,8 @@ export interface AppConfig {
   controlOnly?: boolean;
   /** The disk store: where every upload lands. Always present. */
   blobPath: string;
-  /** Maximum request body size in bytes for the JSON write surface. Bodies
-   *  exceeding this are rejected with HTTP 413 `request_too_large` by the
-   *  global `bodyLimit` middleware. The blob upload route is exempt and has
-   *  no cap: its body streams to disk.
-   *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
+  /** Ordinary JSON body cap, excluding the doors with separate caps in
+   *  `bodyCapFor`. `MARFA_MAX_REQUEST_BYTES`, default 1 MiB. */
   maxRequestBytes: number;
   /** Max body size in bytes for the doors `bodyCapFor` names bulk; batches
    *  outgrow the per-request cap. `MARFA_MAX_BULK_REQUEST_BYTES`, 16MB. */

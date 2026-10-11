@@ -104,10 +104,13 @@ pub enum StateCommand {
         /// The process writing, which must hold the registration.
         #[arg(long)]
         process: String,
+        /// Current problems as a JSON object of messages. Omit to preserve them; `{}` clears them.
+        #[arg(long, value_name = "JSON")]
+        problems: Option<String>,
         #[command(flatten)]
         body: BodySource,
     },
-    /// Remove the state document and every agreement. The connector's own
+    /// Remove the state document, current problems and every agreement. The connector's own
     /// key, or `connectors.manage`.
     Delete {
         /// The connector id.
@@ -353,14 +356,32 @@ pub fn release_request(id: &str, process: &str) -> Request {
     Request::delete(&["connectors", id, "hold"]).query("process", process)
 }
 
-pub fn state_put_request(id: &str, process: &str, state: Value) -> Result<Request, CliError> {
+pub fn state_put_request(
+    id: &str,
+    process: &str,
+    state: Value,
+    problems: Option<&str>,
+) -> Result<Request, CliError> {
     if !state.is_object() {
         return Err(CliError::Invalid(
             "a connector's state document is a JSON object".into(),
         ));
     }
-    Ok(Request::put(&["connectors", id, "state"])
-        .json(json!({ "process": process, "state": state })))
+    let mut body = json!({ "process": process, "state": state });
+    if let Some(problems) = problems {
+        let problems: Value = serde_json::from_str(problems)
+            .map_err(|error| CliError::Invalid(format!("problems must be JSON: {error}")))?;
+        if !problems
+            .as_object()
+            .is_some_and(|map| map.values().all(Value::is_string))
+        {
+            return Err(CliError::Invalid(
+                "problems must be a JSON object of messages".into(),
+            ));
+        }
+        body["problems"] = problems;
+    }
+    Ok(Request::put(&["connectors", id, "state"]).json(body))
 }
 
 pub fn agreements_write_request(
@@ -396,7 +417,12 @@ pub fn agreements_list_request(id: &str, waiting: Option<bool>, page: &PageArgs)
 fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match command {
         StateCommand::Get { id } => Request::get(&["connectors", &id, "state"]),
-        StateCommand::Put { id, process, body } => state_put_request(&id, &process, body.read()?)?,
+        StateCommand::Put {
+            id,
+            process,
+            problems,
+            body,
+        } => state_put_request(&id, &process, body.read()?, problems.as_deref())?,
         StateCommand::Delete { id } => Request::delete(&["connectors", &id, "state"]),
     };
     out.value(&remote.json(&request)?)

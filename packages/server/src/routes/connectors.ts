@@ -1,3 +1,4 @@
+import { ConnectorProblemsSchema } from "./_connector-problems.js";
 import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
@@ -97,6 +98,9 @@ const ConnectorSchema = z
       .describe("When the connector last sent a heartbeat; `null` if never."),
     last_run: nullableRef(ConnectorRunSchema).describe(
       "The connector's most recently reported run; `null` if it has reported none.",
+    ),
+    problems: ConnectorProblemsSchema.describe(
+      "The source's current problems, by opaque key; `{}` if there are none.",
     ),
     hold_expires_at: z
       .string()

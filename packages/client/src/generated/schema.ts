@@ -620,6 +620,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/types/normalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Normalize a type
+         * @description Normalizes a candidate definition and returns its declared form, the registered declared definition and the registered resolved definition. It does not register or replace a type.
+         */
+        post: operations["normalizeType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/search": {
         parameters: {
             query?: never;
@@ -1100,7 +1120,7 @@ export interface paths {
         post?: never;
         /**
          * Delete the state document
-         * @description Deletes the state document and every agreement of the connector's source, which every registration of that source reads. No hold is needed.
+         * @description Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.
          */
         delete: operations["deleteConnectorState"];
         options?: never;
@@ -1953,6 +1973,10 @@ export interface components {
             max_versions?: number;
         } & {
             [key: string]: unknown;
+        };
+        /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
+        ConnectorProblems: {
+            [key: string]: string;
         };
         /**
          * @description Where a bulk-action job is. `queued`: waiting to run. `in_progress`: running. `completed`: it reached every matched item. `failed`: it stopped early, and `error` says why. `canceled`: it was canceled before it finished.
@@ -2960,9 +2984,13 @@ export interface components {
                 };
             };
         };
-        /** @description One type. */
-        TypeResponse: {
+        /** @description Canonical definitions from one registry view, with field defaults made explicit as `required: false` and `searchable: true`. */
+        NormalizedType: {
             type: components["schemas"]["TypeDefinition"] & unknown;
+            /** @description The canonical registered type's declared definition; `null` if its identifier is not registered. */
+            registered_type: components["schemas"]["TypeDefinition"] | null;
+            /** @description The canonical registered definition, with inherited fields, policies and roles resolved as on `GET /types/{id}`; `null` if its identifier is not registered. */
+            resolved_type: components["schemas"]["TypeDefinition"] | null;
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal: {
@@ -2973,23 +3001,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "inheritance_violation" | "invalid_schema" | "missing_required_field" | "property_shadows_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        LinkTakenOrTypeAlreadyExistsRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "link_taken" | "type_already_exists";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3015,7 +3026,7 @@ export interface components {
                 };
             };
         };
-        /** @description A type to register. */
+        /** @description A declared item type. */
         TypeDefinitionInput: {
             /** @description The type's own fields, by name. */
             fields: {
@@ -3044,6 +3055,27 @@ export interface components {
             id: string;
         } & {
             [key: string]: unknown;
+        };
+        /** @description One type. */
+        TypeResponse: {
+            type: components["schemas"]["TypeDefinition"] & unknown;
+        };
+        /** @description An error response. */
+        LinkTakenOrTypeAlreadyExistsRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "link_taken" | "type_already_exists";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description An error response. */
         CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal: {
@@ -3453,6 +3485,7 @@ export interface components {
             last_heartbeat_at: string | null;
             /** @description The connector's most recently reported run; `null` if it has reported none. */
             last_run: components["schemas"]["ConnectorRun"] | null;
+            problems: components["schemas"]["ConnectorProblems"] & unknown;
             /** @description When the hold on the connector lapses; `null` if no process holds it or its hold has lapsed. */
             hold_expires_at: string | null;
         };
@@ -3649,6 +3682,7 @@ export interface components {
         };
         /** @description A connector's state document: the JSON object it keeps on the instance to resume from. */
         ConnectorState: {
+            problems: components["schemas"]["ConnectorProblems"] & unknown;
             /** @description The document as last written; `{}` if none was. */
             state: {
                 [key: string]: unknown;
@@ -12307,6 +12341,174 @@ export interface operations {
             };
         };
     };
+    normalizeType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TypeDefinitionInput"];
+            };
+        };
+        responses: {
+            /** @description Returns the normalized candidate and the registered definitions. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedType"];
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `fields` is missing.
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
+             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `property_shadows_field`: a field is named like one every item has.
+             *     - `inheritance_violation`: the type reshapes an inherited field.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description `type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeChainUnresolvableRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy. */
+            422: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     searchItems: {
         parameters: {
             query: {
@@ -16709,6 +16911,7 @@ export interface operations {
                 "application/json": {
                     /** @description The name the process took the connector's hold under. */
                     process: string;
+                    problems?: components["schemas"]["ConnectorProblems"] & unknown;
                     /** @description The new document, a JSON object of at most 512 KiB serialized. It replaces the whole document. */
                     state: {
                         [key: string]: unknown;
@@ -16729,6 +16932,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        problems: components["schemas"]["ConnectorProblems"] & unknown;
                         /** @description The document as written. */
                         state: {
                             [key: string]: unknown;
@@ -16740,7 +16944,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `process` or `state` is missing.
-             *     - `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field this endpoint doesn't take.
+             *     - `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, a problems map is over its entry, message or serialized size limits, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {

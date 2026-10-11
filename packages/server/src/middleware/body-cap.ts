@@ -3,12 +3,14 @@
  * need the larger one — stated once so `app.ts` and the OpenAPI doc agree.
  * Inbound caps after its endpoint lookup, so an unknown address reads nothing.
  */
-export type BodyCap = "none" | "bulk" | "request" | "inbound";
+export type BodyCap =
+  "none" | "bulk" | "request" | "inbound" | "connector-state";
 
 export function bodyCapFor(path: string): BodyCap {
   if (path.startsWith("/blobs") || path === "/restore") {
     return "none";
   }
+  if (/^\/connectors\/[^/]+\/state$/.test(path)) return "connector-state";
   if (path.startsWith("/inbound/")) return "inbound";
   if (
     path.startsWith("/items/bulk") ||
@@ -28,3 +30,10 @@ export function bodyCapFor(path: string): BodyCap {
 export function bulkBodyCap(config: { maxBulkRequestBytes?: number }): number {
   return config.maxBulkRequestBytes ?? 16 * 1024 * 1024;
 }
+
+/** Two independently bounded documents plus the process's worst JSON encoding. */
+export const CONNECTOR_STATE_BODY_CAP =
+  2 * 512 * 1024 +
+  100 * 6 +
+  Buffer.byteLength(JSON.stringify({ process: "", state: {}, problems: {} })) -
+  4;

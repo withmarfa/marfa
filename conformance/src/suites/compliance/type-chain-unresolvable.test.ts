@@ -102,6 +102,15 @@ describe("a type whose stored parent chain is a cycle", () => {
       expect(body.error.code).toBe("type_chain_unresolvable");
       expect(body.error.details.type_id).toBe(CHILD);
 
+      const normalized = await send("POST", "/types/normalize", {
+        id: CHILD,
+        fields: {},
+      });
+      expect(normalized.status).toBe(409);
+      expect(normalized.headers.get("X-Error-Code")).toBe(
+        "type_chain_unresolvable",
+      );
+
       // The way back: the write door reads the stored schema without walking
       // the chain, so it answers, and the read resolves once the cycle is gone.
       const corrected = await send("PUT", `/types/${ROOT}`, {
