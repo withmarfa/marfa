@@ -1,13 +1,134 @@
 import { randomBytes } from "node:crypto";
 import { lstatSync, unlinkSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, chmod, link } from "node:fs/promises";
+import { lstat, mkdir, chmod, link, open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { dirname, isAbsolute, parse, resolve, sep, join } from "node:path";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
+import { createConnection } from "node:net";
+import { pathToFileURL } from "node:url";
+import { createClient, LibsqlError } from "@libsql/client";
 import { getRequestListener } from "@hono/node-server";
 
 const execute = promisify(execFile);
+let startupTurn = Promise.resolve();
+const activeLocks = new Set<string>();
+
+async function acquireStartupLock(socketPath: string) {
+  const lockPath = `${socketPath}.lock`;
+  const inUse = () =>
+    new Error(`Control socket path is already in use: ${socketPath}`);
+  try {
+    const existing = await lstat(lockPath);
+    // Do not open and close a descriptor for an inode this process has locked.
+    if (activeLocks.has(`${String(existing.dev)}:${String(existing.ino)}`))
+      throw inUse();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  let file;
+  let identity: string;
+  try {
+    file = await open(
+      lockPath,
+      constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_RDWR |
+        constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    file = await open(lockPath, constants.O_RDWR | constants.O_NOFOLLOW);
+  }
+  try {
+    const stat = await file.stat();
+    if (
+      !stat.isFile() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o777) !== 0o600 ||
+      stat.nlink !== 1
+    )
+      throw new Error(
+        `Control startup lock must be a private regular file owned by the server account: ${lockPath}`,
+      );
+    await assertNoAcl(lockPath);
+    const current = await lstat(lockPath);
+    if (current.dev !== stat.dev || current.ino !== stat.ino)
+      throw new Error(`Control startup lock changed: ${lockPath}`);
+    identity = `${String(stat.dev)}:${String(stat.ino)}`;
+  } finally {
+    await file.close();
+  }
+  // Keep the file in place: deleting it lets another process lock a different
+  // inode. SQLite releases this reservation on rollback or process exit.
+  const lock = createClient({ url: pathToFileURL(lockPath).href, timeout: 0 });
+  try {
+    const reservation = await lock.transaction("write");
+    activeLocks.add(identity);
+    return {
+      close() {
+        reservation.close();
+        lock.close();
+        activeLocks.delete(identity);
+      },
+    };
+  } catch (error) {
+    try {
+      lock.close();
+    } catch {
+      /* Keep the acquisition error. */
+    }
+    if (error instanceof LibsqlError && error.code === "SQLITE_BUSY")
+      throw inUse();
+    throw new Error(
+      `Control socket startup lock could not be acquired: ${socketPath}`,
+      { cause: error },
+    );
+  }
+}
+
+async function removeStaleSocket(socketPath: string): Promise<void> {
+  let previous;
+  try {
+    previous = await lstat(socketPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const collision = () =>
+    new Error(`Control socket already exists: ${socketPath}`);
+  if (!previous.isSocket()) throw collision();
+  const refused = await new Promise<boolean>((resolvePromise, reject) => {
+    const probe = createConnection(socketPath);
+    probe.setTimeout(1_000, () => {
+      probe.destroy();
+      reject(new Error(`Control socket probe timed out: ${socketPath}`));
+    });
+    probe.once("connect", () => {
+      probe.destroy();
+      reject(collision());
+    });
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      probe.destroy();
+      if (error.code === "ECONNREFUSED") resolvePromise(true);
+      else if (error.code === "ENOENT") resolvePromise(false);
+      else reject(error);
+    });
+  });
+  if (!refused) return;
+  // The reservation excludes other startups; recheck in case the server
+  // account replaced this path through another operation.
+  try {
+    const current = lstatSync(socketPath);
+    if (current.dev !== previous.dev || current.ino !== previous.ino)
+      throw collision();
+    unlinkSync(socketPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 async function assertNoAcl(path: string): Promise<void> {
   if (process.platform === "darwin") {
@@ -91,14 +212,49 @@ export async function startControlSocket(
   fetch: (request: Request) => Response | Promise<Response>,
 ) {
   await verifyControlDirectory(socketPath);
+  // Closing any descriptor for a lock file can release this process's POSIX
+  // locks. Serialize local startups too, including aliases on case-insensitive disks.
+  const previous = startupTurn;
+  let release!: () => void;
+  startupTurn = new Promise<void>((done) => {
+    release = done;
+  });
+  await previous;
+  let lock: Awaited<ReturnType<typeof acquireStartupLock>> | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
   try {
-    await lstat(socketPath);
-    throw new Error(
-      `Control socket already exists: ${socketPath}. Stop its server before removing a stale socket.`,
-    );
+    lock = await acquireStartupLock(socketPath);
+    await removeStaleSocket(socketPath);
+    server = await publishControlSocket(socketPath, fetch);
+    const ownership = lock;
+    server.once("close", () => {
+      ownership.close();
+    });
+    return server;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (server) {
+      const published = server;
+      await new Promise<void>((done) =>
+        published.close(() => {
+          done();
+        }),
+      );
+    }
+    try {
+      lock?.close();
+    } catch {
+      /* Keep the startup error. */
+    }
+    throw error;
+  } finally {
+    release();
   }
+}
+
+async function publishControlSocket(
+  socketPath: string,
+  fetch: (request: Request) => Response | Promise<Response>,
+) {
   // libuv unlinks its bound name unconditionally on close. Publish a second
   // link only after verification, and remove that link only while it is ours.
   const boundPath = join(
