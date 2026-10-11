@@ -874,7 +874,8 @@ type Reached = Result<(String, WireCatalog, Receiver<io::Result<Frame>>)>;
 /// `None` when `stop` was set first.
 fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
     let (sender, answer) = mpsc::sync_channel::<Reached>(1);
-    let http = Arc::clone(http);
+    let asked = http.to_let_go();
+    let http = asked.clone();
     let cursor = cursor.to_string();
     thread::spawn(move || {
         let reached = (|| {
@@ -887,6 +888,7 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     });
     loop {
         if stop.load(Ordering::Relaxed) {
+            asked.let_go();
             return None;
         }
         match answer.recv_timeout(poll) {

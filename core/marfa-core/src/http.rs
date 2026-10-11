@@ -406,7 +406,7 @@ impl Http {
         }));
     }
 
-    fn confirm_origin(&self) -> Result<(), CoreError> {
+    pub(crate) fn confirm_origin(&self) -> Result<(), CoreError> {
         let Some(relocation) = self.relocation.get() else {
             return Ok(());
         };

@@ -14,7 +14,11 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedServer, type Answer } from "../../device/scripted-server.js";
 import { keychainEnv } from "../../utils/keychain.js";
-import { requireBinary } from "./harness.js";
+import { hydratedHarness, requireBinary } from "./harness.js";
+import {
+  SCRIPTED_INSTANCE,
+  SCRIPTED_TYPES,
+} from "../../device/marfa-answers.js";
 
 const run = promisify(execFile);
 
@@ -375,6 +379,160 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
     await server.stop();
     keychain.remove();
   });
+  it("defers working-copy token renewal until the new origin confirms its identity", async () => {
+    const copy = await hydratedHarness("relocation-stale-credential");
+    const prefix = `/relocation-${randomUUID()}`;
+    const origin = `${server.url}${prefix}`;
+    keepInKeychain(keychain.path, origin, signIn(server, prefix, null, 1));
+    let instance = "credential-fixture";
+    let badRoot: Answer | undefined;
+    const root = (): Answer =>
+      badRoot ?? {
+        kind: "json",
+        status: 200,
+        body: { name: "marfa", version: "fixture", instance_id: instance },
+      };
+    server.answer("GET", prefix, root);
+    server.answer("GET", `${prefix}/`, root);
+    server.copyAnswer("POST", `${prefix}/token`, {
+      kind: "json",
+      status: 200,
+      body: {
+        access_token: "renewed-fixture",
+        refresh_token: "next-fixture",
+        token_type: "Bearer",
+        expires_in: 3600,
+      },
+    });
+    try {
+      const queued = await copy.device.create({
+        type: "core.note",
+        properties: { title: "Unsent relocation", body: "kept" },
+      });
+      expect(queued.ok).toBe(true);
+      const before = await copy.device.queue();
+      const statusBefore = await copy.device.status();
+      const local = await marfaAt(keychain.path, origin, [
+        "device",
+        "--db",
+        copy.device.store,
+        "items",
+        "list",
+      ]).done;
+      expect(local.code, local.stderr).toBe(0);
+      expect(server.requests).toHaveLength(0);
+      const wrong = await marfaAt(keychain.path, origin, [
+        "device",
+        "--db",
+        copy.device.store,
+        "types",
+        "served",
+      ]).done;
+      expect(
+        server.requests.map(
+          (request) => `${request.method} ${request.pathname}`,
+        ),
+      ).toEqual([`GET ${prefix}`]);
+      expect(wrong.code, wrong.stdout + wrong.stderr).toBe(4);
+      expect(JSON.parse(wrong.stderr)).toMatchObject({
+        error: { code: "wrong_server" },
+      });
+      expect(server.requests.map((request) => request.pathname)).toEqual([
+        prefix,
+      ]);
+      expect(server.requests[0]!.headers.authorization).toBeUndefined();
+      expect(await copy.device.queue()).toEqual(before);
+
+      const refusedRoots: Answer[] = [
+        { kind: "json", status: 200, body: {} },
+        {
+          kind: "json",
+          status: 401,
+          body: { error: { code: "unauthorized", message: "refused" } },
+        },
+        { kind: "json", status: 503, body: {} },
+        {
+          kind: "json",
+          status: 302,
+          body: {},
+          headers: { location: `${origin}/token` },
+        },
+      ];
+      for (const answer of refusedRoots) {
+        badRoot = answer;
+        const count = server.requests.length;
+        const refused = await marfaAt(keychain.path, origin, [
+          "device",
+          "--db",
+          copy.device.store,
+          "types",
+          "served",
+        ]).done;
+        expect(refused.code).not.toBe(0);
+        expect(
+          server.requests
+            .slice(count)
+            .map((request) => `${request.method} ${request.pathname}`),
+        ).toEqual([`GET ${prefix}`]);
+        expect(server.requests.at(-1)!.headers.authorization).toBeUndefined();
+        expect(await copy.device.queue()).toEqual(before);
+        expect(await copy.device.status()).toEqual(statusBefore);
+      }
+      badRoot = undefined;
+      instance = SCRIPTED_INSTANCE;
+      server.copyAnswer(
+        "GET",
+        `${prefix}/types`,
+        {
+          kind: "json",
+          status: 401,
+          body: { error: { code: "unauthorized", message: "expired" } },
+        },
+        {
+          kind: "json",
+          status: 200,
+          body: { data: SCRIPTED_TYPES, next_cursor: null },
+        },
+      );
+      server.copyAnswer("GET", `${prefix}/edge-types`, {
+        kind: "json",
+        status: 200,
+        body: { data: [], next_cursor: null },
+      });
+      const same = await marfaAt(keychain.path, origin, [
+        "device",
+        "--db",
+        copy.device.store,
+        "types",
+        "served",
+      ]).done;
+      expect(same.code, same.stderr).toBe(0);
+      expect(server.requests.map((request) => request.pathname)).toEqual([
+        ...Array(2 + refusedRoots.length).fill(prefix),
+        `${prefix}/types`,
+        `${prefix}/`,
+        `${prefix}/token`,
+        `${prefix}/types`,
+        `${prefix}/edge-types`,
+      ]);
+      expect(
+        server.requests[1 + refusedRoots.length]!.headers.authorization,
+      ).toBeUndefined();
+      expect(server.requests.at(-2)!.headers.authorization).toBe(
+        "Bearer renewed-fixture",
+      );
+      expect(await copy.device.queue()).toEqual(before);
+      const after = await copy.device.status();
+      expect(statusBefore.ok && after.ok && after.value).toEqual(
+        statusBefore.ok
+          ? { ...statusBefore.value, server_origin: origin }
+          : null,
+      );
+    } finally {
+      await copy.stop();
+    }
+  });
+
   const sentTo = (prefix: string) =>
     server.requests
       .filter((request) => request.pathname.startsWith(prefix))

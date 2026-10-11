@@ -520,3 +520,120 @@ fn relocation_can_cancel_a_waiter_while_another_clone_confirms() {
     assert_eq!(server.seen("/types").len(), 1);
     assert_eq!(origin(&core), server.url());
 }
+
+fn current_copy(core: &Core) {
+    let conn = core.conn().unwrap();
+    store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+    store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+    store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+    store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+}
+
+#[test]
+fn relocation_wrong_server_preserves_self_clearing_queue_verdicts() {
+    let server = Scripted::start();
+    server.on("/", vec![scripted::root(OTHER_INSTANCE)]);
+    let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+    current_copy(&core);
+    for reason in [
+        crate::BlockedReason::CredentialRefused,
+        crate::BlockedReason::AwaitingDependency,
+    ] {
+        store::block_unanswered(&core.conn().unwrap(), reason).unwrap();
+        let before = core.queue().unwrap();
+        assert!(matches!(core.drain(), Err(CoreError::WrongServer { .. })));
+        assert_eq!(core.queue().unwrap(), before);
+        assert_eq!(origin(&core), OLD_ORIGIN);
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL",
+                [],
+            )
+            .unwrap();
+    }
+    assert_eq!(server.asked(), 2);
+    assert!(
+        server
+            .seen("/")
+            .iter()
+            .all(|seen| seen.authorization.is_none())
+    );
+}
+
+#[test]
+fn relocation_follow_cancellation_stops_the_abandoned_identity_probe() {
+    let server = Scripted::start();
+    doors(&server);
+    let released = Arc::new(AtomicBool::new(false));
+    let retried = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/",
+        vec![
+            Answer::WaitFor {
+                ready: released.clone(),
+                answer: Box::new(scripted::root(scripted::INSTANCE)),
+            },
+            Answer::WaitFor {
+                ready: retried.clone(),
+                answer: Box::new(scripted::root(scripted::INSTANCE)),
+            },
+        ],
+    );
+    let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+    current_copy(&core);
+    let before = core.queue().unwrap();
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let following = scope.spawn(|| core.follow(&stop, false, |_| {}));
+        server.wait_for("/", 1, Duration::from_secs(2));
+        stop.store(true, Ordering::SeqCst);
+        following.join().unwrap().unwrap();
+    });
+    assert_eq!(origin(&core), OLD_ORIGIN);
+    assert_eq!(core.queue().unwrap(), before);
+    released.store(true, Ordering::SeqCst);
+    // A retry waits for the abandoned worker's gate. It must perform its own
+    // anonymous verification rather than inherit that worker's admission.
+    let retry = core.http().unwrap().clone();
+    let retrying = std::thread::spawn(move || retry.types());
+    server.wait_for("/", 2, Duration::from_secs(2));
+    assert_eq!(origin(&core), OLD_ORIGIN);
+    assert_eq!(core.queue().unwrap(), before);
+    assert!(server.seen("/types").is_empty());
+    retried.store(true, Ordering::SeqCst);
+    retrying.join().unwrap().unwrap();
+    assert_eq!(server.seen("/").len(), 2);
+    assert_eq!(server.seen("/types").len(), 1);
+    assert!(server.seen("/edge-types").is_empty());
+    assert!(server.seen("/events").is_empty());
+    assert_eq!(core.queue().unwrap(), before);
+    assert_eq!(origin(&core), server.url());
+}
+
+#[test]
+fn relocation_unavailable_server_preserves_blocked_queue_and_empty_pass_is_offline() {
+    let server = Scripted::start();
+    server.on("/", vec![scripted::json(503, "{}")]);
+    let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+    current_copy(&core);
+    store::block_unanswered(
+        &core.conn().unwrap(),
+        crate::BlockedReason::CredentialRefused,
+    )
+    .unwrap();
+    let before = core.queue().unwrap();
+    let report = core.drain().unwrap();
+    assert!(report.unavailable.is_some());
+    assert_eq!(report.undelivered, before.len());
+    assert_eq!(core.queue().unwrap(), before);
+    assert_eq!(origin(&core), OLD_ORIGIN);
+    assert_eq!(server.asked(), 1);
+    core.conn()
+        .unwrap()
+        .execute("DELETE FROM queue", [])
+        .unwrap();
+    core.drain().unwrap();
+    assert_eq!(server.asked(), 1);
+    assert_eq!(origin(&core), OLD_ORIGIN);
+}
