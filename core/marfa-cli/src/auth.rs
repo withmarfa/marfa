@@ -20,7 +20,7 @@ use crate::remote::request::Request;
 
 pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
-const OWNER_SCOPES: [&str; 17] = [
+const OWNER_SCOPES: [&str; 22] = [
     "openid",
     "profile",
     "email",
@@ -38,6 +38,11 @@ const OWNER_SCOPES: [&str; 17] = [
     "config.manage",
     "audit.read",
     "grants.manage",
+    "instance.read",
+    "instance.maintain",
+    "connectors.manage",
+    "blobs.manage",
+    "keys.manage",
 ];
 
 const REFRESH_AHEAD_SECONDS: u64 = 60;

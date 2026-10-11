@@ -217,6 +217,32 @@ async function grants(c: TestContext) {
 }
 
 describe("the device authorization grant through the provider plugin", () => {
+  it.each([undefined, "", "   "])(
+    "refuses a device request without named scopes (%j)",
+    async (scope) => {
+      ctx = await createTestContext({});
+      const clientId = await registerClient(ctx, [DEVICE_CODE_GRANT_TYPE]);
+      expect(
+        (await initiate(ctx, clientId, "core.note:read")).device_code,
+      ).toBeTruthy();
+      for (const encoding of ["form", "body"] as const) {
+        const body = {
+          client_id: clientId,
+          ...(scope === undefined ? {} : { scope }),
+        };
+        const refused = await request(ctx.app, "POST", "/auth/device/code", {
+          [encoding]: body,
+          headers: { origin: ORIGIN },
+        });
+        expect(refused.status).toBe(400);
+        const error = (await refused.json()) as Record<string, unknown>;
+        expect(error.error).toBe("invalid_scope");
+        expect(error.error_description).toMatch(/name.*scope/i);
+        expect(error.device_code).toBeUndefined();
+      }
+    },
+  );
+
   it("registers a device client, approves on the consent screen, polls a token and reaches the data plane", async () => {
     ctx = await createTestContext({});
     const c = ctx;

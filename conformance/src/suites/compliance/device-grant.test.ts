@@ -66,7 +66,7 @@ describe("the device authorization grant", () => {
 });
 
 describe("a device code", () => {
-  async function ask(scope: string): Promise<Response> {
+  async function ask(scope?: string): Promise<Response> {
     const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -83,7 +83,10 @@ describe("a device code", () => {
     return fetch(`${server!.apiUrl}/auth/device/code`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id, scope }),
+      body: new URLSearchParams({
+        client_id,
+        ...(scope === undefined ? {} : { scope }),
+      }),
     });
   }
 
@@ -100,6 +103,18 @@ describe("a device code", () => {
     expect(complete.searchParams.get("user_code")).toBe(body.user_code);
     expect(body.expires_in).toBe(600);
     expect(body.interval).toBe(5);
+  });
+
+  it("is refused 400 invalid_scope when no scopes are named", async () => {
+    expect((await ask("core.note:read")).status).toBe(200);
+    for (const scope of [undefined, "", "   "]) {
+      const refused = await ask(scope);
+      expect(refused.status).toBe(400);
+      const body = (await refused.json()) as Record<string, unknown>;
+      expect(body.error).toBe("invalid_scope");
+      expect(body.error_description).toMatch(/name.*scope/i);
+      expect(body.device_code).toBeUndefined();
+    }
   });
 
   it("is refused 400 invalid_scope for a scope the instance does not publish", async () => {
