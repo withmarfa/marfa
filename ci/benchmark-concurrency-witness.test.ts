@@ -19,10 +19,13 @@ it("runs the HTTP overlap witness in the nightly benchmark job", () => {
     (step) => step.name === "Witness concurrent HTTP reads",
   );
   const load = steps.findIndex((step) => step.name === "Load");
-  expect(witness).toBeGreaterThan(-1);
+  const witnessStep = steps[witness];
+  if (witnessStep === undefined) {
+    throw new Error("The benchmark workflow has no HTTP overlap witness");
+  }
   expect(load).toBeGreaterThan(witness);
-  expect(steps[witness].run).toBe(
+  expect(witnessStep.run).toBe(
     "pnpm exec vitest run packages/server/src/read-concurrency.test.ts",
   );
-  expect(steps[witness].if).toBeUndefined();
+  expect(witnessStep.if).toBeUndefined();
 });
