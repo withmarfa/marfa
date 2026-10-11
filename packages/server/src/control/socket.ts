@@ -5,9 +5,51 @@ import { lstat, mkdir, chmod, link } from "node:fs/promises";
 import { dirname, isAbsolute, parse, resolve, sep, join } from "node:path";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { getRequestListener } from "@hono/node-server";
 
 const execute = promisify(execFile);
+
+async function removeStaleSocket(socketPath: string): Promise<void> {
+  let previous;
+  try {
+    previous = await lstat(socketPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const collision = () =>
+    new Error(`Control socket already exists: ${socketPath}`);
+  if (!previous.isSocket()) throw collision();
+  const refused = await new Promise<boolean>((resolvePromise, reject) => {
+    const probe = createConnection(socketPath);
+    probe.setTimeout(1_000, () => {
+      probe.destroy();
+      reject(new Error(`Control socket probe timed out: ${socketPath}`));
+    });
+    probe.once("connect", () => {
+      probe.destroy();
+      reject(collision());
+    });
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      probe.destroy();
+      if (error.code === "ECONNREFUSED") resolvePromise(true);
+      else if (error.code === "ENOENT") resolvePromise(false);
+      else reject(error);
+    });
+  });
+  if (!refused) return;
+  // No asynchronous boundary between checking the probed inode and removal:
+  // another startup in this process cannot publish a replacement in between.
+  try {
+    const current = lstatSync(socketPath);
+    if (current.dev !== previous.dev || current.ino !== previous.ino)
+      throw collision();
+    unlinkSync(socketPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 async function assertNoAcl(path: string): Promise<void> {
   if (process.platform === "darwin") {
@@ -91,14 +133,7 @@ export async function startControlSocket(
   fetch: (request: Request) => Response | Promise<Response>,
 ) {
   await verifyControlDirectory(socketPath);
-  try {
-    await lstat(socketPath);
-    throw new Error(
-      `Control socket already exists: ${socketPath}. Stop its server before removing a stale socket.`,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
+  await removeStaleSocket(socketPath);
   // libuv unlinks its bound name unconditionally on close. Publish a second
   // link only after verification, and remove that link only while it is ours.
   const boundPath = join(

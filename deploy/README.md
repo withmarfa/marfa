@@ -88,7 +88,7 @@ This recovery process opens no public listener and runs no background jobs. Its 
 
 The server creates the socket directory with mode `0700` and the socket with mode `0600`. The directory must belong to the server account; unsafe ownership, permissions, symlinks or access ACLs prevent startup. Linux requires `getfacl`, supplied by the image's `acl` package. Use an absolute normalized socket path without symlink components, no longer than 103 bytes. `--socket` rejects ordinary URL or credential selection and never falls back to HTTP.
 
-A clean shutdown removes its socket. After a crash, an existing socket is refused to prevent taking over another process's listener. Stop every server using that path, verify that none remains, remove the stale socket file, and restart. Do not remove a live socket. Keep the same account and volume ownership when starting recovery.
+A clean shutdown removes its socket. After a crash, the server replaces a stale control socket when a connection is refused. A live listener or a non-socket file at that path is left intact and prevents startup. A probe timeout or another connection error also prevents startup without removing the path. Keep the same account and volume ownership when starting recovery.
 
 ## Watching the instance
 

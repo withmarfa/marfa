@@ -10,6 +10,10 @@ import {
   rm,
   symlink,
   rename,
+  mkdir,
+  link,
+  writeFile,
+  readFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +44,71 @@ function get(socketPath: string): Promise<string> {
   });
 }
 describe("private control socket", () => {
+  it("publishes only one listener when two startups race", async () => {
+    const socketPath = await path();
+    const results = await Promise.allSettled([
+      startControlSocket(socketPath, () => new Response("first")),
+      startControlSocket(socketPath, () => new Response("second")),
+    ]);
+    const servers = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    try {
+      expect(servers).toHaveLength(1);
+      const winner = results[0].status === "fulfilled" ? "first" : "second";
+      expect(await get(socketPath)).toBe(winner);
+    } finally {
+      await Promise.all(
+        servers.map(
+          (server) =>
+            new Promise<void>((done) =>
+              server.close(() => {
+                done();
+              }),
+            ),
+        ),
+      );
+    }
+  });
+  it("replaces a socket that refuses connections", async () => {
+    const socketPath = await path();
+    await mkdir(join(socketPath, ".."), { mode: 0o700 });
+    const boundPath = join(socketPath, "..", "stale.sock");
+    const stale = createServer();
+    await new Promise<void>((done) => stale.listen(boundPath, done));
+    await link(boundPath, socketPath);
+    await new Promise<void>((done) =>
+      stale.close(() => {
+        done();
+      }),
+    );
+    expect((await lstat(socketPath)).isSocket()).toBe(true);
+    await expect(get(socketPath)).rejects.toMatchObject({
+      code: "ECONNREFUSED",
+    });
+    const server = await startControlSocket(
+      socketPath,
+      () => new Response("restarted"),
+    );
+    try {
+      expect(await get(socketPath)).toBe("restarted");
+    } finally {
+      await new Promise<void>((done) =>
+        server.close(() => {
+          done();
+        }),
+      );
+    }
+  });
+  it("refuses a non-socket path without removing its contents", async () => {
+    const socketPath = await path();
+    await mkdir(join(socketPath, ".."), { mode: 0o700 });
+    await writeFile(socketPath, "keep this file");
+    await expect(
+      startControlSocket(socketPath, () => new Response()),
+    ).rejects.toThrow(socketPath);
+    expect(await readFile(socketPath, "utf8")).toBe("keep this file");
+  });
   it("serves only after restricting its directory and socket", async () => {
     const socketPath = await path();
     const server = await startControlSocket(

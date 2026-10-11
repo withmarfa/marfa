@@ -808,6 +808,26 @@ When a key holding `config.manage` sends `PUT /config` with an otherwise valid b
 
 **Tests:** `compliance/instance-config.test.ts › refuses a body past the request cap with 413 request_too_large, and keeps the configuration`.
 
+## Private control socket at boot
+
+### `instance/control-stale-restart`
+
+When the configured private control socket path holds a socket that refuses connections, the server MUST replace that socket and start its private control listener.
+
+**Tests:** `compliance/control-socket.test.ts › starts on the same control socket after SIGKILL`.
+
+### `instance/control-live-refused`
+
+When another listener accepts connections at the configured private control socket path, the server MUST refuse to start without disrupting that listener.
+
+**Tests:** `compliance/control-socket.test.ts › refuses a live control socket and preserves its listener`.
+
+### `instance/control-nonsocket-refused`
+
+When the configured private control socket path holds a file that is not a socket, the server MUST refuse to start without removing that file.
+
+**Tests:** `compliance/control-socket.test.ts › refuses a non-socket control path and preserves its contents`.
+
 ## Settings refused at boot
 
 The server reads its settings once, when it starts, and the table at the end of this chapter gives each one's rule. A client meets a refused setting as a process that exits, so these rules are about the exit status, the log message and the files left behind.
