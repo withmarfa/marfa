@@ -821,3 +821,9 @@ When `POST /types/normalize` succeeds or is refused, the server MUST leave the t
 When `POST /types/normalize` succeeds or is refused, the server MUST create no audit entry.
 
 **Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
+
+### `types/normalize-cli`
+
+When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
+
+**Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.

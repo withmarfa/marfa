@@ -1230,6 +1230,36 @@ mod dispatch {
     const QUIET: Printer = Printer { json: true };
 
     #[test]
+    fn type_normalization_sends_the_declared_input_to_its_read_door() {
+        let definition = json!({
+            "id": "user.normalized",
+            "fields": { "title": { "type": "string" } },
+            "required": ["title"]
+        });
+        let door = Door::open(vec![Answer::json(
+            "200 OK",
+            r#"{"type":{},"registered_type":null,"resolved_type":null}"#,
+        )]);
+        types::run(
+            types::TypesCommand::Normalize(BodySource {
+                body: Some(definition.to_string()),
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method(), "POST");
+        assert_eq!(received[0].path(), "/types/normalize");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&received[0].body).unwrap(),
+            definition
+        );
+    }
+
+    #[test]
     fn a_delete_carries_the_idempotency_key_it_was_given() {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(

@@ -2935,18 +2935,20 @@ The types an instance holds, and the shipped ones it has outgrown
 Usage: marfa types [OPTIONS] <COMMAND>
 
 Commands:
-  list      Every type the instance holds
-  get       One type by id, with its schema
-  register  Register a type from its definition. Needs `metadata.types:write` and write on the type
-            in the key's type map
-  replace   Replace a registered type's definition. Needs write on the type in the key's type map
-            and `schema.write` or `metadata.types:write`
-  delete    Remove a registered type. Needs `schema.write` and write on the type in the key's type
-            map
-  drift     Shipped types this instance carries that the build no longer does. Requires
-            `instance.read`
-  prune     Remove one shipped type the build no longer carries. Requires `instance.maintain`
-  help      Print this message or the help of the given subcommand(s)
+  list       Every type the instance holds
+  get        One type by id, with its schema
+  register   Register a type from its definition. Needs `metadata.types:write` and write on the type
+             in the key's type map
+  normalize  Normalize a definition and compare it with the registered type. Any authenticated key
+             can use this command
+  replace    Replace a registered type's definition. Needs write on the type in the key's type map
+             and `schema.write` or `metadata.types:write`
+  delete     Remove a registered type. Needs `schema.write` and write on the type in the key's type
+             map
+  drift      Shipped types this instance carries that the build no longer does. Requires
+             `instance.read`
+  prune      Remove one shipped type the build no longer carries. Requires `instance.maintain`
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -3054,6 +3056,47 @@ Register a type from its definition. Needs `metadata.types:write` and write on t
 type map
 
 Usage: marfa types register [OPTIONS]
+
+Options:
+      --file <PATH>
+          A file holding the JSON body; `-` reads stdin
+
+      --body <JSON>
+          The JSON body inline
+
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
+
+      --socket <PATH>
+          Use private local process authority through this Unix socket, without a keychain
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
+```
+
+### marfa types normalize
+
+```text
+Normalize a definition and compare it with the registered type. Any authenticated key can use this
+command
+
+Usage: marfa types normalize [OPTIONS]
 
 Options:
       --file <PATH>
