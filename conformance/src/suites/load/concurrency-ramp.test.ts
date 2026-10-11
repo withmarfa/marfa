@@ -40,8 +40,7 @@ const { corpusItems, batchSize, rampLevels, readSamples, writeSamples } =
   profile.bench;
 
 const CORPUS_SIZE = Math.max(20, Math.round(corpusItems / 2));
-/** Same run count at every rung, so rungs are directly comparable. */
-const READ_RUNS_PER_LEVEL = Math.max(
+const READ_TARGET_COUNT = Math.max(
   rampLevels[rampLevels.length - 1],
   Math.round(readSamples / 2),
 );
@@ -139,7 +138,7 @@ describe("concurrency ramp", () => {
   });
 
   it("records correct reads and steady-state timing through the ladder", async () => {
-    const targets = sampleIds(corpusIds, READ_RUNS_PER_LEVEL);
+    const targets = sampleIds(corpusIds, READ_TARGET_COUNT);
     const expectedItems = new Map<string, string>();
     for (const id of corpusIds) {
       const response = await client.getItem(id);
