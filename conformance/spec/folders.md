@@ -3628,13 +3628,13 @@ When a missing folder file is trashed after no other folder holds it, the CLI MU
 
 When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST defer its deletion.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folders/uncertain-move-deferred-unsure-reported`
 
 When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST name the uncertainty in `unsure`.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+**Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folders/moved-arrival-bytes`
 

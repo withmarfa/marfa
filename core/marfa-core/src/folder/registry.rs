@@ -242,10 +242,36 @@ fn machine_path(home: &Path) -> PathBuf {
     base.join(FILE_NAME)
 }
 
-/// The admitted spelling made absolute, without following a renamed directory
-/// or a symlink into a different folder.
+/// Parent components are removed only after both spellings open the same
+/// directory without following links, so a link before `..` cannot disappear.
 pub fn resolved(dir: &Path) -> PathBuf {
-    std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
+    let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !absolute
+        .components()
+        .any(|part| part == std::path::Component::ParentDir)
+    {
+        return absolute;
+    }
+    let Ok(admitted) = Directory::open(&absolute) else {
+        return absolute;
+    };
+    let mut normalized = PathBuf::new();
+    for part in absolute.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            part => normalized.push(part.as_os_str()),
+        }
+    }
+    if Directory::open(&normalized)
+        .is_ok_and(|directory| admitted.same(&directory).unwrap_or(false))
+    {
+        normalized
+    } else {
+        absolute
+    }
 }
 
 /// Missing or unreadable roots are kept, since a disconnected volume or a
@@ -269,6 +295,21 @@ mod tests {
         std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
         std::fs::write(dir.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
         dir
+    }
+
+    #[test]
+    fn parent_components_do_not_hide_nested_registered_folders() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let outer = folder_at(temp.path(), "outer");
+        std::fs::create_dir(outer.join("child")).unwrap();
+        let inner = folder_at(&outer, "nested");
+        let parent_spelling = outer.join("child/..");
+        let registry = Registry::at(temp.path().join(FILE_NAME));
+        registry.add(&parent_spelling, "outer", None).unwrap();
+        assert!(registry.add(&inner, "inner", None).is_err());
+        registry.unregister(&parent_spelling).unwrap();
+        registry.add(&inner, "inner", None).unwrap();
+        assert!(registry.add(&parent_spelling, "outer", None).is_err());
     }
 
     #[test]

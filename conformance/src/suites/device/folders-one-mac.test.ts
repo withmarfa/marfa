@@ -253,6 +253,60 @@ describe("folders on one Mac", () => {
     expect(deletesOf(a.server, kept)).toBe(0);
   });
 
+  it("keeps an unreadable file moved to another folder before its next scan", async () => {
+    const moved = "01a00000-0000-7000-8000-0000000016f1";
+    const gone = "01a00000-0000-7000-8000-0000000016f2";
+    const { a, b } = await onOneMac(
+      "unreadable-move",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          {
+            item: {
+              id: moved,
+              properties: { title: "Moved", body: "original\n" },
+            },
+          },
+          {
+            item: {
+              id: gone,
+              properties: { title: "Gone", body: "deleted\n" },
+            },
+          },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const target = join(b.dir, "Moved.md");
+    renameSync(join(a.dir, "Moved.md"), target);
+    const before = readFileSync(target);
+    rmSync(join(a.dir, "Gone.md"));
+    chmodSync(target, 0o000);
+    try {
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(deletesOf(a.server, moved)).toBe(0);
+      expect(held.value.scan.trashed).toEqual([]);
+      expect(held.value.scan.moved_away).toBe(1);
+      expect(deletesOf(a.server, gone)).toBe(0);
+      expect(held.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Gone.md",
+      ]);
+    } finally {
+      chmodSync(target, 0o600);
+    }
+    expect(readFileSync(target)).toEqual(before);
+    // With a complete peer inventory, the genuinely missing file is deleted.
+    const readable = await a.folder.push();
+    expect(readable.ok, JSON.stringify(readable)).toBe(true);
+    expect(deletesOf(a.server, moved)).toBe(0);
+    expect(deletesOf(a.server, gone)).toBe(1);
+  });
+
   it("does not trash a file moved to another folder", async () => {
     const moved = "01a00000-0000-7000-8000-0000000016d1";
     const deleted = "01a00000-0000-7000-8000-0000000016d2";

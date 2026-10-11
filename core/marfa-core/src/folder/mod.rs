@@ -28,7 +28,7 @@ pub use sync::SyncReport;
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -844,7 +844,7 @@ struct Walked {
     directories: Vec<Flagged>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
-    left: Vec<(Directory, PathBuf)>,
+    left: Vec<(WalkRoute, PathBuf)>,
 }
 
 impl Walked {
@@ -887,17 +887,66 @@ impl Walked {
     }
 }
 
-/// A directory it cannot read is reported and passed over, so one does not
-/// stop the scan of every other.
+/// Reopening a walked parent must prove every component is the same directory.
+/// Keeping identities instead of descriptors bounds the walk's open files.
+#[derive(Clone)]
+struct WalkRoute {
+    root: Directory,
+    steps: Vec<(std::ffi::OsString, std::fs::Metadata)>,
+}
+
+impl WalkRoute {
+    fn open(&self) -> std::io::Result<Directory> {
+        let mut directory = self.root.clone();
+        for (name, expected) in &self.steps {
+            directory = directory.child(Path::new(name), false)?;
+            if !same_file(expected, &directory.metadata()?) {
+                return Err(std::io::Error::other("walked directory was replaced"));
+            }
+        }
+        Ok(directory)
+    }
+
+    fn child(&self, name: &std::ffi::OsStr, directory: &Directory) -> std::io::Result<Self> {
+        let mut route = self.clone();
+        route.steps.push((name.to_owned(), directory.metadata()?));
+        Ok(route)
+    }
+}
+
+#[cfg(unix)]
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.created().ok() == right.created().ok()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
+}
+
 struct Captured {
-    file: std::fs::File,
-    metadata: std::fs::Metadata,
+    route: WalkRoute,
+    name: std::ffi::OsString,
+    metadata: RefCell<std::fs::Metadata>,
 }
 
 impl Captured {
+    fn open(&self) -> std::io::Result<std::fs::File> {
+        let directory = self.route.open()?;
+        let file = directory.capture_file(Path::new(&self.name))?;
+        let metadata = file.metadata()?;
+        if !same_file(&self.metadata.borrow(), &metadata) {
+            return Err(std::io::Error::other("walked file was replaced"));
+        }
+        *self.metadata.borrow_mut() = metadata;
+        Ok(file)
+    }
+
     fn read(&self) -> std::io::Result<Vec<u8>> {
-        let mut file = self.file.try_clone()?;
-        file.rewind()?;
+        let mut file = self.open()?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         Ok(bytes)
@@ -905,6 +954,23 @@ impl Captured {
 }
 
 fn walk(root: &Path, dir: &Path, directory: &Directory, lists: &Lists, walked: &mut Walked) {
+    let route = WalkRoute {
+        root: directory.clone(),
+        steps: Vec::new(),
+    };
+    walk_at(root, dir, directory, &route, lists, walked);
+}
+
+/// A directory it cannot read is reported and passed over, so one does not
+/// stop the scan of every other.
+fn walk_at(
+    root: &Path,
+    dir: &Path,
+    directory: &Directory,
+    route: &WalkRoute,
+    lists: &Lists,
+    walked: &mut Walked,
+) {
     if let Some(gone) = crate::fault::named("vanish-while-walking")
         && identity::relative(root, dir).is_ok_and(|relative| relative == gone)
     {
@@ -953,16 +1019,20 @@ fn walk(root: &Path, dir: &Path, directory: &Directory, lists: &Lists, walked: &
                     item: None,
                 });
             } else {
-                walk(root, &path, &child, lists, walked);
+                match route.child(&name, &child) {
+                    Ok(route) => walk_at(root, &path, &child, &route, lists, walked),
+                    Err(error) => walked.unreadable(root, &path, &error),
+                }
             }
         } else if kind == crate::directory::FileType::RegularFile {
             if landing::left_behind(&path) {
-                walked.left.push((directory.clone(), PathBuf::from(name)));
+                walked.left.push((route.clone(), PathBuf::from(name)));
             } else if lists.takes(&relative) {
                 if let Ok(captured) = directory.capture_file(entry).and_then(|file| {
                     Ok(Captured {
-                        metadata: file.metadata()?,
-                        file,
+                        metadata: RefCell::new(file.metadata()?),
+                        route: route.clone(),
+                        name: name.clone(),
                     })
                 }) {
                     walked.opened.insert(path.clone(), captured);
@@ -988,7 +1058,7 @@ fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, i
             walked
                 .opened
                 .get(path)
-                .and_then(|capture| identity::of(&capture.metadata))
+                .and_then(|capture| identity::of(&capture.metadata.borrow()))
                 .or_else(|| walked.unread.get(path).copied()),
         )
     }))
@@ -1054,7 +1124,7 @@ impl Scanned {
             key: identity::relative(root, path)?,
             path: path.to_path_buf(),
             mark,
-            born: captured.and_then(|captured| identity::born(&captured.metadata)),
+            born: captured.and_then(|captured| identity::born(&captured.metadata.borrow())),
             text: String::new(),
             hash: String::new(),
             id: None,
@@ -1151,13 +1221,13 @@ impl Folder {
             .into_iter()
             .map(PathBuf::from)
             .filter(|name| landing::left_behind(name));
-        for (directory, left) in walked
-            .left
-            .iter()
-            .cloned()
-            .chain(state_left.map(|name| (self.state_dir.clone(), name)))
-        {
-            let _ = directory.unlink(&left);
+        for (route, left) in &walked.left {
+            if let Ok(directory) = route.open() {
+                let _ = directory.unlink(left);
+            }
+        }
+        for left in state_left {
+            let _ = self.state_dir.unlink(&left);
         }
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
@@ -1194,7 +1264,7 @@ impl Folder {
                     && state::untaken_read_version(&bound.content_hash).is_none()
                     && bound.identity.is_some()
                     && marks.get(path).map(|found| found.key()) == bound.identity
-                    && let Some(stat) = walked.opened.get(path).and_then(|captured| stat_metadata(&captured.metadata))
+                    && let Some(stat) = walked.opened.get(path).and_then(|captured| stat_metadata(&captured.metadata.borrow()))
                     && state::stat_of(&conn, key)?.as_deref() == Some(stat.as_str())
                     // A file whose item the copy lost is said to be at every pass.
                     && crate::store::held_version(&conn, &bound.item_id)?.is_some()
@@ -1216,10 +1286,6 @@ impl Folder {
                 if !carries_frontmatter(path) || unchanged.contains(key) {
                     continue;
                 }
-                let stat = walked
-                    .opened
-                    .get(path)
-                    .and_then(|captured| stat_metadata(&captured.metadata));
                 let Ok(bytes) = walked
                     .opened
                     .get(path)
@@ -1228,7 +1294,11 @@ impl Folder {
                 else {
                     continue;
                 };
-                if let Some(stat) = stat {
+                if let Some(stat) = walked
+                    .opened
+                    .get(path)
+                    .and_then(|captured| stat_metadata(&captured.metadata.borrow()))
+                {
                     stats.push((key.clone(), stat));
                 }
                 // Held below; its id line, which is ASCII, still names its item.
@@ -1290,7 +1360,7 @@ impl Folder {
                 || walked
                     .opened
                     .get(path)
-                    .map(|captured| captured.metadata.clone())
+                    .map(|captured| captured.metadata.borrow().clone())
                     .and_then(|metadata| identity::of(&metadata))
                     .or_else(|| walked.unread.get(path).copied())
                     .is_some_and(|found| bound_marks.contains(found.key().as_str()))
@@ -1327,7 +1397,7 @@ impl Folder {
                 && walked
                     .opened
                     .get(&path)
-                    .is_some_and(|captured| changed_within(&captured.metadata, settle))
+                    .is_some_and(|captured| changed_within(&captured.metadata.borrow(), settle))
             {
                 files.push(deferred()?);
                 report.settling.push(identity::relative(&self.root, &path)?);
@@ -1338,10 +1408,6 @@ impl Folder {
             let bytes = match early.remove(&path) {
                 Some(bytes) => bytes,
                 None => {
-                    let stat = walked
-                        .opened
-                        .get(&path)
-                        .and_then(|captured| stat_metadata(&captured.metadata));
                     let Ok(bytes) = walked
                         .opened
                         .get(&path)
@@ -1351,7 +1417,11 @@ impl Folder {
                         files.push(deferred()?);
                         continue;
                     };
-                    if let Some(stat) = stat {
+                    if let Some(stat) = walked
+                        .opened
+                        .get(&path)
+                        .and_then(|captured| stat_metadata(&captured.metadata.borrow()))
+                    {
                         stats.push((identity::relative(&self.root, &path)?, stat));
                     }
                     bytes
@@ -1401,7 +1471,7 @@ impl Folder {
             let metadata = walked
                 .opened
                 .get(&path)
-                .map(|captured| captured.metadata.clone());
+                .map(|captured| captured.metadata.borrow().clone());
             files.push(Scanned {
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
@@ -5031,6 +5101,117 @@ fn name_from_title(title: &str, extension: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_large_walk_keeps_descriptors_available() {
+        const CHILD: &str = "MARFA_TEST_LARGE_WALK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("sh")
+                .args(["-c", "ulimit -n 128; exec \"$@\"", "large-walk"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "folder::tests::a_large_walk_keeps_descriptors_available",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for at in 0..256 {
+            std::fs::write(root.join(format!("note-{at}.md")), "original note").unwrap();
+        }
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let readable = walked
+            .opened
+            .values()
+            .filter(|captured| captured.read().is_ok())
+            .count();
+        let root_present = Directory::open(&root).is_ok();
+        assert_eq!(
+            (walked.opened.len(), readable, root_present),
+            (256, 256, true)
+        );
+        drop(walked);
+        let mut ended = std::process::Command::new("true").spawn().unwrap();
+        let gone = ended.id();
+        ended.wait().unwrap();
+        for at in 0..256 {
+            let child = root.join(format!("child-{at}"));
+            std::fs::create_dir(&child).unwrap();
+            std::fs::write(child.join("note.md"), "original note").unwrap();
+            std::fs::write(child.join(format!(".marfa-{gone}-0.tmp")), "unfinished").unwrap();
+        }
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        assert_eq!(walked.opened.len(), 512);
+        assert_eq!(walked.left.len(), 256);
+        for captured in walked.opened.values() {
+            assert_eq!(captured.read().unwrap(), b"original note");
+        }
+        for (route, name) in &walked.left {
+            route.open().unwrap().unlink(name).unwrap();
+        }
+        assert!(Directory::open(&root).is_ok());
+    }
+
+    #[test]
+    fn a_walk_refuses_replaced_children_and_reads_restored_originals() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let child = root.join("child");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("note.md"), "original").unwrap();
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let captured = &walked.opened[&child.join("note.md")];
+        assert_eq!(captured.read().unwrap(), b"original");
+        std::fs::rename(&child, root.join("original")).unwrap();
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("note.md"), "replacement").unwrap();
+        assert!(captured.read().is_err());
+        std::fs::rename(&child, root.join("replacement")).unwrap();
+        std::fs::rename(root.join("original"), &child).unwrap();
+        assert_eq!(captured.read().unwrap(), b"original");
+        std::fs::rename(child.join("note.md"), child.join("original.md")).unwrap();
+        std::fs::write(child.join("note.md"), "replacement file").unwrap();
+        assert!(captured.read().is_err());
+        assert_eq!(
+            std::fs::read(root.join("replacement/note.md")).unwrap(),
+            b"replacement"
+        );
+    }
 
     fn held_at(occurred_at: &str) -> Item {
         Item {
