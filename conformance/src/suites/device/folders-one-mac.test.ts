@@ -6,10 +6,10 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readlinkSync,
   readdirSync,
-  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -64,6 +64,116 @@ afterEach(async () => {
 });
 
 describe("folders on one Mac", () => {
+  describe.runIf(process.platform === "darwin")(
+    "unidentified cross-directory moves and older deletions",
+    () => {
+      it.each(["directory", "file", "unreadable file"])(
+        "holds cross-directory moves and older deletions behind an unidentified %s",
+        async (kind) => {
+          const moved = "01a00000-0000-7000-8000-000000000ae1";
+          const missing = "01a00000-0000-7000-8000-000000000ae2";
+          harness = await folderHarness(`contract-unidentified-${kind}`, {
+            rows: {
+              "core.note": [
+                {
+                  item: {
+                    id: moved,
+                    properties: { title: "Moved", body: "moved body\n" },
+                  },
+                },
+                {
+                  item: {
+                    id: missing,
+                    properties: { title: "Missing", body: "missing body\n" },
+                  },
+                },
+                {
+                  item: {
+                    id: "01a00000-0000-7000-8000-000000000ae3",
+                    properties: { title: "Stable", body: "stable body\n" },
+                  },
+                },
+              ],
+            },
+          });
+          expect((await harness.folder.pull()).ok).toBe(true);
+          rmSync(join(harness.dir, "Missing.md"));
+          const complete = await harness.folder.scan();
+          expect(complete.ok && complete.value.missing).toBe(1);
+          const child = join(harness.dir, "child");
+          mkdirSync(child);
+          const target = join(child, "Moved.md");
+          renameSync(join(harness.dir, "Moved.md"), target);
+          const bytes = readFileSync(target);
+          const affected = kind === "directory" ? child : target;
+          const originalBirth = statSync(affected, {
+            bigint: true,
+          }).birthtimeNs;
+          const setBirth = (birth: bigint) =>
+            execFileSync("python3", [
+              "-c",
+              `
+import ctypes, os, sys
+class AttrList(ctypes.Structure):
+    _fields_ = [("count", ctypes.c_uint16), ("reserved", ctypes.c_uint16), ("common", ctypes.c_uint32), ("volume", ctypes.c_uint32), ("dir", ctypes.c_uint32), ("file", ctypes.c_uint32), ("fork", ctypes.c_uint32)]
+class Timespec(ctypes.Structure):
+    _fields_ = [("seconds", ctypes.c_long), ("nanos", ctypes.c_long)]
+attrs = AttrList(5, 0, 0x200, 0, 0, 0, 0)
+stamp = Timespec(*divmod(int(sys.argv[2]), 1000000000))
+lib = ctypes.CDLL(None, use_errno=True)
+if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(stamp), ctypes.sizeof(stamp), 0) != 0:
+    raise OSError(ctypes.get_errno(), "setattrlist creation time")
+`,
+              affected,
+              birth.toString(),
+            ]);
+          setBirth(0n);
+          expect(statSync(affected).birthtimeMs).toBe(0);
+          expect(statSync(harness.dir).birthtimeMs).toBeGreaterThan(0);
+          if (kind === "unreadable file") chmodSync(target, 0o000);
+          const stable = join(harness.dir, "Stable.md");
+          writeFileSync(
+            stable,
+            readFileSync(stable, "utf8").replace(
+              "stable body",
+              "edited stable body",
+            ),
+          );
+          try {
+            const first = await harness.folder.scan();
+            expect(first.ok && first.value.updated).toBe(1);
+            await new Promise((resolve) => setTimeout(resolve, 6000));
+            const held = await harness.folder.scan();
+            const queued = await harness.folder.device().queue();
+            expect(held.ok, JSON.stringify(held)).toBe(true);
+            expect(queued.ok, JSON.stringify(queued)).toBe(true);
+            expect(held.ok && held.value.deleted, JSON.stringify(queued)).toBe(
+              0,
+            );
+            expect(
+              queued.ok &&
+                queued.value.filter((entry) => entry.kind === "delete_item"),
+            ).toEqual([]);
+            expect(first.ok && first.value.missing).toBe(0);
+          } finally {
+            if (kind === "unreadable file") chmodSync(target, 0o600);
+            setBirth(originalBirth);
+          }
+          expect(readFileSync(target)).toEqual(bytes);
+          const resumed = await harness.folder.scan();
+          expect(resumed.ok && resumed.value.deleted).toBe(1);
+          const queued = await harness.folder.device().queue();
+          expect(
+            queued.ok &&
+              queued.value
+                .filter((entry) => entry.kind === "delete_item")
+                .map((entry) => entry.item_id),
+          ).toEqual([missing]);
+        },
+      );
+    },
+  );
+
   /** Past the grace a missing file is journaled for (`folders/delete-grace`). */
   async function pastTheGrace(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -192,7 +302,7 @@ describe("folders on one Mac", () => {
       harness.settings.id,
     ]);
     expect(existsSync(join(second.dir, "kept.md"))).toBe(true);
-    expect(existsSync(join(second.dir, ".marfa"))).toBe(false);
+    expect(existsSync(join(second.dir, ".marfa", "core.sqlite"))).toBe(false);
   });
 
   it("tells a copy into another folder from a move", async () => {
@@ -251,6 +361,60 @@ describe("folders on one Mac", () => {
     expect(deletesOf(a.server, moving)).toBe(0);
     expect(deletesOf(a.server, loose)).toBe(0);
     expect(deletesOf(a.server, kept)).toBe(0);
+  });
+
+  it("keeps an unreadable file moved to another folder before its next scan", async () => {
+    const moved = "01a00000-0000-7000-8000-0000000016f1";
+    const gone = "01a00000-0000-7000-8000-0000000016f2";
+    const { a, b } = await onOneMac(
+      "unreadable-move",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          {
+            item: {
+              id: moved,
+              properties: { title: "Moved", body: "original\n" },
+            },
+          },
+          {
+            item: {
+              id: gone,
+              properties: { title: "Gone", body: "deleted\n" },
+            },
+          },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const target = join(b.dir, "Moved.md");
+    renameSync(join(a.dir, "Moved.md"), target);
+    const before = readFileSync(target);
+    rmSync(join(a.dir, "Gone.md"));
+    chmodSync(target, 0o000);
+    try {
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(deletesOf(a.server, moved)).toBe(0);
+      expect(held.value.scan.trashed).toEqual([]);
+      expect(held.value.scan.moved_away).toBe(1);
+      expect(deletesOf(a.server, gone)).toBe(0);
+      expect(held.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Gone.md",
+      ]);
+    } finally {
+      chmodSync(target, 0o600);
+    }
+    expect(readFileSync(target)).toEqual(before);
+    // With a complete peer inventory, the genuinely missing file is deleted.
+    const readable = await a.folder.push();
+    expect(readable.ok, JSON.stringify(readable)).toBe(true);
+    expect(deletesOf(a.server, moved)).toBe(0);
+    expect(deletesOf(a.server, gone)).toBe(1);
   });
 
   it("does not trash a file moved to another folder", async () => {
@@ -1628,14 +1792,20 @@ describe("folders on one Mac", () => {
     expect(refused.ok || refused.refusal.raw).toContain(
       "a folder cannot sit inside another",
     );
-    expect(existsSync(join(harness.dir, "inner", ".marfa"))).toBe(false);
+    expect(
+      existsSync(join(harness.dir, "inner", ".marfa", "core.sqlite")),
+    ).toBe(false);
     const holding = await inside(join(harness.dir, "..")).add(innerRow.id);
     expect(holding.ok || holding.refusal.raw).toContain(
       "a folder cannot sit inside another",
     );
 
     // A folder inside, on another machine's registry say, is its own.
-    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    mkdirSync(join(harness.dir, "inner", ".marfa"), { recursive: true });
+    copyFileSync(
+      join(harness.dir, ".marfa", "core.sqlite"),
+      join(harness.dir, "inner", ".marfa", "core.sqlite"),
+    );
     put(harness, "inner/theirs.md", "---\ntitle: Theirs\n---\nnot ours\n");
     put(harness, "ours.md", "---\ntitle: Ours\n---\nours\n");
     const pushed = await harness.folder.push();
@@ -1672,7 +1842,11 @@ describe("folders on one Mac", () => {
       );
 
     // Another folder's state lands in the directory, and a file goes.
-    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    mkdirSync(join(harness.dir, "inner", ".marfa"), { recursive: true });
+    copyFileSync(
+      join(harness.dir, ".marfa", "core.sqlite"),
+      join(harness.dir, "inner", ".marfa", "core.sqlite"),
+    );
     rmSync(join(harness.dir, "gone.md"));
     const first = await harness.folder.push();
     expect(first.ok, JSON.stringify(first)).toBe(true);
@@ -1775,31 +1949,43 @@ describe("folders on one Mac", () => {
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   });
 
-  it("lists a folder reached through a symlink once, and never as another", async () => {
-    harness = await folderHarness("renamed-folder");
-    scriptFolderWrites(harness);
-    put(harness, "One.txt", "same\n");
-    put(harness, "Two.txt", "same\n");
-    expect((await harness.folder.push()).ok).toBe(true);
-    const [one] = sentCreates(harness).map((sent) => String(sent.id));
-    const real = realpathSync(harness.dir);
-    renameSync(real, `${real}-renamed`);
-    symlinkSync(`${real}-renamed`, real);
-    expect((await harness.folder.push()).ok).toBe(true);
-    const listed = await harness.folder.list();
-    expect(
-      listed.ok && listed.value.map((entry) => entry.dir),
-      "a folder reached through a symlink was listed under both names",
-    ).toEqual([`${real}-renamed`]);
+  it("admits parent components without skipping a preceding symlink", async () => {
+    harness = await folderHarness("parent-components");
+    mkdirSync(join(harness.dir, "child"));
+    const at = (path: string) =>
+      new CliFolder(path, {
+        binary: requireBinary(),
+        url: harness!.server.url,
+        key: KEY,
+      });
+    // Keep the raw spelling: path.join would erase the component under test.
+    const admitted = await at(`${harness.dir}/child/..`).add(
+      harness.settings.id,
+    );
+    expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+    symlinkSync(join(harness.dir, "child"), join(harness.dir, "link"));
+    const refused = await at(`${harness.dir}/link/..`).add(harness.settings.id);
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    expect((await harness.folder.status()).ok).toBe(true);
+  });
 
-    rmSync(join(harness.dir, "One.txt"));
-    expect((await harness.folder.push()).ok).toBe(true);
-    await pastTheGrace();
-    const swept = await harness.folder.push();
-    expect(swept.ok, JSON.stringify(swept)).toBe(true);
-    if (!swept.ok) return;
-    expect(swept.value.scan.trashed).toEqual(["One.txt"]);
-    expect(deletesOf(harness.server, String(one))).toBe(1);
+  it("refuses a folder reached through a symlink and preserves its registry identity", async () => {
+    harness = await folderHarness("renamed-folder");
+    const root = harness.dir;
+    const away = `${root}-renamed`;
+    renameSync(root, away);
+    symlinkSync(away, root);
+    try {
+      expect((await harness.folder.push()).ok).toBe(false);
+      const listed = await harness.folder.list();
+      expect(listed.ok && listed.value.map((entry) => entry.dir)).toEqual([
+        root,
+      ]);
+    } finally {
+      rmSync(root);
+      renameSync(away, root);
+    }
+    expect((await harness.folder.pull()).ok).toBe(true);
   });
 
   it("follows a move by copy and delete, by id and by bytes", async () => {
@@ -1907,7 +2093,7 @@ describe("folders on one Mac", () => {
   });
 
   it("keeps its registry under the home by default", async () => {
-    const home = mkdtempSync(join(tmpdir(), "marfa-home-"));
+    const home = mkdtempSync(join(realpathSync(tmpdir()), "marfa-home-"));
     harness = await folderHarness("home-registry", { home });
     const registry =
       process.platform === "darwin"

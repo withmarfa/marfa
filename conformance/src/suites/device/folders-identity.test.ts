@@ -2629,6 +2629,12 @@ describe("what a folder never does to a person's text", () => {
     const dir = harness.dir;
     const away = `${dir}-away`;
     const watching = harness.folder.watch();
+    const reasonsSince = (offset: number) =>
+      [...watching.stdout.slice(offset).matchAll(/^\{[\s\S]*?^\}/gm)].map(
+        (frame) =>
+          (JSON.parse(frame[0]) as { scan?: { root_gone?: string | null } })
+            .scan?.root_gone,
+      );
     try {
       // The witness: a file deleted while the watch runs is sent as a delete
       // once the grace has run.
@@ -2639,15 +2645,38 @@ describe("what a folder never does to a person's text", () => {
         },
         { timeout: 30_000, interval: 200 },
       );
+      // Refused access is uncertainty, not proof that another directory replaced it.
+      const refusedAt = watching.stdout.length;
+      chmodSync(dir, 0o000);
+      try {
+        await vi.waitFor(
+          () => {
+            expect(reasonsSince(refusedAt)).toContainEqual(
+              expect.stringContaining(`${dir} cannot be checked`),
+            );
+          },
+          { timeout: 30_000, interval: 200 },
+        );
+        expect(deleted()).toEqual([ids[0]]);
+        expect(watching.running(), watching.stderr).toBe(true);
+      } finally {
+        chmodSync(dir, 0o700);
+      }
+      const readableAt = watching.stdout.length;
+      await vi.waitFor(() => expect(reasonsSince(readableAt)).toContain(null), {
+        timeout: 30_000,
+        interval: 200,
+      });
       // The whole folder moves away, as a rename in the Finder or an
       // ejected volume takes it.
+      const missingAt = watching.stdout.length;
       renameSync(dir, away);
       await vi.waitFor(
         () => {
           expect(
-            watching.stdout,
+            reasonsSince(missingAt),
             "the watch did not say its directory is gone",
-          ).toContain("cannot be found");
+          ).toContainEqual(expect.stringContaining(`${dir} cannot be found`));
         },
         { timeout: 30_000, interval: 200 },
       );

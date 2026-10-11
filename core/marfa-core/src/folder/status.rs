@@ -100,7 +100,7 @@ impl Folder {
                 // As the next scan settles any write a crash cut off.
                 state::every_bound(&conn)?
                     .into_iter()
-                    .filter_map(|row| state::settled(&row, &self.root).unwrap_or(Some(row)))
+                    .filter_map(|row| state::settled(&row, &self.root_dir).unwrap_or(Some(row)))
                     .collect::<Vec<_>>(),
                 state::paused(&conn, state::Removal::Disk)?,
                 state::paused(&conn, state::Removal::Pull)?,
@@ -139,7 +139,10 @@ impl Folder {
         }
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
-            let bytes = std::fs::read(path).ok();
+            let bytes = walked
+                .opened
+                .get(path)
+                .and_then(|captured| captured.read().ok());
             let mut entry = match by_path.get(key.as_str()) {
                 Some(bound) => self.bound_status(
                     bound,
@@ -389,7 +392,7 @@ mod tests {
 
     #[test]
     fn status_keeps_the_edge_catalog_from_its_item_catalog_snapshot() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state_dir = dir.path().join(super::super::STATE_DIR);
         std::fs::create_dir(&state_dir).unwrap();
         let path = state_dir.join("core.sqlite");
@@ -464,7 +467,14 @@ mod tests {
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
-            store_mark: None,
+            root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
+                .unwrap(),
+            store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
+                .unwrap()
+                .entry_identity(std::path::Path::new("core.sqlite"))
+                .unwrap(),
+            state_dir: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
+                .unwrap(),
         };
         let status = folder.status().unwrap();
         assert!(

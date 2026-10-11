@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -134,7 +135,7 @@ function targets(names: BodyLinks["links"]): BodyTarget[] {
 }
 
 function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), "marfa-body-edges-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-body-edges-"));
   dirs.push(dir);
   return dir;
 }

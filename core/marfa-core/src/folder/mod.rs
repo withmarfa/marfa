@@ -28,7 +28,7 @@ pub use sync::SyncReport;
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -38,9 +38,12 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
+use crate::directory::Directory;
+use crate::directory::{Mode, OFlags};
 use crate::error::CoreError;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
+use std::io::{Read, Seek};
 
 use crate::body::embed::{FILE_TYPE, bytes_of, carries_frontmatter, is_document};
 use crate::body::resolve::{Names, Resolver};
@@ -50,7 +53,7 @@ use elsewhere::{Look, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{BoundFiles, EdgeWork};
-use lists::{Lists, in_package, is_package};
+use lists::{Lists, in_package};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 pub use registry::{REGISTRY_ENV, Registered, Registry};
@@ -109,13 +112,13 @@ fn near_limit(key: &str, text: &str) -> Option<Flagged> {
 
 pub struct Folder {
     root: PathBuf,
+    root_dir: Directory,
+    state_dir: Directory,
+    store_mark: (u64, u64),
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
     permissions: std::sync::OnceLock<bool>,
-    /// The identity of the store this handle opened, which a directory
-    /// put in the folder's place does not hold.
-    store_mark: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -221,35 +224,42 @@ impl Folder {
     ) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
-        let state = root.join(STATE_DIR);
-        // A refused add leaves only what was there before it.
-        let made = if !root.exists() {
-            Some(root.clone())
-        } else if !state.exists() {
-            Some(state.clone())
-        } else {
-            None
-        };
-        std::fs::create_dir_all(&state).map_err(|error| {
-            CoreError::Store(format!("cannot make {}: {error}", state.display()))
-        })?;
-        let added = Folder::bind(root, folder, server, renew);
-        if added.is_err()
-            && let Some(made) = made
-        {
-            let _ = std::fs::remove_dir_all(made);
+        let root_dir = Directory::create(&root).map_err(io_error)?;
+        admitted_root(&root_dir).map_err(io_error)?;
+        crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
+        let state_dir = root_dir
+            .child(Path::new(STATE_DIR), true)
+            .map_err(io_error)?;
+        let fresh = state_dir.contains_no_files().unwrap_or(false);
+        swap_root(&root, "replace-root-before-store-open");
+        let added = Folder::bind(
+            root,
+            root_dir.clone(),
+            state_dir.clone(),
+            folder,
+            server,
+            renew,
+        );
+        if added.is_err() && fresh {
+            let _ = state_dir.clear();
         }
         added
     }
 
     fn bind(
         root: PathBuf,
+        root_dir: Directory,
+        state_dir: Directory,
         folder: &str,
         server: Server,
         renew: Option<crate::http::Renew>,
     ) -> Result<Folder> {
         let state = root.join(STATE_DIR);
-        let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
+        let core = working(Core::open_directory(
+            &state_dir,
+            &state.join("core.sqlite"),
+            Some(server),
+        )?)?;
         if let Some(renew) = renew {
             core.renew_credential_with(renew);
         }
@@ -264,11 +274,15 @@ impl Folder {
         }
         let added = Folder {
             root,
+            root_dir,
+            store_mark: state_dir
+                .entry_identity(Path::new("core.sqlite"))
+                .map_err(io_error)?,
+            state_dir,
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
-            store_mark: store_mark(&state),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -314,18 +328,31 @@ impl Folder {
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
-        if !state.join("core.sqlite").exists() {
-            return Err(not_a_folder(&root));
-        }
-        let core = working(Core::open(state.join("core.sqlite"), server)?)?;
+        let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
+        admitted_root(&root_dir).map_err(io_error)?;
+        let state_dir = root_dir
+            .child(Path::new(STATE_DIR), false)
+            .map_err(|_| not_a_folder(&root))?;
+        state_dir
+            .entry_identity(Path::new("core.sqlite"))
+            .map_err(|_| not_a_folder(&root))?;
+        let core = working(Core::open_directory(
+            &state_dir,
+            &state.join("core.sqlite"),
+            server,
+        )?)?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         let opened = Folder {
             root,
+            root_dir,
+            store_mark: state_dir
+                .entry_identity(Path::new("core.sqlite"))
+                .map_err(io_error)?,
+            state_dir,
             folder,
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
-            store_mark: store_mark(&state),
         };
         // A lost registry is the scan's to notice before listing again.
         if let Some(registry) = Registry::located()
@@ -341,18 +368,24 @@ impl Folder {
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
-        if !state.join("core.sqlite").exists() {
-            return Err(not_a_folder(&root));
-        }
-        let core = Core::open_reader(state.join("core.sqlite"))?;
+        let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
+        admitted_root(&root_dir).map_err(io_error)?;
+        let state_dir = root_dir
+            .child(Path::new(STATE_DIR), false)
+            .map_err(|_| not_a_folder(&root))?;
+        let core = Core::read_directory(&state_dir, &state.join("core.sqlite"))?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         Folder {
             root,
+            root_dir,
+            store_mark: state_dir
+                .entry_identity(Path::new("core.sqlite"))
+                .map_err(io_error)?,
+            state_dir,
             folder,
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
-            store_mark: store_mark(&state),
         }
         .status()
     }
@@ -413,11 +446,20 @@ impl Folder {
         if let Some(registry) = Registry::located() {
             registry.unregister(&self.root)?;
         }
-        let Folder { root, core, .. } = self;
+        self.refuse_if_gone()?;
+        let Folder {
+            root,
+            state_dir,
+            core,
+            ..
+        } = self;
         drop(core);
-        let state = root.join(STATE_DIR);
-        std::fs::remove_dir_all(&state).map_err(|error| {
-            CoreError::Store(format!("cannot remove {}: {error}", state.display()))
+        swap_root(&root, "replace-root-before-cleanup");
+        state_dir.clear().map_err(|error| {
+            CoreError::Store(format!(
+                "cannot remove {}: {error}",
+                root.join(STATE_DIR).display()
+            ))
         })
     }
 
@@ -575,7 +617,7 @@ impl Folder {
 
     fn walked(&self, lists: &Lists) -> Walked {
         let mut walked = Walked::default();
-        walk(&self.root, &self.root, lists, &mut walked);
+        walk(&self.root, &self.root, &self.root_dir, lists, &mut walked);
         walked.files.sort();
         walked
     }
@@ -586,18 +628,57 @@ impl Folder {
 
     /// Why the folder does not write at `path`, where it does not.
     fn not_writing_at(&self, lists: &Lists, path: &str) -> Option<&'static str> {
-        if !plainly_inside(&self.root, path) {
+        if !plainly_inside(&self.root_dir, path) {
             Some("the path leads out of the folder")
         } else if !lists.takes(path) {
             Some("the folder's lists do not take the path")
-        } else if in_package(&self.root, path) {
+        } else if in_package(&self.root_dir, path) {
             Some("the path is inside a package")
-        } else if in_nested_folder(&self.root, path) {
+        } else if in_nested_folder(&self.root_dir, path) {
             Some("the path is inside another folder")
         } else {
             None
         }
     }
+}
+
+fn swap_root(root: &Path, fault: &str) {
+    if crate::fault::named(fault).is_some() {
+        std::fs::rename(root, root.with_extension("original")).expect("fixture root rename");
+        std::fs::rename(root.with_extension("replacement"), root)
+            .expect("fixture replacement rename");
+    }
+}
+
+fn io_error(error: std::io::Error) -> CoreError {
+    CoreError::Io(error.to_string())
+}
+
+fn require_birth(birth: Option<u128>) -> std::io::Result<()> {
+    if same_birth(birth, birth) {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "folder identity requires a nonzero birth timestamp; use a filesystem that reports file and directory creation times",
+    ))
+}
+
+fn admitted_root(directory: &Directory) -> std::io::Result<()> {
+    let birth = match crate::fault::named("root-birth-time").as_deref() {
+        Some("missing") => None,
+        Some("zero") => Some(0),
+        _ => identity::born(&directory.metadata()?),
+    };
+    require_birth(birth)
+}
+
+fn read_file(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
+    let mut file = file.try_clone()?;
+    file.rewind()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn not_a_folder(root: &Path) -> CoreError {
@@ -615,17 +696,23 @@ fn working(core: Core) -> Result<Core> {
     Ok(core)
 }
 
-fn in_nested_folder(root: &Path, relative: &str) -> bool {
-    let mut here = root.to_path_buf();
+fn in_nested_folder(root: &Directory, relative: &str) -> bool {
+    let mut directory = root.clone();
     let mut names = relative.split('/').peekable();
     while let Some(name) = names.next() {
         if names.peek().is_none() {
             break;
         }
-        here.push(name);
-        if here.join(STATE_DIR).is_dir() {
+        let Ok(child) = directory.child(Path::new(name), false) else {
+            return false;
+        };
+        if child
+            .child(Path::new(STATE_DIR), false)
+            .is_ok_and(|state| state.entry_identity(Path::new("core.sqlite")).is_ok())
+        {
             return true;
         }
+        directory = child;
     }
     false
 }
@@ -640,46 +727,63 @@ impl Folder {
         fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
         still: impl FnOnce(Option<&[u8]>) -> bool,
     ) -> std::result::Result<(), landing::Unlanded> {
-        self.inside(path.parent())?;
-        landing::land(path, fill, still)
+        if let Some(gone) = self.root_gone() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
+        }
+        let (directory, name) = self.location(path, true)?;
+        swap_root(&self.root, "replace-root-before-publication");
+        landing::land_at(&directory, Path::new(&name), fill, still)
     }
 
-    /// Makes the directories from the folder's root down to `dir`, never the
-    /// root itself, and fails where the folder's directory is gone.
+    fn location(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<(Directory, std::ffi::OsString)> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| std::io::Error::other("path outside folder"))?;
+        if let Ok(below) = relative.strip_prefix(STATE_DIR) {
+            self.state_dir.parent(below, create)
+        } else {
+            self.root_dir.parent(relative, create)
+        }
+    }
+
+    fn read(&self, path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+        let (directory, name) = self.location(path.as_ref(), false)?;
+        directory.read(Path::new(&name))
+    }
+
+    fn read_text(&self, path: impl AsRef<Path>) -> std::io::Result<String> {
+        String::from_utf8(self.read(path)?)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    fn metadata(&self, path: impl AsRef<Path>) -> std::io::Result<std::fs::Metadata> {
+        let (directory, name) = self.location(path.as_ref(), false)?;
+        directory.entry_metadata(Path::new(&name))
+    }
+
+    fn exists(&self, path: impl AsRef<Path>) -> bool {
+        self.location(path.as_ref(), false)
+            .is_ok_and(|(directory, name)| directory.entry_kind(Path::new(&name)).is_ok())
+    }
+
+    fn remove_file(&self, path: &Path, still: impl FnOnce(&[u8]) -> bool) -> std::io::Result<bool> {
+        let (directory, name) = self.location(path, false)?;
+        landing::remove_at(&directory, Path::new(&name), still)
+    }
+
     fn inside(&self, dir: Option<&Path>) -> std::io::Result<()> {
         if let Some(gone) = self.root_gone() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone));
         }
-        let Some(below) = dir.and_then(|dir| dir.strip_prefix(&self.root).ok()) else {
-            return Ok(());
-        };
-        let mut here = self.root.clone();
-        for part in below.components() {
-            here.push(part);
-            match std::fs::create_dir(&here) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
+        if let Some(below) = dir.and_then(|dir| dir.strip_prefix(&self.root).ok()) {
+            self.root_dir.child(below, true)?;
         }
         Ok(())
     }
-}
-
-/// The store's inode and birth time, and not its device: a volume mounted
-/// again can come back under another device number, while the two its
-/// filesystem keeps for the file stay.
-#[cfg(unix)]
-fn store_mark(state: &Path) -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(state.join("core.sqlite")).ok()?;
-    let born = identity::born(&metadata)?;
-    Some(format!("{}:{born}", metadata.ino()))
-}
-
-#[cfg(not(unix))]
-fn store_mark(_state: &Path) -> Option<String> {
-    None
 }
 
 impl Folder {
@@ -688,18 +792,62 @@ impl Folder {
     /// directory put in its place. Every file would then read as deleted, so
     /// a pass reads and writes nothing until it is back.
     fn root_gone(&self) -> Option<String> {
-        let state = self.root.join(STATE_DIR);
-        match std::fs::metadata(state.join("core.sqlite")) {
-            Ok(_) if self.store_mark.is_none() || store_mark(&state) == self.store_mark => None,
-            Ok(_) => Some(format!(
-                "{} is no longer the directory this folder opened, so nothing in it is read or written; open the folder again where it now is",
-                self.root.display()
-            )),
-            Err(_) => Some(format!(
-                "{} cannot be found: moved, renamed or on a volume no longer mounted, so nothing is read, written or deleted until it is back",
-                self.root.display()
-            )),
+        let unavailable = |path: &Path, error: std::io::Error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "{} cannot be found, so nothing in the folder is read or written; restore the original directory and state to resume",
+                    path.display()
+                )
+            } else {
+                format!(
+                    "{} cannot be checked ({error}), so nothing in the folder is read or written; check access and restore the original directory and state to resume",
+                    path.display()
+                )
+            }
+        };
+        let same = |left: &Directory, right: &Directory| -> std::io::Result<bool> {
+            let matches = left.same(right)?;
+            if !matches {
+                // A missing birth identity cannot establish replacement.
+                require_birth(identity::born(&left.metadata()?))?;
+                require_birth(identity::born(&right.metadata()?))?;
+            }
+            Ok(matches)
+        };
+        let current = match Directory::open(&self.root) {
+            Ok(current) => current,
+            Err(error) => return Some(unavailable(&self.root, error)),
+        };
+        match same(&self.root_dir, &current) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Some(format!(
+                    "{} is no longer the directory this folder opened, so nothing in it is read or written; restore the original directory to resume",
+                    self.root.display()
+                ));
+            }
+            Err(error) => return Some(unavailable(&self.root, error)),
         }
+        let state_path = self.root.join(STATE_DIR);
+        let state = match current.child(Path::new(STATE_DIR), false) {
+            Ok(state) => state,
+            Err(error) => return Some(unavailable(&state_path, error)),
+        };
+        let state_matches = match same(&self.state_dir, &state) {
+            Ok(matches) => matches,
+            Err(error) => return Some(unavailable(&state_path, error)),
+        };
+        if state_matches {
+            match state.entry_identity(Path::new("core.sqlite")) {
+                Ok(mark) if mark == self.store_mark => return None,
+                Ok(_) => {}
+                Err(error) => return Some(unavailable(&state_path.join("core.sqlite"), error)),
+            }
+        }
+        Some(format!(
+            "{} is no longer the administrative state this folder opened, so nothing in the folder is read or written; restore the original state to resume",
+            state_path.display()
+        ))
     }
 
     /// For a command that has nothing to report a gone directory in.
@@ -754,13 +902,25 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
 #[derive(Default)]
 struct Walked {
     files: Vec<PathBuf>,
+    opened: HashMap<PathBuf, Captured>,
+    unread: HashMap<PathBuf, identity::Identity>,
     directories: Vec<Flagged>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
-    left: Vec<PathBuf>,
+    left: Vec<(WalkRoute, PathBuf)>,
 }
 
 impl Walked {
+    fn file_birth(&mut self, root: &Path, dir: &Path, birth: Option<u128>) -> bool {
+        match require_birth(birth) {
+            Ok(()) => true,
+            Err(error) => {
+                self.unreadable(root, dir, &error);
+                false
+            }
+        }
+    }
+
     fn passed_over(&self, relative: &str) -> bool {
         self.directories.iter().any(|dir| {
             dir.path.is_empty()
@@ -795,59 +955,159 @@ impl Walked {
         }
     }
 
-    fn vanished(&self) -> bool {
-        self.directories.iter().any(|dir| dir.flag == "gone")
+    fn incomplete(&self) -> bool {
+        self.directories
+            .iter()
+            .any(|dir| matches!(dir.flag, "gone" | "unreadable"))
     }
+}
+
+/// Reopening a walked parent must prove every component is the same directory.
+/// Keeping identities instead of descriptors bounds the walk's open files.
+#[derive(Clone)]
+struct WalkRoute {
+    root: Directory,
+    steps: Vec<(std::ffi::OsString, std::fs::Metadata)>,
+}
+
+impl WalkRoute {
+    fn open(&self) -> std::io::Result<Directory> {
+        let mut directory = self.root.clone();
+        for (name, expected) in &self.steps {
+            directory = directory.child(Path::new(name), false)?;
+            if !same_file(expected, &directory.metadata()?) {
+                return Err(std::io::Error::other(
+                    "walked directory identity cannot be confirmed",
+                ));
+            }
+        }
+        Ok(directory)
+    }
+
+    fn child(&self, name: &std::ffi::OsStr, directory: &Directory) -> std::io::Result<Self> {
+        let mut route = self.clone();
+        let metadata = directory.metadata()?;
+        require_birth(identity::born(&metadata))?;
+        route.steps.push((name.to_owned(), metadata));
+        Ok(route)
+    }
+}
+
+#[cfg(unix)]
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && same_birth(identity::born(left), identity::born(right))
+}
+
+fn same_birth(left: Option<u128>, right: Option<u128>) -> bool {
+    left.is_some_and(|birth| birth > 0) && left == right
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
+}
+
+struct Captured {
+    route: WalkRoute,
+    name: std::ffi::OsString,
+    metadata: RefCell<std::fs::Metadata>,
+}
+
+impl Captured {
+    fn open(&self) -> std::io::Result<std::fs::File> {
+        let directory = self.route.open()?;
+        let file = directory.capture_file(Path::new(&self.name))?;
+        let metadata = file.metadata()?;
+        require_birth(identity::born(&self.metadata.borrow()))?;
+        require_birth(identity::born(&metadata))?;
+        if !same_file(&self.metadata.borrow(), &metadata) {
+            return Err(std::io::Error::other(
+                "walked file identity cannot be confirmed",
+            ));
+        }
+        *self.metadata.borrow_mut() = metadata;
+        Ok(file)
+    }
+
+    fn read_settled(&self, settle: Option<Duration>) -> std::io::Result<Option<Vec<u8>>> {
+        let mut file = self.open()?;
+        if settle.is_some_and(|settle| changed_within(&self.metadata.borrow(), settle)) {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    fn read(&self) -> std::io::Result<Vec<u8>> {
+        Ok(self
+            .read_settled(None)?
+            .expect("a read without a settling interval never waits"))
+    }
+}
+
+fn walk(root: &Path, dir: &Path, directory: &Directory, lists: &Lists, walked: &mut Walked) {
+    let route = WalkRoute {
+        root: directory.clone(),
+        steps: Vec::new(),
+    };
+    walk_at(root, dir, directory, &route, lists, walked);
 }
 
 /// A directory it cannot read is reported and passed over, so one does not
 /// stop the scan of every other.
-fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
+fn walk_at(
+    root: &Path,
+    dir: &Path,
+    directory: &Directory,
+    route: &WalkRoute,
+    lists: &Lists,
+    walked: &mut Walked,
+) {
     if let Some(gone) = crate::fault::named("vanish-while-walking")
         && identity::relative(root, dir).is_ok_and(|relative| relative == gone)
     {
         let _ = std::fs::rename(dir, root.join(format!("{gone}.vanished")));
+        return walked.unreadable(root, dir, &std::io::ErrorKind::NotFound.into());
     }
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match directory.entries() {
         Ok(entries) => entries,
         Err(error) => return walked.unreadable(root, dir, &error),
     };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => return walked.unreadable(root, dir, &error),
-        };
-        let path = entry.path();
+    for name in entries {
+        let path = dir.join(&name);
+        let entry = Path::new(&name);
         let Ok(relative) = identity::relative(root, &path) else {
             continue;
         };
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            // A file deleted since the listing is gone, as the scan finds it;
-            // a directory's files may only have moved.
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound
-                    && !entry.file_type().is_ok_and(|kind| kind.is_dir()) =>
-            {
-                continue;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                walked.unreadable(root, &path, &error);
-                continue;
-            }
+        let kind = match directory.entry_kind(entry) {
+            Ok(kind) => kind,
             Err(error) => {
                 walked.unreadable(root, dir, &error);
                 continue;
             }
         };
-        // A symlink is neither: following one would give two paths one
-        // identity on purpose.
-        if metadata.is_dir() {
-            // A folder inside is that folder's, its files never this one's.
-            if !lists.enters(&relative) || path.join(STATE_DIR).is_dir() {
+        if kind == crate::directory::FileType::Directory {
+            if !lists.enters(&relative) {
                 continue;
             }
-            if is_package(&path) {
+            let child = match directory.child(entry, false) {
+                Ok(child) => child,
+                Err(error) => {
+                    walked.unreadable(root, &path, &error);
+                    continue;
+                }
+            };
+            if child
+                .child(Path::new(STATE_DIR), false)
+                .is_ok_and(|state| state.entry_identity(Path::new("core.sqlite")).is_ok())
+            {
+                continue;
+            }
+            if lists::is_package_at(&path, &child) {
                 walked.directories.push(Flagged {
                     path: relative,
                     flag: "package",
@@ -855,18 +1115,59 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
                     item: None,
                 });
             } else {
-                walk(root, &path, lists, walked);
+                match route.child(&name, &child) {
+                    Ok(route) => walk_at(root, &path, &child, &route, lists, walked),
+                    Err(error) => walked.unreadable(root, &path, &error),
+                }
             }
-        } else if metadata.is_file() {
+        } else if kind == crate::directory::FileType::RegularFile {
             if landing::left_behind(&path) {
-                walked.left.push(path);
+                walked.left.push((route.clone(), PathBuf::from(name)));
             } else if lists.takes(&relative) {
+                match directory.capture_file(entry).and_then(|file| {
+                    Ok(Captured {
+                        metadata: RefCell::new(file.metadata()?),
+                        route: route.clone(),
+                        name: name.clone(),
+                    })
+                }) {
+                    Ok(captured) => {
+                        let born = identity::born(&captured.metadata.borrow());
+                        if walked.file_birth(root, dir, born) {
+                            walked.opened.insert(path.clone(), captured);
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
+                            && let Some(identity) =
+                                identity::Identity::from_parts(device, inode, born)
+                        {
+                            // An identity can prove a move even where unread bytes
+                            // leave the rest of this inventory incomplete.
+                            walked.unread.insert(path.clone(), identity);
+                        }
+                        walked.unreadable(root, dir, &error);
+                    }
+                }
                 walked.files.push(path);
             } else if lists.secret(&relative) {
                 walked.secrets.push(relative);
             }
         }
     }
+}
+
+fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, identity::Identity> {
+    identity::resolve(paths.iter().map(|path| {
+        (
+            path,
+            walked
+                .opened
+                .get(path)
+                .and_then(|capture| identity::of(&capture.metadata.borrow()))
+                .or_else(|| walked.unread.get(path).copied()),
+        )
+    }))
 }
 
 fn one_per_name(
@@ -913,26 +1214,30 @@ struct Scanned {
     line: Option<i64>,
     unreadable: Option<String>,
     deferred: bool,
+    source: Option<Vec<u8>>,
     /// `None` on a volume that keeps no permission.
     executable: Option<bool>,
 }
 
 impl Scanned {
-    fn deferred(root: &Path, path: &Path, mark: Option<String>) -> Result<Self> {
+    fn deferred(
+        root: &Path,
+        path: &Path,
+        mark: Option<String>,
+        captured: Option<&Captured>,
+    ) -> Result<Self> {
         Ok(Self {
             key: identity::relative(root, path)?,
             path: path.to_path_buf(),
             mark,
-            born: std::fs::symlink_metadata(path)
-                .ok()
-                .as_ref()
-                .and_then(identity::born),
+            born: captured.and_then(|captured| identity::born(&captured.metadata.borrow())),
             text: String::new(),
             hash: String::new(),
             id: None,
             line: None,
             unreadable: None,
             deferred: true,
+            source: None,
             executable: None,
         })
     }
@@ -989,7 +1294,7 @@ impl Folder {
                 ..ScanReport::default()
             });
         }
-        state::settle_landings(&*self.core.conn()?, &self.root)?;
+        state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -1003,16 +1308,33 @@ impl Folder {
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let lists = settings.lists()?;
+        if crate::fault::named("replace-root-before-scan-walk").is_some() {
+            std::fs::rename(&self.root, self.root.with_extension("original"))
+                .expect("move original root for fault");
+            std::fs::rename(self.root.with_extension("replacement"), &self.root)
+                .expect("install replacement root for fault");
+        }
         let walked = self.walked(&lists);
-        // And under `.marfa/`, which no walk enters, the settings file's.
-        let state_dir = std::fs::read_dir(self.root.join(STATE_DIR))
+        let mut incomplete = walked.incomplete();
+        swap_root(&self.root, "replace-root-before-capture");
+        if let Some(gone) = self.root_gone() {
+            report.root_gone = Some(gone);
+            return Ok(report);
+        }
+        let state_left = self
+            .state_dir
+            .entries()
+            .unwrap_or_default()
             .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| landing::left_behind(path));
-        for left in walked.left.iter().cloned().chain(state_dir) {
-            let _ = std::fs::remove_file(left);
+            .map(PathBuf::from)
+            .filter(|name| landing::left_behind(name));
+        for (route, left) in &walked.left {
+            if let Ok(directory) = route.open() {
+                let _ = directory.unlink(left);
+            }
+        }
+        for left in state_left {
+            let _ = self.state_dir.unlink(&left);
         }
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
@@ -1039,7 +1361,7 @@ impl Folder {
         let mut unchanged: HashSet<String> = HashSet::new();
         if !full {
             // Resolved over every file, so a hard link shares no mark.
-            let marks = identity::resolve(&paths);
+            let marks = captured_identities(&paths, &walked);
             let conn = self.core.conn()?;
             for (path, key) in paths.iter().zip(&keys) {
                 if let Some(bound) = by_path.get(key.as_str())
@@ -1049,7 +1371,7 @@ impl Folder {
                     && state::untaken_read_version(&bound.content_hash).is_none()
                     && bound.identity.is_some()
                     && marks.get(path).map(|found| found.key()) == bound.identity
-                    && let Some(stat) = stat_of(path)
+                    && let Some(stat) = walked.opened.get(path).and_then(|captured| stat_metadata(&captured.metadata.borrow()))
                     && state::stat_of(&conn, key)?.as_deref() == Some(stat.as_str())
                     // A file whose item the copy lost is said to be at every pass.
                     && crate::store::held_version(&conn, &bound.item_id)?.is_some()
@@ -1071,11 +1393,20 @@ impl Folder {
                 if !carries_frontmatter(path) || unchanged.contains(key) {
                     continue;
                 }
-                let stat = stat_of(path);
-                let Ok(bytes) = std::fs::read(path) else {
+                let Ok(bytes) = walked
+                    .opened
+                    .get(path)
+                    .ok_or_else(|| std::io::Error::other("file not opened"))
+                    .and_then(Captured::read)
+                else {
+                    incomplete = true;
                     continue;
                 };
-                if let Some(stat) = stat {
+                if let Some(stat) = walked
+                    .opened
+                    .get(path)
+                    .and_then(|captured| stat_metadata(&captured.metadata.borrow()))
+                {
                     stats.push((key.clone(), stat));
                 }
                 // Held below; its id line, which is ASCII, still names its item.
@@ -1134,9 +1465,12 @@ impl Folder {
             .collect();
         let bound = |path: &Path, key: &str| {
             bound_paths.contains(key)
-                || std::fs::symlink_metadata(path)
-                    .ok()
+                || walked
+                    .opened
+                    .get(path)
+                    .map(|captured| captured.metadata.borrow().clone())
                     .and_then(|metadata| identity::of(&metadata))
+                    .or_else(|| walked.unread.get(path).copied())
                     .is_some_and(|found| bound_marks.contains(found.key().as_str()))
         };
         let mut held: Vec<PathBuf> = Vec::new();
@@ -1153,7 +1487,7 @@ impl Folder {
         }
         // Resolved over pushed files only, so a file the folder never touches
         // cannot withhold a note's identity by sharing it.
-        let identities = identity::resolve(&held);
+        let identities = captured_identities(&held, &walked);
         let mut files = Vec::new();
         for path in held {
             // Unread bytes still claim their file's identity before another
@@ -1163,27 +1497,39 @@ impl Folder {
                     &self.root,
                     &path,
                     identities.get(&path).map(|mark| mark.key()),
+                    walked.opened.get(&path),
                 )
             };
-            if let Some(settle) = settle
-                && !is_document(&path)
-                && changed_within(&path, settle)
-            {
-                files.push(deferred()?);
-                report.settling.push(identity::relative(&self.root, &path)?);
-                continue;
-            }
             // Unreadable now, a dataless placeholder say: the next scan reads
             // it, and the folder holds what it last agreed with meanwhile.
             let bytes = match early.remove(&path) {
                 Some(bytes) => bytes,
                 None => {
-                    let stat = stat_of(&path);
-                    let Ok(bytes) = std::fs::read(&path) else {
-                        files.push(deferred()?);
-                        continue;
+                    let read = walked
+                        .opened
+                        .get(&path)
+                        .ok_or_else(|| std::io::Error::other("file not opened"))
+                        .and_then(|captured| {
+                            captured.read_settled(settle.filter(|_| !is_document(&path)))
+                        });
+                    let bytes = match read {
+                        Ok(Some(bytes)) => bytes,
+                        Ok(None) => {
+                            files.push(deferred()?);
+                            report.settling.push(identity::relative(&self.root, &path)?);
+                            continue;
+                        }
+                        Err(_) => {
+                            incomplete = true;
+                            files.push(deferred()?);
+                            continue;
+                        }
                     };
-                    if let Some(stat) = stat {
+                    if let Some(stat) = walked
+                        .opened
+                        .get(&path)
+                        .and_then(|captured| stat_metadata(&captured.metadata.borrow()))
+                    {
                         stats.push((identity::relative(&self.root, &path)?, stat));
                     }
                     bytes
@@ -1230,7 +1576,10 @@ impl Folder {
                 .as_ref()
                 .filter(|read| read.unreadable.is_none())
                 .and_then(|read| line_of(&read.front));
-            let metadata = std::fs::symlink_metadata(&path).ok();
+            let metadata = walked
+                .opened
+                .get(&path)
+                .map(|captured| captured.metadata.borrow().clone());
             files.push(Scanned {
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
@@ -1244,8 +1593,13 @@ impl Folder {
                 line,
                 unreadable,
                 deferred: false,
+                source: Some(bytes),
                 path,
             });
+        }
+        if let Some(gone) = self.root_gone() {
+            report.root_gone = Some(gone);
+            return Ok(report);
         }
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
@@ -1269,6 +1623,10 @@ impl Folder {
         let mut work: Vec<EdgeWork> = Vec::new();
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
+            if let Some(gone) = self.root_gone() {
+                report.root_gone = Some(gone);
+                return Ok(report);
+            }
             if let Some(reason) = waiting.remove(&at) {
                 report.flagged.push(Flagged {
                     path: file.key.clone(),
@@ -1523,6 +1881,11 @@ impl Folder {
             state::set_stats(&conn, &stats, full)?;
         }
 
+        if let Some(gone) = self.root_gone() {
+            report.root_gone = Some(gone);
+            return Ok(report);
+        }
+
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
         let bound = {
@@ -1538,6 +1901,10 @@ impl Folder {
                 .collect()
         };
         for row in bound {
+            if let Some(gone) = self.root_gone() {
+                report.root_gone = Some(gone);
+                return Ok(report);
+            }
             let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
             if seen.contains(&row.path) {
                 // Back inside the grace, so the server never hears of it.
@@ -1551,7 +1918,7 @@ impl Folder {
             // taking, or one the walk could not read or passed over, is not trashed.
             if !lists.takes(&row.path)
                 || walked.passed_over(&row.path)
-                || in_nested_folder(&self.root, &row.path)
+                || in_nested_folder(&self.root_dir, &row.path)
             {
                 if held {
                     let conn = self.core.conn()?;
@@ -1560,18 +1927,19 @@ impl Folder {
                 report.unreached += 1;
                 continue;
             }
-            // A directory that went away during the walk may have taken any
-            // file with it, so this pass trusts no absence.
-            if walked.vanished() {
+            // An unread part of the inventory may hold a file moved from
+            // any other path, so no missing path proves a deletion this pass.
+            if incomplete {
                 continue;
             }
             let conn = self.core.conn()?;
             state::journal_missing(&conn, &row.path, &row.item_id)?;
             report.missing += 1;
         }
-        if !walked.vanished() {
+        if !incomplete && self.root_gone().is_none() {
             self.sweep_journal(&settings, &peers, &mut report)?;
         }
+        report.root_gone = report.root_gone.or_else(|| self.root_gone());
         Ok(report)
     }
 
@@ -1810,7 +2178,9 @@ impl Folder {
         }
         match bytes_of(item, catalog) {
             Some(blob) => crate::blob::named(blob).is_ok_and(|named| {
-                std::fs::read(&file.path).is_ok_and(|bytes| crate::blob::name_of(&bytes) == named)
+                file.source
+                    .as_ref()
+                    .is_some_and(|bytes| crate::blob::name_of(bytes) == named)
             }),
             None => {
                 file.unreadable.is_none()
@@ -2153,7 +2523,16 @@ impl Folder {
             tier: Some(settings.new_tier()),
             ..Default::default()
         };
-        let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
+        let item_id = named_item(
+            self.core.create_file_item_from(
+                &file.path,
+                file.source
+                    .as_deref()
+                    .ok_or_else(|| CoreError::Io("file not captured".into()))?,
+                &draft,
+            )?,
+            &file.key,
+        )?;
         self.queue_default_edges(&item_id, settings, None)?;
         self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), Kept::default())
@@ -2524,8 +2903,15 @@ impl Folder {
                 .insert(executable::FIELD.into(), Value::Bool(runs));
         }
         let queued = if bound.content_hash != file.hash {
-            self.core
-                .update_file_item(&held.id, &file.path, &edit, based)?;
+            self.core.update_file_item_from(
+                &held.id,
+                &file.path,
+                file.source
+                    .as_deref()
+                    .ok_or_else(|| CoreError::Io("file not captured".into()))?,
+                &edit,
+                based,
+            )?;
             true
         } else if !edit.properties.is_empty() {
             match based {
@@ -2949,6 +3335,7 @@ impl Folder {
             match self.pull_into(None, &mut report) {
                 Ok(()) => {
                     report.add_writes(&earlier);
+                    report.root_gone = report.root_gone.or_else(|| self.root_gone());
                     return Ok(report);
                 }
                 // What an attempt wrote stays written, and the next attempt
@@ -2970,7 +3357,7 @@ impl Folder {
             return Ok(());
         }
         let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
-        state::settle_landings(&*self.core.conn()?, &self.root)?;
+        state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let mut members = self.members(&settings)?;
@@ -3110,7 +3497,7 @@ impl Folder {
             if *unmatched
                 && bound
                     .as_ref()
-                    .is_some_and(|bound| !self.root.join(&bound.path).exists())
+                    .is_some_and(|bound| !self.exists(self.root.join(&bound.path)))
             {
                 continue;
             }
@@ -3202,7 +3589,7 @@ impl Folder {
                     !taken.contains(&name)
                         && self.writes_at(&lists, candidate)
                         && (own == Some(candidate)
-                            || !wanted.contains(&name) && !self.root.join(candidate).exists())
+                            || !wanted.contains(&name) && !self.exists(self.root.join(candidate)))
                 };
                 entry.want = beside(&entry.want, |candidate| !free(candidate));
                 report.beside += 1;
@@ -3215,7 +3602,7 @@ impl Folder {
             // as the scan's creates, sent by then, rank among the others.
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
                 plan.write += 1;
-                if self.root.join(&entry.want).exists() {
+                if self.exists(self.root.join(&entry.want)) {
                     plan.beside += 1;
                 }
             }
@@ -3307,24 +3694,31 @@ impl Folder {
         want: &str,
         context: &crate::read_view::Context,
     ) -> Result<()> {
+        if !self.keeps_permissions() {
+            return Ok(());
+        }
         let path = self.root.join(want);
         let wanted = executable::held(item);
-        if !self.keeps_permissions()
-            || std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted)
-        {
+        let Ok((directory, name)) = self.location(&path, false) else {
+            return Ok(());
+        };
+        let Ok(file) = directory.open_file(Path::new(&name), OFlags::RDONLY, Mode::empty()) else {
+            return Ok(());
+        };
+        let Ok(metadata) = file.metadata() else {
+            return Ok(());
+        };
+        if executable::of(&metadata) == wanted {
             return Ok(());
         }
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let read = state::stat_of(&conn, want)?;
-        // Made runnable by the server's word, it is marked first, and left as
-        // it is where it cannot be.
         if read.is_some()
-            && read == stat_of(&path)
-            && (!wanted || executable::quarantine(&path).is_ok())
+            && read == stat_metadata(&metadata)
+            && (!wanted || executable::quarantine(&file).is_ok())
         {
-            // As a write's is: a refused permission is not the pull's to fail.
-            let _ = executable::set(&path, wanted);
+            let _ = executable::set(&file, wanted);
         }
         Ok(())
     }
@@ -3332,7 +3726,7 @@ impl Folder {
     fn keeps_permissions(&self) -> bool {
         *self
             .permissions
-            .get_or_init(|| executable::kept(&self.root.join(STATE_DIR)))
+            .get_or_init(|| executable::kept(&self.state_dir))
     }
 
     /// Refusal protects the destination through this pull, including from
@@ -3390,7 +3784,7 @@ impl Folder {
                 // file moving to its placement included.
                 let on_disk = bound
                     .as_ref()
-                    .and_then(|bound| std::fs::read(self.root.join(&bound.path)).ok())
+                    .and_then(|bound| self.read(self.root.join(&bound.path)).ok())
                     .filter(|found| {
                         crate::blob::named(blob)
                             .is_ok_and(|named| crate::blob::name_of(found) == named)
@@ -3400,7 +3794,7 @@ impl Folder {
                         self.core.let_go_blob(blob);
                         (found, Vec::new(), Vec::new())
                     }
-                    None => match self.core.blob(blob).map(std::fs::read) {
+                    None => match self.core.blob_file(blob).map(|file| read_file(&file)) {
                         Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
                         Err(
                             error @ (CoreError::Unauthorized { .. }
@@ -3435,7 +3829,7 @@ impl Folder {
                 let typed = bound
                     .as_ref()
                     .filter(|bound| carries_frontmatter(Path::new(&bound.path)))
-                    .and_then(|bound| std::fs::read_to_string(self.root.join(&bound.path)).ok())
+                    .and_then(|bound| self.read_text(self.root.join(&bound.path)).ok())
                     .map(|text| document::read(&text));
                 let rendered = self.render(
                     item,
@@ -3492,7 +3886,7 @@ impl Folder {
         // The bytes on the disk, not the mapping's memory of them: a file
         // changed since the scan read it is the person's.
         let changed = |bound: &state::Bound| {
-            std::fs::read(self.root.join(&bound.path))
+            self.read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
         };
         // What this file's own-field lines say at this version, for an old
@@ -3520,9 +3914,9 @@ impl Folder {
         };
         // Something at the destination that is not this item's own file,
         // unless it is byte for byte this item's render.
-        let occupied = !in_place && !ours && path.exists();
+        let occupied = !in_place && !ours && self.exists(&path);
         let rebound =
-            occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
+            occupied && bound.is_none() && self.read(&path).is_ok_and(|found| found == bytes);
         if occupied && !rebound {
             if leaving.is_some_and(|leaving| leaving.contains(&crate::names::folded(&want))) {
                 return Ok(PlacementWrite::Waiting);
@@ -3623,7 +4017,7 @@ impl Folder {
         // own file as the scan last read it, or none.
         let over = bound
             .as_ref()
-            .filter(|_| ours && path.exists())
+            .filter(|_| ours && self.exists(&path))
             .map(|bound| bound.content_hash.clone());
         let file_item = bytes_of(item, catalog).is_some();
         // Bound before the write, so the scan never reads it back; a path the
@@ -3662,13 +4056,13 @@ impl Folder {
         rendering.context.borrow().check(&conn)?;
         let written = self.land(
             &path,
-            |file, beside| {
+            |file, _| {
                 std::io::Write::write_all(file, &bytes)?;
                 if file_item {
-                    executable::quarantine(beside)?;
+                    executable::quarantine(file)?;
                     if self.keeps_permissions() {
                         // The bytes are written whatever the permission does.
-                        let _ = executable::set(beside, executable::held(item));
+                        let _ = executable::set(file, executable::held(item));
                     }
                 }
                 Ok(())
@@ -3712,8 +4106,8 @@ impl Folder {
             // it holds the person's edit, and stays for the next scan.
             let conn = self.core.conn()?;
             rendering.context.borrow().check(&conn)?;
-            if plainly_inside(&self.root, &bound.path) {
-                let _ = landing::remove(&self.root.join(&bound.path), |found| {
+            if plainly_inside(&self.root_dir, &bound.path) {
+                let _ = self.remove_file(&self.root.join(&bound.path), |found| {
                     state::hash(found) == bound.content_hash
                 });
             }
@@ -3726,7 +4120,7 @@ impl Folder {
         }
         report.placed += usize::from(self.place(&item.id, &want, withheld)?);
         // Read after the write, because the file did not exist until now.
-        if let Ok(metadata) = std::fs::symlink_metadata(&path)
+        if let Ok(metadata) = self.metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
             rendering.bind(&*self.core.conn()?, &binding(Some(found.key())))?;
@@ -3754,10 +4148,10 @@ impl Folder {
             return Ok(TakeIn::Inapplicable);
         };
         let path = self.root.join(want);
-        if path.exists() {
+        if self.exists(&path) {
             return Ok(TakeIn::Inapplicable);
         }
-        let Ok(source) = transfer::Source::open(from, theirs) else {
+        let Ok(source) = transfer::Source::open_at(from, theirs) else {
             return Ok(TakeIn::Inapplicable);
         };
         let binding = |identity: Option<String>| state::Bound {
@@ -3793,12 +4187,18 @@ impl Folder {
         )?;
         let moved = self.inside(path.parent()).and_then(|()| {
             landing::crash_if_asked(&path);
-            landing::appear_if_asked(&path, "create-before-move")?;
+            let (target_dir, target_name) = self.location(&path, true)?;
+            landing::appear_at(&target_dir, Path::new(&target_name), "create-before-move")?;
             source.check()?;
             let renamed = if crate::fault::named("cross-volume-move").is_some() {
                 Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
             } else {
-                landing::rename_new(from, &path)
+                landing::rename_new_at(
+                    &from.directory,
+                    &from.name,
+                    &target_dir,
+                    Path::new(&target_name),
+                )
             };
             renamed.or_else(|error| {
                 if error.kind() != std::io::ErrorKind::CrossesDevices && !source.protected(&error) {
@@ -3813,7 +4213,7 @@ impl Folder {
                 .map(|()| {
                     landing::crash_if_named(&path, "crash-after-copy-publish");
                     if source.check().is_ok() {
-                        let _ = landing::remove(from, |found| {
+                        let _ = landing::remove_at(&from.directory, &from.name, |found| {
                             source.check().is_ok() && state::hash(found) == theirs.content_hash
                         });
                     }
@@ -3829,7 +4229,7 @@ impl Folder {
         }
         rendering.bind(&conn, &binding(None))?;
         state::journal_clear_for(&conn, want, &item.id)?;
-        if let Ok(metadata) = std::fs::symlink_metadata(&path)
+        if let Ok(metadata) = self.metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
             rendering.bind(&conn, &binding(Some(found.key())))?;
@@ -3852,18 +4252,27 @@ impl Folder {
             return Ok(LetGo::Inapplicable);
         };
         let path = self.root.join(&bound.path);
-        let own = std::fs::read(&path)
+        let own = self
+            .read(&path)
             .is_ok_and(|found| bound.written_hash.as_deref() == Some(state::hash(&found).as_str()));
-        if !own || !plainly_inside(&self.root, &bound.path) || !peers.filed_elsewhere(item_id) {
+        if !own || !plainly_inside(&self.root_dir, &bound.path) || !peers.filed_elsewhere(item_id) {
             return Ok(LetGo::Inapplicable);
         }
-        let Ok(source) = transfer::Source::open(&path, &bound) else {
+        let Ok((directory, name)) = self.location(&path, false) else {
+            return Ok(LetGo::Inapplicable);
+        };
+        let entry = transfer::Entry {
+            directory,
+            name: name.into(),
+            label: path.clone(),
+        };
+        let Ok(source) = transfer::Source::open_at(&entry, &bound) else {
             return Ok(LetGo::Inapplicable);
         };
         // Checked again as it goes, so an edit saved meanwhile stays.
         let conn = self.core.conn()?;
         context.same_copy(&conn)?;
-        let removed = match landing::remove_checked(&path, |found| {
+        let removed = match landing::remove_checked_at(&entry.directory, &entry.name, |found| {
             source.check().is_ok()
                 && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
         }) {
@@ -3987,7 +4396,7 @@ impl Folder {
             Some(item) if settings.holds_state(item.state) => return Ok(Departing::No),
             _ => {}
         }
-        Ok(match std::fs::read(self.root.join(&row.path)) {
+        Ok(match self.read(self.root.join(&row.path)) {
             Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
                 Departing::Kept
             }
@@ -4016,14 +4425,14 @@ impl Folder {
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
-        if plainly_inside(&self.root, &row.path) {
+        if plainly_inside(&self.root_dir, &row.path) {
             let still =
                 |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
-            if path.exists()
-                && !landing::remove(&path, still).map_err(|error| {
+            if self.exists(&path)
+                && !self.remove_file(&path, still).map_err(|error| {
                     CoreError::Store(format!("cannot remove {}: {error}", path.display()))
                 })?
-                && path.exists()
+                && self.exists(&path)
             {
                 return Ok(None);
             }
@@ -4039,7 +4448,7 @@ impl Folder {
         bound: &state::Bound,
         rendering: &Rendering<'_>,
     ) -> Result<bool> {
-        if self.root.join(&bound.path).exists()
+        if self.exists(self.root.join(&bound.path))
             || !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
         {
             return Ok(false);
@@ -4084,7 +4493,7 @@ impl Folder {
         if !carries_frontmatter(Path::new(&bound.path)) {
             return Ok(false);
         }
-        let Ok(found) = std::fs::read_to_string(self.root.join(&bound.path)) else {
+        let Ok(found) = self.read_text(self.root.join(&bound.path)) else {
             return Ok(false);
         };
         let document = document::read(&found);
@@ -4582,15 +4991,12 @@ struct Placing<'a> {
     bound: Option<state::Bound>,
     want: String,
     rank: placement::Rank,
-    taken: Option<(PathBuf, state::Bound)>,
+    taken: Option<(transfer::Entry, state::Bound)>,
 }
 
 /// The status change time where the system keeps one, which an editor
 /// restoring the modification time does not move back.
-fn changed_within(path: &Path, settle: Duration) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
+fn changed_within(metadata: &std::fs::Metadata, settle: Duration) -> bool {
     #[cfg(unix)]
     let changed = {
         use std::os::unix::fs::MetadataExt;
@@ -4612,8 +5018,7 @@ fn changed_within(path: &Path, settle: Duration) -> bool {
 }
 
 /// What a quick pass compares with what its last read recorded.
-fn stat_of(path: &Path) -> Option<String> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
+fn stat_metadata(metadata: &std::fs::Metadata) -> Option<String> {
     let modified = metadata
         .modified()
         .ok()?
@@ -4623,7 +5028,7 @@ fn stat_of(path: &Path) -> Option<String> {
     Some(format!(
         "{}:{modified}:{}",
         metadata.len(),
-        executable::of(&metadata)
+        executable::of(metadata)
     ))
 }
 
@@ -4745,16 +5150,32 @@ impl PullReport {
     }
 }
 
-/// A guard, not a boundary: the write resolves the path again.
-fn plainly_inside(root: &Path, relative: &str) -> bool {
-    let mut here = root.to_path_buf();
-    for part in relative.split('/') {
-        if part.is_empty() || part == "." || part == ".." {
+/// Directory opens enforce the same component rule again when they operate.
+fn plainly_inside(root: &Directory, relative: &str) -> bool {
+    let mut directory = root.clone();
+    let mut names = relative.split('/').peekable();
+    while let Some(name) = names.next() {
+        if name.is_empty() || name == "." || name == ".." {
             return false;
         }
-        here.push(part);
-        if std::fs::symlink_metadata(&here).is_ok_and(|found| found.is_symlink()) {
-            return false;
+        match directory.entry_kind(Path::new(name)) {
+            Ok(crate::directory::FileType::Symlink) => return false,
+            Ok(crate::directory::FileType::Directory) if names.peek().is_some() => {
+                match directory.child(Path::new(name), false) {
+                    Ok(child) => directory = child,
+                    Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                        return names.all(|part| !part.is_empty() && part != "." && part != "..");
+                    }
+                    Err(_) => return false,
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return names.all(|part| !part.is_empty() && part != "." && part != "..");
+            }
+            _ if names.peek().is_some() => {
+                return names.all(|part| !part.is_empty() && part != "." && part != "..");
+            }
+            _ => {}
         }
     }
     true
@@ -4788,6 +5209,186 @@ fn name_from_title(title: &str, extension: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_large_walk_keeps_descriptors_available() {
+        const CHILD: &str = "MARFA_TEST_LARGE_WALK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("sh")
+                .args(["-c", "ulimit -n 128; exec \"$@\"", "large-walk"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "folder::tests::a_large_walk_keeps_descriptors_available",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for at in 0..256 {
+            std::fs::write(root.join(format!("note-{at}.md")), "original note").unwrap();
+        }
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let readable = walked
+            .opened
+            .values()
+            .filter(|captured| captured.read().is_ok())
+            .count();
+        let root_present = Directory::open(&root).is_ok();
+        assert_eq!(
+            (walked.opened.len(), readable, root_present),
+            (256, 256, true)
+        );
+        drop(walked);
+        let mut ended = std::process::Command::new("true").spawn().unwrap();
+        let gone = ended.id();
+        ended.wait().unwrap();
+        for at in 0..256 {
+            let child = root.join(format!("child-{at}"));
+            std::fs::create_dir(&child).unwrap();
+            std::fs::write(child.join("note.md"), "original note").unwrap();
+            std::fs::write(child.join(format!(".marfa-{gone}-0.tmp")), "unfinished").unwrap();
+        }
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        assert_eq!(walked.opened.len(), 512);
+        assert_eq!(walked.left.len(), 256);
+        for captured in walked.opened.values() {
+            assert_eq!(captured.read().unwrap(), b"original note");
+        }
+        for (route, name) in &walked.left {
+            route.open().unwrap().unlink(name).unwrap();
+        }
+        assert!(Directory::open(&root).is_ok());
+    }
+
+    #[test]
+    fn a_walk_refuses_replaced_children_and_reads_restored_originals() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let child = root.join("child");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("note.md"), "original").unwrap();
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let captured = &walked.opened[&child.join("note.md")];
+        assert_eq!(captured.read().unwrap(), b"original");
+        std::fs::rename(&child, root.join("original")).unwrap();
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("note.md"), "replacement").unwrap();
+        assert!(captured.read().is_err());
+        std::fs::rename(&child, root.join("replacement")).unwrap();
+        std::fs::rename(root.join("original"), &child).unwrap();
+        assert_eq!(captured.read().unwrap(), b"original");
+        std::fs::rename(child.join("note.md"), child.join("original.md")).unwrap();
+        std::fs::write(child.join("note.md"), "replacement file").unwrap();
+        assert!(captured.read().is_err());
+        assert_eq!(
+            std::fs::read(root.join("replacement/note.md")).unwrap(),
+            b"replacement"
+        );
+    }
+
+    #[test]
+    fn reopened_identity_requires_a_known_nonzero_birth_time() {
+        assert!(same_birth(Some(1), Some(1)));
+        assert!(!same_birth(Some(1), Some(2)));
+        assert!(!same_birth(None, None));
+        assert!(!same_birth(Some(0), Some(0)));
+        assert!(require_birth(Some(1)).is_ok());
+        assert_eq!(
+            require_birth(None).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        assert_eq!(
+            require_birth(Some(0)).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn a_binary_changed_after_walking_waits_for_settling() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("file.bin");
+        std::fs::write(&path, b"original").unwrap();
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let captured = &walked.opened[&path];
+        let settle = Duration::from_millis(200);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while changed_within(&captured.metadata.borrow(), settle) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            captured.read_settled(Some(settle)).unwrap(),
+            Some(b"original".to_vec())
+        );
+        std::fs::write(&path, b"still writing").unwrap();
+        assert!(changed_within(&std::fs::metadata(&path).unwrap(), settle));
+        assert_eq!(captured.read_settled(Some(settle)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_without_birth_identity_makes_its_parent_inventory_incomplete() {
+        let root = Path::new("root");
+        let child = root.join("child");
+        let mut complete = Walked::default();
+        assert!(complete.file_birth(root, &child, Some(1)));
+        assert!(!complete.passed_over("child/old-name.md"));
+        assert!(!complete.incomplete());
+        for birth in [None, Some(0)] {
+            let mut partial = Walked::default();
+            assert!(!partial.file_birth(root, &child, birth));
+            assert!(partial.passed_over("child/old-name.md"));
+            assert_eq!(partial.directories[0].flag, "unreadable");
+            assert!(!partial.passed_over("elsewhere/note.md"));
+            assert!(
+                partial.incomplete(),
+                "an unresolved move can start outside the unread subtree"
+            );
+        }
+    }
 
     fn held_at(occurred_at: &str) -> Item {
         Item {
@@ -4870,7 +5471,7 @@ mod tests {
             },
         ] {
             let server = crate::scripted::Scripted::start();
-            let dir = tempfile::tempdir().unwrap();
+            let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
             let db = dir.path().join(STATE_DIR).join("core.sqlite");
             std::fs::create_dir_all(db.parent().unwrap()).unwrap();
             let core = working(Core::open(&db, None).unwrap()).unwrap();
@@ -5010,7 +5611,7 @@ mod tests {
 
     #[test]
     fn a_folder_another_process_holds_is_refused_before_it_is_worked() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state = dir.path().join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
         let holder = Core::open(state.join("core.sqlite"), None).unwrap();
@@ -5027,7 +5628,7 @@ mod tests {
 
     #[test]
     fn a_folder_waiting_for_its_first_sync_refuses_every_step_that_writes_or_sends() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state = dir.path().join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
         let core = Core::open(state.join("core.sqlite"), None).unwrap();

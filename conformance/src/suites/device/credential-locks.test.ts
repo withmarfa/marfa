@@ -4,6 +4,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -271,7 +272,9 @@ interface Running {
 
 /** Starts the binary against `origin` under `keychain`, with a home of its own. */
 function marfaAt(keychain: string, origin: string, args: string[]): Running {
-  const home = mkdtempSync(join(tmpdir(), "marfa-credential-home-"));
+  const home = mkdtempSync(
+    join(realpathSync(tmpdir()), "marfa-credential-home-"),
+  );
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
@@ -386,7 +389,9 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
     keychain.remove();
   });
   it("renews an expired stored token before folder binding completes", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "marfa-folder-renewal-"));
+    const dir = mkdtempSync(
+      join(realpathSync(tmpdir()), "marfa-folder-renewal-"),
+    );
     const folder = {
       id: randomUUID(),
       version: 1,

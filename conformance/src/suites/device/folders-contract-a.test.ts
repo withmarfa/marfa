@@ -21,9 +21,26 @@ import {
   refusal,
   writeAnswers,
 } from "../../device/marfa-answers.js";
+import { withFault } from "./folders.shared.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, folderItem, scriptWrites } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
+
+function treeBytes(root: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  const visit = (dir: string, prefix: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const key = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        entries[`${key}/`] = "directory";
+        visit(join(dir, entry.name), `${key}/`);
+      } else
+        entries[key] = readFileSync(join(dir, entry.name)).toString("base64");
+    }
+  };
+  visit(root, "");
+  return entries;
+}
 
 let harness: FolderHarness | undefined;
 afterEach(async () => {
@@ -586,6 +603,199 @@ describe("settings and folder reporting", () => {
     ).toBe(true);
   });
 
+  it.each(["missing", "zero"])(
+    "refuses a root with %s birth identity before creating administrative state",
+    async (birth) => {
+      harness = await folderHarness(`contract-root-birth-${birth}`);
+      const state = join(harness.dir, ".marfa");
+      expect(existsSync(join(state, "core.sqlite"))).toBe(true);
+      rmSync(state, { recursive: true });
+      const refused = await withFault(`root-birth-time=${birth}`, () =>
+        harness!.folder.add(harness!.settings.id),
+      );
+      expect(refused.ok).toBe(false);
+      expect(JSON.stringify(refused)).toContain("birth");
+      expect(existsSync(state)).toBe(false);
+      const admitted = await harness.folder.add(harness.settings.id);
+      expect(admitted.ok, JSON.stringify(admitted)).toBe(true);
+      expect(existsSync(join(state, "core.sqlite"))).toBe(true);
+    },
+  );
+
+  it("leaves replacement state untouched when the root changes before its store opens", async () => {
+    harness = await folderHarness("contract-store-admission-swap");
+    const root = harness.dir;
+    const original = `${root}.original`;
+    const replacement = `${root}.replacement`;
+    mkdirSync(join(replacement, ".marfa"), { recursive: true });
+    writeFileSync(join(replacement, "owned-by-replacement"), "keep this\n");
+    try {
+      await withFault("replace-root-before-store-open", () =>
+        harness!.folder.add(harness!.settings.id),
+      );
+      expect(readdirSync(join(root, ".marfa"))).toEqual([]);
+      expect(readFileSync(join(root, "owned-by-replacement"), "utf8")).toBe(
+        "keep this\n",
+      );
+    } finally {
+      if (existsSync(original)) {
+        rmSync(root, { recursive: true, force: true });
+        renameSync(original, root);
+      }
+      if (existsSync(replacement))
+        rmSync(replacement, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["replace-root-before-scan-walk", "replace-root-before-capture"])(
+    "ignores a replacement installed at %s",
+    async (fault) => {
+      harness = await folderHarness("contract-root-admission-swap");
+      const root = harness.dir;
+      const original = `${root}.original`;
+      const replacement = `${root}.replacement`;
+      writeFileSync(join(root, "Owned.md"), "this folder's file\n");
+      const witness = await harness.folder.scan();
+      expect(witness.ok).toBe(true);
+      if (witness.ok) expect(witness.value.created).toBe(1);
+      cpSync(root, replacement, { recursive: true });
+      writeFileSync(
+        join(replacement, "Unowned.md"),
+        "not this folder's file\n",
+      );
+      const before = treeBytes(replacement);
+      try {
+        const scanned = await withFault(fault, () => harness!.folder.scan());
+        expect(scanned.ok).toBe(true);
+        if (scanned.ok) {
+          expect
+            .soft(scanned.value.created, JSON.stringify(scanned.value))
+            .toBe(0);
+          expect
+            .soft(scanned.value.root_gone, JSON.stringify(scanned.value))
+            .toContain("no longer the directory");
+        }
+        expect(treeBytes(root)).toEqual(before);
+        if (scanned.ok) {
+          expect(scanned.value.missing).toBe(0);
+          expect(scanned.value.trashed).toEqual([]);
+        }
+      } finally {
+        if (existsSync(original)) {
+          rmSync(root, { recursive: true, force: true });
+          renameSync(original, root);
+        }
+        if (existsSync(replacement))
+          rmSync(replacement, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("ignores replacement settings installed immediately before their read", async () => {
+    harness = await folderHarness("contract-settings-admission-swap");
+    const sent = changes(harness);
+    const root = harness.dir;
+    const file = settingsPath(harness);
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace("title: folder", "title: accepted"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sent, JSON.stringify(sent)).toHaveLength(1);
+    const original = `${root}.original`;
+    const replacement = `${root}.replacement`;
+    cpSync(root, replacement, { recursive: true });
+    const foreign = join(replacement, ".marfa", "folder.yaml");
+    writeFileSync(
+      foreign,
+      readFileSync(foreign, "utf8").replace(
+        "title: accepted",
+        "title: ignored",
+      ),
+    );
+    const before = treeBytes(replacement);
+    try {
+      const pushed = await withFault("replace-root-before-settings-read", () =>
+        harness!.folder.push(),
+      );
+      expect(sent, JSON.stringify(sent)).toHaveLength(1);
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (pushed.ok)
+        expect(pushed.value.scan.root_gone).toContain(
+          "no longer the directory",
+        );
+      expect(treeBytes(root)).toEqual(before);
+    } finally {
+      if (existsSync(original)) {
+        rmSync(root, { recursive: true, force: true });
+        renameSync(original, root);
+      }
+      if (existsSync(replacement))
+        rmSync(replacement, { recursive: true, force: true });
+    }
+  });
+
+  it("admits contents beside empty administrative directories", async () => {
+    harness = await folderHarness("empty-administrative-directory");
+    mkdirSync(join(harness.dir, "nested", ".marfa", "cache"), {
+      recursive: true,
+    });
+    writeFileSync(join(harness.dir, "nested", "Note.md"), "ordinary content\n");
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    if (scanned.ok) expect(scanned.value.created).toBe(1);
+  });
+
+  it.each(["replace-root-before-publication", "replace-root-before-cleanup"])(
+    "leaves every replacement byte intact at %s",
+    async (fault) => {
+      harness = await folderHarness("contract-final-boundary", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-000000000e91",
+                properties: { title: "Owned", body: "original body\n" },
+              },
+            },
+          ],
+        },
+      });
+      const root = harness.dir;
+      const original = `${root}.original`;
+      const replacement = `${root}.replacement`;
+      const baseline = `${root}.baseline`;
+      cpSync(root, baseline, { recursive: true });
+      const witness = await harness.folder.pull();
+      expect(witness.ok, JSON.stringify(witness)).toBe(true);
+      expect(readFileSync(join(root, "Owned.md"), "utf8")).toContain(
+        "original body",
+      );
+      rmSync(root, { recursive: true });
+      renameSync(baseline, root);
+      cpSync(root, replacement, { recursive: true });
+      writeFileSync(join(replacement, "Owned.md"), "replacement body\n");
+      const before = treeBytes(replacement);
+      try {
+        const result = await withFault(fault, () =>
+          fault.endsWith("cleanup")
+            ? harness!.folder.remove()
+            : harness!.folder.pull(),
+        );
+        expect(result.ok, JSON.stringify(result)).toBe(true);
+        expect(existsSync(original)).toBe(true);
+        expect(treeBytes(root)).toEqual(before);
+      } finally {
+        if (existsSync(original)) {
+          rmSync(root, { recursive: true, force: true });
+          renameSync(original, root);
+        }
+        if (existsSync(replacement))
+          rmSync(replacement, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("reports root_gone and ignores a replacement directory while watching", async () => {
     harness = await folderHarness("contract-root-gone", {
       events: [copyLiveReplay("1", [])],
@@ -617,6 +827,7 @@ describe("settings and folder reporting", () => {
         readFileSync(file, "utf8").replace("title: accepted", "title: ignored"),
       );
       writeFileSync(join(dir, "Unowned.md"), "not this folder's file\n");
+      const replacementBytes = treeBytes(dir);
       await vi.waitFor(
         () =>
           expect(watch.stdout).toMatch(
@@ -638,8 +849,19 @@ describe("settings and folder reporting", () => {
       ).toEqual([]);
       expect(watch.stdout).toMatch(/"created": 0/);
       expect(watch.running(), watch.stderr).toBe(true);
+      expect(treeBytes(dir)).toEqual(replacementBytes);
+      renameSync(dir, copy);
+      renameSync(away, dir);
+      writeFileSync(
+        file,
+        readFileSync(file, "utf8").replace("title: accepted", "title: resumed"),
+      );
+      await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 10_000 });
+      expect(watch.running(), watch.stderr).toBe(true);
+      expect(treeBytes(copy)).toEqual(replacementBytes);
     } finally {
       await watch.stop();
+      if (existsSync(copy)) rmSync(copy, { recursive: true, force: true });
       if (existsSync(away)) {
         rmSync(dir, { recursive: true, force: true });
         renameSync(away, dir);

@@ -1,11 +1,22 @@
-use std::fs::{File, Metadata, OpenOptions};
+use crate::directory::Directory;
+use crate::directory::{Mode, OFlags};
+use std::fs::{File, Metadata};
 use std::io::{self, Read, Seek, Write};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use super::{identity, state};
 
+#[derive(Clone)]
+pub(super) struct Entry {
+    pub directory: Directory,
+    pub name: PathBuf,
+    pub label: PathBuf,
+}
+
 pub(super) struct Source {
-    path: PathBuf,
+    entry: Entry,
     file: File,
     metadata: Metadata,
     hash: String,
@@ -14,8 +25,11 @@ pub(super) struct Source {
 }
 
 impl Source {
-    pub(super) fn open(path: &Path, bound: &state::Bound) -> io::Result<Self> {
-        let metadata = std::fs::symlink_metadata(path)?;
+    pub(super) fn open_at(entry: &Entry, bound: &state::Bound) -> io::Result<Self> {
+        let file = entry
+            .directory
+            .open_file(&entry.name, OFlags::RDONLY, Mode::empty())?;
+        let metadata = file.metadata()?;
         if !metadata.is_file() || metadata.is_symlink() {
             return Err(changed());
         }
@@ -24,7 +38,6 @@ impl Source {
         {
             return Err(changed());
         }
-        let file = open(path)?;
         if !same_file(&metadata, &file.metadata()?) {
             return Err(changed());
         }
@@ -33,7 +46,7 @@ impl Source {
         let source = Self {
             #[cfg(target_os = "macos")]
             attributes,
-            path: path.to_path_buf(),
+            entry: entry.clone(),
             file,
             metadata,
             hash: bound.content_hash.clone(),
@@ -44,9 +57,15 @@ impl Source {
 
     pub(super) fn protected(&self, error: &io::Error) -> bool {
         error.kind() == io::ErrorKind::PermissionDenied
-            && std::fs::symlink_metadata(&self.path).is_ok_and(|metadata| {
-                metadata.is_file() && same_file(&self.metadata, &metadata) && protected(&metadata)
-            })
+            && self
+                .entry
+                .directory
+                .entry_metadata(&self.entry.name)
+                .is_ok_and(|metadata| {
+                    metadata.is_file()
+                        && same_file(&self.metadata, &metadata)
+                        && protected(&metadata)
+                })
     }
 
     pub(super) fn fill(&self, target: &mut File) -> io::Result<()> {
@@ -86,18 +105,22 @@ impl Source {
 
     fn fault(&self, name: &str) -> bool {
         crate::fault::named(name).is_some_and(|name| {
-            self.path
+            self.entry
+                .label
                 .file_name()
                 .is_some_and(|file| file.to_string_lossy() == name)
         })
     }
 
     pub(super) fn check(&self) -> io::Result<()> {
-        let metadata = std::fs::symlink_metadata(&self.path)?;
+        let metadata = self.entry.directory.entry_metadata(&self.entry.name)?;
         if !metadata.is_file() || metadata.is_symlink() || !same_file(&self.metadata, &metadata) {
             return Err(changed());
         }
-        let mut source = open(&self.path)?;
+        let mut source =
+            self.entry
+                .directory
+                .open_file(&self.entry.name, OFlags::RDONLY, Mode::empty())?;
         if !same_file(&self.metadata, &source.metadata()?) {
             return Err(changed());
         }
@@ -118,17 +141,6 @@ impl Source {
 
 fn changed() -> io::Error {
     io::Error::other("the source changed while it was being taken in")
-}
-
-fn open(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-    }
-    options.open(path)
 }
 
 #[cfg(unix)]
@@ -177,6 +189,20 @@ fn same_permissions(first: &Metadata, next: &Metadata) -> bool {
 #[cfg(not(unix))]
 fn same_permissions(first: &Metadata, next: &Metadata) -> bool {
     first.permissions().readonly() == next.permissions().readonly()
+}
+
+#[cfg(test)]
+impl Source {
+    fn open(path: &Path, bound: &state::Bound) -> io::Result<Self> {
+        Self::open_at(
+            &Entry {
+                directory: Directory::open(&path.parent().unwrap().canonicalize()?)?,
+                name: path.file_name().unwrap().into(),
+                label: path.to_path_buf(),
+            },
+            bound,
+        )
+    }
 }
 
 #[cfg(test)]

@@ -609,7 +609,7 @@ mod tests {
     /// `placed`, and a move of it this machine queued that the server
     /// answered as stale.
     fn moved_and_refused_as_stale(url: String) -> (tempfile::TempDir, Folder) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let db = dir.path().join(super::super::STATE_DIR).join("core.sqlite");
         std::fs::create_dir_all(db.parent().unwrap()).unwrap();
         let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();

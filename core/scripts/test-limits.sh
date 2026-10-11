@@ -22,7 +22,9 @@ if [[ "$(basename "$(dirname "$1")")" == deps ]]; then
   # Cargo uses this runner only when run from under `core/`, so marfa-core's
   # unit tests also keep out of it in `Registry::located`.
   if [[ -z "${MARFA_FOLDER_REGISTRY:-}" ]]; then
-    MARFA_FOLDER_REGISTRY="$(mktemp -d "${TMPDIR:-/tmp}/marfa-test-registry.XXXXXX")/folders.json"
+    # Resolve the system temporary parent, whose macOS /var spelling is an alias.
+    test_temp_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+    MARFA_FOLDER_REGISTRY="$(mktemp -d "${test_temp_parent}/marfa-test-registry.XXXXXX")/folders.json"
     export MARFA_FOLDER_REGISTRY
   fi
 fi

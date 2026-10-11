@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -40,7 +41,7 @@ function value<T>(result: Outcome<T>): T {
 }
 
 it("resolves body links through real server lookup and keeps their removal after pull", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "marfa-body-links-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-body-links-"));
   const folder = new CliFolder(dir, {
     binary: requireBinary(),
     url: apiUrl,

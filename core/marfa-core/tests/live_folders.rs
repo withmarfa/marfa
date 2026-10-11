@@ -14,6 +14,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use marfa_core::folder::{REGISTRY_ENV, Registry};
 use marfa_core::{CoreError, Folder, Server, SyncReport, Synced, WatchError, WatchEvent};
 
+fn temporary_folder() -> tempfile::TempDir {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+}
+
 fn server() -> Server {
     let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
     let key = std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key");
@@ -122,7 +126,7 @@ static REGISTRY: Once = Once::new();
 /// Set once, before any folder reads it, so no test races another's write.
 fn registry() -> Registry {
     REGISTRY.call_once(|| {
-        let dir = tempfile::tempdir().unwrap().keep();
+        let dir = temporary_folder().keep();
         // SAFETY: under the `Once`, before any thread this file starts reads
         // the environment.
         unsafe { std::env::set_var(REGISTRY_ENV, dir.join("folders.json")) };
@@ -169,7 +173,7 @@ fn note(dir: &Path, name: &str) {
 #[test]
 #[ignore = "needs a running server"]
 fn a_sync_sends_what_changed_and_writes_back_what_the_server_holds() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let folder = added(dir.path(), server());
     note(dir.path(), "First");
     let synced = ran(&folder);
@@ -195,7 +199,7 @@ fn a_sync_sends_what_changed_and_writes_back_what_the_server_holds() {
 #[test]
 #[ignore = "needs a running server"]
 fn one_sync_leaves_the_files_it_wrote_in_step_and_counts_their_placements() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let (folder, tag) = added_tagged(dir.path(), server());
     // Made on the server, so each is written here and placed by this sync.
     for title in ["Alpha", "Beta", "Gamma"] {
@@ -222,7 +226,7 @@ fn one_sync_leaves_the_files_it_wrote_in_step_and_counts_their_placements() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_sync_with_the_server_out_of_reach_says_why_and_keeps_the_write() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let door = Door::new();
     let folder = added(dir.path(), door.server());
     ran(&folder);
@@ -253,7 +257,7 @@ fn a_sync_with_the_server_out_of_reach_says_why_and_keeps_the_write() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_folder_with_writes_waiting_is_not_removed_and_one_sent_is() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let folder = added(dir.path(), server());
     ran(&folder);
     note(dir.path(), "Waiting");
@@ -271,7 +275,7 @@ fn a_folder_with_writes_waiting_is_not_removed_and_one_sent_is() {
         .sync()
         .unwrap();
     Folder::remove_at(dir.path()).unwrap();
-    assert!(!dir.path().join(".marfa").exists());
+    assert!(!dir.path().join(".marfa/core.sqlite").exists());
     assert!(dir.path().join("Waiting.md").exists(), "its files stay");
     let listed = registry().folders().unwrap();
     assert!(!listed.iter().any(|entry| entry.dir.ends_with(dir.path())));
@@ -280,7 +284,7 @@ fn a_folder_with_writes_waiting_is_not_removed_and_one_sent_is() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_folder_whose_directory_is_gone_is_taken_off_the_registry() {
-    let parent = tempfile::tempdir().unwrap();
+    let parent = temporary_folder();
     let dir = parent.path().join("gone");
     drop(added(&dir, server()));
     let resolved = std::fs::canonicalize(&dir).unwrap();
@@ -310,7 +314,7 @@ fn a_folder_whose_directory_is_gone_is_taken_off_the_registry() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_watch_holds_its_folder_until_its_stop_and_then_lets_it_go() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let folder = added(dir.path(), server());
     let stop = AtomicBool::new(false);
     let (told, events) = mpsc::channel::<WatchEvent>();
@@ -369,7 +373,7 @@ fn a_watch_holds_its_folder_until_its_stop_and_then_lets_it_go() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_stop_raised_during_a_pass_ends_the_watch_once_that_pass_is_done() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let door = Door::new();
     let folder = added(dir.path(), door.server());
     ran(&folder);
@@ -402,7 +406,7 @@ fn a_stop_raised_during_a_pass_ends_the_watch_once_that_pass_is_done() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_watch_whose_tell_fails_ends_with_that_failure() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let folder = added(dir.path(), server());
     let stop = AtomicBool::new(false);
     let watched = folder.watch(&stop, |_| Err("the caller went away"));
@@ -415,7 +419,7 @@ fn a_watch_whose_tell_fails_ends_with_that_failure() {
 #[test]
 #[ignore = "needs a running server"]
 fn a_watch_whose_tell_panics_ends_and_lets_the_folder_go() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = temporary_folder();
     let folder = added(dir.path(), server());
     ran(&folder);
     let (done, ended) = mpsc::channel();

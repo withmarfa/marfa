@@ -652,82 +652,103 @@ fn dot_names(line: &str) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn is_package(path: &Path) -> bool {
-    // Only a name with an extension is asked of the system, which a walk
-    // would otherwise ask of every directory on every pass.
-    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
-        return false;
-    };
+pub(super) fn is_package_at(path: &Path, directory: &crate::directory::Directory) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
     PACKAGES
         .iter()
         .any(|known| known.eq_ignore_ascii_case(extension))
-        || system::marks(path)
+        || system::marks(extension, directory.file())
 }
 
-pub(super) fn in_package(root: &Path, relative: &str) -> bool {
-    let mut here = root.to_path_buf();
+#[cfg(all(test, target_os = "macos"))]
+fn is_package(path: &Path) -> bool {
+    crate::directory::Directory::open(&path.canonicalize().unwrap())
+        .is_ok_and(|directory| is_package_at(path, &directory))
+}
+
+pub(super) fn in_package(root: &crate::directory::Directory, relative: &str) -> bool {
+    let mut directory = root.clone();
+    let mut label = std::path::PathBuf::new();
     let mut names = relative.split('/').peekable();
     while let Some(name) = names.next() {
         if names.peek().is_none() {
             break;
         }
-        here.push(name);
-        if is_package(&here) {
+        label.push(name);
+        let Ok(child) = directory.child(Path::new(name), false) else {
+            return false;
+        };
+        if is_package_at(&label, &child) {
             return true;
         }
+        directory = child;
     }
     false
 }
 
 #[cfg(target_os = "macos")]
 mod system {
-    use std::path::Path;
-
-    use core_foundation::base::{CFType, CFTypeRef, TCFType};
-    use core_foundation::boolean::CFBoolean;
-    use core_foundation::error::CFErrorRef;
-    use core_foundation::string::CFStringRef;
-    use core_foundation::url::{CFURL, CFURLRef, kCFURLIsPackageKey};
-
+    use core_foundation::{base::TCFType, string::CFString};
+    use std::ffi::{c_char, c_void};
+    use xattr::FileExt;
+    type Object = *const c_void;
+    #[link(name = "UniformTypeIdentifiers", kind = "framework")]
     unsafe extern "C" {
-        fn CFURLCopyResourcePropertyForKey(
-            url: CFURLRef,
-            key: CFStringRef,
-            value: *mut CFTypeRef,
-            error: *mut CFErrorRef,
-        ) -> u8;
+        static UTTypePackage: Object;
+        static UTTypeDirectory: Object;
+    }
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn objc_getClass(name: *const c_char) -> Object;
+        fn sel_registerName(name: *const c_char) -> Object;
+        fn objc_msgSend();
+        fn objc_autoreleasePoolPush() -> *mut c_void;
+        fn objc_autoreleasePoolPop(pool: *mut c_void);
     }
 
-    /// Whether the system opens the directory as one thing, by its type or
-    /// by the bundle bit, as the Finder does.
-    pub(super) fn marks(path: &Path) -> bool {
-        let Some(url) = CFURL::from_path(path, true) else {
-            return false;
-        };
-        let mut value: CFTypeRef = std::ptr::null();
-        // SAFETY: the URL outlives the call, the key is CoreFoundation's own
-        // constant, and a null error pointer asks for no error.
-        let found = unsafe {
-            CFURLCopyResourcePropertyForKey(
-                url.as_concrete_TypeRef(),
-                kCFURLIsPackageKey,
-                &mut value,
-                std::ptr::null_mut(),
-            )
-        };
-        if found == 0 || value.is_null() {
-            return false;
+    pub(super) fn marks(extension: &str, directory: &std::fs::File) -> bool {
+        if directory
+            .get_xattr("com.apple.FinderInfo")
+            .ok()
+            .flatten()
+            .is_some_and(|info| info.len() >= 10 && info[8] & 0x20 != 0)
+        {
+            return true;
         }
-        // SAFETY: a Copy function hands its caller the one reference, which
-        // the wrapper releases.
-        let value = unsafe { CFType::wrap_under_create_rule(value) };
-        value.downcast::<CFBoolean>().is_some_and(bool::from)
+        let extension = CFString::new(extension);
+        // SAFETY: these are the Objective-C signatures declared by UTType.h.
+        // CFString is toll-free bridged to NSString, and all autoreleased
+        // objects stay inside this thread's pool until the conformance check.
+        unsafe {
+            let pool = objc_autoreleasePoolPush();
+            let type_for: unsafe extern "C" fn(Object, Object, Object, Object) -> Object =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let conforms: unsafe extern "C" fn(Object, Object, Object) -> bool =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let kind = type_for(
+                objc_getClass(c"UTType".as_ptr()),
+                sel_registerName(c"typeWithFilenameExtension:conformingToType:".as_ptr()),
+                extension.as_concrete_TypeRef().cast(),
+                UTTypeDirectory,
+            );
+            let package = !kind.is_null()
+                && conforms(
+                    kind,
+                    sel_registerName(c"conformsToType:".as_ptr()),
+                    UTTypePackage,
+                );
+            objc_autoreleasePoolPop(pool);
+            package
+        }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod system {
-    pub(super) fn marks(_path: &std::path::Path) -> bool {
+    pub(super) fn marks(_extension: &str, _directory: &std::fs::File) -> bool {
         false
     }
 }

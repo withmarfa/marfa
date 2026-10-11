@@ -748,10 +748,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         let sendable = match address(row, &payload)? {
             Door::Json(outgoing, shape) => Sendable::Json(outgoing, shape),
             Door::Upload { hash, mime_type } => {
-                let opened = match core.cache()?.held(hash)? {
-                    Some(path) => File::open(path),
-                    None => Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
-                };
+                let opened = core.cache()?.open_held(hash);
                 match opened {
                     Ok(bytes) => Sendable::Upload { bytes, mime_type },
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

@@ -32,8 +32,9 @@ pub enum FoldersCommand {
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
     List,
     /// Take a folder off this machine: its own state under `.marfa` goes,
-    /// and its files stay as plain files. Refused while writes wait, except
-    /// for a first sync still waiting to be confirmed, which this cancels. A
+    /// and its files stay as plain files. Empty administrative directories
+    /// remain. Refused while writes wait, except for a first sync still
+    /// waiting to be confirmed, which this cancels. A
     /// folder whose directory is gone is taken off the list.
     Remove {
         /// The folder.

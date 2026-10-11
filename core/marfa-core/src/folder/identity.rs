@@ -81,17 +81,12 @@ fn inode_of(_metadata: &Metadata) -> u64 {
 
 /// The identity of every file in a set, with an identity two files share
 /// withheld from both.
-pub fn resolve(paths: &[std::path::PathBuf]) -> HashMap<std::path::PathBuf, Identity> {
+pub fn resolve<'a>(
+    files: impl IntoIterator<Item = (&'a std::path::PathBuf, Option<Identity>)>,
+) -> HashMap<std::path::PathBuf, Identity> {
     let mut seen: HashMap<Identity, Vec<std::path::PathBuf>> = HashMap::new();
-    for path in paths {
-        let Ok(metadata) = std::fs::symlink_metadata(path) else {
-            continue;
-        };
-        // A symlink is not the file it points at.
-        if metadata.is_symlink() || !metadata.is_file() {
-            continue;
-        }
-        if let Some(identity) = of(&metadata) {
+    for (path, identity) in files {
+        if let Some(identity) = identity {
             seen.entry(identity).or_default().push(path.clone());
         }
     }
@@ -125,6 +120,22 @@ pub fn relative(folder: &Path, path: &Path) -> Result<String, CoreError> {
 mod tests {
     use super::*;
 
+    fn resolve_paths(paths: &[std::path::PathBuf]) -> HashMap<std::path::PathBuf, Identity> {
+        let files: Vec<_> = paths
+            .iter()
+            .filter_map(|path| {
+                std::fs::symlink_metadata(path)
+                    .ok()
+                    .map(|metadata| (path, metadata))
+            })
+            .collect();
+        resolve(
+            files.iter().map(|(path, metadata)| {
+                (*path, metadata.is_file().then(|| of(metadata)).flatten())
+            }),
+        )
+    }
+
     #[test]
     fn a_zero_birth_time_yields_no_identity() {
         assert!(
@@ -151,7 +162,7 @@ mod tests {
         let two = dir.path().join("two");
         std::fs::write(&one, b"contents").unwrap();
         std::fs::hard_link(&one, &two).unwrap();
-        let resolved = resolve(&[one.clone(), two.clone()]);
+        let resolved = resolve_paths(&[one.clone(), two.clone()]);
         assert!(
             resolved.is_empty(),
             "an identity two paths share was handed to one of them, and the \
@@ -159,7 +170,7 @@ mod tests {
              would bind the wrong one and write its contents over the item"
         );
 
-        assert_eq!(resolve(&[one]).len(), 1);
+        assert_eq!(resolve_paths(&[one]).len(), 1);
     }
 
     #[test]
@@ -169,7 +180,7 @@ mod tests {
         let link = dir.path().join("link");
         std::fs::write(&real, b"contents").unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        let resolved = resolve(&[real.clone(), link]);
+        let resolved = resolve_paths(&[real.clone(), link]);
         assert_eq!(
             resolved.len(),
             1,

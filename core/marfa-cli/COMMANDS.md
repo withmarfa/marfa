@@ -9808,8 +9808,9 @@ Commands:
   list     List the folders on this machine, as its registry holds them. The registry is the file
            MARFA_FOLDER_REGISTRY names, where it names one
   remove   Take a folder off this machine: its own state under `.marfa` goes, and its files stay as
-           plain files. Refused while writes wait, except for a first sync still waiting to be
-           confirmed, which this cancels. A folder whose directory is gone is taken off the list
+           plain files. Empty administrative directories remain. Refused while writes wait, except
+           for a first sync still waiting to be confirmed, which this cancels. A folder whose
+           directory is gone is taken off the list
   status   Say where every file in the folder stands, from its own store, asking the server nothing
   confirm  Let a folder's first sync go, or a paused large removal: its deletes are queued, and
            files whose items left elsewhere are taken away
@@ -9939,8 +9940,9 @@ Output:
 
 ```text
 Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain
-files. Refused while writes wait, except for a first sync still waiting to be confirmed, which this
-cancels. A folder whose directory is gone is taken off the list
+files. Empty administrative directories remain. Refused while writes wait, except for a first sync
+still waiting to be confirmed, which this cancels. A folder whose directory is gone is taken off the
+list
 
 Usage: marfa folders remove [OPTIONS] <DIR>
 

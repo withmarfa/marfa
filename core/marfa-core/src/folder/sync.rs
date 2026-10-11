@@ -81,7 +81,11 @@ impl Folder {
     /// is gone is only taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
         let dir = dir.as_ref();
-        if dir.join(STATE_DIR).exists() || !Folder::forget(dir)? {
+        let has_store = crate::directory::Directory::open(dir)
+            .and_then(|root| root.child(Path::new(STATE_DIR), false))
+            .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
+            .is_ok();
+        if has_store || !Folder::forget(dir)? {
             Folder::open(dir, None)?.remove()?;
         }
         Ok(())

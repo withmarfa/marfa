@@ -1,5 +1,8 @@
+use crate::directory::Directory;
+#[cfg(unix)]
+use crate::directory::{Mode, OFlags};
+use std::fs::File;
 use std::fs::Metadata;
-use std::path::Path;
 
 use serde_json::Value;
 
@@ -28,32 +31,41 @@ pub fn held(item: &Item) -> bool {
 /// A volume that keeps no permissions, such as exFAT, shows every file as
 /// one its owner may run.
 #[cfg(unix)]
-pub fn kept(dir: &Path) -> bool {
+pub(super) fn kept(dir: &Directory) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    let probe = dir.join(".permission-probe");
-    let keeps = std::fs::write(&probe, b"")
-        .and_then(|()| std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o644)))
-        .and_then(|()| std::fs::symlink_metadata(&probe))
-        .is_ok_and(|metadata| !of(&metadata))
-        && std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755))
-            .and_then(|()| std::fs::symlink_metadata(&probe))
-            .is_ok_and(|metadata| of(&metadata));
-    let _ = std::fs::remove_file(&probe);
+    let probe = std::path::Path::new(".permission-probe");
+    let Ok(file) = dir.open_file(
+        probe,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+        Mode::from_raw_mode(0o600),
+    ) else {
+        return false;
+    };
+    let keeps = {
+        file.set_permissions(std::fs::Permissions::from_mode(0o644))
+            .and_then(|()| file.metadata())
+            .is_ok_and(|metadata| !of(&metadata))
+            && file
+                .set_permissions(std::fs::Permissions::from_mode(0o755))
+                .and_then(|()| file.metadata())
+                .is_ok_and(|metadata| of(&metadata))
+    };
+    let _ = dir.unlink(probe);
     keeps
 }
 
 #[cfg(not(unix))]
-pub fn kept(_dir: &Path) -> bool {
+pub(super) fn kept(_dir: &Directory) -> bool {
     false
 }
 
 #[cfg(unix)]
-pub fn set(path: &Path, executable: bool) -> std::io::Result<()> {
+pub fn set(file: &File, executable: bool) -> std::io::Result<()> {
     if crate::fault::named("permission-change-fails").is_some() {
         return Err(std::io::Error::other("permission change refused"));
     }
     use std::os::unix::fs::PermissionsExt;
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Ok(());
     }
@@ -66,13 +78,13 @@ pub fn set(path: &Path, executable: bool) -> std::io::Result<()> {
     };
     if wanted != mode {
         permissions.set_mode(wanted);
-        std::fs::set_permissions(path, permissions)?;
+        file.set_permissions(permissions)?;
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn set(_path: &Path, _executable: bool) -> std::io::Result<()> {
+pub fn set(_file: &File, _executable: bool) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -83,22 +95,19 @@ pub const QUARANTINE: &str = "com.apple.quarantine";
 /// download. Flags `0081` are a download's as browsers write them; the empty
 /// last field names no download event.
 #[cfg(target_os = "macos")]
-pub fn quarantine(path: &Path) -> std::io::Result<()> {
+pub fn quarantine(file: &File) -> std::io::Result<()> {
     if crate::fault::named("quarantine-fails").is_some() {
         return Err(std::io::Error::other("quarantine marking refused"));
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
-    xattr::set(
-        path,
-        QUARANTINE,
-        format!("0081;{now:08x};Marfa;").as_bytes(),
-    )
+    use xattr::FileExt;
+    file.set_xattr(QUARANTINE, format!("0081;{now:08x};Marfa;").as_bytes())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn quarantine(_path: &Path) -> std::io::Result<()> {
+pub fn quarantine(_file: &File) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -114,7 +123,7 @@ mod tests {
         let path = dir.path().join("tool.command");
         std::fs::write(&path, b"#!/bin/sh\n").unwrap();
         assert!(xattr::get(&path, QUARANTINE).unwrap().is_none());
-        quarantine(&path).unwrap();
+        quarantine(&File::open(&path).unwrap()).unwrap();
         let value = xattr::get(&path, QUARANTINE).unwrap().unwrap();
         assert!(String::from_utf8(value).unwrap().starts_with("0081;"));
     }
@@ -124,14 +133,16 @@ mod tests {
         let path = dir.path().join("file");
         std::fs::write(&path, b"bytes").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(start)).unwrap();
-        set(&path, executable).unwrap();
+        set(&File::open(&path).unwrap(), executable).unwrap();
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777
     }
 
     #[test]
     fn a_volume_that_keeps_permissions_is_told_so() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(kept(dir.path()));
+        assert!(kept(
+            &Directory::open(&dir.path().canonicalize().unwrap()).unwrap()
+        ));
         assert!(!dir.path().join(".permission-probe").exists());
     }
 
@@ -140,5 +151,16 @@ mod tests {
         assert_eq!(mode_after(0o644, true), 0o755);
         assert_eq!(mode_after(0o600, true), 0o700);
         assert_eq!(mode_after(0o755, false), 0o644);
+    }
+    #[test]
+    fn a_probe_name_that_already_exists_is_not_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::write(root.join(".permission-probe"), b"belongs to the person").unwrap();
+        assert!(!kept(&Directory::open(&root).unwrap()));
+        assert_eq!(
+            std::fs::read(root.join(".permission-probe")).unwrap(),
+            b"belongs to the person"
+        );
     }
 }

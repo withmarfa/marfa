@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone, resolved};
 use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
+use crate::directory::Directory;
 use crate::{Core, Result, store};
 
 const META_STORE: &str = "folder_store";
@@ -45,6 +46,7 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
 
 pub(super) struct Peer {
     root: PathBuf,
+    root_dir: Option<Directory>,
     /// Its store, read only; `None` where it cannot be opened.
     folder: Option<Folder>,
     members: OnceCell<Option<HashSet<String>>>,
@@ -62,6 +64,7 @@ struct Walked {
 struct OnDisk {
     key: String,
     path: PathBuf,
+    captured: Option<super::Captured>,
     mark: Option<String>,
     id: Option<String>,
     hash: OnceCell<Option<String>>,
@@ -71,7 +74,9 @@ impl OnDisk {
     fn hash(&self) -> Option<&str> {
         self.hash
             .get_or_init(|| {
-                std::fs::read(&self.path)
+                self.captured
+                    .as_ref()?
+                    .read()
                     .ok()
                     .map(|bytes| state::hash(&bytes))
             })
@@ -80,22 +85,44 @@ impl OnDisk {
 }
 
 impl Peer {
-    fn open(root: PathBuf) -> Peer {
-        let folder = Core::open_reader(root.join(STATE_DIR).join("core.sqlite"))
+    fn open(entry: Registered) -> Peer {
+        let root = entry.dir;
+        let mut root_dir = Directory::open(&root)
             .ok()
-            .and_then(|core| {
-                let folder = super::settings_file::bound(&core).ok()??;
-                Some(Folder {
-                    root: root.clone(),
-                    folder,
-                    core,
-                    key: std::sync::Mutex::new(None),
-                    permissions: std::sync::OnceLock::new(),
-                    store_mark: super::store_mark(&root.join(STATE_DIR)),
+            .filter(|root| super::admitted_root(root).is_ok());
+        let folder = root_dir.as_ref().and_then(|root_dir| {
+            let state_dir = root_dir.child(Path::new(STATE_DIR), false).ok()?;
+            let core =
+                Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")).ok()?;
+            let folder = super::settings_file::bound(&core).ok()??;
+            if folder != entry.folder
+                || entry.store.as_ref().is_some_and(|expected| {
+                    core.conn()
+                        .ok()
+                        .and_then(|conn| store::meta_get(&conn, META_STORE).ok().flatten())
+                        .as_ref()
+                        != Some(expected)
                 })
-            });
+            {
+                return None;
+            }
+            Some(Folder {
+                root: root.clone(),
+                root_dir: root_dir.clone(),
+                store_mark: state_dir.entry_identity(Path::new("core.sqlite")).ok()?,
+                state_dir,
+                folder,
+                core,
+                key: std::sync::Mutex::new(None),
+                permissions: std::sync::OnceLock::new(),
+            })
+        });
+        if folder.is_none() {
+            root_dir = None;
+        }
         Peer {
             root,
+            root_dir,
             folder,
             members: OnceCell::new(),
             walked: OnceCell::new(),
@@ -149,13 +176,21 @@ impl Peer {
     }
 
     fn present(&self, key: &str) -> bool {
-        plainly_inside(&self.root, key) && self.root.join(key).is_file()
+        self.root_dir.as_ref().is_some_and(|root| {
+            plainly_inside(root, key) && root.entry_metadata(Path::new(key)).is_ok()
+        })
     }
 
     fn walked(&self) -> &Walked {
         self.walked.get_or_init(|| {
             let mut walked = super::Walked::default();
-            let partial = if self.root.is_dir() {
+            let mut partial = if self
+                .folder
+                .as_ref()
+                .is_some_and(|folder| folder.root_gone().is_some())
+            {
+                Some("the other folder is no longer at its admitted directory".into())
+            } else if let Some(root_dir) = &self.root_dir {
                 let include = self
                     .folder
                     .as_ref()
@@ -164,7 +199,7 @@ impl Peer {
                     .unwrap_or_default();
                 match Lists::wider(&include) {
                     Ok(lists) => {
-                        super::walk(&self.root, &self.root, &lists, &mut walked);
+                        super::walk(&self.root, &self.root, root_dir, &lists, &mut walked);
                         walked
                             .directories
                             .iter()
@@ -184,14 +219,35 @@ impl Peer {
                 .into_iter()
                 .filter_map(|path| {
                     let key = identity::relative(&self.root, &path).ok()?;
-                    let mark = std::fs::symlink_metadata(&path)
-                        .ok()
-                        .and_then(|metadata| identity::of(&metadata))
+                    let captured = walked.opened.remove(&path);
+                    let mark = captured
+                        .as_ref()
+                        .and_then(|captured| identity::of(&captured.metadata.borrow()))
+                        .or_else(|| walked.unread.get(&path).copied())
                         .map(|found| found.key());
-                    let id = carries_frontmatter(&path).then(|| id_of(&path)).flatten();
+                    let id = if let Some(captured) = &captured {
+                        if carries_frontmatter(&path) {
+                            match captured.open().and_then(id_of_reader) {
+                                Ok(id) => id,
+                                Err(error) => {
+                                    partial = Some(format!(
+                                        "{} cannot be read ({error})",
+                                        path.display()
+                                    ));
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        partial = Some(format!("{} could not be opened", path.display()));
+                        None
+                    };
                     Some(OnDisk {
                         key,
                         path,
+                        captured,
                         mark,
                         id,
                         hash: OnceCell::new(),
@@ -207,27 +263,34 @@ impl Peer {
     }
 }
 
-/// The `marfa_id` line of a Markdown file, read no further than its
-/// frontmatter, so a walk does not read every body.
-fn id_of(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut lines = BufReader::new(file).lines();
-    let line = lines.next()?.ok()?;
+#[cfg(test)]
+fn id_of_file(mut file: std::fs::File) -> Option<String> {
+    use std::io::Seek;
+    file.rewind().ok()?;
+    id_of_reader(file).ok().flatten()
+}
+
+/// Read only the frontmatter, preserving an I/O failure as uncertainty.
+fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
+    let mut lines = BufReader::new(reader).lines();
+    let Some(line) = lines.next().transpose()? else {
+        return Ok(None);
+    };
     let first = line.strip_prefix(super::document::MARK).unwrap_or(&line);
     if first.trim_end() != "---" {
-        return None;
+        return Ok(None);
     }
     for line in lines {
-        let line = line.ok()?;
+        let line = line?;
         if line.trim_end() == "---" {
-            return None;
+            return Ok(None);
         }
         if let Some(id) = line.strip_prefix("marfa_id:") {
             let id = id.trim().trim_matches(['"', '\'']);
-            return (!id.is_empty()).then(|| id.to_string());
+            return Ok((!id.is_empty()).then(|| id.to_string()));
         }
     }
-    None
+    Ok(None)
 }
 
 pub(super) enum Look {
@@ -287,13 +350,7 @@ impl<'a> Peers<'a> {
             if let (Some(conn), Ok(json)) = (&conn, serde_json::to_string(&others)) {
                 let _ = store::meta_set(conn, META_OTHERS, &json);
             }
-            (
-                others
-                    .into_iter()
-                    .map(|entry| Peer::open(entry.dir))
-                    .collect(),
-                None,
-            )
+            (others.into_iter().map(Peer::open).collect(), None)
         })
     }
 
@@ -383,9 +440,6 @@ impl<'a> Peers<'a> {
             return Look::Unsure(why.to_string());
         }
         let peers = self.all();
-        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
-            return Look::Unsure(why);
-        }
         let item = lost.item_id.as_str();
         if lost.identity.is_some()
             && peers
@@ -394,6 +448,9 @@ impl<'a> Peers<'a> {
                 .any(|file| file.mark == lost.identity)
         {
             return Look::Moved;
+        }
+        if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
+            return Look::Unsure(why);
         }
         // Where both folders hold the item, the other's file of it is its
         // own, not this one moved.
@@ -429,7 +486,15 @@ impl<'a> Peers<'a> {
                 }
                 let same = match bound.get(&file.key) {
                     Some((bound, hash)) => bound == item && *hash == lost.content_hash,
-                    None => file.hash() == Some(lost.content_hash.as_str()),
+                    None => match file.hash() {
+                        Some(hash) => hash == lost.content_hash,
+                        None => {
+                            return Look::Unsure(format!(
+                                "{} could not be read in the other folder",
+                                file.path.display()
+                            ));
+                        }
+                    },
                 };
                 matches += usize::from(same);
             }
@@ -455,7 +520,7 @@ impl<'a> Peers<'a> {
     }
 
     /// A file another folder let go of, holding the bytes it wrote, to take in.
-    pub(super) fn let_go(&self, item_id: &str) -> Option<(PathBuf, state::Bound)> {
+    pub(super) fn let_go(&self, item_id: &str) -> Option<(super::transfer::Entry, state::Bound)> {
         for peer in self.all() {
             let Some(bound) = peer.bound_to(item_id) else {
                 continue;
@@ -470,8 +535,20 @@ impl<'a> Peers<'a> {
                 continue;
             }
             let path = peer.root.join(&bound.path);
-            if std::fs::read(&path).is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash) {
-                return Some((path, bound));
+            let root = peer.root_dir.as_ref()?;
+            let (directory, name) = root.parent(Path::new(&bound.path), false).ok()?;
+            if directory
+                .read(Path::new(&name))
+                .is_ok_and(|bytes| state::hash(&bytes) == bound.content_hash)
+            {
+                return Some((
+                    super::transfer::Entry {
+                        directory,
+                        name: name.into(),
+                        label: path,
+                    },
+                    bound,
+                ));
             }
         }
         None
@@ -479,8 +556,50 @@ impl<'a> Peers<'a> {
 }
 
 #[cfg(test)]
+fn id_of(path: &Path) -> Option<String> {
+    id_of_file(std::fs::File::open(path).ok()?)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_moved_file_keeps_its_peer_identity() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let from = temp.path().join("from");
+        let to = temp.path().join("to");
+        std::fs::create_dir(&from).unwrap();
+        std::fs::create_dir(&to).unwrap();
+        let note = from.join("note.md");
+        std::fs::write(&note, "---\nmarfa_id: n1\n---\noriginal\n").unwrap();
+        let mark = identity::of(&std::fs::metadata(&note).unwrap())
+            .unwrap()
+            .key();
+        let peer = || Peer {
+            root: to.clone(),
+            root_dir: Some(Directory::open(&to).unwrap()),
+            folder: None,
+            members: OnceCell::new(),
+            walked: OnceCell::new(),
+            bound: OnceCell::new(),
+        };
+        let moved = to.join("moved.md");
+        std::fs::rename(&note, &moved).unwrap();
+        let readable = peer();
+        assert_eq!(readable.files()[0].mark.as_deref(), Some(mark.as_str()));
+        assert_eq!(readable.files()[0].id.as_deref(), Some("n1"));
+        std::fs::set_permissions(&moved, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = peer();
+        let retained = unreadable
+            .files()
+            .iter()
+            .any(|file| file.mark.as_deref() == Some(mark.as_str()));
+        std::fs::set_permissions(&moved, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(retained, "the peer lost the moved file's observed identity");
+    }
 
     #[test]
     fn a_byte_order_mark_does_not_hide_the_id() {

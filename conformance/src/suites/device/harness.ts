@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   statSync,
   writeFileSync,
@@ -571,7 +572,9 @@ export async function folderHarness(
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
-  const root = mkdtempSync(join(tmpdir(), `marfa-folder-${label}-`));
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), `marfa-folder-${label}-`),
+  );
   const dir = join(root, "notes");
   const registry = options.registry ?? join(root, "registry", "folders.json");
   const folder = new CliFolder(dir, {
@@ -679,7 +682,10 @@ export function scriptBlob(
 
 /** A file on disk, for a fixture that uploads or attaches one. */
 export function fileOf(name: string, contents: string | Buffer): string {
-  const path = join(mkdtempSync(join(tmpdir(), "marfa-file-")), name);
+  const path = join(
+    mkdtempSync(join(realpathSync(tmpdir()), "marfa-file-")),
+    name,
+  );
   writeFileSync(path, contents);
   return path;
 }
