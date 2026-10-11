@@ -35,6 +35,22 @@ impl WriterLock {
         let path = lock_path(store);
         crate::owner_only(&path)?;
         let claim = Connection::open(&path)?;
+        Self::claim_connection(claim)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn claim_directory(
+        vfs: &crate::directory_vfs::DirectoryVfs,
+    ) -> Result<Self, CoreError> {
+        Self::claim_connection(vfs.open(
+            "core.sqlite.writer-lock",
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?)
+    }
+
+    fn claim_connection(claim: Connection) -> Result<Self, CoreError> {
         // Zero: waiting would make a second opener hang instead of being told
         // it may only read.
         claim.busy_timeout(std::time::Duration::from_millis(0))?;

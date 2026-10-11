@@ -14,6 +14,7 @@ regex = "1"
 notify.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite.workspace = true
+libsqlite3-sys = "=0.38.2"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -26,6 +27,11 @@ uuid.workspace = true
 yaml-rust2.workspace = true
 tree-sitter = "0.27"
 tree-sitter-yaml = "0.7"
+
+[build-dependencies]
+cc = "1"
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks"] }

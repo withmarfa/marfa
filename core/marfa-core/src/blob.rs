@@ -18,6 +18,10 @@ pub(crate) const CACHE_MOST: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct Cache {
     dir: PathBuf,
+    #[cfg(unix)]
+    parent: Option<crate::directory::Directory>,
+    #[cfg(unix)]
+    directory: std::sync::OnceLock<crate::directory::Directory>,
     /// Held while bytes are taken in for an upload and queued, and while the
     /// cache is trimmed, so a trim never takes bytes an upload is about to
     /// name.
@@ -43,8 +47,97 @@ impl Cache {
         name.push(".blobs");
         Cache {
             dir: PathBuf::from(name),
+            #[cfg(unix)]
+            parent: None,
+            #[cfg(unix)]
+            directory: std::sync::OnceLock::new(),
             settling: Mutex::new(()),
         }
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn anchored(
+        parent: &crate::directory::Directory,
+        label: &Path,
+        create: bool,
+    ) -> Result<Self> {
+        let mut cache = Self::beside(label);
+        cache.parent = Some(parent.clone());
+        match parent.child(Path::new("core.sqlite.blobs"), create) {
+            Ok(directory) => {
+                let _ = cache.directory.set(directory);
+            }
+            Err(error) if !create && error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(cache.unwritable(error)),
+        }
+        Ok(cache)
+    }
+
+    #[cfg(unix)]
+    fn capability(&self, create: bool) -> io::Result<Option<&crate::directory::Directory>> {
+        let Some(parent) = &self.parent else {
+            return Ok(None);
+        };
+        if let Some(directory) = self.directory.get() {
+            return Ok(Some(directory));
+        }
+        let directory = parent.child(Path::new("core.sqlite.blobs"), create)?;
+        let _ = self.directory.set(directory);
+        Ok(self.directory.get())
+    }
+
+    fn open_label(&self, label: &Path, write: bool, create: bool) -> io::Result<File> {
+        #[cfg(unix)]
+        if let Some(directory) = self.capability(create)? {
+            use rustix::fs::{Mode, OFlags};
+            let relative = label.strip_prefix(&self.dir).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "not a cache entry label")
+            })?;
+            let flags = if create {
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL
+            } else if write {
+                OFlags::WRONLY
+            } else {
+                OFlags::RDONLY
+            };
+            return directory.open_file(relative, flags, Mode::from_raw_mode(0o600));
+        }
+        File::options()
+            .read(!write && !create)
+            .write(write || create)
+            .create_new(create)
+            .open(label)
+    }
+
+    pub(crate) fn open_held(&self, hash: &str) -> io::Result<File> {
+        let name = hex_of(hash)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+        self.open_label(&self.dir.join(name), false, false)
+    }
+
+    fn unlink_label(&self, label: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        if let Some(directory) = self.capability(false)? {
+            let relative = label.strip_prefix(&self.dir).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "not a cache entry label")
+            })?;
+            return directory.unlink(relative);
+        }
+        fs::remove_file(label)
+    }
+
+    fn entries(&self) -> io::Result<Vec<PathBuf>> {
+        #[cfg(unix)]
+        if let Some(directory) = self.capability(false)? {
+            return Ok(directory
+                .entries()?
+                .into_iter()
+                .map(|name| self.dir.join(name))
+                .collect());
+        }
+        fs::read_dir(&self.dir)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect()
     }
 
     pub(crate) fn hold(&self) -> MutexGuard<'_, ()> {
@@ -56,9 +149,8 @@ impl Cache {
     /// Marks held bytes as just read, so a trim takes the bytes read longest
     /// ago first.
     pub(crate) fn touch(&self, path: &Path) {
-        let _ = File::options()
-            .append(true)
-            .open(path)
+        let _ = self
+            .open_label(path, true, false)
             .and_then(|file| file.set_modified(SystemTime::now()));
     }
 
@@ -68,30 +160,32 @@ impl Cache {
             return;
         };
         if !kept.contains(hex) {
-            let _ = fs::remove_file(self.dir.join(hex));
+            let _ = self.unlink_label(&self.dir.join(hex));
         }
     }
 
     /// Called under `hold`, with `kept` read under it.
     pub(crate) fn trim(&self, most: u64, kept: &HashSet<String>) {
-        let Ok(entries) = fs::read_dir(&self.dir) else {
+        let Ok(entries) = self.entries() else {
             return;
         };
         let mut held: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
         let mut total = 0u64;
-        for entry in entries.flatten() {
-            let Ok(metadata) = entry.metadata() else {
+        for entry in entries {
+            let Ok(metadata) = self
+                .open_label(&entry, false, false)
+                .and_then(|file| file.metadata())
+            else {
                 continue;
             };
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
+            let name = entry.file_name().unwrap_or_default().to_string_lossy();
             if !metadata.is_file() || name.starts_with(".incoming-") {
                 continue;
             }
             total += metadata.len();
             if !kept.contains(name.as_ref()) {
                 let read = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                held.push((read, metadata.len(), entry.path()));
+                held.push((read, metadata.len(), entry));
             }
         }
         held.sort();
@@ -99,7 +193,7 @@ impl Cache {
             if total <= most {
                 break;
             }
-            if fs::remove_file(&path).is_ok() {
+            if self.unlink_label(&path).is_ok() {
                 total -= size;
             }
         }
@@ -107,22 +201,25 @@ impl Cache {
 
     pub(crate) fn held(&self, hash: &str) -> Result<Option<PathBuf>> {
         let path = self.dir.join(hex_of(hash)?);
-        Ok(path.is_file().then_some(path))
+        match self.open_held(hash) {
+            Ok(_) => Ok(Some(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(self.unwritable(error)),
+        }
     }
 
     /// The copy is what an upload later streams from, so a file the person
     /// changes or deletes after asking does not change what is sent.
-    pub(crate) fn take(&self, source: &Path) -> Result<Taken> {
+    pub(crate) fn take_reader(&self, source: &Path, file: impl Read) -> Result<Taken> {
         let unreadable = |error: io::Error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", source.display()))
         };
-        let file = File::open(source).map_err(unreadable)?;
         let (hash, size, incoming) = self.copy_in(file).map_err(|error| match error {
             Copy::Source(error) => unreadable(error),
             Copy::Cache(error) => self.unwritable(error),
         })?;
         if size == 0 {
-            let _ = fs::remove_file(&incoming);
+            let _ = self.unlink_label(&incoming);
             return Err(CoreError::Invalid(format!(
                 "{} is empty, and the server holds no empty blob",
                 source.display()
@@ -132,23 +229,31 @@ impl Cache {
         Ok(Taken { hash, size })
     }
 
+    pub(crate) fn requires_descriptor(&self) -> bool {
+        #[cfg(unix)]
+        return self.parent.is_some();
+        #[cfg(not(unix))]
+        false
+    }
+
     /// A process that ended mid-copy leaves its file behind, and only its age
     /// tells it from a copy still being written.
     pub(crate) fn sweep_incoming(&self, older_than: Duration) {
-        let Ok(entries) = fs::read_dir(&self.dir) else {
+        let Ok(entries) = self.entries() else {
             return;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
             let stale = entry
                 .file_name()
+                .unwrap_or_default()
                 .to_string_lossy()
                 .starts_with(".incoming-")
-                && entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
+                && self
+                    .open_label(&entry, false, false)
+                    .and_then(|file| file.metadata()?.modified())
                     .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > older_than));
             if stale {
-                let _ = fs::remove_file(entry.path());
+                let _ = self.unlink_label(&entry);
             }
         }
     }
@@ -162,7 +267,7 @@ impl Cache {
             Copy::Cache(error) => self.unwritable(error),
         })?;
         if found != hash {
-            let _ = fs::remove_file(&incoming);
+            let _ = self.unlink_label(&incoming);
             return Err(CoreError::Decoding(format!(
                 "the bytes fetched for {hash} hash to {found}, so they are not the blob asked for"
             )));
@@ -171,15 +276,26 @@ impl Cache {
     }
 
     fn copy_in(&self, mut from: impl Read) -> std::result::Result<(String, u64, PathBuf), Copy> {
-        let mut made = fs::DirBuilder::new();
-        made.recursive(true);
-        // Another account on the machine reads nothing of what a key reads.
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
-        made.create(&self.dir).map_err(Copy::Cache)?;
+        if self.parent.is_some() {
+            self.capability(true).map_err(Copy::Cache)?;
+        }
+        #[cfg(unix)]
+        let make = self.parent.is_none();
+        #[cfg(not(unix))]
+        let make = true;
+        if make {
+            let mut made = fs::DirBuilder::new();
+            made.recursive(true);
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+            made.create(&self.dir).map_err(Copy::Cache)?;
+        }
         let incoming = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
         let copied = (|| {
-            let mut to = File::create(&incoming).map_err(Copy::Cache)?;
+            let mut to = self
+                .open_label(&incoming, true, true)
+                .map_err(Copy::Cache)?;
             let mut hasher = Sha256::new();
             let mut buffer = vec![0u8; 64 * 1024];
             let mut size = 0u64;
@@ -200,7 +316,7 @@ impl Cache {
         match copied {
             Ok((hash, size)) => Ok((hash, size, incoming)),
             Err(error) => {
-                let _ = fs::remove_file(&incoming);
+                let _ = self.unlink_label(&incoming);
                 Err(error)
             }
         }
@@ -209,10 +325,30 @@ impl Cache {
     /// A rename, so a second reader sees the whole file or none of it.
     fn settle(&self, incoming: &Path, hash: &str) -> Result<PathBuf> {
         let path = self.dir.join(hex_of(hash)?);
-        fs::rename(incoming, &path).map_err(|error| {
-            let _ = fs::remove_file(incoming);
+        #[cfg(unix)]
+        let renamed = match self.capability(false) {
+            Ok(Some(directory)) => directory.rename(
+                incoming.strip_prefix(&self.dir).expect("incoming label"),
+                directory,
+                Path::new(hex_of(hash)?),
+                false,
+            ),
+            Ok(None) => fs::rename(incoming, &path),
+            Err(error) => Err(error),
+        };
+        #[cfg(not(unix))]
+        let renamed = fs::rename(incoming, &path);
+        renamed.map_err(|error| {
+            let _ = self.unlink_label(incoming);
             self.unwritable(error)
         })?;
+        #[cfg(unix)]
+        if let Some(directory) = self
+            .capability(false)
+            .map_err(|error| self.unwritable(error))?
+        {
+            directory.sync().map_err(|error| self.unwritable(error))?;
+        }
         Ok(path)
     }
 
@@ -480,7 +616,131 @@ pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn admitted_cache_does_not_remove_a_replacement_roots_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("owned");
+        std::fs::create_dir(&root).unwrap();
+        let directory = crate::directory::Directory::open(&root.canonicalize().unwrap()).unwrap();
+        let cache = super::Cache::anchored(&directory, &root.join("core.sqlite"), true).unwrap();
+        let source = temp.path().join("source");
+        std::fs::write(&source, b"held bytes").unwrap();
+        let taken = cache
+            .take_reader(&source, File::open(&source).unwrap())
+            .unwrap();
+        let held = cache.held(&taken.hash).unwrap().unwrap();
+        assert!(held.exists());
+        std::fs::rename(&root, temp.path().join("original")).unwrap();
+        std::fs::create_dir_all(held.parent().unwrap()).unwrap();
+        std::fs::write(&held, b"replacement bytes").unwrap();
+        cache.let_go(&taken.hash, &Default::default());
+        assert_eq!(std::fs::read(&held).unwrap(), b"replacement bytes");
+    }
+
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn anchored_cache_uses_retained_state_and_blob_directories_for_every_operation() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().canonicalize().unwrap();
+        let root = parent.join("owned");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join(".marfa")).unwrap();
+        let state = crate::directory::Directory::open(&root.join(".marfa")).unwrap();
+        let cache = Cache::anchored(&state, &root.join(".marfa/core.sqlite"), true).unwrap();
+        let first = name_of(b"first original blob");
+        cache.keep(&first, &b"first original blob"[..]).unwrap();
+        fs::rename(&root, parent.join("original")).unwrap();
+        fs::create_dir_all(root.join(".marfa/core.sqlite.blobs")).unwrap();
+        let replacement = root.join(".marfa/core.sqlite.blobs");
+        fs::write(
+            replacement.join(hex_of(&first).unwrap()),
+            b"replacement witness",
+        )
+        .unwrap();
+        let incoming = replacement.join(".incoming-witness");
+        fs::write(&incoming, b"keep incoming replacement").unwrap();
+        let before = snapshot(&root);
+        let mut opened = cache.open_held(&first).unwrap();
+        let mut bytes = Vec::new();
+        opened.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"first original blob");
+        cache.touch(&cache.dir.join(hex_of(&first).unwrap()));
+        let copied = cache
+            .take_reader(Path::new("proof.bin"), &b"second original blob"[..])
+            .unwrap();
+        assert_eq!(copied.hash, name_of(b"second original blob"));
+        cache
+            .keep(&name_of(b"fetched original"), &b"fetched original"[..])
+            .unwrap();
+        let retained = state.child(Path::new("core.sqlite.blobs"), false).unwrap();
+        let left = retained
+            .open_file(
+                Path::new(".incoming-old"),
+                rustix::fs::OFlags::WRONLY | rustix::fs::OFlags::CREATE | rustix::fs::OFlags::EXCL,
+                rustix::fs::Mode::from_raw_mode(0o600),
+            )
+            .unwrap();
+        left.set_modified(SystemTime::now() - Duration::from_secs(7200))
+            .unwrap();
+        cache.sweep_incoming(Duration::from_secs(3600));
+        assert_eq!(
+            retained
+                .entry_kind(Path::new(".incoming-old"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        cache.trim(
+            0,
+            &HashSet::from([hex_of(&copied.hash).unwrap().to_string()]),
+        );
+        assert!(cache.held(&first).unwrap().is_none());
+        cache.let_go(&copied.hash, &HashSet::new());
+        assert!(cache.held(&copied.hash).unwrap().is_none());
+        assert_eq!(snapshot(&root), before);
+        fs::rename(
+            parent.join("original/.marfa/core.sqlite.blobs"),
+            parent.join("original/.marfa/retained-blobs"),
+        )
+        .unwrap();
+        fs::create_dir(parent.join("original/.marfa/core.sqlite.blobs")).unwrap();
+        cache.keep(&first, &b"first original blob"[..]).unwrap();
+        assert_eq!(
+            fs::read_dir(parent.join("original/.marfa/core.sqlite.blobs"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(
+            parent
+                .join("original/.marfa/retained-blobs")
+                .join(hex_of(&first).unwrap())
+                .is_file()
+        );
+    }
+
+    #[cfg(unix)]
+    fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut result = Vec::new();
+        fn read(dir: &Path, root: &Path, result: &mut Vec<(PathBuf, Vec<u8>)>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    read(&path, root, result);
+                } else {
+                    result.push((
+                        path.strip_prefix(root).unwrap().to_owned(),
+                        fs::read(&path).unwrap(),
+                    ));
+                }
+            }
+        }
+        read(root, root, &mut result);
+        result.sort();
+        result
+    }
 
     /// A link on a port of its own that sends `body` and then, if asked,
     /// goes quiet with the connection open.

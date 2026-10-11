@@ -4,6 +4,12 @@ mod builtin;
 mod catalog;
 mod catch_up;
 pub mod contract;
+mod directory;
+#[cfg(unix)]
+mod directory_vfs;
+#[cfg(not(unix))]
+#[path = "directory_vfs_unsupported.rs"]
+mod directory_vfs;
 mod drain;
 mod error;
 mod fault;
@@ -143,6 +149,58 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {
+    #[cfg(unix)]
+    pub(crate) fn open_directory(
+        state: &directory::Directory,
+        store_label: &Path,
+        server: Option<Server>,
+    ) -> Result<Core> {
+        let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
+        let lock = lock::WriterLock::claim_directory(&vfs)?;
+        let cache = blob::Cache::anchored(state, store_label, lock.handle() == Handle::Writer)?;
+        if lock.handle() == Handle::Writer {
+            cache.sweep_incoming(INCOMING_GRACE);
+        }
+        Self::from_connection(
+            store::open_directory(&vfs, store_label)?,
+            server,
+            lock,
+            Some(cache),
+        )
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn read_directory(state: &directory::Directory, store_label: &Path) -> Result<Core> {
+        let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
+        Self::from_connection(
+            store::read_directory(&vfs, store_label)?,
+            None,
+            lock::WriterLock::reader(),
+            Some(blob::Cache::anchored(state, store_label, false)?),
+        )
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn open_directory(
+        _state: &directory::Directory,
+        _store_label: &Path,
+        _server: Option<Server>,
+    ) -> Result<Core> {
+        Err(CoreError::Invalid(
+            "folder directory capabilities are unavailable on this platform".into(),
+        ))
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn read_directory(
+        _state: &directory::Directory,
+        _store_label: &Path,
+    ) -> Result<Core> {
+        Err(CoreError::Invalid(
+            "folder directory capabilities are unavailable on this platform".into(),
+        ))
+    }
+
     /// Creates the file when absent. A changed origin is confirmed against
     /// the recorded instance before the first request.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
@@ -1343,10 +1401,26 @@ impl Core {
     }
 
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        refuse_invalid_names(&draft.tags, &draft.properties)?;
+        self.refuse_unknown_type(&draft.r#type)?;
+        store::refuse_unless_usable(&*self.conn()?)?;
+        let file = std::fs::File::open(path).map_err(|error| {
+            CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
+        })?;
+        self.create_file_item_from(path, file, draft)
+    }
+
+    pub(crate) fn create_file_item_from(
+        &self,
+        path: &Path,
+        reader: impl std::io::Read,
+        draft: &Draft,
+    ) -> Result<QueuedWrite> {
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unknown_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
+        self.with_upload_reader(path, reader, &mime_type, |tx, catalog, upload, taken| {
             let mut draft = draft.clone();
             name_bytes(
                 &mut draft.properties,
@@ -1366,9 +1440,26 @@ impl Core {
         edit: &Edit,
         based: Based,
     ) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        refuse_invalid_names(&[], &edit.properties)?;
+        store::refuse_unless_usable(&*self.conn()?)?;
+        let file = std::fs::File::open(path).map_err(|error| {
+            CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
+        })?;
+        self.update_file_item_from(id, path, file, edit, based)
+    }
+
+    pub(crate) fn update_file_item_from(
+        &self,
+        id: &str,
+        path: &Path,
+        reader: impl std::io::Read,
+        edit: &Edit,
+        based: Based,
+    ) -> Result<QueuedWrite> {
         refuse_invalid_names(&[], &edit.properties)?;
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
+        self.with_upload_reader(path, reader, &mime_type, |tx, catalog, upload, taken| {
             let mut edit = edit.clone();
             let r#type = match &edit.r#type {
                 Some(r#type) => Some(r#type.clone()),
@@ -1410,12 +1501,27 @@ impl Core {
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_usable(&*self.conn()?)?;
+        let file = std::fs::File::open(path).map_err(|error| {
+            CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
+        })?;
+        self.with_upload_reader(path, file, mime_type, then)
+    }
+
+    fn with_upload_reader<T>(
+        &self,
+        path: &Path,
+        file: impl std::io::Read,
+        mime_type: &str,
+        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
+    ) -> Result<T> {
+        self.lock.refuse_unless_writer()?;
+        store::refuse_unless_usable(&*self.conn()?)?;
         let cache = self.cache()?;
         let queued = {
             // Until the upload is queued, nothing but this hold keeps its
             // bytes from a trim.
             let _held = cache.hold();
-            let taken = cache.take(path)?;
+            let taken = cache.take_reader(path, file)?;
             let mut conn = self.conn()?;
             let catalog = catalog::Catalog::load(&conn)?;
             let tx = conn.transaction()?;
@@ -1512,6 +1618,9 @@ impl Core {
     pub fn blob(&self, hash: &str) -> Result<PathBuf> {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
+        if cache.requires_descriptor() {
+            return Err(CoreError::Invalid("folder bytes are read through directory capabilities; this store cannot provide a pathname to reopen".into()));
+        }
         if let Some(path) = cache.held(&hash)? {
             if self.handle() == Handle::Writer {
                 cache.touch(&path);
@@ -1531,6 +1640,33 @@ impl Core {
         let path = blob::fetch(cache, http, &hash)?;
         self.trim_blobs(Some(&hash), blob::CACHE_MOST);
         Ok(path)
+    }
+
+    pub(crate) fn blob_file(&self, hash: &str) -> Result<std::fs::File> {
+        let hash = blob::named(hash)?;
+        let cache = self.cache()?;
+        match cache.open_held(&hash) {
+            Ok(file) => {
+                if self.handle() == Handle::Writer {
+                    let _ = file.set_modified(std::time::SystemTime::now());
+                }
+                return Ok(file);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(CoreError::Store(format!("cannot read held bytes: {error}"))),
+        }
+        let Some(http) = self.http.as_deref() else {
+            return Err(CoreError::BytesAbsent {
+                hash,
+                reason: "this handle cannot fetch bytes".into(),
+            });
+        };
+        blob::fetch(cache, http, &hash)?;
+        let file = cache
+            .open_held(&hash)
+            .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
+        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        Ok(file)
     }
 
     /// Bytes an upload still names are never taken, nor `fetched`, which a
@@ -4384,6 +4520,7 @@ mod tests {
                     "tag_write",
                     "extension_write",
                     "with_upload",
+                    "with_upload_reader",
                     "write_create",
                     "write_update",
                 ][..],
@@ -4525,7 +4662,12 @@ mod tests {
         let core = Core::open(&path, None).unwrap();
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"held here").unwrap();
-        let hash = core.cache().unwrap().take(&file).unwrap().hash;
+        let hash = core
+            .cache()
+            .unwrap()
+            .take_reader(&file, std::fs::File::open(&file).unwrap())
+            .unwrap()
+            .hash;
         let held = core.blob(&hash).unwrap();
         assert_eq!(std::fs::read(held).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
@@ -4542,7 +4684,11 @@ mod tests {
         let file = |name: &str, bytes: &[u8]| {
             let path = dir.path().join(name);
             std::fs::write(&path, bytes).unwrap();
-            core.cache().unwrap().take(&path).unwrap().hash
+            core.cache()
+                .unwrap()
+                .take_reader(&path, std::fs::File::open(&path).unwrap())
+                .unwrap()
+                .hash
         };
         let waiting = file("waiting.txt", b"to be sent");
         let read = file("read.txt", b"fetched once");
@@ -4794,7 +4940,12 @@ mod tests {
         let writer = Core::open(&path, None).unwrap();
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"held here").unwrap();
-        let hash = writer.cache().unwrap().take(&file).unwrap().hash;
+        let hash = writer
+            .cache()
+            .unwrap()
+            .take_reader(&file, std::fs::File::open(&file).unwrap())
+            .unwrap()
+            .hash;
 
         let reader = Core::open_reader(&path).unwrap();
         let held = reader.blob(&hash).unwrap();

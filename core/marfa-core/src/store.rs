@@ -48,6 +48,21 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
     Ok(conn)
 }
 
+#[cfg(unix)]
+pub(crate) fn open_directory(
+    vfs: &crate::directory_vfs::DirectoryVfs,
+    label: &Path,
+) -> Result<Connection, CoreError> {
+    let conn = vfs.open(
+        "core.sqlite",
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    prepare(&conn).map_err(|error| at_path(error, label))?;
+    Ok(conn)
+}
+
 fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
         CoreError::WrongSchema { reason, unsent, .. } => CoreError::WrongSchema {
@@ -74,6 +89,22 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
             path.display()
         ))
     })?;
+    read_connection(conn, path)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_directory(
+    vfs: &crate::directory_vfs::DirectoryVfs,
+    label: &Path,
+) -> Result<Connection, CoreError> {
+    let conn = vfs.open(
+        "core.sqlite",
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    read_connection(conn, label)
+}
+
+fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreError> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let no_schema = || {
         CoreError::Invalid(format!(
@@ -3224,6 +3255,62 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn admitted_store_does_not_reopen_replacement_sidecars() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("owned");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("core.sqlite");
+        let conn = super::open(&path).unwrap();
+        super::meta_set(&conn, "witness", "original").unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        std::fs::rename(&root, temp.path().join("original")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let replacement = super::open(&path).unwrap();
+        super::meta_set(&replacement, "witness", "replacement").unwrap();
+        let before = std::fs::read(root.join("core.sqlite-wal")).unwrap();
+        super::meta_set(&conn, "witness", "updated original").unwrap();
+        assert_eq!(
+            super::meta_get(&conn, "witness").unwrap().as_deref(),
+            Some("updated original")
+        );
+        drop(conn);
+        assert!(
+            std::fs::read(root.join("core.sqlite-wal")).unwrap() == before,
+            "replacement WAL changed"
+        );
+        assert_eq!(
+            super::meta_get(&replacement, "witness").unwrap().as_deref(),
+            Some("replacement")
+        );
+    }
+
+    #[test]
+    fn closing_admitted_store_preserves_replacement_sidecars() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("owned");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("core.sqlite");
+        let conn = super::open(&path).unwrap();
+        super::meta_set(&conn, "witness", "original").unwrap();
+        assert!(root.join("core.sqlite-wal").exists());
+        assert!(root.join("core.sqlite-shm").exists());
+        std::fs::rename(&root, temp.path().join("original")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let replacement = super::open(&path).unwrap();
+        super::meta_set(&replacement, "witness", "replacement").unwrap();
+        let wal = std::fs::read(root.join("core.sqlite-wal")).unwrap();
+        let shm = std::fs::read(root.join("core.sqlite-shm")).unwrap();
+        drop(conn);
+        assert_eq!(std::fs::read(root.join("core.sqlite-wal")).unwrap(), wal);
+        assert_eq!(std::fs::read(root.join("core.sqlite-shm")).unwrap(), shm);
+        assert_eq!(
+            super::meta_get(&replacement, "witness").unwrap().as_deref(),
+            Some("replacement")
+        );
+    }
+
     use serde_json::json;
 
     use super::testing::*;
