@@ -84,6 +84,14 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "POST /auth/revoke-other-sessions":
     "ends every browser session but the caller's",
   "POST /auth/change-password": "the owner's password change",
+  "GET /auth/passkey/generate-register-options":
+    "the owner's passkey registration challenge",
+  "POST /auth/passkey/verify-registration": "the owner's passkey registration",
+  "GET /auth/passkey/generate-authenticate-options":
+    "a passkey sign-in challenge",
+  "POST /auth/passkey/verify-authentication": "passkey sign-in",
+  "GET /auth/passkey/list-user-passkeys": "the owner's registered passkeys",
+  "POST /auth/passkey/delete-passkey": "the owner's passkey removal",
   "GET /auth/jwks": "the key set that signs id tokens",
   "GET /auth/oauth2/authorize": "an app's authorization request",
   "POST /auth/oauth2/token": "the token exchange, every grant",
@@ -118,8 +126,8 @@ export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
  * The statuses each sign-in route and discovery document answers, which no
  * document declares because none publishes them, so they are declared here
  * and held as a published operation's are: a status a run draws and this
- * does not list fails the run. `keys-and-oauth.md` rules what each answers
- * and when.
+ * does not list fails the run. `authentication.md` and `keys-and-oauth.md`
+ * rule what each answers and when.
  */
 export const SIGN_IN_ROUTE_STATUSES: Readonly<
   Record<string, readonly number[]>
@@ -138,6 +146,12 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/revoke-sessions": [200, 401],
   "POST /auth/revoke-other-sessions": [200, 401],
   "POST /auth/change-password": [200, 400, 401],
+  "GET /auth/passkey/generate-register-options": [200, 400, 401, 403],
+  "POST /auth/passkey/verify-registration": [200, 400, 401, 403, 409, 500],
+  "GET /auth/passkey/generate-authenticate-options": [200, 403],
+  "POST /auth/passkey/verify-authentication": [200, 400, 401, 403, 500],
+  "GET /auth/passkey/list-user-passkeys": [200, 401, 403],
+  "POST /auth/passkey/delete-passkey": [200, 400, 401, 403, 404],
   "GET /auth/oauth2/authorize": [200, 302],
   "GET /auth/authorize": [200, 302, 400, 404],
   "POST /auth/authorize/decision": [200, 302, 400, 403, 500],
@@ -157,10 +171,12 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "DELETE /auth/grants/{id}": [204, 401, 403, 404, 500],
   "GET /auth/static/auth.css": [200],
   "GET /auth/static/password-toggle.js": [200],
+  "GET /auth/static/passkeys.js": [200],
   "GET /auth/static/submit-state.js": [200],
   "GET /auth/owner/manage": [200, 401],
   "GET /auth/owner/restore": [200, 401],
   "GET /auth/owner/password": [200, 401],
+  "GET /auth/owner/passkeys": [200, 401, 403],
   "POST /auth/owner/password": [200, 400, 401, 403],
 };
 
