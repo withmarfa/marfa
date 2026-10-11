@@ -3980,6 +3980,11 @@ describe("what a folder takes", () => {
         (create.properties as Record<string, unknown>).body === "inner text\n",
     );
     expect(inner).toBeDefined();
+    const gone = sentCreates(harness).find(
+      (create) =>
+        (create.properties as Record<string, unknown>).title === "Gone",
+    );
+    expect(gone).toBeDefined();
     // Changed elsewhere, so the pull tries to write a file it cannot reach.
     changed = wireItem({
       id: String(inner?.id),
@@ -3992,7 +3997,7 @@ describe("what a folder takes", () => {
     const locked = join(harness.dir, "locked");
     chmodSync(locked, 0o000);
     try {
-      // The witness: a file taken away in the same scan is journaled.
+      // An unread directory could hide a move from any other path.
       rmSync(join(harness.dir, "gone.md"));
       put(harness, "after.md", "---\ntitle: After\n---\nbody\n");
       const pushed = await harness.folder.push();
@@ -4007,8 +4012,9 @@ describe("what a folder takes", () => {
       ).toEqual([["locked", "unreadable"]]);
       expect(
         [pushed.value.scan.missing, pushed.value.scan.unreached],
-        "a file in a directory the walk could not read was journaled as deleted, and its item goes to the bin",
-      ).toEqual([1, 1]);
+        "an incomplete inventory must hold missing paths outside the unread directory too",
+      ).toEqual([0, 1]);
+      expect(pushed.value.scan.deleted).toBe(0);
       expect(pushed.value.pull?.unwritten).toBe(1);
     } finally {
       chmodSync(locked, 0o755);
@@ -4022,6 +4028,22 @@ describe("what a folder takes", () => {
     ).toEqual([0, 0]);
     expect((await harness.folder.push()).ok).toBe(true);
     expect(read(harness, "locked/inner.txt")).toBe("changed elsewhere\n");
+    // The push restored the unjournaled item from the copy. A removal
+    // made with the directory readable can now establish absence.
+    expect(existsSync(join(harness.dir, "gone.md"))).toBe(true);
+    rmSync(join(harness.dir, "gone.md"));
+    const missing = await harness.folder.scan();
+    expect(missing.ok && missing.value.missing).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    const confirmed = await harness.folder.scan();
+    expect(confirmed.ok && confirmed.value.deleted).toBe(1);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok &&
+        queued.value
+          .filter((entry) => entry.kind === "delete_item")
+          .map((entry) => entry.item_id),
+    ).toEqual([gone?.id]);
   });
 
   it("treats names differing only in case or Unicode form as one", async () => {
