@@ -22,6 +22,8 @@ mod read_view;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
+mod relocation_tests;
+#[cfg(test)]
 mod scripted;
 mod search;
 mod sse;
@@ -112,12 +114,13 @@ pub struct Server {
 }
 
 pub struct Core {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     http: Option<Arc<http::Http>>,
     cache: Option<blob::Cache>,
     catch_up_idle: Duration,
-    /// Held for as long as the `Core` lives: holding it is the claim.
-    lock: lock::WriterLock,
+    /// A relocation callback retains the claim while its read ends, so it
+    /// cannot record an origin after another process becomes the writer.
+    lock: Arc<lock::WriterLock>,
     /// Hydration, catch-up and follow each move the one cursor, so two at
     /// once could move it backwards, apply an event twice, or apply one to a
     /// copy a hydration has replaced.
@@ -140,8 +143,8 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {
-    /// Creates the file when absent. A file bound to a different server is
-    /// refused.
+    /// Creates the file when absent. A changed origin is confirmed against
+    /// the recorded instance before the first request.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Claimed before the store is opened: a second opener that read the
@@ -162,11 +165,11 @@ impl Core {
     pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
         let path = path.as_ref();
         Ok(Core {
-            conn: Mutex::new(store::open_to_read(path)?),
+            conn: Arc::new(Mutex::new(store::open_to_read(path)?)),
             http: None,
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
-            lock: lock::WriterLock::reader(),
+            lock: Arc::new(lock::WriterLock::reader()),
             streaming: AtomicBool::new(false),
             draining: Mutex::new(()),
         })
@@ -204,15 +207,14 @@ impl Core {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        if let Some(http) = &http
+        let relocation = if let Some(http) = &http
             && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
             && expected != http.origin()
         {
-            return Err(CoreError::WrongServer {
-                expected,
-                got: http.origin(),
-            });
-        }
+            Some((expected, store::meta_get(&conn, store::META_INSTANCE_ID)?))
+        } else {
+            None
+        };
         // A copy that has never reached a server holds the types Marfa ships,
         // so an app can save before it has connected.
         if lock.handle() == Handle::Writer
@@ -221,8 +223,32 @@ impl Core {
         {
             store::hold_local_catalog(&conn)?;
         }
+        let conn = Arc::new(Mutex::new(conn));
+        let lock = Arc::new(lock);
+        if let Some((expected_origin, expected_instance)) = relocation {
+            let http = http.as_ref().expect("relocation has a server");
+            let db = Arc::clone(&conn);
+            let origin = http.origin();
+            let recorded_origin = expected_origin.clone();
+            let recorded_instance = expected_instance.clone();
+            let claim = Arc::clone(&lock);
+            http.relocating(
+                expected_origin,
+                expected_instance,
+                Box::new(move |stopped| {
+                    keep_relocated_origin(
+                        &db,
+                        &claim,
+                        &recorded_origin,
+                        recorded_instance.as_deref(),
+                        &origin,
+                        stopped,
+                    )
+                }),
+            );
+        }
         Ok(Core {
-            conn: Mutex::new(conn),
+            conn,
             http,
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
@@ -1689,6 +1715,48 @@ impl Core {
         }
         Ok(conn)
     }
+}
+
+fn keep_relocated_origin(
+    conn: &Mutex<Connection>,
+    claim: &lock::WriterLock,
+    recorded_origin: &str,
+    recorded_instance: Option<&str>,
+    origin: &str,
+    stopped: &AtomicBool,
+) -> Result<()> {
+    claim.refuse_unless_writer()?;
+    let mut conn = loop {
+        if stopped.load(Ordering::SeqCst) {
+            return Err(CoreError::Canceled);
+        }
+        match conn.try_lock() {
+            Ok(conn) => break conn,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(CoreError::Store(
+                    "the connection was poisoned by an earlier panic".into(),
+                ));
+            }
+        }
+    };
+    let tx = conn.transaction()?;
+    if stopped.load(Ordering::SeqCst) {
+        return Err(CoreError::Canceled);
+    }
+    if store::meta_get(&tx, store::META_SERVER_ORIGIN)?.as_deref() != Some(recorded_origin)
+        || store::meta_get(&tx, store::META_INSTANCE_ID)?.as_deref() != recorded_instance
+    {
+        return Err(CoreError::WrongServer {
+            expected: recorded_origin.into(),
+            got: origin.into(),
+        });
+    }
+    store::meta_set(&tx, store::META_SERVER_ORIGIN, origin)?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Lets go of a pin, and of the row where the slice does not take it.
@@ -4311,6 +4379,7 @@ mod tests {
             (
                 include_str!("lib.rs"),
                 &[
+                    "keep_relocated_origin",
                     "transition_locally",
                     "tag_write",
                     "extension_write",
@@ -4775,7 +4844,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_bound_to_one_server_refuses_another() {
+    fn an_origin_only_copy_opens_offline_but_refuses_to_send_to_another_origin() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
         {
@@ -4786,7 +4855,12 @@ mod tests {
         assert!(Core::open(&path, unreachable_server("HTTP://ONE.test:8600")).is_ok());
         assert!(Core::open(&path, None).is_ok());
         assert_eq!(
-            Core::open(&path, unreachable_server("http://two.test:8600")).err(),
+            Core::open(&path, unreachable_server("http://two.test:8600"))
+                .unwrap()
+                .http()
+                .unwrap()
+                .types()
+                .err(),
             Some(CoreError::WrongServer {
                 expected: "http://one.test:8600".into(),
                 got: "http://two.test:8600".into()

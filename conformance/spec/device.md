@@ -188,21 +188,45 @@ When a device hydrates, a device MUST let go a row that is not pinned and that i
 
 ### `device/origin-refused`
 
-If a device is asked to reach a server at an origin other than the one its copy was hydrated from, by scheme, host, port or path prefix, then a device MUST refuse `wrong_server`.
+Where a copy records an origin, if a device is asked to reach another origin by scheme, host, port or path prefix and the copy names no instance or the anonymous root names another instance, then a device MUST refuse `wrong_server` before sending any request other than the anonymous identity read.
 
-**Tests:** `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› refuses a store opened at another path prefix of its host, sending nothing there`, `device/local-refusals.test.ts › refuses a write to a store bound to another server`.
+**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› confirms a changed path prefix anonymously and refuses another instance there`, `device/local-refusals.test.ts › refuses a write to a store bound to another server`.
+
+### `device/origin-opens-offline`
+
+When a device opens a working copy at another origin, a device MUST open the copy without contacting or confirming that origin.
+
+**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› follows the same instance to a new origin without replacing its copy or queue`.
+
+### `device/origin-confirm-before-send`
+
+While a copy records another origin, a device MUST send no credentials, credential renewal, reads or writes to the offered origin except an anonymous `GET /` until that root confirms the copy's recorded instance identity.
+
+**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› follows the same instance to a new origin without replacing its copy or queue`, `› confirms a changed path prefix anonymously and refuses another instance there`.
+
+### `device/origin-confirm-recorded`
+
+When the anonymous root at another origin confirms a copy's recorded instance identity, a device MUST record that origin before sending any other request there.
+
+**Tests:** `device/working-copy.test.ts › follows the same instance to a new origin without replacing its copy or queue`.
+
+### `device/origin-unconfirmed-keeps-copy`
+
+When an anonymous identity read at an offered origin fails, a device MUST leave the copy and its queued writes as they were.
+
+**Tests:** `device/working-copy.test.ts › keeps the copy and queue when a new origin cannot confirm its identity`.
 
 ### `device/origin-refused-names`
 
 When a device refuses `wrong_server`, a device MUST name the origin the copy belongs to and the origin it was offered.
 
-**Tests:** `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› refuses a store opened at another path prefix of its host, sending nothing there`.
+**Tests:** `device/working-copy.test.ts › opens offline at a new origin and refuses another instance before sending credentials`, `› confirms a changed path prefix anonymously and refuses another instance there`.
 
 ### `device/origin-refused-sends-nothing`
 
-When a device refuses `wrong_server`, a device MUST send nothing to the server it was offered and leave the copy as it was.
+When a device refuses `wrong_server`, a device MUST leave the copy and its queued writes as they were.
 
-**Tests:** `device/local-refusals.test.ts › refuses a write to a store bound to another server`, `device/working-copy.test.ts › refuses a store opened at another path prefix of its host, sending nothing there`.
+**Tests:** `device/local-refusals.test.ts › refuses a write to a store bound to another server`, `device/working-copy.test.ts › confirms a changed path prefix anonymously and refuses another instance there`.
 
 ### `device/origin-key-free`
 
