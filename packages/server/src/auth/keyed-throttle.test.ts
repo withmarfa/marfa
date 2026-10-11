@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { join } from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import { KeyedThrottle } from "./keyed-throttle.js";
 import type { Storage } from "../storage/interface.js";
@@ -172,5 +175,42 @@ describe("KeyedThrottle", () => {
     expect(a.allowed).toBe(true);
     expect(b.allowed).toBe(true);
     expect(c.allowed).toBe(false);
+  });
+  it("shares the owner budget atomically across processes and after they restart", async () => {
+    ctx = await createTestContext();
+    const script = `
+      import { createSqliteStorage } from ${JSON.stringify(new URL("../storage/sqlite/index.ts", import.meta.url).href)};
+      import { KeyedThrottle } from ${JSON.stringify(new URL("./keyed-throttle.ts", import.meta.url).href)};
+      const storage = await createSqliteStorage(process.argv[1]);
+      try {
+        const throttle = new KeyedThrottle(storage, {
+          family: "device-user-code-owner", limit: 10, windowMs: 15 * 60_000,
+        });
+        const results = [];
+        for (let i = 0; i < Number(process.argv[2]); i++)
+          results.push(await throttle.attempt("claimed-owner"));
+        process.stdout.write(JSON.stringify(results));
+      } finally { await storage.close(); }
+    `;
+    const run = async (attempts: number) => {
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        script,
+        join(ctx!.tmpDir, "test.db"),
+        String(attempts),
+      ]);
+      return JSON.parse(stdout) as { allowed: boolean; count: number }[];
+    };
+    const results = (await Promise.all([run(6), run(6), run(6)])).flat();
+    expect(results.filter((result) => result.allowed)).toHaveLength(10);
+    expect(results.map((result) => result.count).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 18 }, (_, i) => i + 1),
+    );
+    expect(await run(1)).toEqual([
+      expect.objectContaining({ allowed: false, count: 19 }),
+    ]);
   });
 });

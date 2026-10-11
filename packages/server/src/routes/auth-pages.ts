@@ -221,13 +221,9 @@ async function createUserAppGrant(
 export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  // Every door that looks a device code up counts the lookup here first:
-  // the entry form, and the consent screen and its decision, which take a
-  // code from the URL or the form as readily. A lookup is counted against
-  // the caller's address and the instance, before it is made: a sweep tries
-  // each code once, so a count per code never fires, and a count of
-  // failures alone would still let the sweep find the live code it was
-  // looking for. A person approving one device makes three lookups.
+  // Each lane counts every door before looking up a code, including successful
+  // lookups: a sweep may try each code only once. Owner authority comes from
+  // the middleware's live session check, never from a cookie's presence.
   const deviceCodePerAddress = new KeyedThrottle(storage, {
     family: "device-user-code-address",
     limit: DEVICE_CODE_ADDRESS_LIMIT,
@@ -238,17 +234,37 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     limit: DEVICE_CODE_INSTANCE_LIMIT,
     windowMs: DEVICE_CODE_WINDOW_MS,
   });
+  const deviceCodePerOwner = new KeyedThrottle(storage, {
+    family: "device-user-code-owner",
+    limit: DEVICE_CODE_ADDRESS_LIMIT,
+    windowMs: DEVICE_CODE_WINDOW_MS,
+  });
+  const deviceCodeOwnerInstance = new KeyedThrottle(storage, {
+    family: "device-user-code-owner-instance",
+    limit: DEVICE_CODE_INSTANCE_LIMIT,
+    windowMs: DEVICE_CODE_WINDOW_MS,
+  });
 
-  /** Count a device code lookup and say whether it may be made. One the
-   *  address window refuses is not counted against the instance's, so one
-   *  caller alone cannot close device sign-in for everyone. */
   const admitCodeLookup = async (c: Context<AppEnv>): Promise<boolean> => {
+    const authority = c.get("authority");
+    if (authority?.kind === "owner") {
+      // The transaction revalidates the admitted authority under the write lock,
+      // so ending a session cannot race the owner lane's counter writes.
+      return storage.runInTransaction(async () => {
+        const owner = await deviceCodePerOwner.attempt(authority.userId);
+        return (
+          owner.allowed &&
+          (await deviceCodeOwnerInstance.attempt("all")).allowed
+        );
+      });
+    }
     const ip = c.var.clientIp;
-    const local = await deviceCodePerAddress.attempt(
+    const address = await deviceCodePerAddress.attempt(
       ip ? addressBucket(ip) : "unknown",
     );
+    // Over-cap callers cannot spend the rest of their lane's aggregate budget.
     return (
-      local.allowed && (await deviceCodePerInstance.attempt("all")).allowed
+      address.allowed && (await deviceCodePerInstance.attempt("all")).allowed
     );
   };
 
@@ -1044,10 +1060,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 
 class DeviceApprovalRefused extends Error {}
 
-/** Device code submissions one address may make per window. */
+/** Device code lookups one anonymous address or verified owner may make per window. */
 export const DEVICE_CODE_ADDRESS_LIMIT = 10;
 
-/** Device code submissions the whole instance takes per window. */
+/** Device code lookups each lane takes across the instance per window. */
 export const DEVICE_CODE_INSTANCE_LIMIT = 100;
 
 const DEVICE_CODE_WINDOW_MS = 15 * 60 * 1000;
