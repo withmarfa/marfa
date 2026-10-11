@@ -27,7 +27,14 @@ export function boundBlobRead(
     }, idleTimeoutMs);
     timer.unref();
   };
-  const output = new Transform({
+  class BlobReadStream extends Transform {
+    override read(size?: number): Buffer | string | null {
+      const chunk = super.read(size) as Buffer | string | null;
+      if (size !== 0 && chunk !== null && chunk.length > 0) refresh();
+      return chunk;
+    }
+  }
+  const output = new BlobReadStream({
     readableHighWaterMark: 64 * 1024,
     writableHighWaterMark: 64 * 1024,
     transform(chunk: Buffer, _encoding, callback) {

@@ -17,6 +17,51 @@ function endless(): Readable {
 }
 
 describe("blob read idle lifetime", () => {
+  it.each(["null", "zero"])(
+    "does not extend the deadline for %s reads",
+    async (kind) => {
+      vi.useFakeTimers();
+      let offered = false;
+      const source =
+        kind === "zero"
+          ? endless()
+          : new Readable({
+              read() {
+                if (!offered) {
+                  offered = true;
+                  this.push(Buffer.from("x"));
+                }
+              },
+            });
+      const output = boundBlobRead(source, 100);
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(25);
+        expect(output.read(kind === "zero" ? 0 : 1024)).toBeNull();
+      }
+      expect(source.destroyed).toBe(true);
+      expect(output.destroyed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("keeps small reads of buffered bytes alive beyond the idle deadline", async () => {
+    vi.useFakeTimers();
+    const source = endless();
+    const output = boundBlobRead(source, 100);
+    try {
+      for (let i = 0; i < 12; i++) {
+        await vi.advanceTimersByTimeAsync(25);
+        expect(output.read(1024)).toHaveLength(1024);
+        expect(output.destroyed).toBe(false);
+      }
+    } finally {
+      output.destroy();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(source.destroyed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("closes the actual file descriptor before garbage collection", async () => {
     const dir = await mkdtemp(join(tmpdir(), "blob-idle-fd-"));
     const handle = await open(join(dir, "blob"), "w+");
