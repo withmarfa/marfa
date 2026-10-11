@@ -2282,8 +2282,27 @@ impl Folder {
                 }
             }
         }
-        let unchanged = (!whole || properties.len() == held.properties.len())
-            && properties.iter().all(|(field, value)| {
+        if let Err(error) = crate::validation::property_names(&properties) {
+            let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+            flagged.push(Flagged::of(&file.key, &held_for));
+            return self
+                .bind_held(file, item_id, bound, held_for)
+                .map(|()| false);
+        }
+        let mut effective_properties = catalog.projected_properties(
+            changes.r#type.as_deref().unwrap_or(&held.r#type),
+            &properties,
+            whole,
+        );
+        // An unchanged stored null is presentation, even though sending it
+        // under replace would clear the property.
+        for (field, value) in &properties {
+            if value.is_null() && held.properties.get(field).is_some_and(Value::is_null) {
+                effective_properties.insert(field.clone(), Value::Null);
+            }
+        }
+        let unchanged = (!whole || effective_properties.len() == held.properties.len())
+            && effective_properties.iter().all(|(field, value)| {
                 held.properties
                     .get(field)
                     .is_some_and(|held| document::same_value(value, held))
@@ -4184,6 +4203,7 @@ impl Folder {
             front.insert(VERSION_FIELD.into(), Value::from(line));
         }
         if let Some(typed) = typed {
+            fields::keep_empty_properties(&mut front, &typed.front, edge_types, body_field);
             fields::keep_equivalent(&mut front, &typed.front, edge_types);
         }
         Ok(Rendered {

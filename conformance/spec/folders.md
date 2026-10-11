@@ -204,13 +204,13 @@ When the settings change to require another slice during a running watch, a devi
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST retain the file’s bytes.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/invalid-document-flagged`
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST flag the local refusal.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/invalid-document-scan-continues`
 
@@ -222,7 +222,7 @@ When a folder document fails local field validation or names a type absent from 
 
 When a refused folder document is corrected or its type becomes available in the held catalog, a device MUST retry admission at a later scan.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
 
 ### `folders/first-sync-waits`
 
@@ -1086,9 +1086,21 @@ When a pull changes a document, a device MUST preserve unchanged frontmatter sou
 
 ### `folders/preserve-change-in-place`
 
-When a pull changes document properties, a device MUST edit changed values in place, remove uncarried values, and append missing fields.
+When a pull changes document properties, a device MUST edit changed values in place, remove uncarried non-null values, and append missing fields.
 
 **Tests:** `device/folders.test.ts › preserves frontmatter bytes through metadata, remote edits and presentation-only saves`, `cli/folder.test.ts › preserves %s edits and continues pulling another document`.
+
+### `folders/preserve-null-property`
+
+When an existing document carries a null property line spelled as `key:`, `key: null`, or `key: ~`, and the item carries no value for that property, a device MUST preserve that line's bytes, including whitespace and comments.
+
+**Tests:** `device/folders-frontmatter.test.ts › keeps empty property lines through pushes, pulls and later clears`.
+
+### `folders/preserve-null-property-scope`
+
+When a property has no line in an existing document and no value on the item, a device MUST NOT add a null line for it.
+
+**Tests:** `device/folders-frontmatter.test.ts › keeps empty property lines through pushes, pulls and later clears`.
 
 ### `folders/preserve-children`
 
