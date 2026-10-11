@@ -858,17 +858,23 @@ const OFFLINE_WITHOUT_REFRESH =
 /**
  * The device plugin's `onDeviceAuthRequest`, which it calls once the provider
  * has authenticated the client and held the scopes to its ceiling, with the
- * scopes joined by single spaces. Refuses `offline_access` to a client that
+ * scopes joined by single spaces. Requires named scopes before issuing a
+ * code. Refuses `offline_access` to a client that
  * may not refresh: the provider would approve the scope and issue an access
  * token alone, and the client would sign the person in again when it ended.
  * Registration keeps such a client from holding the scope, so this answers a
  * client registered before it did.
  */
-export function refuseOfflineWithoutRefresh(
+export function validateDeviceScope(
   storage: Storage,
 ): (clientId: string, scope: string | undefined) => Promise<void> {
   return async (clientId, scope) => {
-    if (!scope?.split(/\s+/).includes("offline_access")) return;
+    if (!scope?.trim())
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_scope",
+        error_description: "Name the scopes to request in the scope parameter.",
+      });
+    if (!scope.split(/\s+/).includes("offline_access")) return;
     const client = await storage.oauthProvider?.getClient(clientId);
     if (client && !clientMayRefresh(client.grantTypes))
       throw new APIError("BAD_REQUEST", {

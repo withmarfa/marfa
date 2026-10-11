@@ -1339,6 +1339,14 @@ When a client asks `POST /auth/device/code` for a scope it may be granted, the s
 
 **Tests:** `compliance/device-grant.test.ts › is issued with its codes, where to enter it, ten minutes to live and a five-second interval`.
 
+### `keys-and-oauth/device-scope-required`
+
+When a device authorization request omits `scope` or names no scope after whitespace is removed, the server MUST refuse it with HTTP 400 and `invalid_scope`, with an `error_description` telling the client to name the scopes to request.
+
+**Reason:** A code with no requested scope cannot produce an approved grant. Refusing initiation prevents a consent screen from offering an approval that cannot issue a token.
+
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope when no scopes are named`.
+
 ### `keys-and-oauth/device-code-at-rest`
 
 The server MUST NOT hold a device code it issued as the code itself.
