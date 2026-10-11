@@ -14,6 +14,10 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { generateId } from "@withmarfa/shared";
 import {
+  boundBlobRead,
+  DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
+} from "./blob-read.js";
+import {
   bareHex,
   blobDisposition,
   spoolVerified,
@@ -24,6 +28,7 @@ import {
 } from "./blob-store.js";
 
 export interface S3BlobConfig {
+  readIdleTimeoutMs?: number;
   bucket: string;
   region: string;
   endpoint?: string;
@@ -57,8 +62,11 @@ export class S3BlobStore implements BlobStore {
   private readonly prefix: string;
   private readonly client: S3Client;
   private storeId: string | null = null;
+  private readonly readIdleTimeoutMs: number;
 
   constructor(config: S3BlobConfig) {
+    this.readIdleTimeoutMs =
+      config.readIdleTimeoutMs ?? DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS;
     if (!config.bucket)
       throw new Error("S3_BUCKET is required for an S3 store");
     if (!config.region)
@@ -190,7 +198,10 @@ export class S3BlobStore implements BlobStore {
       const offset = range?.start ?? 0;
       const length = response.ContentLength ?? size - offset;
       return {
-        stream: response.Body as Readable,
+        stream: boundBlobRead(
+          response.Body as Readable,
+          this.readIdleTimeoutMs,
+        ),
         size_bytes: size,
         offset,
         length,

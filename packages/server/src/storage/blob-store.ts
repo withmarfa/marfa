@@ -16,6 +16,10 @@ import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { generateId } from "@withmarfa/shared";
+import {
+  boundBlobRead,
+  DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
+} from "./blob-read.js";
 import type { BlobStoreKind } from "./interface.js";
 
 /**
@@ -195,7 +199,10 @@ export class DiskBlobStore implements BlobStore {
   readonly locator: string;
   private storeId: string | null = null;
 
-  constructor(basePath: string) {
+  constructor(
+    basePath: string,
+    private readonly readIdleTimeoutMs = DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
+  ) {
     this.locator = resolve(basePath);
   }
 
@@ -292,8 +299,16 @@ export class DiskBlobStore implements BlobStore {
         length,
       };
     }
-    const stream = handle.createReadStream({ start, end });
-    return { stream, size_bytes: size, offset: start, length };
+    try {
+      const stream = boundBlobRead(
+        handle.createReadStream({ start, end }),
+        this.readIdleTimeoutMs,
+      );
+      return { stream, size_bytes: size, offset: start, length };
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
   }
 
   async has(hash: string): Promise<{ size_bytes: number } | null> {

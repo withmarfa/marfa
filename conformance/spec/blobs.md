@@ -4,6 +4,22 @@ Content-addressed binary storage beside the items that reference it. A blob is b
 
 A blob is read through `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, and is uploaded through `POST /blobs`.
 
+## Download lifetime
+
+### `blobs/read-idle-lifetime`
+
+If a blob download makes no progress for the configured blob read idle interval, then the server MUST close the read stream and its file or socket.
+
+**Reason:** a caller that abandons a download cannot leave an open resource behind or cause the server to exit when that resource is garbage collected.
+
+**Tests:** `compliance/blob-read-lifetime.test.ts › ends a download that stops reading before the body finishes`.
+
+### `blobs/read-disconnect`
+
+When a caller disconnects during a blob download, the server MUST remain available to answer other requests.
+
+**Tests:** `compliance/blob-read-lifetime.test.ts › finishes an active download and stays up after a client disconnects`.
+
 ## Uploading a blob
 
 ### `blobs/upload-created`

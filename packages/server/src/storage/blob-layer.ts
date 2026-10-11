@@ -23,6 +23,7 @@ export interface BlobLayer {
 export type BlobLayerConfig = Pick<
   AppConfig,
   | "blobPath"
+  | "blobReadIdleTimeoutMs"
   | "s3Bucket"
   | "s3Region"
   | "s3Endpoint"
@@ -36,7 +37,7 @@ export async function createBlobLayer(
   storage: Storage,
   config: BlobLayerConfig,
 ): Promise<BlobLayer> {
-  const disk = new DiskBlobStore(config.blobPath);
+  const disk = new DiskBlobStore(config.blobPath, config.blobReadIdleTimeoutMs);
   const s3 = config.s3Bucket
     ? new S3BlobStore({
         bucket: config.s3Bucket,
@@ -46,6 +47,7 @@ export async function createBlobLayer(
         secretAccessKey: config.s3SecretAccessKey || undefined,
         forcePathStyle: config.s3ForcePathStyle,
         prefix: config.s3Prefix,
+        readIdleTimeoutMs: config.blobReadIdleTimeoutMs,
       })
     : null;
   const stores: BlobStore[] = s3 ? [disk, s3] : [disk];
