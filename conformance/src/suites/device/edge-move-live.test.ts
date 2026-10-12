@@ -14,7 +14,7 @@ import {
   trackItem,
 } from "../../utils/setup.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
-import { requireBinary } from "./harness.js";
+import { queuedEdit, requireBinary } from "./harness.js";
 
 /**
  * A move of an edge's end made through a working copy, against a real
@@ -176,11 +176,13 @@ it("re-parents a note offline in one write a real server takes, never leaving it
 
     proxy.setOnline(false);
     const queued = value(
-      await device().updateEdge(edge.id, {
-        properties: {},
-        version: edge.version,
-        source_id: second,
-      }),
+      queuedEdit(
+        await device().updateEdge(edge.id, {
+          properties: {},
+          version: edge.version,
+          source_id: second,
+        }),
+      ),
     );
     const offline = value(await device().drain());
     expect(offline.answered, "a drain offline answered something").toBe(0);
@@ -268,11 +270,13 @@ it("puts the edge back at its old parent when the server refuses the move for a 
     value(await device.hydrate(["core.note"], "library"));
 
     const queued = value(
-      await device.updateEdge(upper.id, {
-        properties: {},
-        version: upper.version,
-        source_id: bottom,
-      }),
+      queuedEdit(
+        await device.updateEdge(upper.id, {
+          properties: {},
+          version: upper.version,
+          source_id: bottom,
+        }),
+      ),
     );
     // The witness: the copy showed the move before the server refused it.
     expect(
@@ -329,11 +333,13 @@ it("holds a move onto its own unanswered create, and sends it naming the row the
     const minted = created.item_id!;
     expect(minted).not.toBe(landing);
     const queued = value(
-      await device().updateEdge(edge.id, {
-        properties: {},
-        version: edge.version,
-        source_id: minted,
-      }),
+      queuedEdit(
+        await device().updateEdge(edge.id, {
+          properties: {},
+          version: edge.version,
+          source_id: minted,
+        }),
+      ),
     );
     expect(queued.depends_on).toEqual([created.id]);
     expect(

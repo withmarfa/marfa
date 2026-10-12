@@ -8,7 +8,12 @@ import {
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { Outcome } from "../../device/protocol.js";
-import { startHarness, scriptHydration, type Harness } from "./harness.js";
+import {
+  queuedEdit,
+  startHarness,
+  scriptHydration,
+  type Harness,
+} from "./harness.js";
 
 let harness: Harness | undefined;
 afterEach(async () => {
@@ -102,15 +107,22 @@ it.each([
     });
     value(await device.hydrate(["core.note"], "library"));
     const first = value(
-      await device.updateEdge(EDGE, { properties: { weight: 2 }, version: 1 }),
+      queuedEdit(
+        await device.updateEdge(EDGE, {
+          properties: { weight: 2 },
+          version: 1,
+        }),
+      ),
     );
     value(await device.drain());
     value(await device.catchUp());
     const second = value(
-      await device.updateEdge(EDGE, {
-        properties: { weight: 3 },
-        version: caughtUpVersion,
-      }),
+      queuedEdit(
+        await device.updateEdge(EDGE, {
+          properties: { weight: 3 },
+          version: caughtUpVersion,
+        }),
+      ),
     );
     if (grantBlocked) {
       const blocked = value(await device.drain());

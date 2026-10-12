@@ -1292,8 +1292,12 @@ impl Core {
     }
 
     /// A move of an end goes in the same write as the properties, so the
-    /// edge is never absent between two writes.
-    pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<QueuedWrite> {
+    /// edge is never absent between two writes. An edit that names no
+    /// property and moves no end the copy does not already hold queues
+    /// nothing and answers `None`: the server would take it, bump the edge's
+    /// version and announce a change that never happened
+    /// (`queue-and-verdicts/edge-edit-no-change`).
+    pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<Option<QueuedWrite>> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
@@ -1326,6 +1330,9 @@ impl Core {
         }
         let edit = &edit;
         refuse_edge_move(&conn, &held, edit)?;
+        if edit.is_empty() {
+            return Ok(None);
+        }
         let payload = edit.payload(base)?;
         let mut depends_on = store::untaken_create_for_edge(&conn, id)?;
         let mut next = held.clone();
@@ -1365,7 +1372,7 @@ impl Core {
             },
         )?;
         tx.commit()?;
-        Ok(queued)
+        Ok(Some(queued))
     }
 
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
@@ -3953,6 +3960,7 @@ mod tests {
         drop(conn);
         let moved = core
             .update_edge("link", &moving(Some("other"), None))
+            .unwrap()
             .unwrap();
         assert_eq!(moved.body["source_id"], "other");
     }
@@ -3962,6 +3970,7 @@ mod tests {
         let core = movable_link();
         let edit = core
             .update_edge("link", &moving(Some("row"), Some("other")))
+            .unwrap()
             .unwrap();
         assert_eq!(edit.body.get("source_id"), None, "{}", edit.body);
         assert_eq!(edit.body["target_id"], "other");
@@ -3970,6 +3979,77 @@ mod tests {
         assert_eq!(
             (link.source_id.as_str(), link.target_id.as_str()),
             ("row", "other")
+        );
+    }
+
+    #[test]
+    fn an_edge_edit_that_changes_nothing_queues_nothing() {
+        let core = movable_link();
+        let before = core.queue().unwrap();
+        for (what, edit) in [
+            ("a move to the source it holds", moving(Some("row"), None)),
+            ("a move to the target it holds", moving(None, Some("older"))),
+            (
+                "a move to both ends it holds",
+                moving(Some("row"), Some("older")),
+            ),
+            ("no property and no move", moving(None, None)),
+        ] {
+            let queued = core.update_edge("link", &edit).unwrap();
+            assert_eq!(queued, None, "{what} was queued");
+        }
+        assert_eq!(core.queue().unwrap(), before, "a no-op edit was queued");
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::beneath_edge(&conn, "link").unwrap(),
+            None,
+            "a no-op edit held the edge beneath a write that does not exist"
+        );
+        drop(conn);
+
+        // The witness: the same edge, edited to something, is queued.
+        let moved = core
+            .update_edge("link", &moving(Some("other"), None))
+            .unwrap();
+        assert!(moved.is_some(), "an edit that moves an end was not queued");
+    }
+
+    #[test]
+    fn a_no_op_edge_edit_is_still_refused_where_it_names_no_version_or_a_stale_one() {
+        let core = movable_link();
+        let unversioned = EdgeEdit {
+            base_version: None,
+            ..moving(Some("row"), None)
+        };
+        let stale = EdgeEdit {
+            base_version: Some(7),
+            ..moving(Some("row"), None)
+        };
+        for edit in [unversioned, stale] {
+            let failure = core.update_edge("link", &edit).unwrap_err();
+            assert!(matches!(failure, CoreError::Invalid(_)), "{failure:?}");
+        }
+        let failure = core.update_edge("absent", &moving(None, None)).unwrap_err();
+        assert!(matches!(failure, CoreError::NotFound { .. }), "{failure:?}");
+    }
+
+    #[test]
+    fn an_edge_edit_naming_the_end_it_holds_and_a_property_sends_only_the_property() {
+        let core = movable_link();
+        let edit = EdgeEdit {
+            properties: serde_json::json!({ "note": "mine" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..moving(Some("row"), Some("older"))
+        };
+        let queued = core
+            .update_edge("link", &edit)
+            .unwrap()
+            .expect("an edit that changes a property was not queued");
+        assert_eq!(
+            queued.body,
+            serde_json::json!({ "properties": { "note": "mine" }, "version": 1 })
         );
     }
 
@@ -3989,6 +4069,7 @@ mod tests {
         let local = created.item_id.clone().unwrap();
         let moved = core
             .update_edge("link", &moving(Some(&local), None))
+            .unwrap()
             .unwrap();
         assert_eq!(moved.depends_on, vec![created.id.clone()]);
         assert_eq!(
@@ -4024,6 +4105,7 @@ mod tests {
         let local = created.item_id.clone().unwrap();
         let moved = core
             .update_edge("link", &moving(Some(&local), None))
+            .unwrap()
             .unwrap();
         let conn = core.conn().unwrap();
         let refused = store::land_on_held_row(&conn, &created, "other").unwrap();
@@ -4064,6 +4146,7 @@ mod tests {
                     ..EdgeEdit::default()
                 },
             )
+            .unwrap()
             .unwrap();
         moved_off_the_slice(&core);
         assert!(core.edges_from("elsewhere").unwrap().len() == 1);

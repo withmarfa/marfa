@@ -9,6 +9,7 @@ import {
 } from "../../device/marfa-answers.js";
 import {
   hydratedHarness,
+  queuedEdit,
   scriptHydration,
   scriptWrites,
   startHarness,
@@ -204,10 +205,12 @@ it("keeps a dead edge edit over a newer edge event", async () => {
     ]),
   );
   expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-  const edit = await device.updateEdge("link", {
-    version: 1,
-    properties: { weight: 2 },
-  });
+  const edit = queuedEdit(
+    await device.updateEdge("link", {
+      version: 1,
+      properties: { weight: 2 },
+    }),
+  );
   expect(edit.ok).toBe(true);
   if (!edit.ok) return;
   scriptWrites(server, {

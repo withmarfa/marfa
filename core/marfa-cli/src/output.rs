@@ -96,6 +96,18 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
+/// An edit that changed nothing queued no write: `null` in JSON, so a script
+/// reads it as no write and not as an error.
+pub fn nothing_queued(json: bool) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
+    if json {
+        writeln!(out, "null")?;
+    } else {
+        writeln!(out, "nothing queued: the edit changes nothing")?;
+    }
+    Ok(())
+}
+
 /// `landing` names the refused creates whose row no read has found yet, which
 /// still hold the writes that depend on them.
 pub fn queued(

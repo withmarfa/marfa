@@ -34,6 +34,7 @@ import {
   fileOf,
   hashOf,
   hydratedHarness,
+  queuedEdit,
   scriptHydration,
   scriptWrites,
   startHarness,
@@ -1741,10 +1742,12 @@ describe("what a drain sends and reports", () => {
       },
     });
     const { device, server } = harness;
-    const edited = await device.updateEdge(EDGE, {
-      properties: { weight: 2 },
-      version: 1,
-    });
+    const edited = queuedEdit(
+      await device.updateEdge(EDGE, {
+        properties: { weight: 2 },
+        version: 1,
+      }),
+    );
     expect(edited.ok, JSON.stringify(edited)).toBe(true);
     if (!edited.ok) return;
     const answered = writeAnswers.edge(
