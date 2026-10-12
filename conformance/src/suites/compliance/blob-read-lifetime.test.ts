@@ -1,5 +1,6 @@
 import { get } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { byteDifference } from "../../utils/bytes.js";
 import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
 import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 
@@ -36,7 +37,10 @@ describe("blob download lifetime", () => {
   it("finishes an active download and stays up after a client disconnects", async () => {
     const headers = { Authorization: `Bearer ${server.workingKey}` };
     const complete = await fetch(`${server.apiUrl}/blobs/${hash}`, { headers });
-    expect(Buffer.from(await complete.arrayBuffer())).toEqual(bytes);
+    expect(complete.status).toBe(200);
+    expect(
+      byteDifference(new Uint8Array(await complete.arrayBuffer()), bytes),
+    ).toBeNull();
     await new Promise<void>((resolve, reject) => {
       const request = get(
         `${server.apiUrl}/blobs/${hash}`,
