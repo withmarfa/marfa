@@ -2201,8 +2201,6 @@ describe("source-owned inbound continuity", () => {
         );
       else await ctx.storage.keys.revoke(key.id);
       expect((await post(ctx, made.path, "refused")).status).toBe(404);
-      // The unique live-source index requires revoking an expired key before replacement.
-      if (standing === "expired") await ctx.storage.keys.revoke(key.id);
       const successorKey = await mintWorkingKey(ctx, { source: key.source });
       expect((await post(ctx, made.path, "before registration")).status).toBe(
         404,
