@@ -2634,14 +2634,14 @@ export interface components {
             edge: components["schemas"]["Edge"] & unknown;
         };
         /** @description An error response. */
-        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "missing_required_field" | "validation_error";
+                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2728,7 +2728,7 @@ export interface components {
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. */
+            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -2748,13 +2748,13 @@ export interface components {
             type: string;
             /** @description What the property holds. */
             description?: string;
-            /** @description `true` if every edge of the type should have the property. */
+            /** @description `true` if every edge of the type must have the property. */
             required?: boolean;
             /** @description The values an `enum` property takes. */
             enum_values?: string[];
             /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
             items_type?: string;
-            /** @description A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail. */
+            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
             format?: string;
         };
         /** @description An error response. */
@@ -2830,7 +2830,7 @@ export interface components {
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. Leave it out for none. */
+            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. Leave it out for none. */
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -4731,7 +4731,7 @@ export interface operations {
                     capture_longitude?: number;
                     /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                     tags?: string[];
-                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. */
+                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -4775,11 +4775,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.
+             * @description - `validation_error`: a field is invalid.
              *     - `missing_required_field`: `type` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `invalid_id`: `id` or an edge target is not a valid ID.
-             *     - `invalid_properties`: the properties don't fit the type.
+             *     - `invalid_id`: `id` or an edge target isn't a valid ID.
+             *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
             400: {
@@ -5568,7 +5568,7 @@ export interface operations {
                     occurred_at?: string;
                     /** @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes. */
                     source_id?: string;
-                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. */
+                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -5602,9 +5602,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing.
-             *     - `validation_error`: the body is malformed, has an undeclared field, or changes nothing.
-             *     - `invalid_id`: the ID or an edge target is not a valid ID.
-             *     - `invalid_properties`: the resulting properties don't fit the type.
+             *     - `validation_error`: the body is malformed or changes nothing.
+             *     - `invalid_id`: the ID or a target isn't valid.
+             *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
@@ -7479,7 +7479,7 @@ export interface operations {
                         version?: number;
                         /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                         tags?: string[];
-                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. */
+                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                         edges?: {
                             [key: string]: string[];
                         };
@@ -9981,9 +9981,8 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.
              *     - `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.
-             *     - `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.
-             *     - `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.
-             *     - `edge_cycle`: the edge would close a cycle.
+             *     - `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.
+             *     - `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.
              */
             400: {
                 headers: {
@@ -9997,7 +9996,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -10592,9 +10591,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.
-             *     - `validation_error`: the body moves both ends, the edge type can't move an end this way, or a property is invalid.
+             *     - `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.
              *     - `invalid_id`: `source_id` or `target_id` isn't a valid ID.
-             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge would break its edge type's rules.
+             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.
              */
             400: {
                 headers: {
@@ -10608,7 +10607,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -19603,7 +19602,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

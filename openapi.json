@@ -2399,7 +2399,7 @@
         ],
         "description": "One edge."
       },
-      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal": {
+      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2411,6 +2411,7 @@
                   "edge_constraint_violation",
                   "edge_cycle",
                   "invalid_id",
+                  "invalid_properties",
                   "missing_required_field",
                   "validation_error"
                 ],
@@ -2629,7 +2630,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePropertyDefinition"
             },
-            "description": "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it."
+            "description": "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list."
           },
           "reverse_name": {
             "type": "string",
@@ -2673,7 +2674,7 @@
           },
           "required": {
             "type": "boolean",
-            "description": "`true` if every edge of the type should have the property."
+            "description": "`true` if every edge of the type must have the property."
           },
           "enum_values": {
             "type": "array",
@@ -2688,7 +2689,7 @@
           },
           "format": {
             "type": "string",
-            "description": "A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail."
+            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`."
           }
         },
         "required": [
@@ -2860,7 +2861,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePropertyDefinition"
             },
-            "description": "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. Leave it out for none."
+            "description": "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. Leave it out for none."
           },
           "reverse_name": {
             "type": "string",
@@ -7326,7 +7327,7 @@
                         "type": "string"
                       }
                     },
-                    "description": "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none."
+                    "description": "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                   }
                 },
                 "required": [
@@ -7398,7 +7399,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+            "description": "- `validation_error`: a field is invalid.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9104,7 +9105,7 @@
                         "type": "string"
                       }
                     },
-                    "description": "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched."
+                    "description": "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                   }
                 },
                 "required": [
@@ -9182,7 +9183,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed or changes nothing.\n- `invalid_id`: the ID or a target isn't valid.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13334,7 +13335,7 @@
                               "type": "string"
                             }
                           },
-                          "description": "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched."
+                          "description": "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                         }
                       },
                       "required": [
@@ -18470,11 +18471,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.\n- `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.\n- `edge_cycle`: the edge would close a cycle.",
+            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -19287,11 +19288,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`: the body moves both ends, the edge type can't move an end this way, or a property is invalid.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge would break its edge type's rules.",
+            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -37871,7 +37872,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
             "content": {
               "application/json": {
                 "schema": {

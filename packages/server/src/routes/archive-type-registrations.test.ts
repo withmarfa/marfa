@@ -444,6 +444,93 @@ describe("archives carry type registrations", () => {
     expect(second.types_skipped).toBe(1);
   });
 
+  it("re-restores an edge type stored before registration normalized its properties, as the same registration", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+    const id = `user.stored-${uniqueSuffix()}`;
+    // The shape a registration made before properties were normalized left
+    // in the table: a format on a string and a `required: false`.
+    const stored = {
+      id,
+      cardinality: "many-to-many" as const,
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+      cascade_on_delete: "orphan" as const,
+      property_schema: {
+        contact: { type: "string" as const, format: "email" as const },
+        rank: { type: "number" as const, required: false },
+      },
+      written_at: "source" as const,
+    };
+    await source.storage.edgeTypes.create(stored);
+    await destination.storage.edgeTypes.create(stored);
+    const archive = await exportArchive(source);
+
+    const again = await restore(destination, archive);
+    expect(again.status, await again.clone().text()).toBe(200);
+    expect(await again.json()).toMatchObject({
+      edge_types_registered: 0,
+      edge_types_skipped: 1,
+    });
+    expect(
+      (await destination.storage.edgeTypes.get(id))?.property_schema,
+      "the stored row is compared in its normalized form and left as it was",
+    ).toEqual(stored.property_schema);
+  });
+
+  it("restores an edge type's string property with a format as the type of that format, and refuses a format that does not suit its property", async () => {
+    const source = await newContext();
+    await itemWrites(source.storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-ef",
+      source_id: "ef1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const withProperty = async (property: Record<string, string>) => {
+      const id = `user.format-${uniqueSuffix()}`;
+      const archive = await repack(entries, {
+        "types.ndjson":
+          JSON.stringify({
+            edge_type: {
+              id,
+              cardinality: "many-to-many",
+              property_schema: { contact: property },
+            },
+          }) + "\n",
+      });
+      return { archive, id };
+    };
+
+    const collapsing = await newContext();
+    const fits = await withProperty({ type: "string", format: "email" });
+    const ok = await restore(collapsing, fits.archive);
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect(
+      (await collapsing.storage.edgeTypes.get(fits.id))?.property_schema,
+    ).toEqual({ contact: { type: "email" } });
+
+    const refusing = await newContext();
+    const misfit = await withProperty({ type: "number", format: "url" });
+    const refused = await restore(refusing, misfit.archive);
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as {
+      error: { code: string; details?: { errors?: { field: string }[] } };
+    };
+    expect(body.error.code).toBe("invalid_schema");
+    expect(body.error.details?.errors?.map((e) => e.field)).toEqual([
+      "property_schema.contact.format",
+    ]);
+    expect(await refusing.storage.edgeTypes.list()).toHaveLength(0);
+    expect(
+      (await refusing.storage.items.list({})).data.filter(
+        (item) => item.properties.body === "innocent",
+      ),
+      "the refusal wrote the archive's items",
+    ).toHaveLength(0);
+  });
+
   it("refuses an archive that redefines a type already registered", async () => {
     const source = await newContext();
     const destination = await newContext();

@@ -182,7 +182,7 @@ const BulkInputItemSchema = z.object({
     .record(z.string(), z.array(z.string()))
     .optional()
     .describe(
-      "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched.",
+      "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
     ),
 });
 

@@ -248,6 +248,87 @@ describe("the server resolves a conflict", () => {
     expect(orphaned.inbound).not.toContain(`${bookmarkParent.id}>parent-of`);
   });
 
+  it("gives the conflicted copy the original's edges, including one whose properties break the property_schema its type now declares", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const make = async (title: string) => {
+      const r = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { title, body: `${title} body` },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    // The edge type registered without a schema, an edge stored under it,
+    // and the type registered again with one the stored edge breaks.
+    const edgeType = `mock.copy-schema.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+    const original = await make("original");
+    const stale = await make("stale");
+    const fresh = await make("fresh");
+    const old = await client.createEdge({
+      source_id: original.id,
+      target_id: stale.id,
+      edge_type: edgeType,
+      properties: { weight: "heavy" },
+    });
+    expect(old.ok, JSON.stringify(old.error)).toBe(true);
+    trackEdge(ctx, old.data.edge.id);
+    expect((await client.deleteEdgeType(edgeType, true)).ok).toBe(true);
+    const again = await client.registerEdgeType({
+      id: edgeType,
+      cardinality: "many-to-many",
+      property_schema: { weight: { type: "number" } },
+    });
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    const fitting = await client.createEdge({
+      source_id: original.id,
+      target_id: fresh.id,
+      edge_type: edgeType,
+      properties: { weight: 2 },
+    });
+    expect(fitting.ok, JSON.stringify(fitting.error)).toBe(true);
+    trackEdge(ctx, fitting.data.edge.id);
+
+    const base = original.version;
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { body: "schema copy body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "schema copy body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const out = await client.listItemEdges(copy!, { edge_type: edgeType });
+    const byTarget = new Map(
+      out.data.data.map((e) => [e.target_id, e.properties]),
+    );
+    expect([...byTarget.keys()].sort()).toEqual([fresh.id, stale.id].sort());
+    expect(byTarget.get(stale.id)).toEqual({ weight: "heavy" });
+    expect(byTarget.get(fresh.id)).toEqual({ weight: 2 });
+  });
+
   it("gives the conflicted copy only the edges the original's own file writes, none that cascade or block", async () => {
     requireRule(caps, "serverSideMerge");
 
