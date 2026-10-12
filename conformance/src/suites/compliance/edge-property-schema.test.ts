@@ -157,15 +157,16 @@ describe("PATCH /edges/{id}", () => {
     return { id: r.data.edge.id, version: r.data.edge.version };
   }
 
-  it("refuses a wrong-typed value and a value outside an enum with 400 invalid_properties naming the property, and changes nothing", async () => {
+  it("refuses a patch that sets a value of the wrong type with 400 invalid_properties naming the property, and changes nothing", async () => {
     const edgeType = await register();
     const { id, version } = await held(edgeType);
-    for (const [what, properties, property] of BROKEN.slice(0, 2)) {
-      const r = await client.updateEdge(id, { version, properties });
-      expect(r.status, what).toBe(400);
-      expect(r.error?.error.code, what).toBe("invalid_properties");
-      expect(named(r.error?.error), what).toEqual([property]);
-    }
+    const r = await client.updateEdge(id, {
+      version,
+      properties: { weight: "heavy" },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_properties");
+    expect(named(r.error?.error)).toEqual(["weight"]);
     const after = await client.getEdge(id);
     expect(after.data.edge.version).toBe(version);
     expect(after.data.edge.properties).toEqual({ label: "kept", weight: 1 });
@@ -173,15 +174,36 @@ describe("PATCH /edges/{id}", () => {
     // The witness: a fitting patch is applied and the other properties stand.
     const ok = await client.updateEdge(id, {
       version,
-      properties: { status: "done", undeclared: true },
+      properties: { weight: 2, undeclared: true },
     });
     expect(ok.status, JSON.stringify(ok.error)).toBe(200);
     expect(ok.data.edge.properties).toEqual({
       label: "kept",
-      weight: 1,
-      status: "done",
+      weight: 2,
       undeclared: true,
     });
+  });
+
+  it("refuses a patch that sets a value outside an enum with 400 invalid_properties naming the property, and changes nothing", async () => {
+    const edgeType = await register();
+    const { id, version } = await held(edgeType);
+    const r = await client.updateEdge(id, {
+      version,
+      properties: { status: "stuck" },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_properties");
+    expect(named(r.error?.error)).toEqual(["status"]);
+    const after = await client.getEdge(id);
+    expect(after.data.edge.version).toBe(version);
+    expect(after.data.edge.properties).toEqual({ label: "kept", weight: 1 });
+
+    const ok = await client.updateEdge(id, {
+      version,
+      properties: { status: "done" },
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(200);
+    expect(ok.data.edge.properties).toMatchObject({ status: "done" });
   });
 
   it("refuses a patch that leaves a required property missing, judged on the merged result", async () => {
@@ -476,5 +498,119 @@ describe("the shipped edge types", () => {
     });
     expect(ok.status, JSON.stringify(ok.error)).toBe(201);
     trackEdge(ctx, ok.data.edge.id);
+  });
+});
+
+describe("null and format", () => {
+  it("keeps a null on an optional declared property as sent and refuses one on a required property", async () => {
+    const edgeType = await register();
+    const source = await note();
+    const made = await client.createEdge({
+      source_id: source,
+      target_id: await note(),
+      edge_type: edgeType,
+      properties: { label: "a", weight: null },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackEdge(ctx, made.data.edge.id);
+    expect(made.data.edge.properties).toEqual({ label: "a", weight: null });
+
+    const patched = await client.updateEdge(made.data.edge.id, {
+      version: made.data.edge.version,
+      properties: { status: null },
+    });
+    expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    expect(patched.data.edge.properties).toEqual({
+      label: "a",
+      weight: null,
+      status: null,
+    });
+
+    const refused = await client.createEdge({
+      source_id: source,
+      target_id: await note(),
+      edge_type: edgeType,
+      properties: { label: null },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(named(refused.error?.error)).toEqual(["label"]);
+  });
+
+  const FORMATS: [string, string, string][] = [
+    ["email", "not an address", "a@example.com"],
+    ["url", "not a url", "https://example.com/a"],
+    ["date", "2026-02-30", "2026-02-28"],
+    ["datetime", "2026-02-28 10:00", "2026-02-28T10:00:00Z"],
+  ];
+
+  it("registers a string property with a format as the type of that format, and judges its values on every edge write", async () => {
+    const property_schema = Object.fromEntries(
+      FORMATS.map(([format]) => [format, { type: "string", format }]),
+    );
+    const edgeType = await register(property_schema);
+    const listed = await client.listEdgeTypes();
+    const registered = listed.data.data.find((t) => t.id === edgeType);
+    expect(registered?.property_schema).toEqual(
+      Object.fromEntries(FORMATS.map(([format]) => [format, { type: format }])),
+    );
+
+    const source = await note();
+    const target = await note();
+    for (const [format, bad] of FORMATS) {
+      const refused = await client.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: edgeType,
+        properties: { [format]: bad },
+      });
+      expect(refused.status, format).toBe(400);
+      expect(refused.error?.error.code, format).toBe("invalid_properties");
+      expect(named(refused.error?.error), format).toEqual([format]);
+    }
+    const ok = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+      properties: Object.fromEntries(FORMATS.map(([f, , good]) => [f, good])),
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+    trackEdge(ctx, ok.data.edge.id);
+
+    const patched = await client.updateEdge(ok.data.edge.id, {
+      version: ok.data.edge.version,
+      properties: { email: "not an address" },
+    });
+    expect(patched.status).toBe(400);
+    expect(named(patched.error?.error)).toEqual(["email"]);
+    const bulk = await client.bulkEdges({
+      atomic: false,
+      edges: [
+        {
+          source_id: source,
+          target_id: await note(),
+          edge_type: edgeType,
+          properties: { url: "not a url" },
+        },
+      ],
+    });
+    expect(bulk.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+  });
+
+  it("refuses a registration that puts a format on a property it does not suit, naming the property", async () => {
+    const r = await client.registerEdgeType({
+      id: `mock.propschema.badformat.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { size: { type: "number", format: "email" } },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_schema");
+    const paths = (
+      r.error?.error.details as { errors?: { field: string }[] } | undefined
+    )?.errors?.map((e) => e.field);
+    expect(paths).toEqual(["property_schema.size.format"]);
   });
 });

@@ -716,7 +716,7 @@ describe("what a restore answers", () => {
     await expectMatchesSchema("POST", "/restore", 200, again.data);
   });
 
-  it("skips an archived edge whose properties break its edge type's property_schema, counted as invalid_properties, and restores the one that fits", async () => {
+  it("restores an archived edge whose properties break its edge type's property_schema, and counts it as imported", async () => {
     const edgeTypeId = `restoreschema.${ctx.runId}`;
     trackEdgeType(ctx, edgeTypeId);
     const [a, b, c] = [uuidv7(), uuidv7(), uuidv7()];
@@ -766,12 +766,14 @@ describe("what a restore answers", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data).toMatchObject({
       imported: 3,
-      edges_imported: 1,
-      edges_skipped: 2,
-      edges_skipped_reasons: { invalid_properties: 1, endpoint_missing: 1 },
+      edges_imported: 2,
+      edges_skipped: 1,
+      edges_skipped_reasons: { endpoint_missing: 1 },
     });
     expect((await client.getEdge(fits)).status).toBe(200);
-    expect((await client.getEdge(wrongType)).status).toBe(404);
+    const kept = await client.getEdge(wrongType);
+    expect(kept.status).toBe(200);
+    expect(kept.data.edge.properties).toEqual({ label: "x", weight: "heavy" });
   });
 
   it("refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing", async () => {

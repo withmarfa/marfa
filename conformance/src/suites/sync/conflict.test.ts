@@ -248,7 +248,7 @@ describe("the server resolves a conflict", () => {
     expect(orphaned.inbound).not.toContain(`${bookmarkParent.id}>parent-of`);
   });
 
-  it("gives the conflicted copy no edge whose properties break the property_schema its type now declares", async () => {
+  it("gives the conflicted copy the original's edges, including one whose properties break the property_schema its type now declares", async () => {
     requireRule(caps, "serverSideMerge");
 
     const make = async (title: string) => {
@@ -321,10 +321,12 @@ describe("the server resolves a conflict", () => {
     expect(copy).toBeTruthy();
 
     const out = await client.listItemEdges(copy!, { edge_type: edgeType });
-    expect(out.data.data.map((e) => e.target_id)).toEqual([fresh.id]);
-    // The edge the copy was not given is still the original's, as it was.
-    const kept = await client.getEdge(old.data.edge.id);
-    expect(kept.data.edge.properties).toEqual({ weight: "heavy" });
+    const byTarget = new Map(
+      out.data.data.map((e) => [e.target_id, e.properties]),
+    );
+    expect([...byTarget.keys()].sort()).toEqual([fresh.id, stale.id].sort());
+    expect(byTarget.get(stale.id)).toEqual({ weight: "heavy" });
+    expect(byTarget.get(fresh.id)).toEqual({ weight: 2 });
   });
 
   it("gives the conflicted copy only the edges the original's own file writes, none that cascade or block", async () => {
