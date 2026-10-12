@@ -28,6 +28,7 @@ import {
 } from "../../device/marfa-answers.js";
 import type { SseFrame } from "../../device/scripted-server.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
+import { byteDifference } from "../../utils/bytes.js";
 import {
   folderHarness,
   hashOf,
@@ -675,13 +676,15 @@ describe("folder credential and upload boundaries", () => {
       (request) => request.pathname === "/blobs" && request.method === "POST",
     );
     expect(uploads).toHaveLength(1);
-    expect(uploads[0].raw).toEqual(bytes);
+    expect(byteDifference(uploads[0].raw, bytes)).toBeNull();
     expect(
       pushed.value.drain.verdicts.some(
         (verdict) => verdict.verdict === "refused",
       ),
     ).toBe(true);
-    expect(readFileSync(join(folder!.dir, "large.bin"))).toEqual(bytes);
+    expect(
+      byteDifference(readFileSync(join(folder!.dir, "large.bin")), bytes),
+    ).toBeNull();
   });
 });
 
