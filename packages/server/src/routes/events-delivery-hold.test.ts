@@ -45,8 +45,8 @@ import {
  * How the stream's next credential read behaves. `pass` is the real read;
  * `hold` waits on the gate before the real read, and `held` settles the
  * moment it is waiting, which is the observation that the send is
- * outstanding; `reject` fails it. Only the first read after a mode is set
- * is affected, so a test can shape one send and leave the rest real.
+ * outstanding; `reject` fails it. `skip` selects a later read after the
+ * mode is set, so a test can shape one send and leave the rest real.
  */
 const nextRead = vi.hoisted(() => {
   let release: () => void = () => undefined;

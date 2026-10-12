@@ -629,7 +629,7 @@ When a replay has sent or legitimately withheld a readable logged event, the ser
 
 **Reason:** replay has settled the row, and a later widening cannot revive it behind a higher delivered cursor; `events/unreadable-row-live-copy` still governs rows the replay could not classify.
 
-**Tests:** `sync/authority-consumption.test.ts › does not revive a replay-withheld row after widening, while new events of its type arrive`.
+**Tests:** waiting on #1444.
 
 ### `events/credential-narrowed`
 

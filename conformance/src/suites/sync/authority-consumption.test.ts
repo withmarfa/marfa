@@ -48,7 +48,7 @@ function itemId(event: SseEvent): string | undefined {
 }
 
 describe("replay authority consumption", () => {
-  it("does not revive a replay-withheld row after widening, while new events of its type arrive", async (context) => {
+  it("filters replay under current authority and delivers future events after widening", async (context) => {
     const minted = await client.createKey({
       label: "Replay authority viewer",
       source: `${ctx.source}-viewer`,
@@ -69,6 +69,24 @@ describe("replay authority consumption", () => {
     );
     const withheld = await item("core.task", "authority-withheld");
     const higher = await item("core.note", "authority-higher");
+    // The same backlog under a wider key is the witness that the task
+    // is replayable before its absence is attributed to narrow authority.
+    const witness = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: eventId },
+      (stream) =>
+        collectUntil(
+          stream,
+          (events) => events.some((event) => event.event === "stream_live"),
+          "the wider replay's live marker",
+          context.signal,
+        ),
+    );
+    expect(witness.events.some((event) => itemId(event) === withheld)).toBe(
+      true,
+    );
+
     await withStream(
       apiUrl,
       minted.data.key,

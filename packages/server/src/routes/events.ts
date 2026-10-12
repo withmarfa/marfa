@@ -627,8 +627,8 @@ export function eventRoutes(
               /**
                * What this stream may show, as the credential stands now.
                *
-               * Read again before each batch of frames is delivered and at each
-               * heartbeat, through the resolver every long-lived piece of work
+               * Read again before each batch, after a backpressure wait, and at
+               * each heartbeat, through the resolver every long-lived piece of work
                * shares, because the stream outlives the request that opened it:
                * a key revoked, narrowed or expired, a sign-in's token revoked or
                * expired, or an app disconnected would otherwise go on being
@@ -1174,11 +1174,14 @@ export function eventRoutes(
                       // release a hold for.
                       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                       if (state.closed) return false;
-                      // Room first, then the row is judged and sent with
-                      // nothing between: a wait between the two would let a
-                      // heartbeat narrow the credential after the row was
-                      // judged under the wider one.
-                      if (!(await paced("a replay"))) return false;
+                      // Room first, then fresh authority after any wait.
+                      // With room already available, consume synchronously
+                      // under the page's authority instead of yielding before
+                      // a decision that could settle the row under stale reach.
+                      if (!hasRoom()) {
+                        if (!(await paced("a replay"))) return false;
+                        if (!(await refreshReach())) return false;
+                      }
                       const isEdge = event.edge_id !== null;
                       // The same rule the live path applies, and the
                       // reason it is written as one: an edge carries no
@@ -1268,8 +1271,8 @@ export function eventRoutes(
                       // withheld: a row that cannot be measured against the
                       // maps cannot be proved readable, and a filter that
                       // cannot classify a row has no business handing it
-                      // over. A row naming no source type is withheld by the
-                      // gate itself, for the same reason.
+                      // over. A missing source type is also unclassifiable,
+                      // so that row keeps the same live-carrier exception.
                       if (isEdge) {
                         const stored = replayEdges.get(event.id);
                         if (stored?.sourceType === undefined) {
@@ -1380,7 +1383,12 @@ export function eventRoutes(
                       }
                       // A replay may have left the reader's queue full, and
                       // these frames wait for it as the replay's rows did.
-                      if (!(await paced("the opening's release"))) return;
+                      // That wait can outlive a credential change, so reread
+                      // authority before settling or delivering the candidate.
+                      if (!hasRoom()) {
+                        if (!(await paced("the opening's release"))) return;
+                        if (!(await refreshReach())) return;
+                      }
                       sendFrame(frame);
                       if (eventId !== undefined) {
                         unreadable.delete(eventId);
