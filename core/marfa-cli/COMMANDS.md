@@ -16,6 +16,12 @@ Every command accepts these.
 | `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. |
 | `--json` | Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning, which is one plain line. |
 
+`marfa` itself also accepts these.
+
+| Option | Description |
+| --- | --- |
+| `-V, --version` | Print version. |
+
 ## Exit codes
 
 | Code | Meaning |

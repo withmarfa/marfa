@@ -37,11 +37,20 @@ pub fn render() -> String {
     )
     .unwrap();
     out.push_str("# Command reference\n\n");
+    modeled(&root, root.get_name());
     write_blocks(&mut out, &description(&root));
 
-    let globals: Vec<&Arg> = shown(&root).filter(|arg| arg.is_global_set()).collect();
+    let (globals, own): (Vec<&Arg>, Vec<&Arg>) = shown(&root).partition(|arg| arg.is_global_set());
+    assert!(
+        own.iter().all(|arg| !arg.is_positional()),
+        "the root takes an argument, which the reference does not show"
+    );
     out.push_str("## Global options\n\nEvery command accepts these.\n\n");
     table(&mut out, "Option", &globals);
+    if !own.is_empty() {
+        writeln!(out, "`{}` itself also accepts these.\n", root.get_name()).unwrap();
+        table(&mut out, "Option", &own);
+    }
     out.push_str("## Exit codes\n\n");
     exit_codes(&mut out);
 
@@ -65,12 +74,13 @@ pub fn render() -> String {
 /// usage, its arguments and options, and its notes, then its subcommands.
 fn section(out: &mut String, command: &Command, path: &str, said: &[Block], above: &[Inherited]) {
     writeln!(out, "### {path}\n").unwrap();
+    modeled(command, path);
     let description = description(command);
     write_blocks(out, description.strip_prefix(said).unwrap_or(&description));
     usage(out, command);
 
     let (from_above, own): (Vec<&Arg>, Vec<&Arg>) =
-        shown(command).partition(|arg| above.iter().any(|item| item.id == arg.get_id().as_str()));
+        shown(command).partition(|arg| above.iter().any(|item| item.is(arg)));
     let positionals: Vec<&Arg> = own
         .iter()
         .copied()
@@ -99,7 +109,7 @@ fn section(out: &mut String, command: &Command, path: &str, said: &[Block], abov
     for arg in &from_above {
         let Some(owner) = above
             .iter()
-            .find(|item| item.id == arg.get_id().as_str())
+            .find(|item| item.is(arg))
             .and_then(|item| item.owner.as_deref())
         else {
             continue;
@@ -142,6 +152,7 @@ fn section(out: &mut String, command: &Command, path: &str, said: &[Block], abov
 #[derive(Clone)]
 struct Inherited {
     id: String,
+    row: String,
     owner: Option<String>,
 }
 
@@ -149,8 +160,58 @@ impl Inherited {
     fn new(arg: &Arg, owner: Option<&str>) -> Self {
         Self {
             id: arg.get_id().as_str().to_owned(),
+            row: row(arg),
             owner: owner.map(str::to_owned),
         }
+    }
+
+    /// Whether `arg` is this option as clap passed it down. Clap passes none
+    /// to a command with an argument of the same id, which is then the
+    /// command's own, and so is a global it declares itself.
+    fn is(&self, arg: &Arg) -> bool {
+        arg.is_global_set() && self.id == arg.get_id().as_str() && self.row == row(arg)
+    }
+}
+
+/// Refuses what `--help` shows and the reference does not, so its first use
+/// fails the test instead of going missing from the file.
+fn modeled(command: &Command, path: &str) {
+    assert!(
+        command.get_visible_aliases().next().is_none()
+            && command.get_visible_short_flag_aliases().next().is_none()
+            && command.get_visible_long_flag_aliases().next().is_none(),
+        "`{path}` has a visible alias, which the reference does not show"
+    );
+    assert!(
+        command.get_short_flag().is_none() && command.get_long_flag().is_none(),
+        "`{path}` has a flag of its own, which the reference does not show"
+    );
+    assert!(
+        command.get_before_help().is_none() && command.get_before_long_help().is_none(),
+        "`{path}` has help before its usage, which the reference does not show"
+    );
+    for arg in shown(command) {
+        let flag = match (arg.get_long(), arg.get_short()) {
+            (Some(long), _) => format!("--{long}"),
+            (None, Some(short)) => format!("-{short}"),
+            (None, None) => arg.to_string(),
+        };
+        assert!(
+            arg.is_hide_possible_values_set()
+                || arg
+                    .get_possible_values()
+                    .iter()
+                    .all(|value| value.is_hide_set() || value.get_help().is_none()),
+            "`{path} {flag}` names a value with help of its own, which the reference does not show"
+        );
+        assert!(
+            arg.get_visible_aliases()
+                .is_none_or(|aliases| aliases.is_empty())
+                && arg
+                    .get_visible_short_aliases()
+                    .is_none_or(|aliases| aliases.is_empty()),
+            "`{path} {flag}` has a visible alias, which the reference does not show"
+        );
     }
 }
 
@@ -189,15 +250,13 @@ fn usage(out: &mut String, command: &Command) {
 fn table(out: &mut String, label: &str, args: &[&Arg]) {
     writeln!(out, "| {label} | Description |\n| --- | --- |").unwrap();
     for arg in args {
-        writeln!(
-            out,
-            "| `{}` | {} |",
-            cell(&name(arg)),
-            cell(&explained(arg))
-        )
-        .unwrap();
+        writeln!(out, "{}", row(arg)).unwrap();
     }
     out.push('\n');
+}
+
+fn row(arg: &Arg) -> String {
+    format!("| `{}` | {} |", cell(&name(arg)), cell(&explained(arg)))
 }
 
 /// The argument as `--help` names it: `<ID>`, `--name <NAME>`, `-n, --name <NAME>`.
@@ -270,7 +329,7 @@ fn headings<'a>(args: &[&'a Arg]) -> Vec<(&'a str, Vec<&'a Arg>)> {
     groups
 }
 
-/// The arguments the long help shows, in its order, without `--help` and `--version`.
+/// The arguments the long help shows, in its order, without `--help`.
 fn shown(command: &Command) -> impl Iterator<Item = &Arg> {
     let mut args: Vec<&Arg> = command
         .get_arguments()
@@ -278,7 +337,7 @@ fn shown(command: &Command) -> impl Iterator<Item = &Arg> {
         .filter(|arg| {
             !matches!(
                 arg.get_action(),
-                ArgAction::Help | ArgAction::HelpShort | ArgAction::HelpLong | ArgAction::Version
+                ArgAction::Help | ArgAction::HelpShort | ArgAction::HelpLong
             )
         })
         .collect();
@@ -446,21 +505,14 @@ mod tests {
         );
     }
 
-    /// Each heading of the reference with the long flags its tables list.
-    fn flags_by_heading(reference: &str) -> Vec<(&str, Vec<&str>)> {
+    /// Each heading of the reference with the table rows under it.
+    fn rows_by_heading(reference: &str) -> Vec<(&str, Vec<&str>)> {
         let mut sections: Vec<(&str, Vec<&str>)> = Vec::new();
         for line in reference.lines() {
             if line.starts_with('#') {
                 sections.push((line, Vec::new()));
-            } else if let (Some(row), Some((_, flags))) =
-                (line.strip_prefix("| `"), sections.last_mut())
-            {
-                let first_cell = row.split('`').next().unwrap_or_default();
-                flags.extend(
-                    first_cell
-                        .split([' ', ','])
-                        .filter(|word| word.starts_with("--")),
-                );
+            } else if let (true, Some((_, rows))) = (line.starts_with("| `"), sections.last_mut()) {
+                rows.push(line);
             }
         }
         sections
@@ -469,31 +521,42 @@ mod tests {
     #[test]
     fn the_global_options_are_listed_once_and_in_no_command() {
         let reference = render();
-        let sections = flags_by_heading(&reference);
-        let globals: Vec<String> = Cli::command()
+        let sections = rows_by_heading(&reference);
+        let mut root = Cli::command();
+        root.build();
+        let globals: Vec<String> = root
             .get_arguments()
             .filter(|arg| arg.is_global_set())
-            .map(|arg| format!("--{}", arg.get_long().expect("a global option is a flag")))
+            .map(row)
             .collect();
-        assert!(globals.contains(&"--url".to_owned()), "{globals:?}");
+        assert!(
+            globals.iter().any(|row| row.starts_with("| `--url ")),
+            "{globals:?}"
+        );
 
         let listed = sections
             .iter()
             .find(|(heading, _)| *heading == "## Global options")
-            .map(|(_, flags)| flags.clone())
+            .map(|(_, rows)| rows.clone())
             .expect("a global options section");
-        assert_eq!(
-            listed, globals,
-            "the global options section lists the root's globals"
+        for global in &globals {
+            assert!(
+                listed.contains(&global.as_str()),
+                "## Global options lacks {global}"
+            );
+        }
+        assert!(
+            listed
+                .iter()
+                .any(|row| row.starts_with("| `-V, --version` |")),
+            "the root's own -V, --version is listed: {listed:?}"
         );
 
-        let mut root = Cli::command();
-        root.build();
         let items = root.find_subcommand("items").expect("an items command");
         assert!(
             items
                 .get_arguments()
-                .any(|arg| arg.get_long() == Some("url")),
+                .any(|arg| arg.is_global_set() && globals.contains(&row(arg))),
             "a command carries the root's globals for its help"
         );
         assert!(
@@ -506,15 +569,159 @@ mod tests {
             .iter()
             .filter(|(heading, _)| heading.starts_with("### "))
             .collect();
-        assert!(commands.iter().any(|(_, flags)| !flags.is_empty()));
-        for (heading, flags) in commands {
-            for flag in flags {
+        assert!(commands.iter().any(|(_, rows)| !rows.is_empty()));
+        for (heading, rows) in commands {
+            for line in rows {
                 assert!(
-                    !globals.iter().any(|global| global == flag) && *flag != "--help",
-                    "{heading} lists {flag}"
+                    !globals.iter().any(|global| global == line)
+                        && !line.starts_with("| `-h, --help` |"),
+                    "{heading} lists {line}"
                 );
             }
         }
+    }
+
+    /// The sections of every command below the root of `root`, as `render`
+    /// writes them.
+    fn sections(mut root: Command) -> String {
+        root.build();
+        let above: Vec<Inherited> = shown(&root)
+            .filter(|arg| arg.is_global_set())
+            .map(|arg| Inherited::new(arg, None))
+            .collect();
+        let mut out = String::new();
+        for area in visible(&root) {
+            let path = format!("{} {}", root.get_name(), area.get_name());
+            section(&mut out, area, &path, &[], &above);
+        }
+        out
+    }
+
+    fn sample(local: Command) -> Command {
+        Command::new("x")
+            .arg(
+                Arg::new("key")
+                    .long("key")
+                    .global(true)
+                    .value_name("KEY")
+                    .help("The key every command sends"),
+            )
+            .subcommand(Command::new("plain").about("Takes only the globals"))
+            .subcommand(local)
+    }
+
+    /// The section under `### {heading}` in `out`.
+    fn section_of<'a>(out: &'a str, heading: &str) -> &'a str {
+        let start = out
+            .find(&format!("### {heading}\n"))
+            .unwrap_or_else(|| panic!("no section {heading} in {out}"));
+        let rest = &out[start + 4..];
+        &out[start..start + 4 + rest.find("\n### ").unwrap_or(rest.len())]
+    }
+
+    #[test]
+    fn an_option_of_a_commands_own_is_listed_though_it_shares_a_globals_id() {
+        let out = sections(
+            sample(
+                Command::new("own").arg(
+                    Arg::new("key")
+                        .long("key")
+                        .value_name("NAME")
+                        .help("The name this command looks up"),
+                ),
+            )
+            .subcommand(
+                Command::new("nested")
+                    .arg(
+                        Arg::new("key")
+                            .long("key")
+                            .global(true)
+                            .value_name("TOKEN")
+                            .help("The token every nested command sends"),
+                    )
+                    .subcommand(Command::new("leaf")),
+            ),
+        );
+        assert!(
+            !section_of(&out, "x plain").contains("--key"),
+            "the root's global is left to the global options: {out}"
+        );
+        assert!(
+            section_of(&out, "x own")
+                .contains("| `--key <NAME>` | The name this command looks up. |"),
+            "{out}"
+        );
+        assert!(
+            section_of(&out, "x nested")
+                .contains("| `--key <TOKEN>` | The token every nested command sends. |"),
+            "{out}"
+        );
+        assert!(
+            section_of(&out, "x nested leaf")
+                .contains("Also accepts the options of `x nested`: `--key <TOKEN>`."),
+            "{out}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own --tier` names a value with help of its own")]
+    fn a_possible_value_with_help_is_refused() {
+        sections(sample(Command::new("own").arg(
+            Arg::new("tier").long("tier").value_parser([
+                clap::builder::PossibleValue::new("library").help("Kept"),
+                clap::builder::PossibleValue::new("feed"),
+            ]),
+        )));
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own --name` has a visible alias")]
+    fn an_options_visible_alias_is_refused() {
+        sections(sample(
+            Command::new("own").arg(Arg::new("name").long("name").visible_alias("title")),
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own -n` has a visible alias")]
+    fn an_options_visible_short_alias_is_refused() {
+        sections(sample(
+            Command::new("own").arg(Arg::new("name").short('n').visible_short_alias('t')),
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own` has a visible alias")]
+    fn a_commands_visible_alias_is_refused() {
+        sections(sample(Command::new("own").visible_alias("mine")));
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own` has a flag of its own")]
+    fn a_commands_flag_is_refused() {
+        sections(sample(Command::new("own").long_flag("own")));
+    }
+
+    #[test]
+    #[should_panic(expected = "`x own` has help before its usage")]
+    fn help_before_the_usage_is_refused() {
+        sections(sample(Command::new("own").before_help("Read this first.")));
+    }
+
+    #[test]
+    fn a_command_with_none_of_those_renders() {
+        let out = sections(sample(
+            Command::new("own").arg(
+                Arg::new("name")
+                    .long("name")
+                    .alias("title")
+                    .value_parser(["a", "b"]),
+            ),
+        ));
+        assert!(
+            section_of(&out, "x own").contains("| `--name <name>` | One of `a`, `b`. |"),
+            "{out}"
+        );
     }
 
     /// Each `<`, `>`, `{` or `}` outside a code span or a fenced block, which
