@@ -1321,7 +1321,7 @@ const settingsShape = {
   MARFA_OTEL_SAMPLE_RATIO: setting(
     decimal(0, 1),
     () => 0.05,
-    "The share of traces exported. Traces that contain an error are exported whatever this says.",
+    "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
   ),
   OTEL_SERVICE_NAME: setting(
     text,
