@@ -207,33 +207,6 @@ const MAX_TYPE_FILTER_ENTRIES = 10;
 const EDGE_MODES = ["all", "none"] as const;
 type EdgeMode = (typeof EDGE_MODES)[number];
 /**
- * How many replayed ids one catch-up remembers, so a live event already
- * on its way to this client is not also sent by the replay.
- *
- * **Derived, and not a function of the backlog.** An id can be delivered
- * twice only if the replay sent it AND the live subscription buffered
- * it, and an event is buffered only when it was emitted after this
- * connection subscribed. The ids at risk are therefore exactly those
- * published while the replay was running, and they always sit at the top
- * of the replayed range. The replay walks that range one
- * `REPLAY_BATCH_SIZE` at a time and already holds a batch of rows in
- * memory, so remembering one batch of ids covers every collision unless
- * more than that many events both committed during the replay and were
- * read by it — and it costs the same order as the read it accompanies.
- *
- * A hundred thousand replayed rows still cost five hundred remembered
- * ids: the backlog is not what this window measures, so raising it buys
- * nothing against a long one. Lowering it starts re-sending events a
- * fast writer produced mid-catch-up.
- *
- * Sufficient, precisely, whenever fewer than a batch of further rows are
- * sent after a buffered event's id is recorded. Past that boundary the
- * guarantee degrades to a second copy rather than to a drop, which is
- * what lets the number be a judgment instead of a proof.
- */
-const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
-
-/**
  * The wire name of the frame saying the stream stopped delivering.
  *
  * A stream that cannot deliver what it promised says so and closes. It
@@ -259,46 +232,13 @@ const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
 const STREAM_INCOMPLETE_EVENT = "stream_incomplete";
 
 /**
- * Most live frames one connection holds while its prologue runs.
+ * Most immutable-filter candidates held while a stream opens.
  *
- * **A memory bound, held to the dedupe window.** The hold lasts only as
- * long as the prologue, one head read plus a replay when the client sent
- * a cursor, and the buffer grows as the product of the instance's write
- * rate and that duration. The prologue does not get faster because the
- * buffer got bigger, so past some size holding more only defers the same
- * answer at a higher cost. The job of the number is to sit above what an
- * ordinary prologue on a busy instance reaches and below what would
- * matter if a pathological one did not stop.
- *
- * It is no larger than `REPLAY_DEDUPE_WINDOW`, and that is a constraint
- * rather than a coincidence. A held frame was published after the
- * subscription attached, so every row the replay sends after it was
- * published after it too and is held beside it; while the hold is under
- * the cap, fewer rows than the window have been sent past any held frame,
- * so the frame's id is still inside the window when the release asks
- * whether the replay already sent it. A cap above the window would let
- * the window move past a held frame, and the release would send that
- * frame a second time. `releaseHold` relies on this.
- *
- * **What it costs at the boundary, stated because it is a real cost.**
- * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge: past it a
- * client receives a second copy carrying an id it already absorbed. This
- * one does not degrade: at the cap the stream terminates where nothing
- * worse than a duplicate would otherwise have happened, unless a replay is
- * reading, which takes the held frames over (`holdFrame` says how). That is the
- * deliberate trade, a bounded, announced, resumable termination in place
- * of a buffer with no ceiling, and it is worth knowing it is a trade.
- *
- * **What it costs per holding viewer.** A held frame is a two-field
- * wrapper around the event object the emitter broadcast, the same object
- * every other subscriber received rather than a copy, so the marginal
- * cost is the wrappers, and the retained cost is keeping up to this many
- * already-published events alive until the prologue ends. The viewer
- * ceiling bounds how many connections can be holding at once; this bounds
- * the frames each one accumulates. A replay that takes the hold over keeps
- * only the ids of what it took, until it reads past them.
+ * Mutable authority is decided when replay or drain consumes a candidate.
+ * At the cap, a running replay takes over candidates that the log can serve;
+ * otherwise the stream ends with a resumable, explicit overflow.
  */
-const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
+const MAX_HELD_FRAMES = REPLAY_BATCH_SIZE;
 
 /** A live frame published while the stream was still holding delivery. */
 type HeldFrame = LiveFrame;
@@ -687,8 +627,8 @@ export function eventRoutes(
               /**
                * What this stream may show, as the credential stands now.
                *
-               * Read again before each batch of frames is delivered and at each
-               * heartbeat, through the resolver every long-lived piece of work
+               * Read again before each batch, after a backpressure wait, and at
+               * each heartbeat, through the resolver every long-lived piece of work
                * shares, because the stream outlives the request that opened it:
                * a key revoked, narrowed or expired, a sign-in's token revoked or
                * expired, or an app disconnected would otherwise go on being
@@ -744,14 +684,10 @@ export function eventRoutes(
                * would otherwise overtake.
                */
               let holding = true;
-              /**
-               * Ids this connection's replay actually sent, so a live event
-               * already on its way to this client is not delivered twice.
-               *
-               * Empty when there is no replay, which suppresses nothing —
-               * exactly right, since nothing has been sent to duplicate.
-               */
-              const replayedIds = new Set<bigint>();
+              /** Rows replay evaluated, including legitimate withholding. */
+              let replayReadThrough: bigint | null = null;
+              /** Candidates consumed by the final drain, including withholding. */
+              let drainedThrough: bigint | null = null;
               /**
                * The last `id:` this stream wrote, which is the cursor the
                * client is holding.
@@ -798,15 +734,7 @@ export function eventRoutes(
                 signal: subscriptionAbort.signal,
               })[Symbol.asyncIterator]();
 
-              /**
-               * Whether an item frame survives the caller's type projection, as
-               * the credential stands at the last read of it.
-               *
-               * Named because it is asked twice — once before a frame is held
-               * and again when it is released — and those two must be the same
-               * question. A credential narrowed between the two answers the
-               * narrower one at release, which is the one that decides.
-               */
+              /** Current authority, applied only when a candidate is consumed. */
               const itemPassesProjection = (event: ItemEventWithId): boolean =>
                 matchesTypeFilter(event.item.type, reach.typeFilter);
 
@@ -974,6 +902,7 @@ export function eventRoutes(
                * emitter listeners, and close the response body.
                */
               const endStream = (): void => {
+                unreadable.clear();
                 const wasOpen = !state.closed;
                 cleanup();
                 void frames.return(undefined);
@@ -1036,64 +965,25 @@ export function eventRoutes(
               const unreadable = new Set<bigint>();
 
               /**
-               * Hold one live frame until the prologue is done with it.
+               * Keep candidates selected by immutable request filters.
                *
-               * The cap is enforced here, beside the buffer it bounds, so a
-               * frame of either kind meets the one rule.
+               * A credential may widen before delivery, so its previous reach
+               * cannot discard a candidate. The subscription already applies
+               * `?type=`; only `?edges=none` remains to be applied here.
                *
-               * **A frame that will not be delivered is not held, and this is
-               * the load-bearing half.** A cap that counted frames the
-               * release path is guaranteed to discard would let traffic a
-               * subscriber had explicitly excluded exhaust its buffer and
-               * terminate its stream: `?edges=none` killed by edge events,
-               * and a credential scoped to one type by events of another, or
-               * one holding no edge type at all by edges of every kind.
-               * Narrowing the subscription would then make it worse rather
-               * than better, which is the opposite of what a filter is for,
-               * and a subscriber that wants items only asks for exactly that
-               * configuration. Each question is one the release path asks,
-               * asked here through the same predicate so they cannot drift.
-               * The credential is asked as it stood at its last read; the
-               * release asks it again as it stands then, so a frame held here
-               * under a credential narrowed since is still withheld.
-               *
-               * The projection costs a `matchesTypeFilter` per held frame it
-               * admits, paid again when that frame is released. Bounded by
-               * this cap and measured at ~146ns, that is at most ~73us across
-               * a whole connection's prologue — against a buffer that could
-               * otherwise be filled entirely by frames its owner cannot
-               * receive.
-               *
-               * The `?type=` filter is not asked here because it is applied
-               * upstream, inside the subscription, so a frame it excludes
-               * never reaches this function.
-               * The replay dedupe is the one release-time drop that stays at
-               * release: whether a held id was also sent by the replay is not
-               * knowable until the replay has finished, so the cap can still
-               * count a frame that turns out to be a duplicate.
-               *
-               * Overflow ends the stream rather than shedding frames. Dropping
-               * the oldest or the newest would be a silent truncation, which
-               * is the failure this whole file is arranged against; carrying
-               * on live would interleave held frames with replayed ones and
-               * reorder the stream. Ending it leaves everything unsent still
-               * in the log, behind a cursor the client already holds.
-               *
-               * **But not while a replay reads.** Every held frame is a row of
-               * the log below the frame arriving, so the held frames are given
-               * up to the replay, which reads on past the newest of them and
-               * sends each itself. That is no truncation, and without it a
-               * replay long enough to let writers in fills the hold behind it
-               * on any busy instance. A row the replay cannot read is the one
-               * exception: its live copy is all it has, so where that copy was
-               * given up the stream ends as it would have.
+               * A full hold can give logged candidates to an active replay,
+               * unless a stored row is unreadable and its live copy is the
+               * only carrier. An overflow without that recovery ends explicitly.
                */
+              const prologueSettled = (id: bigint): boolean =>
+                !unreadable.has(id) &&
+                ((replayReadThrough !== null && id <= replayReadThrough) ||
+                  (drainedThrough !== null && id <= drainedThrough));
+
               const holdFrame = (frame: HeldFrame): void => {
-                const deliverable =
-                  frame.kind === "edge"
-                    ? edgeFrameShown(frame.event)
-                    : itemPassesProjection(frame.event);
-                if (!deliverable) return;
+                if (frame.kind === "edge" && !edgesReachThisStream) return;
+                const id = frame.event.eventId;
+                if (id !== undefined && prologueSettled(id)) return;
                 if (
                   heldFrames.length >= MAX_HELD_FRAMES &&
                   replayReach !== null
@@ -1202,28 +1092,22 @@ export function eventRoutes(
                     return false;
                   }
 
-                  // What is safe to discard is an id this replay actually sent,
-                  // so that is what is recorded rather than the cursor, which
-                  // advances past every row this loop walks, rows a filter
-                  // withheld included. A row the log holds but cannot serve, one
-                  // whose payload does not decode, is not recorded either: its
-                  // live copy is the one carrier that event has left, and it goes
-                  // out after the replay, behind the ids replayed above it, which
-                  // `events/unreadable-row-live-copy` names as the one exception
-                  // to the order. Recorded into a set that belongs to the stream
-                  // rather than to this function, because the drain it feeds runs
-                  // whether or not there was a replay to feed it.
-                  //
-                  // Insertion order, for eviction. Replayed ids arrive
-                  // ascending, so the front is always the oldest.
-                  const replayedOrder: bigint[] = [];
-                  const rememberReplayed = (id: bigint): void => {
-                    replayedIds.add(id);
-                    replayedOrder.push(id);
-                    if (replayedOrder.length > REPLAY_DEDUPE_WINDOW) {
-                      const evicted = replayedOrder.shift();
-                      if (evicted !== undefined) replayedIds.delete(evicted);
+                  // A valid row is settled by replay whether sent or withheld.
+                  // Remove its held twin immediately, freeing capacity, and use
+                  // the watermark to suppress twins that arrive later. Rows the
+                  // log cannot classify keep their live-carrier exception.
+                  const consumeReplayRow = (id: bigint): void => {
+                    replayReadThrough = id;
+                    if (!unreadable.has(id)) {
+                      for (let i = heldFrames.length - 1; i >= 0; i -= 1) {
+                        if (heldFrames[i]?.event.eventId === id) {
+                          heldFrames.splice(i, 1);
+                        }
+                      }
                     }
+                    givenUp.delete(id);
+                    lastReplayedId = id;
+                    lastRead = id;
                   };
                   while (!state.closed) {
                     // Paced by the reader: the next page is read only once
@@ -1290,28 +1174,30 @@ export function eventRoutes(
                       // release a hold for.
                       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                       if (state.closed) return false;
-                      // Room first, then the row is judged and sent with
-                      // nothing between: a wait between the two would let a
-                      // heartbeat narrow the credential after the row was
-                      // judged under the wider one.
-                      if (!(await paced("a replay"))) return false;
+                      // Room first, then fresh authority after any wait.
+                      // With room already available, consume synchronously
+                      // under the page's authority instead of yielding before
+                      // a decision that could settle the row under stale reach.
+                      if (!hasRoom()) {
+                        if (!(await paced("a replay"))) return false;
+                        if (!(await refreshReach())) return false;
+                      }
                       const isEdge = event.edge_id !== null;
                       // The same rule the live path applies, and the
                       // reason it is written as one: an edge carries no
                       // item type, so `?type=` has nothing to say about
                       // it, and only `?edges=none` withholds it.
                       if (isEdge && edgeMode === "none") {
-                        lastReplayedId = event.id;
-                        lastRead = event.id;
+                        consumeReplayRow(event.id);
                         continue;
                       }
                       let parsed: Record<string, unknown> | null = null;
                       if (!isEdge) {
                         try {
-                          parsed = JSON.parse(event.payload) as Record<
-                            string,
-                            unknown
-                          >;
+                          const decoded: unknown = JSON.parse(event.payload);
+                          if (typeof decoded === "object" && decoded !== null) {
+                            parsed = decoded as Record<string, unknown>;
+                          }
                         } catch {
                           // Fail closed on a stored payload that is not
                           // JSON. It cannot be narrowed to what this
@@ -1327,37 +1213,19 @@ export function eventRoutes(
                             `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
                           );
                           if (liveCopyGivenUp(event.id)) return false;
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                       }
-                      // Everything that classifies an item row lives inside
-                      // this branch, and `parsed !== null` is exactly the
-                      // condition under which it was decoded — an edge row
-                      // never reaches it and is never asked to name a type
-                      // it does not carry. Its own gate is below.
-                      //
-                      // **One decision about a row that cannot be
-                      // classified, rather than two checks reaching
-                      // opposite conclusions about it.** The type filter
-                      // and the permission narrowing immediately after it
-                      // read the same value, so splitting the decision
-                      // between them lets one withhold the row while the
-                      // other, guarding on that value being present, hands
-                      // it over unnarrowed — and the one that fails open
-                      // that way is the permission check. Nothing in the
-                      // tree writes that payload today — the publisher
-                      // always attaches the item — but that is a property
-                      // of the current writers rather than of this code,
-                      // and it is not one a permission check should be
-                      // resting on.
-                      //
-                      // Withheld rather than sent, because a row whose type
-                      // cannot be read cannot be proved readable by this
-                      // subscriber, and a filter that cannot classify a row
-                      // has no business handing it over.
-                      if (parsed !== null) {
+                      // An unclassifiable row cannot be projected safely.
+                      // Preserve its intact live carrier instead of treating
+                      // an unreadable stored value as an authority decision.
+                      if (!isEdge) {
+                        if (parsed === null) {
+                          if (liveCopyGivenUp(event.id)) return false;
+                          consumeReplayRow(event.id);
+                          continue;
+                        }
                         const parsedItem: unknown = parsed.item;
                         const named: unknown =
                           typeof parsedItem === "object" && parsedItem !== null
@@ -1365,8 +1233,7 @@ export function eventRoutes(
                             : undefined;
                         if (typeof named !== "string") {
                           if (liveCopyGivenUp(event.id)) return false;
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                         // The same function the live path filters on, and
@@ -1380,16 +1247,14 @@ export function eventRoutes(
                           typeParam !== undefined &&
                           !eventMatchesTypeFilter(named, typeParam)
                         ) {
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                         if (
                           reach.typeFilter.allowed !== undefined &&
                           !matchesTypeFilter(named, reach.typeFilter)
                         ) {
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                       }
@@ -1406,14 +1271,13 @@ export function eventRoutes(
                       // withheld: a row that cannot be measured against the
                       // maps cannot be proved readable, and a filter that
                       // cannot classify a row has no business handing it
-                      // over. A row naming no source type is withheld by the
-                      // gate itself, for the same reason.
+                      // over. A missing source type is also unclassifiable,
+                      // so that row keeps the same live-carrier exception.
                       if (isEdge) {
                         const stored = replayEdges.get(event.id);
-                        if (stored === undefined) {
+                        if (stored?.sourceType === undefined) {
                           if (liveCopyGivenUp(event.id)) return false;
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                         if (
@@ -1423,8 +1287,7 @@ export function eventRoutes(
                             stored.sourceType,
                           )
                         ) {
-                          lastReplayedId = event.id;
-                          lastRead = event.id;
+                          consumeReplayRow(event.id);
                           continue;
                         }
                       }
@@ -1436,11 +1299,7 @@ export function eventRoutes(
                       send(
                         `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${parsed === null ? event.payload : itemFrameFor(parsed, reach.key)}\n\n`,
                       );
-                      // Only here. A row the loop skipped above was not
-                      // sent, so its live copy is not a duplicate.
-                      rememberReplayed(event.id);
-                      lastReplayedId = event.id;
-                      lastRead = event.id;
+                      consumeReplayRow(event.id);
                     }
 
                     // In id order, as given up.
@@ -1485,32 +1344,13 @@ export function eventRoutes(
                 } finally {
                   replayReach = null;
                   givenUp.clear();
-                  unreadable.clear();
                 }
               };
 
               /**
-               * Live delivery resumes, oldest held frame first.
-               *
-               * Withheld against the ids the replay sent, not against the
-               * cursor. Two consequences worth naming.
-               *
-               * A row the replay skipped is not suppressed here, and that
-               * discloses nothing: delivery goes through `sendEvent`, whose
-               * first act is the same permission narrowing the replay
-               * applied, so the held copy meets that filter whatever this
-               * decides.
-               *
-               * An id evicted from the window would be sent a second time
-               * carrying the same `id:`, which a client applying a payload by
-               * id absorbs; `MAX_HELD_FRAMES` is no larger than the window so
-               * that the window cannot move past a held frame, and it does
-               * not happen. Dropping an event the client had no way to learn
-               * it was missing is the failure this rule exists against.
-               *
-               * Stops rather than continuing when the stream closed
-               * mid-drain, so nothing is written into a controller that is
-               * gone.
+               * Drain unsettled candidates oldest first, under fresh authority.
+               * Replay-consumed rows remain settled even if reach widens; an
+               * unreadable stored row keeps its live carrier until consumed.
                */
               const releaseHold = async (): Promise<void> => {
                 // **`holding` stays true for the whole drain.** The drain waits
@@ -1538,13 +1378,27 @@ export function eventRoutes(
                       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by cleanup() across the await above; TS narrows it to `false` but at runtime it can flip to true.
                       if (state.closed) return;
                       const eventId = frame.event.eventId;
-                      if (eventId !== undefined && replayedIds.has(eventId)) {
+                      if (eventId !== undefined && prologueSettled(eventId)) {
                         continue;
                       }
                       // A replay may have left the reader's queue full, and
                       // these frames wait for it as the replay's rows did.
-                      if (!(await paced("the opening's release"))) return;
+                      // That wait can outlive a credential change, so reread
+                      // authority before settling or delivering the candidate.
+                      if (!hasRoom()) {
+                        if (!(await paced("the opening's release"))) return;
+                        if (!(await refreshReach())) return;
+                      }
                       sendFrame(frame);
+                      if (eventId !== undefined) {
+                        unreadable.delete(eventId);
+                        if (
+                          drainedThrough === null ||
+                          eventId > drainedThrough
+                        ) {
+                          drainedThrough = eventId;
+                        }
+                      }
                     }
                   }
                 } catch (err) {
@@ -1565,6 +1419,7 @@ export function eventRoutes(
                 // the flag drops, so no live frame can be written ahead of it.
                 announceLive();
                 holding = false;
+                unreadable.clear();
               };
 
               /** Read the log head this stream announces. */
@@ -1674,7 +1529,7 @@ export function eventRoutes(
                * The prologue is over. The cursor is the furthest position this
                * stream knows: the announced head, the highest id the replay
                * walked past (rows it withheld included) and the highest id
-               * written, since a held live frame drained after the replay
+               * consumed by the drain or written, since a held live frame drained after the replay
                * carries an id past the head and a subscriber resuming from the
                * head alone would be sent it again. Null where none is known:
                * a head read that outran its budget with nothing to replay.
@@ -1685,6 +1540,7 @@ export function eventRoutes(
                 for (const candidate of [
                   announcedHead,
                   replayedTo,
+                  drainedThrough,
                   lastSentId,
                 ]) {
                   if (

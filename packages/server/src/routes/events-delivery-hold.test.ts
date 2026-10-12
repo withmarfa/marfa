@@ -25,6 +25,7 @@ import {
 import {
   createTestContext,
   eventsAppWithKey,
+  mintWorkingKey,
   gatedEventLog,
   readSse,
   readSseWriting,
@@ -35,6 +36,8 @@ import {
   __resetEventLogForTests,
   emitWake,
   initEventLog,
+  storedFrame,
+  publish,
   type ItemEventWithId,
 } from "../pubsub.js";
 
@@ -42,8 +45,8 @@ import {
  * How the stream's next credential read behaves. `pass` is the real read;
  * `hold` waits on the gate before the real read, and `held` settles the
  * moment it is waiting, which is the observation that the send is
- * outstanding; `reject` fails it. Only the first read after a mode is set
- * is affected, so a test can shape one send and leave the rest real.
+ * outstanding; `reject` fails it. `skip` selects a later read after the
+ * mode is set, so a test can shape one send and leave the rest real.
  */
 const nextRead = vi.hoisted(() => {
   let release: () => void = () => undefined;
@@ -51,10 +54,12 @@ const nextRead = vi.hoisted(() => {
   const state = {
     mode: "pass" as "pass" | "hold" | "reject",
     used: false,
+    skip: 0,
     opened: Promise.resolve(),
     held: Promise.resolve(),
     release: (): void => undefined,
-    arm(mode: "hold" | "reject") {
+    arm(mode: "hold" | "reject", skip = 0) {
+      state.skip = skip;
       state.mode = mode;
       state.used = false;
       state.opened = new Promise<void>((resolve) => {
@@ -90,7 +95,7 @@ vi.mock("../auth/live-credential.js", async (importOriginal) => {
     resolveLiveCredential: async (
       ...args: Parameters<typeof actual.resolveLiveCredential>
     ): ReturnType<typeof actual.resolveLiveCredential> => {
-      if (nextRead.mode !== "pass" && !nextRead.used) {
+      if (nextRead.mode !== "pass" && !nextRead.used && nextRead.skip-- <= 0) {
         nextRead.used = true;
         if (nextRead.mode === "reject") {
           throw new Error("the credential read failed");
@@ -419,4 +424,413 @@ describe("the prologue's hold", () => {
     // which finishes is followed by the marker.
     expect(text).not.toContain("event: stream_live");
   });
+});
+
+/** The gate blocks a real read, including its result, until the test opens it. */
+function gateLog(method: "getMaxId" | "getAfter", snapshotHead = false) {
+  let release!: () => void;
+  let arrive!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  const store = ctx.storage.eventLog;
+  const originalHead = store.getMaxId.bind(store);
+  const originalPage = store.getAfter.bind(store);
+  let first = true;
+  const wait = async () => {
+    if (!first) return;
+    first = false;
+    arrive();
+    await opened;
+  };
+  if (method === "getMaxId") {
+    store.getMaxId = async () => {
+      const snapshot = snapshotHead ? await originalHead() : null;
+      await wait();
+      return snapshotHead ? snapshot : originalHead();
+    };
+  } else {
+    store.getAfter = async (after, limit) => {
+      await wait();
+      return originalPage(after, limit);
+    };
+  }
+  return {
+    reached,
+    open: () => {
+      release();
+    },
+    restore: () => {
+      release();
+      store.getMaxId = originalHead;
+      store.getAfter = originalPage;
+    },
+  };
+}
+
+async function viewer(
+  types: Record<string, "read">,
+  edges: Record<string, "read"> = {},
+) {
+  const raw = await mintWorkingKey(ctx, {
+    type_permissions: types,
+    edge_permissions: edges,
+    extension_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    permissions: [],
+  });
+  const res = await request(ctx.app, "GET", "/keys/current", { key: raw });
+  expect(res.status).toBe(200);
+  const id = ((await res.json()) as { id: string }).id;
+  const change = async (
+    type_permissions: Record<string, "read">,
+    edge_permissions = edges,
+  ) => {
+    const patched = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.workingKey,
+      body: { type_permissions, edge_permissions },
+    });
+    expect(patched.status).toBe(200);
+  };
+  return { raw, id, change };
+}
+
+async function task(body: string) {
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type: "core.task", properties: { title: body } },
+  });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { item: ItemEventWithId["item"] }).item;
+}
+
+describe("authority changes while the prologue holds candidates", () => {
+  it("delivers an initially excluded item once before stream_live after widening behind the head gate", async () => {
+    const key = await viewer({ "core.note": "read" });
+    const gate = gateLog("getMaxId");
+    try {
+      const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+      await gate.reached;
+      const item = await task("head-widen-candidate");
+      const rows = await ctx.storage.eventLog.getAfter(0n, 10000);
+      const id = rows.at(-1)?.id;
+      await key.change({ "core.note": "read", "core.task": "read" });
+      gate.open();
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_live"),
+      });
+      expect(frameIds(text).filter((seen) => seen === id)).toHaveLength(1);
+      expect(text.indexOf(item.id)).toBeLessThan(
+        text.indexOf("event: stream_live"),
+      );
+      expect(frameIds(text)).toEqual([id!]);
+      expect(text).toContain(item.id);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  it("delivers an initially excluded item once when widened before the replay page is evaluated", async () => {
+    const key = await viewer({ "core.note": "read" });
+    const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    const gate = gateLog("getAfter");
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: key.raw,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      await gate.reached;
+      const item = await task("replay-widen-candidate");
+      const id = await ctx.storage.eventLog.getMaxId();
+      await key.change({ "core.note": "read", "core.task": "read" });
+      gate.open();
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_live"),
+      });
+      expect(frameIds(text).filter((seen) => seen === id)).toHaveLength(1);
+      expect(frameIds(text)).toEqual([id!]);
+      expect(text).toContain(item.id);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  it("does not revive a lower withheld replay row after widening before the final drain", async () => {
+    const key = await viewer({ "core.note": "read", "core.task": "read" });
+    const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    const gate = gateLog("getAfter");
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: key.raw,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      await gate.reached;
+      const lower = await task("settled-lower");
+      const higher = await note("settled-higher");
+      const highId = await ctx.storage.eventLog.getMaxId();
+      await key.change({ "core.note": "read" });
+      emitWake({
+        type: "created",
+        item: {
+          id: "unlogged-drain-anchor",
+          type: "core.note",
+          properties: {},
+        } as unknown as ItemEventWithId["item"],
+      });
+      nextRead.arm("hold", 1);
+      gate.open();
+      await nextRead.held;
+      await key.change({ "core.note": "read", "core.task": "read" });
+      nextRead.release();
+      let future = "";
+      let written: Promise<void> = Promise.resolve();
+      const { text } = await readSse(res, {
+        onChunk: (t) => {
+          if (future === "" && t.includes("event: stream_live")) {
+            future = "pending";
+            written = task("settled-future").then((item) => {
+              future = item.id;
+            });
+          }
+        },
+        until: (t) => t.includes("settled-future"),
+      });
+      await written;
+      expect(text).toContain(higher);
+      expect(text).toContain(future);
+      expect(text).not.toContain(lower.id);
+      expect(text.slice(text.indexOf("event: stream_live"))).toContain(
+        `"cursor":"${String(highId)}"`,
+      );
+      expectAscending(frameIds(text));
+    } finally {
+      gate.restore();
+      nextRead.release();
+    }
+  });
+
+  it.each(["sent", "withheld", "corrupt"] as const)(
+    "settles a replay row before its delayed %s live twin arrives",
+    async (caseName) => {
+      const item = await task(`delayed-${caseName}`);
+      const key = await viewer(
+        caseName === "sent"
+          ? { "core.note": "read", "core.task": "read" }
+          : { "core.note": "read" },
+      );
+      const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+      const gate = gateLog("getAfter");
+      try {
+        const res = await request(ctx.app, "GET", "/events", {
+          key: key.raw,
+          headers: { "Last-Event-ID": String(cursor) },
+        });
+        await gate.reached;
+        const event = { type: "updated" as const, item };
+        const id = await ctx.storage.eventLog.append({
+          event_type: "updated",
+          item_id: item.id,
+          payload:
+            caseName === "corrupt"
+              ? "invalid json"
+              : JSON.stringify(storedFrame(event)),
+        });
+        await note("delayed-drain-anchor");
+        emitWake({
+          type: "created",
+          item: {
+            id: "unlogged-drain-anchor",
+            type: "core.note",
+            properties: {},
+          } as unknown as ItemEventWithId["item"],
+        });
+        nextRead.arm("hold", 1);
+        gate.open();
+        await nextRead.held;
+        await key.change({ "core.note": "read", "core.task": "read" });
+        emitWake({ ...event, eventId: id });
+        nextRead.release();
+        const { text } = await readSse(res, {
+          until: (t) => t.includes("event: stream_live"),
+        });
+        expect(frameIds(text).filter((seen) => seen === id)).toHaveLength(
+          caseName === "withheld" ? 0 : 1,
+        );
+        if (caseName !== "withheld") expect(text).toContain(item.id);
+        else expect(text).not.toContain(item.id);
+      } finally {
+        gate.restore();
+        nextRead.release();
+      }
+    },
+  );
+});
+
+describe("held edge authority", () => {
+  it.each(["edge", "source"] as const)(
+    "delivers a held edge once after widening its %s grant",
+    async (grant) => {
+      const a = await task("edge-widen-source");
+      const b = await note("edge-widen-target");
+      const types: Record<string, "read"> =
+        grant === "edge"
+          ? { "core.note": "read" as const, "core.task": "read" as const }
+          : { "core.note": "read" as const };
+      const key = await viewer(
+        types,
+        grant === "source" ? { references: "read" } : {},
+      );
+      const gate = gateLog("getMaxId");
+      try {
+        const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+        await gate.reached;
+        await edge(a.id, b);
+        await key.change(
+          { "core.note": "read", "core.task": "read" },
+          { references: "read" },
+        );
+        gate.open();
+        const { text } = await readSse(res, {
+          until: (t) => t.includes("event: stream_live"),
+        });
+        expect(count(text, "event: edge.created")).toBe(1);
+        expect(text.indexOf("event: edge.created")).toBeLessThan(
+          text.indexOf("event: stream_live"),
+        );
+      } finally {
+        gate.restore();
+      }
+    },
+  );
+
+  it.each(["edge", "source"] as const)(
+    "withholds a held edge when its %s grant stays excluded",
+    async (grant) => {
+      const a = await task("edge-excluded-source");
+      const b = await note("edge-excluded-target");
+      const key = await viewer({ "core.note": "read" });
+      const gate = gateLog("getMaxId");
+      try {
+        const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+        await gate.reached;
+        await edge(a.id, b);
+        await note("edge-excluded-anchor");
+        if (grant === "edge")
+          await key.change({ "core.note": "read", "core.task": "read" });
+        else await key.change({ "core.note": "read" }, { references: "read" });
+        gate.open();
+        const { text } = await readSse(res, {
+          until: (t) => t.includes("event: stream_live"),
+        });
+        expect(text).toContain("edge-excluded-anchor");
+        expect(text).not.toContain("event: edge.created");
+      } finally {
+        gate.restore();
+      }
+    },
+  );
+
+  it("withholds a candidate after narrowing before release", async () => {
+    const key = await viewer({ "core.note": "read", "core.task": "read" });
+    const gate = gateLog("getMaxId");
+    try {
+      const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+      await gate.reached;
+      const hidden = await task("head-narrow-candidate");
+      await note("head-narrow-anchor");
+      await key.change({ "core.note": "read" });
+      gate.open();
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_live"),
+      });
+      expect(text).toContain("head-narrow-anchor");
+      expect(text).not.toContain(hidden.id);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  it("ends without releasing a candidate after revocation", async () => {
+    const key = await viewer({ "core.note": "read", "core.task": "read" });
+    const gate = gateLog("getMaxId");
+    try {
+      const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+      await gate.reached;
+      const hidden = await task("head-revoke-candidate");
+      const revoked = await request(ctx.app, "DELETE", `/keys/${key.id}`, {
+        key: ctx.workingKey,
+      });
+      expect(revoked.status).toBe(200);
+      gate.open();
+      const { text } = await readSse(res, { untilClosed: true });
+      expect(text).toContain('"reason":"credential_ended"');
+      expect(text).not.toContain(hidden.id);
+      expect(text).not.toContain("event: stream_live");
+    } finally {
+      gate.restore();
+    }
+  });
+});
+
+describe("replay takeover of the candidate hold", () => {
+  it("replays more than 500 real logged candidates once after permission widening", async () => {
+    const item = await task("takeover-candidate");
+    const key = await viewer({ "core.note": "read" });
+    const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    const gate = gateLog("getAfter");
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: key.raw,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      await gate.reached;
+      const ids: bigint[] = [];
+      for (let i = 0; i < 520; i += 1) {
+        const id = await publish({ type: "updated", item });
+        if (id === undefined)
+          throw new Error("takeover candidate has no logged id");
+        ids.push(id);
+      }
+      await key.change({ "core.note": "read", "core.task": "read" });
+      gate.open();
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_live"),
+      });
+      expect(frameIds(text)).toEqual(ids);
+      expect(text).not.toContain("event: stream_incomplete");
+      expect(text.slice(text.indexOf("event: stream_live"))).toContain(
+        `"cursor":"${String(ids.at(-1))}"`,
+      );
+    } finally {
+      gate.restore();
+    }
+  });
+});
+
+it("covers a candidate withheld by the final drain past the announced head", async () => {
+  const key = await viewer({ "core.note": "read" });
+  const gate = gateLog("getMaxId", true);
+  try {
+    const res = await request(ctx.app, "GET", "/events", { key: key.raw });
+    await gate.reached;
+    const shown = await note("drain-covered-note");
+    const hidden = await task("drain-covered-task");
+    const rows = await ctx.storage.eventLog.getAfter(0n, 10000);
+    const withheldId = rows.at(-1)!.id;
+    gate.open();
+    const { text } = await readSse(res, {
+      until: (seen) => seen.includes("event: stream_live"),
+    });
+    expect(text).toContain(shown);
+    expect(text).not.toContain(hidden.id);
+    expect(text.slice(text.indexOf("event: stream_live"))).toContain(
+      `"cursor":"${String(withheldId)}"`,
+    );
+  } finally {
+    gate.restore();
+  }
 });
