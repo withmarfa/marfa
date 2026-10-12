@@ -5,8 +5,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use marfa_core::folder::registry;
-
 use crate::{DrainReport, HydrateReport, MarfaError, Subscription, drained};
 
 /// A folder as the machine's registry lists it.
@@ -304,7 +302,7 @@ impl Folders {
     pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
         let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)?;
         Ok(ListedFolder {
-            dir: registry::resolved(added.root()).display().to_string(),
+            dir: added.root().display().to_string(),
             folder: added.folder_id().to_string(),
         })
     }
