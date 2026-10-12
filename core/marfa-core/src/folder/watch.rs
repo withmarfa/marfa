@@ -324,7 +324,11 @@ impl Folder {
             && drain.report.undelivered == 0
             && drain.report.unsent == 0
             && drain.report.held == 0
-            && drain.report.unmade == 0;
+            && drain.report.unmade == 0
+            && !scan
+                .directories
+                .iter()
+                .any(|entry| matches!(entry.flag, "unreadable" | "gone"));
         let event = telling.passed(
             full,
             settings.clone(),

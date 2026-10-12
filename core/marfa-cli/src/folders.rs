@@ -678,6 +678,14 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         }
         lines.push(line);
     }
+    for directory in &report.directories {
+        let path = if directory.path.is_empty() {
+            "the folder"
+        } else {
+            &directory.path
+        };
+        lines.push(format!("{path}: {}, {}", directory.flag, directory.reason));
+    }
     if report.paused.disk + report.paused.pull > 0 {
         lines.push(format!(
             "a large removal waits: {} file(s) gone from the disk, {} whose items left elsewhere; `folders confirm` lets it go, `folders restore` puts them back",

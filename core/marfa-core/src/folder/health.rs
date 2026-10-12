@@ -91,7 +91,13 @@ impl State {
     }
 
     fn reserve(&mut self, id: &str, snapshot: Snapshot, refresh: bool) -> Result<()> {
-        if !refresh && self.observed.as_ref() == Some(&snapshot) {
+        if !refresh
+            && self.observed.as_ref() == Some(&snapshot)
+            && self
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.sequence == self.sequence)
+        {
             return Ok(());
         }
         let sequence = self
@@ -118,6 +124,9 @@ impl State {
         {
             return Err(CoreError::Invalid("invalid folder health receipt".into()));
         }
+        // Valid receipts retain server knowledge even when their payload has
+        // been superseded. Only the current attempt may settle its outbox.
+        self.sequence = self.sequence.max(ack.sequence);
         if self
             .pending
             .as_ref()
@@ -125,21 +134,8 @@ impl State {
         {
             return Ok(());
         }
-        self.sequence = self.sequence.max(ack.sequence);
         if ack.accepted {
-            if self
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.sequence == sent.sequence)
-            {
-                self.pending = None;
-            }
-        } else if let Some(pending) = self.pending.clone()
-            && pending.sequence <= ack.sequence
-        {
-            // An equal receipt may belong to a newer state lost in a restored
-            // local backup. Publish the latest local observation above it.
-            self.reserve(&pending.folder_store_id, pending.snapshot, true)?;
+            self.pending = None;
         }
         self.failures = 0;
         self.retry_at = 0;
@@ -185,8 +181,27 @@ fn problem_of(flag: &str) -> Option<Code> {
 fn local_snapshot(status: &StatusReport) -> Snapshot {
     let mut problems = BTreeMap::new();
     for file in &status.files {
+        if file.flag == Some("unreadable")
+            && status.directories.iter().any(|entry| {
+                entry.flag == "unreadable"
+                    && (entry.path.is_empty()
+                        || file
+                            .path
+                            .strip_prefix(&entry.path)
+                            .is_some_and(|rest| rest.starts_with('/')))
+            })
+        {
+            continue;
+        }
         if let Some(code) = file.flag.and_then(problem_of) {
             *problems.entry(code).or_insert(0) += 1;
+        }
+    }
+    for directory in &status.directories {
+        match directory.flag {
+            "unreadable" => *problems.entry(Code::Unreadable).or_insert(0) += 1,
+            "gone" => *problems.entry(Code::HeldFile).or_insert(0) += 1,
+            _ => {}
         }
     }
     Snapshot {
@@ -256,10 +271,11 @@ impl Folder {
         let previous = State::load(&*self.core.conn()?)?.observed;
         let status = self.status();
         let known = status.is_ok();
+        let inventory_complete = status.as_ref().is_ok_and(StatusReport::inventory_complete);
         let mut snapshot = match status {
             Ok(status) => local_snapshot(&status),
             Err(_) => {
-                let mut snapshot = previous.unwrap_or_default();
+                let mut snapshot = previous.clone().unwrap_or_default();
                 snapshot.first_sync_waiting = self
                     .awaiting_confirmation()
                     .unwrap_or(snapshot.first_sync_waiting);
@@ -275,6 +291,9 @@ impl Folder {
                 snapshot
             }
         };
+        if !inventory_complete && let Some(previous) = &previous {
+            snapshot.pending_uploads = snapshot.pending_uploads.max(previous.pending_uploads);
+        }
         if let Ok(conflicts) = self.current_conflicts() {
             snapshot
                 .problems
@@ -353,6 +372,7 @@ impl Folder {
             .map(|(code, count)| Problem { code, count })
             .collect();
         if complete
+            && inventory_complete
             && snapshot.pending_uploads == 0
             && snapshot.pending_downloads == 0
             && snapshot.paused_removals == 0
@@ -388,12 +408,12 @@ impl Folder {
         Ok(count(copies.len()))
     }
 
-    fn health_refresh_for_receipt(&self, sent: &Report) -> Result<()> {
+    fn health_refresh_for_receipt(&self, floor: u64) -> Result<()> {
         let current = State::load(&*self.core.conn()?)?;
         if current
             .pending
             .as_ref()
-            .is_none_or(|pending| pending.sequence != sent.sequence)
+            .is_none_or(|pending| pending.sequence > floor)
         {
             return Ok(());
         }
@@ -413,7 +433,7 @@ impl Folder {
                 .iter()
                 .any(|p| p.code == Code::SettingsInvalid)
         });
-        self.health_observe_inner(false, false, None, error.as_ref(), settings)
+        self.health_observe_inner(false, true, None, error.as_ref(), settings)
     }
 
     pub(super) fn health_send(&self) {
@@ -421,6 +441,17 @@ impl Folder {
     }
 
     fn health_send_inner(&self) -> Result<()> {
+        let current = State::load(&*self.core.conn()?)?;
+        if current.retry_at > millis() {
+            return Ok(());
+        }
+        if current
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.sequence < current.sequence)
+        {
+            self.health_refresh_for_receipt(current.sequence)?;
+        }
         let sent = {
             let conn = self.core.conn()?;
             let state = State::load(&conn)?;
@@ -453,13 +484,18 @@ impl Folder {
                 ));
             }
             let ack: Ack = serde_json::from_str(&reply.body)?;
-            if !ack.accepted {
-                self.health_refresh_for_receipt(&sent)?;
+            {
+                let conn = self.core.conn()?;
+                let mut state = State::load(&conn)?;
+                state.acknowledge(&sent, &ack)?;
+                state.save(&conn)?;
             }
-            let conn = self.core.conn()?;
-            let mut state = State::load(&conn)?;
-            state.acknowledge(&sent, &ack)?;
-            state.save(&conn)
+            if !ack.accepted {
+                // Resequencing observes current disk and problem state after
+                // persisting the floor; the in-flight body is never reused.
+                self.health_refresh_for_receipt(ack.sequence)?;
+            }
+            Ok(())
         })();
         if let Err(error) = &result {
             let conn = self.core.conn()?;
@@ -557,7 +593,20 @@ mod tests {
         let newer = state.pending.clone().unwrap();
         state.acknowledge(&sent, &receipt(50, false)).unwrap();
         assert_eq!(state.pending.as_ref().unwrap().sequence, 2);
+        assert_eq!(state.sequence, 50);
         state.acknowledge(&newer, &receipt(50, false)).unwrap();
+        assert_eq!(state.pending.as_ref().unwrap().sequence, 2);
+        // A fresh observation, even if unchanged, allocates above the floor.
+        state
+            .reserve(
+                "opaque",
+                Snapshot {
+                    pending_uploads: 4,
+                    ..Snapshot::default()
+                },
+                false,
+            )
+            .unwrap();
         let pending = state.pending.as_ref().unwrap();
         assert_eq!(pending.sequence, 51);
         assert_eq!(pending.snapshot.pending_uploads, 4);
@@ -611,6 +660,7 @@ mod tests {
                 file("bad.md", Some("unreadable"), "held"),
             ],
             paused: Paused { disk: 1, pull: 2 },
+            directories: Vec::new(),
             first_sync: None,
         };
         let snapshot = local_snapshot(&status);
@@ -882,7 +932,15 @@ mod tests {
     fn reporting_door(
         delay: Duration,
         status: u16,
-    ) -> (crate::Server, std::sync::mpsc::Receiver<()>) {
+    ) -> (crate::Server, std::sync::mpsc::Receiver<String>) {
+        reporting_door_sequence(delay, status, 1)
+    }
+
+    fn reporting_door_sequence(
+        delay: Duration,
+        status: u16,
+        sequence: u64,
+    ) -> (crate::Server, std::sync::mpsc::Receiver<String>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -915,10 +973,10 @@ mod tests {
                     }
                 }
             }
-            started.send(()).unwrap();
+            started.send(String::from_utf8(request).unwrap()).unwrap();
             std::thread::sleep(delay);
             let body = if status == 200 {
-                r#"{"accepted":true,"sequence":1,"received_at":"2026-01-01T00:00:00.000Z"}"#
+                &serde_json::to_string(&serde_json::json!({"accepted":true,"sequence":sequence,"received_at":"2026-01-01T00:00:00.000Z"})).unwrap()
             } else {
                 r#"{"error":{"code":"unauthorized","message":"refused"}}"#
             };
@@ -990,5 +1048,296 @@ mod tests {
                 .iter()
                 .any(|problem| problem.code == Code::CredentialRefused)
         );
+    }
+    #[test]
+    fn review_dead_current_write_must_prevent_success() {
+        let (dir, folder) = fixture(None);
+        let content = "local text\n";
+        std::fs::write(dir.path().join("Note.md"), content).unwrap();
+        {
+            let conn = folder.core.conn().unwrap();
+            store::upsert_item(
+                &conn,
+                &store::testing::wire_item(
+                    "note",
+                    "core.note",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({"title":"Note"}),
+                ),
+                None,
+                &crate::catalog::Indexing::default(),
+            )
+            .unwrap();
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: "Note.md".into(),
+                    item_id: "note".into(),
+                    identity: None,
+                    content_hash: state::hash(content.as_bytes()),
+                    presentation: None,
+                    written_hash: None,
+                    links: vec![],
+                    lines: vec![],
+                    edit_line: None,
+                    held: None,
+                    own: None,
+                    writes: Default::default(),
+                },
+            )
+            .unwrap();
+            conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('edit','update_item','note','edit','{}',1,'2026-01-01T00:00:00Z')", []).unwrap();
+        }
+        folder.health_observe(false, true, Some(&PullReport::default()), None, false);
+        let before = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(
+            before.observed.unwrap().pending_uploads,
+            1,
+            "witness: current file write counts before terminal failure"
+        );
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("UPDATE queue SET verdict='dead' WHERE id='edit'", [])
+            .unwrap();
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let after = State::load(&folder.core.conn().unwrap()).unwrap();
+        let dead_snapshot = after.observed.unwrap();
+        assert_eq!(dead_snapshot.pending_uploads, 1);
+        assert!(
+            dead_snapshot
+                .problems
+                .iter()
+                .any(|problem| problem.code == Code::HeldFile)
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("Note.md")).unwrap(),
+            content.as_bytes()
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            conn.execute(
+                "UPDATE queue SET payload=?1 WHERE id='edit'",
+                [r#"{"properties":{"title":"pending","body":"local text"},"properties_mode":"replace"}"#],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('later','update_item','note','later',?1,1,NULL,'2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"confirmed"}}"#]).unwrap();
+        }
+        store::record_verdict(
+            &folder.core.conn().unwrap(),
+            "later",
+            &store::Answered {
+                verdict: crate::Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let partial = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(
+            partial.observed.unwrap().pending_uploads,
+            1,
+            "a newer confirmed title does not establish the dead body landed"
+        );
+        assert!(partial.last_success_at.is_none());
+        {
+            let conn = folder.core.conn().unwrap();
+            conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('body','update_item','note','body',?1,1,NULL,'2026-01-01T00:00:02Z')", [r#"{"properties":{"body":"confirmed"}}"#]).unwrap();
+        }
+        store::record_verdict(
+            &folder.core.conn().unwrap(),
+            "body",
+            &store::Answered {
+                verdict: crate::Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let recovered = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(recovered.observed.as_ref().unwrap().pending_uploads, 0);
+        assert!(recovered.observed.as_ref().unwrap().problems.is_empty());
+        assert!(recovered.last_success_at.is_some());
+        assert_eq!(
+            folder
+                .core
+                .queue()
+                .unwrap()
+                .iter()
+                .find(|row| row.id == "edit")
+                .unwrap()
+                .verdict,
+            Some(crate::Verdict::Dead)
+        );
+        assert!(
+            after.last_success_at.is_none(),
+            "a current dead write cannot establish success"
+        );
+    }
+
+    #[test]
+    fn review_unreadable_unbound_directory_must_prevent_success() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, folder) = fixture(None);
+        let child = dir.path().join("unreadable");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(child.join("Note.md"), "unsynced note\n").unwrap();
+        let readable = folder.status().unwrap();
+        assert_eq!(
+            readable.files.len(),
+            1,
+            "witness: the unbound file is present when readable"
+        );
+        folder.health_observe(false, true, None, None, false);
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let scan = folder.scan().unwrap();
+        assert!(
+            scan.directories
+                .iter()
+                .any(|entry| entry.flag == "unreadable")
+        );
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let after = State::load(&folder.core.conn().unwrap()).unwrap();
+        for _ in 0..3 {
+            folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        }
+        assert_eq!(
+            State::load(&folder.core.conn().unwrap()).unwrap().observed,
+            after.observed
+        );
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            after.observed.as_ref().unwrap().pending_uploads,
+            1,
+            "retain the last observed upload instead of inferring absence"
+        );
+        assert_eq!(
+            after.observed.as_ref().unwrap().problems,
+            vec![Problem {
+                code: Code::Unreadable,
+                count: 1
+            }]
+        );
+        // Make the next complete inventory empty, without discarding an unseen file.
+        std::fs::remove_file(child.join("Note.md")).unwrap();
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let recovered = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(recovered.observed.as_ref().unwrap().pending_uploads, 0);
+        assert!(recovered.observed.as_ref().unwrap().problems.is_empty());
+        assert!(recovered.last_success_at.is_some());
+        assert!(
+            after.last_success_at.is_none(),
+            "an incomplete inventory cannot establish success"
+        );
+    }
+    #[test]
+    fn review_coalescing_must_keep_server_sequence_floor() {
+        let mut state = State::default();
+        state.reserve("opaque", Snapshot::default(), false).unwrap();
+        let sent = state.pending.clone().unwrap();
+        state.failed(&CoreError::Network("newer retry".into()));
+        let failures = (state.failures, state.retry_at);
+        for count in 1..=4 {
+            state
+                .reserve(
+                    "opaque",
+                    Snapshot {
+                        pending_uploads: count,
+                        ..Snapshot::default()
+                    },
+                    false,
+                )
+                .unwrap();
+            let pending = state.pending.clone();
+            state.acknowledge(&sent, &receipt(10_000, false)).unwrap();
+            assert_eq!(
+                state.pending, pending,
+                "obsolete receipt must preserve newer content"
+            );
+            assert_eq!((state.failures, state.retry_at), failures);
+            assert_eq!(
+                state.sequence,
+                10_000.max(pending.unwrap().sequence),
+                "obsolete receipt must retain server knowledge"
+            );
+        }
+        assert!(state.pending.as_ref().unwrap().sequence > 10_000);
+        assert_eq!(state.pending.as_ref().unwrap().snapshot.pending_uploads, 4);
+        state.acknowledge(&sent, &receipt(1, true)).unwrap();
+        assert!(state.pending.as_ref().unwrap().sequence > 10_000);
+        assert_eq!((state.failures, state.retry_at), failures);
+    }
+    #[test]
+    fn a_persisted_obsolete_floor_sends_a_fresh_snapshot_after_restart() {
+        let (server, request) = reporting_door_sequence(Duration::ZERO, 200, 51);
+        let (dir, folder) = fixture(Some(server));
+        folder.health_observe(false, true, None, None, false);
+        let mut state = State::load(&folder.core.conn().unwrap()).unwrap();
+        let sent = state.pending.clone().unwrap();
+        state
+            .reserve(
+                &sent.folder_store_id,
+                Snapshot {
+                    pending_uploads: 9,
+                    ..Snapshot::default()
+                },
+                false,
+            )
+            .unwrap();
+        let newer = state.pending.clone().unwrap();
+        state.acknowledge(&sent, &receipt(50, false)).unwrap();
+        assert_eq!(state.pending, Some(newer));
+        state.save(&folder.core.conn().unwrap()).unwrap();
+        // Disk changes after the rejected request and durable floor write.
+        std::fs::write(dir.path().join("Fresh.md"), "current bytes\n").unwrap();
+        let recovered = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(recovered.sequence, 50);
+        assert_eq!(recovered.pending.unwrap().snapshot.pending_uploads, 9);
+        folder.health_send_inner().unwrap();
+        let request = request.recv_timeout(Duration::from_secs(1)).unwrap();
+        let report: Report =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(report.sequence, 51);
+        assert_eq!(
+            report.snapshot.pending_uploads, 1,
+            "send must observe disk, not reuse either cached report"
+        );
+        let final_state = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert!(final_state.pending.is_none());
+        assert_eq!(final_state.observed.unwrap().pending_uploads, 1);
+    }
+
+    #[test]
+    fn an_equal_rejection_resnapshots_and_an_exhausted_floor_keeps_pending() {
+        let (dir, folder) = fixture(None);
+        folder.health_observe(false, true, None, None, false);
+        let mut state = State::load(&folder.core.conn().unwrap()).unwrap();
+        let sent = state.pending.clone().unwrap();
+        state
+            .acknowledge(&sent, &receipt(sent.sequence, false))
+            .unwrap();
+        assert_eq!(state.pending, Some(sent.clone()));
+        state.save(&folder.core.conn().unwrap()).unwrap();
+        std::fs::write(dir.path().join("Fresh.md"), "current bytes\n").unwrap();
+        folder.health_refresh_for_receipt(sent.sequence).unwrap();
+        let mut state = State::load(&folder.core.conn().unwrap()).unwrap();
+        let latest = state.pending.clone().unwrap();
+        assert_eq!(latest.sequence, sent.sequence + 1);
+        assert_eq!(latest.snapshot.pending_uploads, 1);
+        state.acknowledge(&sent, &receipt(MAX_SAFE, false)).unwrap();
+        assert_eq!(state.pending, Some(latest.clone()));
+        assert!(
+            state
+                .reserve(&latest.folder_store_id, latest.snapshot, true)
+                .is_err()
+        );
+        assert_eq!(state.sequence, MAX_SAFE);
+        assert!(state.pending.is_some());
     }
 }

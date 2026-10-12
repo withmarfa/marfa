@@ -44,7 +44,12 @@ impl Folder {
                     && report.drain.report.unsent == 0
                     && report.drain.report.held == 0
                     && report.drain.report.unmade == 0
-                    && report.scan.root_gone.is_none();
+                    && report.scan.root_gone.is_none()
+                    && !report
+                        .scan
+                        .directories
+                        .iter()
+                        .any(|entry| matches!(entry.flag, "unreadable" | "gone"));
                 let unavailable = report
                     .catch_up
                     .as_ref()
