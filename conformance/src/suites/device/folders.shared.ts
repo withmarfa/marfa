@@ -34,6 +34,17 @@ import type { WireEdgeOptions } from "../../device/marfa-answers.js";
  * `include` globs in `vitest.config.ts` do not run it.
  */
 
+/** Content writes, including every non-read except the exact health-report door. */
+export function isContentWrite(request: RecordedRequest): boolean {
+  return (
+    request.method !== "GET" &&
+    !(
+      request.method === "PUT" &&
+      /^\/folders\/[^/]+\/status$/.test(request.pathname)
+    )
+  );
+}
+
 /** A file in the folder. */
 export function put(
   harness: FolderHarness,

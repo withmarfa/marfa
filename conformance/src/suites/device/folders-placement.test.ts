@@ -55,6 +55,7 @@ import type {
 } from "../../device/marfa-answers.js";
 import {
   EdgeDoor,
+  isContentWrite,
   idIn,
   itemVerdicts,
   put,
@@ -268,9 +269,7 @@ describe("where a file sits", () => {
     );
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    const sent = harness.server.requests
-      .slice(before)
-      .filter((request) => request.method !== "GET");
+    const sent = harness.server.requests.slice(before).filter(isContentWrite);
     expect(
       sent.map((request) => request.method),
       "a rename sent something other than one change to the file's placement",
@@ -950,15 +949,12 @@ describe("where a file sits", () => {
     ).toEqual(layout(harness));
 
     // Settled: another round writes nothing anywhere.
-    const before = harness.server.requests.filter(
-      (request) => request.method !== "GET",
-    ).length;
+    const before = harness.server.requests.filter(isContentWrite).length;
     for (const mac of [harness, second]) {
       expect((await mac.folder.push()).ok).toBe(true);
     }
     expect(
-      harness.server.requests.filter((request) => request.method !== "GET")
-        .length,
+      harness.server.requests.filter(isContentWrite).length,
       "the Macs went on writing after they agreed",
     ).toBe(before);
     expect(layout(second)).toEqual(layout(harness));
@@ -1354,13 +1350,10 @@ describe("where a file sits", () => {
     expect(
       [first, second, lines, short].map((id) => placements.get(id)).sort(),
     ).toEqual([cut, numbered, "Line one Line two end.md", "Short.md"].sort());
-    const before = harness.server.requests.filter(
-      (request) => request.method !== "GET",
-    ).length;
+    const before = harness.server.requests.filter(isContentWrite).length;
     expect((await harness.folder.push()).ok).toBe(true);
     expect(
-      harness.server.requests.filter((request) => request.method !== "GET")
-        .length,
+      harness.server.requests.filter(isContentWrite).length,
       "a cut name kept being placed again",
     ).toBe(before);
   });
@@ -1985,14 +1978,9 @@ describe("where a file sits", () => {
     expect(placed.edges.placements(harness.settings.id).get(second_)).toBe(
       "Shared (4).md",
     );
-    const before = harness.server.requests.filter(
-      (request) => request.method !== "GET",
-    ).length;
+    const before = harness.server.requests.filter(isContentWrite).length;
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(
-      harness.server.requests.filter((request) => request.method !== "GET")
-        .length,
-    ).toBe(before);
+    expect(harness.server.requests.filter(isContentWrite).length).toBe(before);
   });
 
   it("places a new item under the most specific first placement naming its type", async () => {
