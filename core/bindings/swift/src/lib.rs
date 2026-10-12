@@ -1907,7 +1907,12 @@ impl Core {
         queued(self.inner.create_edge(&draft)?)
     }
 
-    pub fn update_edge(&self, id: String, edit: EdgeEdit) -> Result<QueuedWrite, MarfaError> {
+    /// Answers `nil` for an edit that changes nothing, which queues no write.
+    pub fn update_edge(
+        &self,
+        id: String,
+        edit: EdgeEdit,
+    ) -> Result<Option<QueuedWrite>, MarfaError> {
         let (source_id, target_id) = match edit.moves {
             None => (None, None),
             Some(EdgeMove {
@@ -1925,7 +1930,7 @@ impl Core {
             source_id,
             target_id,
         };
-        queued(self.inner.update_edge(&id, &edit)?)
+        self.inner.update_edge(&id, &edit)?.map(queued).transpose()
     }
 
     pub fn delete_edge(&self, id: String) -> Result<QueuedWrite, MarfaError> {
@@ -3143,7 +3148,8 @@ mod tests {
 
         let moved = core
             .update_edge(edge.clone(), move_to(EdgeEnd::Source, &second))
-            .unwrap();
+            .unwrap()
+            .expect("a move of an end was not queued");
         let body: serde_json::Value = serde_json::from_str(&moved.body_json).unwrap();
         assert_eq!(body["source_id"], serde_json::json!(second));
         assert_eq!(body.get("target_id"), None);
@@ -3157,6 +3163,13 @@ mod tests {
         assert!(core.edges_from(first.clone()).unwrap().is_empty());
 
         let queued = core.queue().unwrap().len();
+        assert!(
+            core.update_edge(edge.clone(), move_to(EdgeEnd::Source, &second))
+                .unwrap()
+                .is_none(),
+            "a move to the source the edge holds was queued"
+        );
+        assert_eq!(core.queue().unwrap().len(), queued);
         for (end, to, code) in [
             (EdgeEnd::Source, child.as_str(), "edge_cycle"),
             (EdgeEnd::Target, first.as_str(), "validation_error"),

@@ -1281,6 +1281,11 @@ pub struct EdgeEdit {
 }
 
 impl EdgeEdit {
+    /// Whether the edit names no property and no end to move to.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.properties.is_empty() && self.source_id.is_none() && self.target_id.is_none()
+    }
+
     pub(crate) fn payload(&self, base_version: i64) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));

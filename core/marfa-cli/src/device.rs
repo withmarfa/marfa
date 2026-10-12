@@ -401,7 +401,7 @@ pub enum EdgesCommand {
         #[arg(long)]
         id: Option<String>,
     },
-    /// Change an edge's properties.
+    /// Change an edge's properties, or move one of its ends. An edit that changes nothing queues no write.
     Update {
         /// The edge id.
         id: String,
@@ -1163,7 +1163,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         source_id: source,
                         target_id: target,
                     };
-                    output::queued_one(&core.update_edge(&id, &edit)?, json)
+                    match core.update_edge(&id, &edit)? {
+                        Some(queued) => output::queued_one(&queued, json),
+                        None => output::nothing_queued(json),
+                    }
                 }
                 EdgesCommand::Delete { id } => output::queued_one(&core.delete_edge(&id)?, json),
             }

@@ -1990,8 +1990,9 @@ impl MarfaCore {
         )
     }
 
+    /// Answers `null` for an edit that changes nothing, which queues no write.
     #[napi]
-    pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<QueuedWrite> {
+    pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<Option<QueuedWrite>> {
         let (source_id, target_id) = match edit.moves {
             None => (None, None),
             Some(EdgeMove {
@@ -2009,12 +2010,11 @@ impl MarfaCore {
             source_id,
             target_id,
         };
-        queued(
-            env,
-            self.inner
-                .update_edge(&id, &edit)
-                .map_err(|error| failure(env, error))?,
-        )
+        self.inner
+            .update_edge(&id, &edit)
+            .map_err(|error| failure(env, error))?
+            .map(|write| queued(env, write))
+            .transpose()
     }
 
     #[napi]

@@ -573,7 +573,9 @@ impl Folder {
                     source_id: (end == End::Target).then_some(moved.source_id),
                     target_id: (end == End::Source).then_some(moved.target_id),
                 };
-                queued.push(self.core.update_edge(&old.id, &edit)?.id);
+                // The end moved to differs from the one the edge holds, so
+                // the edit is always a write.
+                queued.extend(self.core.update_edge(&old.id, &edit)?.map(|write| write.id));
                 removes.retain(|edge| edge.id != old.id);
             } else {
                 for other in adds {
