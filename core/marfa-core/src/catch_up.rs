@@ -1888,7 +1888,8 @@ mod tests {
             ),
             other => panic!("a fault ended the follow as {other:?}"),
         }
-        assert!(core.claim_stream().is_ok());
+        assert!(core.claim_stream(crate::Mover::CatchUp).is_ok());
+        assert!(core.claim_follow().is_ok());
     }
 
     #[test]
@@ -2204,16 +2205,88 @@ mod tests {
     }
 
     #[test]
+    fn a_second_follow_opened_before_the_first_hydration_is_refused_at_once() {
+        let server = Scripted::start();
+        let (_dir, core) = never_hydrated(&server);
+        let (first_stop, first) = follow_for_real(&core);
+        thread::sleep(MS(100));
+        let (second_stop, second) = follow_for_real(&core);
+        let refused = second.recv_timeout(Duration::from_secs(2));
+        second_stop.store(true, Ordering::Relaxed);
+        assert!(
+            matches!(&refused, Ok(Err(CoreError::Invalid(message))) if message.contains("one at a time")),
+            "a second follow before the first hydration was not refused at once: {refused:?}"
+        );
+        assert!(
+            matches!(first.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "the first follow ended when the second was refused"
+        );
+        first_stop.store(true, Ordering::Relaxed);
+        assert_eq!(
+            first.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Ok(FollowReport::default())
+        );
+        // The witness: with the first follow gone, a follow waits again.
+        let (stop, again) = follow_for_real(&core);
+        assert!(again.recv_timeout(MS(400)).is_err());
+        stop.store(true, Ordering::Relaxed);
+        again.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+    }
+
+    #[test]
+    fn a_follow_that_waited_waits_on_behind_a_hydration_or_catch_up_holding_the_stream() {
+        for holder in [crate::Mover::Hydration, crate::Mover::CatchUp] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on("/events", vec![stream(vec![connected()], held())]);
+            let (_dir, core) = hydrated(&server);
+            {
+                let conn = core.conn().unwrap();
+                store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)
+                    .unwrap();
+            }
+            let (stop, done) = follow_for_real(&core);
+            thread::sleep(MS(300));
+            let claim = core.claim_stream(holder).unwrap();
+            store::meta_delete(&core.conn().unwrap(), store::META_HYDRATE_STATE).unwrap();
+            assert!(
+                done.recv_timeout(MS(600)).is_err(),
+                "{holder:?}: a follow that waited for a hydration was refused for the stream it holds"
+            );
+            assert!(server.seen("/events").is_empty(), "{holder:?}");
+            drop(claim);
+            // The witness: let go, the stream is the follow's.
+            server.wait_for("/events", 1, Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            done.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        }
+    }
+
+    #[test]
     fn a_follow_on_a_copy_whose_cursor_aged_out_ends_at_once_rather_than_waiting() {
         let server = Scripted::start();
         let (_dir, core) = hydrated(&server);
         store::meta_delete(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap();
-        let (stop, done) = follow_for_real(&core);
-        let ended = done.recv_timeout(Duration::from_secs(5));
-        stop.store(true, Ordering::Relaxed);
-        assert!(
-            matches!(ended, Ok(Err(CoreError::CopyExpired { .. }))),
-            "a follow on a copy that must hydrate again waited for a hydration: {ended:?}"
+        let generation = || read_view::generation(&core.conn().unwrap()).unwrap();
+        let held = generation();
+        let followed = || {
+            let (stop, done) = follow_for_real(&core);
+            let ended = done.recv_timeout(Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            assert!(
+                matches!(ended, Ok(Err(CoreError::CopyExpired { .. }))),
+                "a follow on a copy that must hydrate again waited for a hydration: {ended:?}"
+            );
+        };
+        followed();
+        // The witness: a copy that still held its read view is expired.
+        let expired = generation();
+        assert_ne!(expired, held);
+        followed();
+        assert_eq!(
+            generation(),
+            expired,
+            "a follow on a copy expired already expired it again"
         );
         assert!(server.seen("/events").is_empty());
     }
