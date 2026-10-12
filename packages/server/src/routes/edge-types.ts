@@ -57,8 +57,7 @@ const TypeConstraintSchema = z
     },
   );
 
-/** Nothing reads a thumbnail from an edge, and a value nothing reads is a
- *  value nothing checks. */
+/** Nothing reads a thumbnail from an edge. */
 const EdgePropertyTypeSchema = z
   .string()
   .refine((type) => type !== "thumbnail", {

@@ -1932,8 +1932,7 @@ export function validateEdgeTypeSchema(
       for (const [name, def] of Object.entries(props)) {
         const before = errors.length;
         validateFieldShape(name, def, errors);
-        // An edge carries no thumbnail: nothing reads one from an edge, and
-        // a value nothing reads is a value nothing checks.
+        // An edge carries no thumbnail: nothing reads one from an edge.
         if (isThumbnail(def)) {
           errors.push(
             issue({
@@ -2069,7 +2068,7 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
  * Every key of a property an edge type declares. A field's definition less
  * the three keys that only mean something to the items a type validates:
  * `searchable`, `maxLength` and `maxItems`. `POST /edge-types` does not
- * declare them, and nothing checks an edge against its edge type's properties.
+ * declare them, and an edge write does not apply them.
  */
 export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
