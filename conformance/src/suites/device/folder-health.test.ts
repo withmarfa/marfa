@@ -8,6 +8,8 @@ import {
 import { afterEach, expect, it } from "vitest";
 import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
 
+import { writeAnswers } from "../../device/marfa-answers.js";
+import type { DoorRow } from "../../device/folder-door.js";
 import { scriptFolderWrites } from "./folders.shared.js";
 
 interface Report {
@@ -345,3 +347,103 @@ it("preserves a nonzero known upload count while an unreadable inventory hides u
   expect(reports(harness).at(-1)?.pending_uploads).toBe(1);
   expect(reports(harness).at(-1)?.problems).toEqual([]);
 });
+
+it.each(["replacement", "tag addition"] as const)(
+  "preserves accepted %s membership when projecting dead metadata intent",
+  async (operation) => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    harness = await folderHarness(`health-dead-metadata-${operation}`, {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 3,
+              properties: { title: "Held", body: "baseline\n" },
+            },
+          },
+        ],
+      },
+    });
+    let broken = false;
+    let rows: Map<string, DoorRow>;
+    scriptFolderWrites(harness, {
+      door: (door) => {
+        rows = door.rows;
+      },
+      tagging: (request) => {
+        if (broken)
+          return {
+            kind: "json",
+            status: 409,
+            body: {
+              error: {
+                code: "idempotency_key_in_flight",
+                message: "this request is still in flight",
+              },
+            },
+          };
+        if (request.pathname.endsWith("/metadata")) {
+          const row = rows.get(id)!;
+          const tags = (JSON.parse(request.body) as { tags: string[] }).tags;
+          row.tags =
+            request.method === "PUT"
+              ? tags
+              : [...new Set([...(row.tags ?? []), ...tags])];
+          return writeAnswers.metadata(id, row.tags);
+        }
+        return undefined;
+      },
+    });
+    expect((await harness.folder.push()).ok).toBe(true);
+    const device = harness.folder.device();
+    const queued =
+      operation === "replacement"
+        ? await device.addTag(id, "stale")
+        : await device.writeMetadata(id, ["old"], "replace");
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    broken = true;
+    for (let attempt = 0; attempt < 5; attempt++)
+      expect((await device.drain()).ok).toBe(true);
+    const dead = await device.queue();
+    expect(
+      dead.ok &&
+        dead.value.some(
+          (write) => write.id === queued.value.id && write.verdict === "dead",
+        ),
+    ).toBe(true);
+    broken = false;
+    const newer =
+      operation === "replacement"
+        ? await device.writeMetadata(id, [], "replace")
+        : await device.addTag(id, "new");
+    expect(newer.ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const observed = await device.get(id);
+    expect(observed.ok && observed.value.tags).toEqual(
+      operation === "replacement" ? [] : ["new", "old"],
+    );
+    expect(reports(harness).at(-1)?.pending_uploads).toBe(
+      operation === "replacement" ? 0 : 1,
+    );
+    expect((await device.forget()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const restarted = await device.get(id);
+    expect(restarted.ok && restarted.value.tags).toEqual(
+      operation === "replacement" ? [] : ["new", "old"],
+    );
+    const kept = await device.queue();
+    expect(
+      kept.ok &&
+        kept.value.some(
+          (write) => write.id === queued.value.id && write.verdict === "dead",
+        ),
+    ).toBe(true);
+    expect((await device.release({ id: queued.value.id })).ok).toBe(true);
+    const restored = await device.get(id);
+    expect(restored.ok && restored.value.tags).toEqual(
+      operation === "replacement" ? ["stale"] : ["old"],
+    );
+  },
+);

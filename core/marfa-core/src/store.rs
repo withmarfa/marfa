@@ -255,7 +255,7 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
 fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
-        forget_answered(conn)?;
+        forget_answered_inner(conn, false)?;
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM temp.queue WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)",
             [
@@ -1140,7 +1140,11 @@ fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField
                 fields.extend(
                     properties
                         .iter()
-                        .filter(|(_, value)| !value.is_null() || replaces_properties(&row.body))
+                        .filter(|(_, value)| {
+                            row.kind == WriteKind::UpdateEdge
+                                || !value.is_null()
+                                || replaces_properties(&row.body)
+                        })
                         .map(|(key, _)| (true, key.clone())),
                 );
             } else {
@@ -1157,6 +1161,37 @@ fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField
         }
     }
     Ok(fields)
+}
+
+fn is_tag_write(row: &QueuedWrite) -> bool {
+    matches!(
+        row.kind,
+        WriteKind::AddTag
+            | WriteKind::RemoveTag
+            | WriteKind::MergeMetadata
+            | WriteKind::ReplaceMetadata
+    )
+}
+
+fn tag_targets(row: &QueuedWrite) -> HashSet<String> {
+    if row.kind == WriteKind::RemoveTag {
+        return row.tag.iter().cloned().collect();
+    }
+    row.body
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tag| tag.as_str().map(str::to_string))
+        .collect()
+}
+
+fn tag_field(tag: &str) -> EditField {
+    (false, format!("tag/{tag}"))
+}
+
+fn same_tag_subject(a: &QueuedWrite, b: &QueuedWrite) -> bool {
+    is_tag_write(a) && is_tag_write(b) && a.item_id.is_some() && a.item_id == b.item_id
 }
 
 fn supersedes_dead(later: &QueuedWrite, dead: &QueuedWrite) -> bool {
@@ -1205,7 +1240,29 @@ fn learn_dead_effects(conn: &Connection, accepted: &QueuedWrite) -> Result<(), C
         if effect.excluded_attempts.contains(&accepted.idempotency_key) {
             continue;
         }
-        if matches!(dead.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge)
+        if same_tag_subject(&dead, accepted) {
+            if accepted.kind == WriteKind::ReplaceMetadata {
+                effect.whole = true;
+            } else {
+                let original = tag_targets(&dead);
+                let covered = tag_targets(accepted);
+                effect.fields.extend(
+                    covered
+                        .iter()
+                        .filter(|tag| {
+                            dead.kind == WriteKind::ReplaceMetadata || original.contains(*tag)
+                        })
+                        .map(|tag| tag_field(tag)),
+                );
+                if original.is_empty()
+                    && dead.kind != WriteKind::ReplaceMetadata
+                    && dead.kind == accepted.kind
+                    && dead.body == accepted.body
+                {
+                    effect.whole = true;
+                }
+            }
+        } else if matches!(dead.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge)
             && dead.kind == accepted.kind
             && match dead.kind {
                 WriteKind::UpdateItem => dead.item_id.is_some() && dead.item_id == accepted.item_id,
@@ -1247,6 +1304,15 @@ fn remaining_dead_fields(
     if effect.whole {
         return Ok(Some(HashSet::new()));
     }
+    if is_tag_write(row) && row.kind != WriteKind::ReplaceMetadata {
+        let mut fields: HashSet<EditField> =
+            tag_targets(row).iter().map(|tag| tag_field(tag)).collect();
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        fields.retain(|field| !effect.fields.contains(field));
+        return Ok(Some(fields));
+    }
     if matches!(row.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge) {
         let mut fields = edit_fields(conn, row)?;
         // An unrecognised or empty request remains held until an explicit
@@ -1279,14 +1345,21 @@ pub fn current_waiting_writes(
     Ok(waiting)
 }
 
+fn current_item_writes(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    current_waiting_writes(conn, &waiting_writes_for_item(conn, id)?)
+}
+
+fn current_edge_writes(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    current_waiting_writes(conn, &waiting_writes_for_edge(conn, id)?)
+}
+
+/// Raw unanswered and releasable work, even if its content effects are now
+/// covered. Queue lifecycle and recovery guards must still protect it.
 pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
-    current_waiting_writes(
+    read_writes(
         conn,
-        &read_writes(
-            conn,
-            "WHERE verdict IS NULL OR verdict IN (?1, ?2)",
-            [Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
-        )?,
+        "WHERE verdict IS NULL OR verdict IN (?1, ?2)",
+        [Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -1339,16 +1412,13 @@ pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(!waiting_writes_for_item(conn, id)?.is_empty())
 }
 
-/// Through the index rather than the whole queue: this runs once per answer
-/// and once per event.
+/// Raw waiting work through the index, including covered Dead rows that
+/// remain releasable. Projection must explicitly request current effects.
 pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
-    current_waiting_writes(
+    read_writes(
         conn,
-        &read_writes(
-            conn,
-            "WHERE item_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
-            [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
-        )?,
+        "WHERE item_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -1357,13 +1427,10 @@ pub fn edge_write_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> 
 }
 
 fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
-    current_waiting_writes(
+    read_writes(
         conn,
-        &read_writes(
-            conn,
-            "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
-            [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
-        )?,
+        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -2683,7 +2750,14 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         } else {
             HashSet::new()
         };
+        let same_tags = same_tag_subject(&released, &witness)
+            && (released.kind == WriteKind::ReplaceMetadata
+                || witness.kind == WriteKind::ReplaceMetadata
+                || tag_targets(&released)
+                    .iter()
+                    .any(|tag| tag_targets(&witness).contains(tag)));
         if supersedes_dead(&witness, &released)
+            || same_tags
             || same_edit
                 && (covered.iter().any(|field| original_fields.contains(field))
                     || replaces_properties(&witness.body)
@@ -2781,10 +2855,17 @@ pub fn withdraw(
 /// be released and is cleared; passes repeat until one clears nothing, since
 /// each can free what the last kept.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
+    forget_answered_inner(conn, true)
+}
+
+fn forget_answered_inner(conn: &Connection, clean_effects: bool) -> Result<usize, CoreError> {
     let mut cleared = 0;
     loop {
         let pass = forget_answered_once(conn)?;
         if pass == 0 {
+            if clean_effects {
+                conn.execute("DELETE FROM main.meta WHERE key LIKE 'dead_effect/%' AND substr(key, length('dead_effect/') + 1) NOT IN (SELECT id FROM main.queue)", [])?;
+            }
             return Ok(cleared);
         }
         cleared += pass;
@@ -2915,7 +2996,7 @@ pub fn lay_waiting_writes_over(
     item_id: &str,
     indexing: &dyn Fn(&str) -> Indexing,
 ) -> Result<(), CoreError> {
-    let waiting = waiting_writes_for_item(conn, item_id)?;
+    let waiting = current_item_writes(conn, item_id)?;
     if waiting.is_empty() {
         return Ok(());
     }
@@ -2935,6 +3016,24 @@ pub fn lay_waiting_writes_over(
             retain_edit_fields(&mut row.body, &fields);
             if let Some(read) = &mut read {
                 retain_edit_fields(read, &fields);
+            }
+        }
+        if row.verdict == Some(Verdict::Dead) && is_tag_write(&row) {
+            let effect = dead_effect(conn, &row)?;
+            let mut desired = tag_targets(&row);
+            desired.retain(|tag| !effect.fields.contains(&tag_field(tag)));
+            if row.kind == WriteKind::ReplaceMetadata {
+                desired.extend(
+                    tags.iter()
+                        .filter(|tag| effect.fields.contains(&tag_field(tag)))
+                        .cloned(),
+                );
+            }
+            if matches!(
+                row.kind,
+                WriteKind::AddTag | WriteKind::MergeMetadata | WriteKind::ReplaceMetadata
+            ) {
+                row.body["tags"] = serde_json::to_value(desired)?;
             }
         }
         lay_write(conn, &mut item, &mut tags, &row, read.as_ref())?;
@@ -3153,7 +3252,7 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
 }
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
-    let waiting = waiting_writes_for_edge(conn, edge_id)?;
+    let waiting = current_edge_writes(conn, edge_id)?;
     let Some(mut edge) = edge_by_id(conn, edge_id)? else {
         return Ok(());
     };
@@ -5091,7 +5190,7 @@ mod tests {
             "merge null did not apply a body replacement"
         );
         assert!(!item.properties.contains_key("description"));
-        assert_eq!(waiting_writes_for_item(&conn, "held").unwrap().len(), 1);
+        assert_eq!(current_item_writes(&conn, "held").unwrap().len(), 1);
         effect_answer(
             &conn,
             "body",
@@ -5099,7 +5198,7 @@ mod tests {
             Verdict::Accepted,
         );
         assert_eq!(
-            waiting_writes_for_item(&conn, "held").unwrap().len(),
+            current_item_writes(&conn, "held").unwrap().len(),
             1,
             "unconfirmed removal still waits"
         );
@@ -5109,11 +5208,11 @@ mod tests {
             r#"{"properties":{"title":"confirmed title","body":"confirmed body"},"properties_mode":"replace"}"#,
             Verdict::Accepted,
         );
-        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(current_item_writes(&conn, "held").unwrap().is_empty());
         assert_eq!(queued_write(&conn, "dead").unwrap().unwrap(), original);
         assert_eq!(read_of(&conn, "dead").unwrap(), original_read);
         assert_eq!(forget_answered(&conn).unwrap(), 3);
-        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(current_item_writes(&conn, "held").unwrap().is_empty());
         assert!(release(&conn, "dead").unwrap());
         let released = queued_write(&conn, "dead").unwrap().unwrap();
         assert_eq!(released.body, original.body);
@@ -5134,7 +5233,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(waiting_writes_for_item(&conn, "held").unwrap().len(), 1);
+        assert_eq!(current_item_writes(&conn, "held").unwrap().len(), 1);
     }
 
     #[test]
@@ -5185,7 +5284,7 @@ mod tests {
                 .is_none()
         );
         assert!(meta_get(&conn, &effect_key("dead")).unwrap().is_none());
-        assert!(!waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(!current_item_writes(&conn, "held").unwrap().is_empty());
     }
 
     #[test]
@@ -5208,7 +5307,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(current_item_writes(&conn, "held").unwrap().is_empty());
         assert!(release(&conn, "dead").unwrap());
         record_verdict(
             &conn,
@@ -5270,7 +5369,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(!current_item_writes(&conn, "held").unwrap().is_empty());
         // A released witness has a new attempt key and may cover this work.
         conn.execute("UPDATE queue SET verdict='dead' WHERE id='inflight'", [])
             .unwrap();
@@ -5286,7 +5385,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(current_item_writes(&conn, "held").unwrap().is_empty());
     }
     #[test]
     fn partial_dead_edge_projection_keeps_only_unresolved_properties() {
@@ -5321,6 +5420,349 @@ mod tests {
         assert_eq!(
             queued_write(&conn, "dead").unwrap().unwrap().body["properties"]["a"],
             "old a"
+        );
+    }
+    #[test]
+    fn review_purge_must_still_refuse_releasable_dead_work() {
+        let core = crate::Core::open_in_memory(None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('dead','update_item','held','dead',?1,1,'dead','2026-01-01T00:00:00Z')", [r#"{"properties":{"title":"old"}}"#]).unwrap();
+        }
+        assert!(
+            matches!(core.purge_item("held", Some(1)), Err(CoreError::Invalid(_))),
+            "witness: pending dead write blocks before server transport"
+        );
+        {
+            let conn = core.conn().unwrap();
+            effect_answer(
+                &conn,
+                "later",
+                r#"{"properties":{"title":"new"}}"#,
+                Verdict::Accepted,
+            );
+            assert_eq!(
+                queued_write(&conn, "dead").unwrap().unwrap().verdict,
+                Some(Verdict::Dead)
+            );
+        }
+        let result = core.purge_item("held", Some(1));
+        eprintln!("covered dead purge result: {result:?}");
+        assert!(
+            matches!(result, Err(CoreError::Invalid(_))),
+            "coverage must not bypass device/purge-waiting protection"
+        );
+    }
+
+    #[test]
+    fn review_accepted_metadata_replace_must_cover_dead_tag() {
+        let conn = effect_fixture();
+        conn.execute(
+            "UPDATE queue SET kind='add_tag',tag='stale',payload=?1,read=NULL WHERE id='dead'",
+            [r#"{"tags":["stale"]}"#],
+        )
+        .unwrap();
+        lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+        assert!(
+            item_by_id(&conn, "held")
+                .unwrap()
+                .unwrap()
+                .tags
+                .contains(&"stale".to_string()),
+            "witness: unresolved tag projects"
+        );
+        remove_tag(&conn, "held", "stale").unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('later','replace_metadata','held','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"tags":[]}"#]).unwrap();
+        record_verdict(
+            &conn,
+            "later",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+        assert!(
+            !item_by_id(&conn, "held")
+                .unwrap()
+                .unwrap()
+                .tags
+                .contains(&"stale".to_string()),
+            "accepted replacement must keep the dead tag from returning"
+        );
+    }
+
+    #[test]
+    fn review_accepted_edge_null_must_cover_dead_property() {
+        let conn = conn();
+        let mut edge = wire_edge("edge", "source", "target", "references");
+        edge.properties =
+            serde_json::from_value(serde_json::json!({"a":null,"b":"server b"})).unwrap();
+        upsert_edge(&conn, &edge).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('dead','update_edge','edge','dead',?1,1,'dead','2026-01-01T00:00:00Z')", [r#"{"properties":{"a":"old a","b":"old b"}}"#]).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,queued_at) VALUES ('later','update_edge','edge','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"properties":{"a":null}}"#]).unwrap();
+        record_verdict(
+            &conn,
+            "later",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        lay_waiting_edge_writes_over(&conn, "edge").unwrap();
+        let current = edge_by_id(&conn, "edge").unwrap().unwrap();
+        assert_eq!(
+            current.properties["b"], "old b",
+            "witness: unresolved b remains projected"
+        );
+        assert!(
+            current.properties["a"].is_null(),
+            "edge merge stores null; the old dead a must not overwrite it"
+        );
+    }
+    #[test]
+    fn metadata_tag_coverage_keeps_partial_membership_and_raw_releasable_work() {
+        let cases = [
+            (
+                "add_tag",
+                Some("stale"),
+                r#"{"tags":["stale"]}"#,
+                "replace_metadata",
+                None,
+                r#"{"tags":[]}"#,
+                vec![],
+                vec![],
+                false,
+            ),
+            (
+                "remove_tag",
+                Some("stale"),
+                "{}",
+                "replace_metadata",
+                None,
+                r#"{"tags":["stale"]}"#,
+                vec!["stale"],
+                vec!["stale"],
+                false,
+            ),
+            (
+                "merge_metadata",
+                None,
+                r#"{"tags":["old","keep"]}"#,
+                "replace_metadata",
+                None,
+                r#"{"tags":["new"]}"#,
+                vec!["new"],
+                vec!["new"],
+                false,
+            ),
+            (
+                "replace_metadata",
+                None,
+                r#"{"tags":["old","keep"]}"#,
+                "replace_metadata",
+                None,
+                r#"{"tags":["new"]}"#,
+                vec!["new"],
+                vec!["new"],
+                false,
+            ),
+            (
+                "replace_metadata",
+                None,
+                r#"{"tags":["old","keep"]}"#,
+                "add_tag",
+                Some("new"),
+                r#"{"tags":["new"]}"#,
+                vec!["new", "other"],
+                vec!["keep", "new", "old"],
+                true,
+            ),
+            (
+                "replace_metadata",
+                None,
+                r#"{"tags":["old","keep"]}"#,
+                "remove_tag",
+                Some("old"),
+                "{}",
+                vec![],
+                vec!["keep"],
+                true,
+            ),
+            (
+                "merge_metadata",
+                None,
+                r#"{"tags":["old","keep"]}"#,
+                "remove_tag",
+                Some("old"),
+                "{}",
+                vec![],
+                vec!["keep"],
+                true,
+            ),
+            (
+                "remove_tag",
+                Some("stale"),
+                "{}",
+                "merge_metadata",
+                None,
+                r#"{"tags":["stale","new"]}"#,
+                vec!["new", "stale"],
+                vec!["new", "stale"],
+                false,
+            ),
+            (
+                "add_tag",
+                Some("stale"),
+                r#"{"tags":["stale"]}"#,
+                "merge_metadata",
+                None,
+                r#"{"tags":["other"]}"#,
+                vec!["other"],
+                vec!["other", "stale"],
+                true,
+            ),
+        ];
+        for (
+            kind,
+            tag,
+            payload,
+            later_kind,
+            later_tag,
+            later_payload,
+            baseline,
+            expected,
+            current,
+        ) in cases
+        {
+            let conn = effect_fixture();
+            conn.execute(
+                "UPDATE queue SET kind=?1, tag=?2, payload=?3, read=NULL WHERE id='dead'",
+                params![kind, tag, payload],
+            )
+            .unwrap();
+            replace_tags(
+                &conn,
+                "held",
+                &baseline
+                    .iter()
+                    .map(|tag| tag.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+            conn.execute("INSERT INTO queue (id,kind,item_id,tag,idempotency_key,payload,sent,queued_at) VALUES ('later',?1,'held',?2,'later',?3,1,'2026-01-01T00:00:01Z')", params![later_kind,later_tag,later_payload]).unwrap();
+            let original = queued_write(&conn, "dead").unwrap().unwrap();
+            record_verdict(
+                &conn,
+                "later",
+                &Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            for _ in 0..2 {
+                lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+                assert_eq!(
+                    item_by_id(&conn, "held").unwrap().unwrap().tags,
+                    expected,
+                    "{kind} -> {later_kind}"
+                );
+                assert_eq!(
+                    !current_item_writes(&conn, "held").unwrap().is_empty(),
+                    current
+                );
+                assert_eq!(
+                    waiting_writes_for_item(&conn, "held").unwrap().len(),
+                    1,
+                    "covered work remains releasable"
+                );
+                assert_eq!(queued_write(&conn, "dead").unwrap().unwrap(), original);
+                forget_answered(&conn).unwrap();
+            }
+            release(&conn, "dead").unwrap();
+            record_verdict(
+                &conn,
+                "dead",
+                &Answered {
+                    verdict: Verdict::Dead,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(current_item_writes(&conn, "held").unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn partial_dead_edge_null_remains_projected_and_releasable_after_coverage() {
+        let conn = conn();
+        let mut edge = wire_edge("edge", "source", "target", "references");
+        edge.properties =
+            serde_json::from_value(serde_json::json!({"a":"server a","b":"new b"})).unwrap();
+        upsert_edge(&conn, &edge).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('dead','update_edge','edge','dead',?1,1,'dead','2026-01-01T00:00:00Z')", [r#"{"properties":{"a":null,"b":"old b"}}"#]).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,queued_at) VALUES ('later','update_edge','edge','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"properties":{"b":"new b"}}"#]).unwrap();
+        record_verdict(
+            &conn,
+            "later",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        lay_waiting_edge_writes_over(&conn, "edge").unwrap();
+        let edge = edge_by_id(&conn, "edge").unwrap().unwrap();
+        assert!(edge.properties["a"].is_null());
+        assert_eq!(edge.properties["b"], "new b");
+        assert_eq!(current_edge_writes(&conn, "edge").unwrap().len(), 1);
+        assert_eq!(waiting_writes_for_edge(&conn, "edge").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clearing_removed_queue_rows_cleans_their_effect_slot_without_mutating_rejected_stores() {
+        let conn = effect_fixture();
+        release(&conn, "dead").unwrap();
+        assert!(meta_get(&conn, &effect_key("dead")).unwrap().is_some());
+        conn.execute("UPDATE queue SET kind='remove_tag', tag='stale', verdict='refused', sent=1 WHERE id='dead'",[]).unwrap();
+        assert_eq!(forget_answered(&conn).unwrap(), 1);
+        assert!(meta_get(&conn, &effect_key("dead")).unwrap().is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let malformed = open(&path).unwrap();
+        queue_one(&malformed);
+        meta_set(
+            &malformed,
+            "dead_effect/orphan",
+            "fixture must survive refusal",
+        )
+        .unwrap();
+        malformed
+            .execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
+            .unwrap();
+        assert!(matches!(open(&path), Err(CoreError::WrongSchema { .. })));
+        assert!(matches!(
+            open_to_read(&path),
+            Err(CoreError::WrongSchema { .. })
+        ));
+        assert_eq!(
+            meta_get(&malformed, "dead_effect/orphan")
+                .unwrap()
+                .as_deref(),
+            Some("fixture must survive refusal")
         );
     }
 }
