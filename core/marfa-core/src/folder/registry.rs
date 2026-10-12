@@ -249,8 +249,8 @@ fn machine_path(home: &Path) -> PathBuf {
 /// are followed. The root's own entry, and every component a later `..`
 /// climbs back out of, are opened without following links, and a `..` is
 /// removed only after the walk through it returns to the directory it left,
-/// so a link before `..` cannot disappear. A path refused by [`named`] is
-/// kept as spelled.
+/// so a link before `..` cannot disappear. A path [`named`] refuses keeps
+/// its spelling from the refused component on.
 pub fn resolved(dir: &Path) -> PathBuf {
     walk(dir).0
 }
