@@ -485,7 +485,8 @@ export interface DeviceUnderTest {
   createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>>;
   /**
    * Change an edge's properties, or move one of its ends, in one write. An
-   * edit that changes nothing queues no write and answers `null`.
+   * edit that names no property and no new end queues no write and answers
+   * `null`.
    */
   updateEdge(
     id: string,

@@ -1990,7 +1990,8 @@ impl MarfaCore {
         )
     }
 
-    /// Answers `null` for an edit that changes nothing, which queues no write.
+    /// Answers `null` for an edit that names no property and no new end, which
+    /// queues no write.
     #[napi]
     pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<Option<QueuedWrite>> {
         let (source_id, target_id) = match edit.moves {

@@ -1907,7 +1907,8 @@ impl Core {
         queued(self.inner.create_edge(&draft)?)
     }
 
-    /// Answers `nil` for an edit that changes nothing, which queues no write.
+    /// Answers `nil` for an edit that names no property and no new end, which
+    /// queues no write.
     pub fn update_edge(
         &self,
         id: String,

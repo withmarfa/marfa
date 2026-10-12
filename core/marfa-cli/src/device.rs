@@ -401,7 +401,7 @@ pub enum EdgesCommand {
         #[arg(long)]
         id: Option<String>,
     },
-    /// Change an edge's properties, or move one of its ends. An edit that changes nothing queues no write.
+    /// Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
     Update {
         /// The edge id.
         id: String,

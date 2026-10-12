@@ -2780,7 +2780,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device edges update
 
-Change an edge's properties, or move one of its ends. An edit that changes nothing queues no write.
+Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
 
 ```text
 marfa device edges update [OPTIONS] <ID>
