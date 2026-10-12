@@ -11,6 +11,8 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
+  bulkGetOf,
+  certifiedRead,
   copyLiveReplay,
   cursorAhead,
   edgesPage,
@@ -1429,7 +1431,8 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // A hydration reads a pinned row this way, and keeps the pin over it.
+    // A pin reads a row this way. A hydration reads its pinned rows in a
+    // bulk read, which leaves the row out, and keeps the pin over it.
     const note = await client.createItem({
       type: "core.note",
       source: ctx.source,
@@ -1446,6 +1449,20 @@ describe("the scripted answers match the server's", () => {
       { status: unread.status, body: unread.error },
       answers.itemNotFound(note.data.item.id),
       { same: ["error.code", "error.message"] },
+    );
+    const left = await narrowed.rawRequest("/items/bulk-get", {
+      method: "POST",
+      body: {
+        ids: [note.data.item.id],
+        include: ["edges", "metadata", "system"],
+      },
+    });
+    expect(left.status).toBe(200);
+    expectFidelity(
+      "a row of a type the key does not hold, in a bulk read by id",
+      { status: left.status, body: left.data },
+      bulkGetOf([answers.itemNotFound(note.data.item.id)], false),
+      { same: ["items", "metadata"] },
     );
 
     const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
@@ -3205,6 +3222,34 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
   };
   expect(row.listed).toBe(true);
   expect(row.item.id).toBe(seeded.id);
+  // A hydration reads its pinned rows this way: a bulk read by id under the
+  // view, which leaves out an id that names nothing.
+  const gone = uuidv7();
+  const bulk = await fetch(`${apiUrl}/items/bulk-get`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ids: [seeded.id, gone],
+      include: ["edges", "metadata", "system"],
+    }),
+  });
+  expect(bulk.status).toBe(200);
+  expect(bulk.headers.get("X-Marfa-Read-View")).toBe(fence);
+  expect(bulk.headers.get("Cache-Control")).toBe("no-store");
+  const bulkBody = (await bulk.json()) as { items: { id: string }[] };
+  expect(bulkBody.items.map((item) => item.id)).toEqual([seeded.id]);
+  expectFidelity(
+    "a bulk read by id under a matching read view",
+    { status: bulk.status, body: bulkBody },
+    bulkGetOf(
+      [
+        certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
+        certifiedRead(answers.itemNotFound(gone)),
+      ],
+      true,
+    ),
+    { same: ["listed"], shape: ["items", "metadata"] },
+  );
   const ordinary = await fetch(
     `${apiUrl}/items/${seeded.id}?include=metadata`,
     { headers: { Authorization: `Bearer ${apiKey}` } },

@@ -5,6 +5,7 @@ import {
   scriptHydration,
   scriptKey,
   scriptWrites,
+  readsOf,
   type Harness,
 } from "./harness.js";
 import {
@@ -2630,10 +2631,7 @@ describe("catch-up keeps the copy to its slice", () => {
       expect(status.ok, JSON.stringify(status)).toBe(true);
       return status.ok ? status.value.pinned : [];
     };
-    const reads = () =>
-      server.requests.filter(
-        (request) => request.pathname === "/items/settings",
-      ).length;
+    const reads = () => readsOf(server, "settings");
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.pin("settings")).ok).toBe(true);

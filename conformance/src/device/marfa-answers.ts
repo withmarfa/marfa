@@ -748,6 +748,67 @@ export function certifiedRead(
   };
 }
 
+/**
+ * What `POST /items/bulk-get` answers for ids whose reads by id answer
+ * `reads`, in the order the request named them. The server resolves each id
+ * as a read by id does, so a `200` gives the id's row and a `404` leaves the
+ * id out (`items/bulk-get` and `items/bulk-get-omits`). Any other answer is
+ * the whole request's. Under a read view the answer is certified only where
+ * every read was, and then carries `listed` beside `items`
+ * (`read-views/listed-bulk-get`).
+ */
+export function bulkGetOf(reads: Answer[], viewed: boolean): Answer {
+  const gated = reads.filter((read) => read.kind === "gated");
+  if (gated.length > 0)
+    return {
+      kind: "gated",
+      until: Promise.all(gated.map((read) => read.until)).then(() => undefined),
+      then: bulkGetOf(
+        reads.map((read) => (read.kind === "gated" ? read.then : read)),
+        viewed,
+      ),
+    };
+  const items: unknown[] = [];
+  const metadata: unknown[] = [];
+  const listed: unknown[] = [];
+  let certified = viewed;
+  let contract: string | string[] | null | undefined;
+  for (const read of reads) {
+    if (read.kind !== "json" || (read.status !== 200 && read.status !== 404))
+      return read;
+    contract ??= read.contract;
+    const proof = Object.entries(read.headers ?? {}).find(
+      ([name]) => name.toLowerCase() === "x-marfa-read-view",
+    )?.[1];
+    if (proof !== SCRIPTED_READ_VIEW) certified = false;
+    if (read.status === 404) continue;
+    const row = read.body as {
+      item: Record<string, unknown>;
+      metadata?: unknown;
+      listed?: unknown;
+    };
+    items.push(row.item);
+    metadata.push(
+      row.metadata ?? { item_id: row.item.id, tags: [], extensions: {} },
+    );
+    listed.push(row.listed ?? true);
+  }
+  return {
+    kind: "json",
+    status: 200,
+    body: { items, metadata, ...(certified ? { listed } : {}) },
+    ...(contract === undefined ? {} : { contract }),
+    ...(certified
+      ? {
+          headers: {
+            "X-Marfa-Read-View": SCRIPTED_READ_VIEW,
+            "Cache-Control": "no-store",
+          },
+        }
+      : {}),
+  };
+}
+
 /** The head read a hydration performs before it takes its snapshot. */
 export function headRead(cursor: string): Answer {
   return { kind: "sse", frames: [connected, streamCursor(cursor)] };
