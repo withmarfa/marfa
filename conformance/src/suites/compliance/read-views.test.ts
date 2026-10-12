@@ -483,6 +483,26 @@ describe("conditional working-copy read views", () => {
           expect(edge).not.toHaveProperty("listed");
       }
     }
+    const ids = rows.map((row) => row.id);
+    const bulk = await bulkGet(
+      { ids, include: ["metadata", "edges"] },
+      proof.read_view,
+    );
+    certified(bulk, proof.read_view);
+    const bulkBody = (await bulk.json()) as Omit<BulkRead, "items"> & {
+      items: Array<{
+        id: string;
+        edges?: Record<string, { data: unknown[] }>;
+      }>;
+    };
+    expect(bulkBody).not.toHaveProperty("read_view");
+    expect(bulkBody.items.map((item) => item.id)).toEqual(ids);
+    expect(bulkBody.listed).toEqual([true, true, true]);
+    const bulkEdges = bulkBody.items.flatMap((item) =>
+      Object.values(item.edges ?? {}).flatMap((block) => block.data),
+    );
+    expect(bulkEdges).toHaveLength(1);
+    for (const edge of bulkEdges) expect(edge).not.toHaveProperty("listed");
     const empty = await request(
       `/items?source=${ctx.source}-empty&include=metadata`,
       proof.read_view,
@@ -494,6 +514,10 @@ describe("conditional working-copy read views", () => {
       expect(ordinary.status).toBe(200);
       expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
     }
+    const ordinaryBulk = await bulkGet({ ids });
+    expect(ordinaryBulk.status).toBe(200);
+    expect(ordinaryBulk.headers.get("X-Marfa-Read-View")).toBeNull();
+    expect(await ordinaryBulk.json()).not.toHaveProperty("listed");
   });
 
   it("rejects unsupported conditional doors, malformed proofs and metadata-free item pages", async () => {
