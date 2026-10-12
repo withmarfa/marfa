@@ -141,8 +141,9 @@ impl Folder {
 
     /// Takes the folder at `dir` off this machine: its own state under
     /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed. Only the path the registry
-    /// lists is followed through a symbolic link. A listed folder's state goes
+    /// the first sync still waits to be confirmed. No symbolic link is
+    /// followed, and a path through one is taken only where it is the path
+    /// the registry lists. A listed folder's state goes
     /// only where the store at its listed path is the one the registry lists
     /// for it; otherwise its entry alone is taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<Removal> {
@@ -161,7 +162,7 @@ impl Folder {
                 Reached::Unlisted(_) => "name the folder by a path without symbolic links".into(),
             };
             return Err(CoreError::Invalid(format!(
-                "{} passes through the symbolic link {}, and `folders remove` follows a link only through the path the folder registry lists; {instead}",
+                "{} passes through the symbolic link {}, and `folders remove` takes a path through a link only where it is the path the folder registry lists; {instead}",
                 spelled.display(),
                 link.display()
             )));

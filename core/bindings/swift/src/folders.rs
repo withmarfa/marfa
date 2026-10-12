@@ -420,8 +420,9 @@ impl Folders {
 
     /// Takes the folder off this machine: its state under `.marfa` goes and
     /// its files stay. Refused while writes wait, except for a first sync
-    /// still waiting to be confirmed, which this cancels. Follows a symbolic
-    /// link only through the path the registry lists. Where that path is
+    /// still waiting to be confirmed, which this cancels. Follows no symbolic
+    /// link, and takes a path through one only where it is the path the
+    /// registry lists. Where that path is
     /// gone, passes through a link, or holds state the registry does not
     /// show to be the folder's own, the folder is only taken off the
     /// registry.

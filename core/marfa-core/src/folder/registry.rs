@@ -664,7 +664,7 @@ mod tests {
             Folder::status_of(&named),
             Err(CoreError::Invalid(message)) if message.contains("is not a folder")
         ));
-        // A removal follows a link only through the listed path, and names it.
+        // A removal through a link is refused, naming the listed path.
         assert!(matches!(
             Folder::remove_at(&named),
             Err(CoreError::Invalid(message))

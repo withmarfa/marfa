@@ -477,8 +477,8 @@ describe("a folder round trip", () => {
     );
     await c.cli.json(["folders", "status", named]);
 
-    // A removal follows a link only through the path the registry lists,
-    // and names that path.
+    // A removal through a link is refused, naming the path the registry
+    // lists.
     const throughLink = await c.cli.refused(["folders", "remove", named]);
     expect(throughLink.envelope.error.code).toBe("invalid");
     expect(throughLink.envelope.error.message).toContain(

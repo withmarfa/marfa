@@ -34,11 +34,11 @@ pub enum FoldersCommand {
     /// Take a folder off this machine: its own state under `.marfa` goes,
     /// and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
-    /// waiting to be confirmed, which this cancels. Follows a symbolic link
-    /// only through the path `folders list` shows. Where that path is gone,
-    /// passes through a link, or holds state the registry does not show to
-    /// be the folder's own, the folder is only taken off the list and
-    /// nothing is deleted.
+    /// waiting to be confirmed, which this cancels. Follows no symbolic
+    /// link, and takes a path through one only where it is the path
+    /// `folders list` shows. Where that path is gone, passes through a link,
+    /// or holds state the registry does not show to be the folder's own, the
+    /// folder is only taken off the list and nothing is deleted.
     Remove {
         /// The folder.
         dir: PathBuf,
