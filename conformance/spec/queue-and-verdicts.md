@@ -1244,11 +1244,11 @@ When a later row or edge from the server comes beneath a `dead` write, a device 
 
 ### `queue-and-verdicts/dead-covered-effects`
 
-When a later queued write to the same row or edge is answered `accepted` while an earlier write is `dead`, a device MUST omit from the dead attempt's local projection only those effects that the accepted write applies to the same fields or state.
+When a later queued write to the same row or edge is answered `accepted` while an earlier update, tag change, metadata replacement, state change, or edge deletion is `dead`, a device MUST omit from the dead attempt's local projection only those effects that the accepted write applies to the same fields or state.
 
-**Reason:** a later confirmed edit takes precedence over an older failed edit, while unresolved content remains available; a merge-mode null applies no change (`queue-and-verdicts/merge-null-leaves`).
+**Reason:** a later confirmed edit takes precedence over an older failed edit, while unresolved content remains available; an item's merge-mode null applies no change (`queue-and-verdicts/merge-null-leaves`), while an edge update stores null (`edges/update-merge`).
 
-**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
 
 ### `queue-and-verdicts/dead-covered-persistent`
 
@@ -1256,7 +1256,7 @@ When a caller clears answered writes or reopens a working copy, a device MUST pr
 
 **Reason:** removing an accepted receipt from the queue does not make its older superseded content current again.
 
-**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
 
 ### `queue-and-verdicts/dead-covered-release`
 
@@ -1264,7 +1264,7 @@ When a caller releases a dead write whose effects were superseded, a device MUST
 
 **Reason:** explicit release renews the caller's intent without changing the original recoverable body (`queue-and-verdicts/release-lays-over` and `queue-and-verdicts/queue-shows-body`).
 
-**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
 
 ### `queue-and-verdicts/waiting-over-hydration`
 
