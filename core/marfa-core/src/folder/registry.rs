@@ -1,7 +1,7 @@
 use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -159,7 +159,7 @@ impl Registry {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let directory = Directory::create(parent)
+        let directory = Directory::create(&resolved(parent))
             .map_err(|error| self.failed("make the directory of", &error))?;
         let name = Path::new(
             self.path
@@ -194,10 +194,10 @@ impl Registry {
         };
         let mut tidied: Vec<Registered> = Vec::new();
         for mut entry in std::mem::take(&mut listing.folders) {
+            entry.dir = resolved(&entry.dir);
             if gone(&entry) {
                 continue;
             }
-            entry.dir = resolved(&entry.dir);
             tidied.retain(|kept| {
                 kept.dir != entry.dir && (entry.store.is_none() || kept.store != entry.store)
             });
@@ -246,9 +246,10 @@ fn machine_path(home: &Path) -> PathBuf {
 /// directory without following links, so a link before `..` cannot disappear.
 pub fn resolved(dir: &Path) -> PathBuf {
     let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let absolute = with_ancestors_resolved(&absolute);
     if !absolute
         .components()
-        .any(|part| part == std::path::Component::ParentDir)
+        .any(|part| part == Component::ParentDir)
     {
         return absolute;
     }
@@ -258,10 +259,10 @@ pub fn resolved(dir: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for part in absolute.components() {
         match part {
-            std::path::Component::ParentDir => {
+            Component::ParentDir => {
                 normalized.pop();
             }
-            std::path::Component::CurDir => {}
+            Component::CurDir => {}
             part => normalized.push(part.as_os_str()),
         }
     }
@@ -272,6 +273,44 @@ pub fn resolved(dir: &Path) -> PathBuf {
     } else {
         absolute
     }
+}
+
+/// The directories above a root are the person's and outside the folder, and
+/// the system links some of them (`/var` and `/tmp` on macOS), so links there
+/// are followed. The root's own entry, and any component a later `..` climbs
+/// back out of, are left for the no-follow open to judge.
+fn with_ancestors_resolved(absolute: &Path) -> PathBuf {
+    let parts: Vec<Component> = absolute.components().collect();
+    let mut depth = 0usize;
+    let mut lowest = usize::MAX;
+    for part in &parts {
+        match part {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => {
+                depth = depth.saturating_sub(1);
+                lowest = lowest.min(depth);
+            }
+            _ => {}
+        }
+    }
+    let lead = parts
+        .iter()
+        .take_while(|part| !matches!(part, Component::Normal(_)))
+        .count();
+    let (above, rest) = parts.split_at(lead + lowest.min(depth.saturating_sub(1)));
+    let above: PathBuf = above.iter().collect();
+    for base in above.ancestors() {
+        if let Ok(mut found) = std::fs::canonicalize(base) {
+            if let Ok(missing) = above.strip_prefix(base)
+                && !missing.as_os_str().is_empty()
+            {
+                found.push(missing);
+            }
+            found.extend(rest);
+            return found;
+        }
+    }
+    absolute.to_path_buf()
 }
 
 /// Missing or unreadable roots are kept, since a disconnected volume or a
@@ -310,6 +349,79 @@ mod tests {
         registry.unregister(&parent_spelling).unwrap();
         registry.add(&inner, "inner", None).unwrap();
         assert!(registry.add(&parent_spelling, "outer", None).is_err());
+    }
+
+    #[test]
+    fn a_linked_ancestor_is_resolved_and_nothing_at_or_below_the_root_is_followed() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes/child")).unwrap();
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        let named = base.join("link/notes");
+        assert!(Directory::open(&named).is_err());
+        assert_eq!(resolved(&named), real.join("notes"));
+        assert!(Directory::open(&resolved(&named)).is_ok());
+        assert_eq!(
+            resolved(&base.join("link/new/deeper")),
+            real.join("new/deeper")
+        );
+        assert_eq!(
+            resolved(&base.join("link/notes/child/..")),
+            real.join("notes")
+        );
+
+        std::os::unix::fs::symlink(real.join("notes"), base.join("alias")).unwrap();
+        assert_eq!(resolved(&base.join("alias")), base.join("alias"));
+        assert!(Directory::open(&resolved(&base.join("alias"))).is_err());
+        assert!(Directory::open(&resolved(&base.join("alias/child/.."))).is_err());
+        std::os::unix::fs::symlink(base.join("elsewhere"), real.join("notes/inside")).unwrap();
+        let root = Directory::open(&resolved(&named)).unwrap();
+        assert!(root.child(Path::new("child"), false).is_ok());
+        assert!(root.child(Path::new("inside"), false).is_err());
+        let back = base.join("link/notes/inside/..");
+        assert_eq!(resolved(&back), real.join("notes/inside/.."));
+        assert!(Directory::open(&resolved(&back)).is_err());
+    }
+
+    #[test]
+    fn a_folder_named_through_a_linked_ancestor_is_added_opened_and_removed_where_it_resolves() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let real = temp.path().join("real");
+        let root = real.join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        std::os::unix::fs::symlink(&real, temp.path().join("link")).unwrap();
+        let named = temp.path().join("link/notes");
+
+        assert_eq!(Folder::open(&named, None).unwrap().root(), root);
+        let not_a_folder = |status: Result<crate::folder::StatusReport>| match status {
+            Err(CoreError::Invalid(message)) => message.contains("is not a folder"),
+            _ => false,
+        };
+        assert!(!not_a_folder(Folder::status_of(&named)));
+        std::os::unix::fs::symlink(&root, temp.path().join("alias")).unwrap();
+        assert!(Folder::open(temp.path().join("alias"), None).is_err());
+        assert!(not_a_folder(Folder::status_of(temp.path().join("alias"))));
+        Folder::remove_at(&named).unwrap();
+        assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
+
+        let server = crate::scripted::Scripted::start();
+        let added = Folder::add(
+            temp.path().join("link/fresh"),
+            "01a00000-0000-7000-8000-000000000002",
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+            None,
+        );
+        assert!(!matches!(added, Err(CoreError::Io(_))), "{:?}", added.err());
+        assert!(real.join("fresh").join(STATE_DIR).is_dir());
     }
 
     #[test]

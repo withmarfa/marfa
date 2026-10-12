@@ -3448,7 +3448,7 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 When a folder is added, a device MUST list its admitted absolute directory spelling, followed `system.folder` and store identity in the machine’s folder registry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`.
+**Tests:** `device/folders-one-mac.test.ts › lists the folders on the Mac in one registry`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › registers the resolved directory, followed folder and store identity`, `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
 
 ### `folders/registry-independent-stores`
 
@@ -4470,9 +4470,17 @@ When a folder directory is admitted, a device MUST retain that opened directory 
 
 ### `folders/directory-components-no-follow`
 
-When opening a folder or any directory below it, a device MUST refuse symbolic links in every path component.
+When opening a folder or any directory below it, a device MUST refuse a symbolic link at the folder's own directory entry and in every path component below it.
 
-**Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`.
+**Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`, `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
+
+### `folders/root-linked-ancestor-resolved`
+
+When a folder is named through a path whose directories above the folder include a symbolic link, a device MUST admit the folder at the path with those links resolved.
+
+**Reason:** The directories above a folder are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
+
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
 
 ### `folders/replacement-root-no-deletion`
 

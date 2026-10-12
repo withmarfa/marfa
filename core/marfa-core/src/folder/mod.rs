@@ -223,7 +223,7 @@ impl Folder {
         renew: Option<crate::http::Renew>,
     ) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
-        let root = root.as_ref().to_path_buf();
+        let root = registry::resolved(root.as_ref());
         let root_dir = Directory::create(&root).map_err(io_error)?;
         admitted_root(&root_dir).map_err(io_error)?;
         crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
@@ -326,7 +326,7 @@ impl Folder {
     }
 
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
-        let root = root.as_ref().to_path_buf();
+        let root = registry::resolved(root.as_ref());
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -366,7 +366,7 @@ impl Folder {
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        let root = root.as_ref().to_path_buf();
+        let root = registry::resolved(root.as_ref());
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;

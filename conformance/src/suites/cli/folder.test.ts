@@ -3,8 +3,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -371,6 +373,79 @@ describe("a folder round trip", () => {
     );
     expect(corrected.updated).toBe(0);
     expect(corrected.flagged).toEqual([]);
+  });
+
+  it("adds a folder named through a linked directory where it resolves, and follows no link inside it", async () => {
+    // A directory above a folder is the person's, and may be a link, as
+    // `/var` and `/tmp` are on macOS.
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const named = join(dir, "linked", "notes");
+    const resolved = join(realpathSync(real), "notes");
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    writeFileSync(
+      join(outside, "outside.md"),
+      `---\ntitle: ${unique("behind-a-link")}\n---\nBehind a link.\n`,
+    );
+    symlinkSync(outside, join(resolved, "inside"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("linked-ancestor"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    const added = await c.cli.json<{ dir: string }>([
+      "folders",
+      "add",
+      named,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    expect(added.dir).toBe(resolved);
+    const listed = await c.cli.json<Array<{ dir: string; folder: string }>>([
+      "folders",
+      "list",
+    ]);
+    expect(
+      listed
+        .filter((entry) => entry.folder === settings.item.id)
+        .map((entry) => entry.dir),
+    ).toEqual([resolved]);
+
+    writeFileSync(
+      join(resolved, "dropped.md"),
+      `---\ntitle: ${unique("linked-ancestor-note")}\n---\nDropped here.\n`,
+    );
+    const pushed = await c.cli.json<PushReport>(["folders", "push", named]);
+    // The file beside the link is taken in, and the one behind it is not.
+    expect(pushed.scan.created).toBe(1);
+    const minted = /marfa_id: (\S+)/.exec(
+      readFileSync(join(resolved, "dropped.md"), "utf8"),
+    )![1]!;
+    trackItem(c.ctx, minted);
+    expect(readFileSync(join(outside, "outside.md"), "utf8")).not.toContain(
+      "marfa_id",
+    );
+
+    // The folder's own directory is not followed when it is the link.
+    symlinkSync(resolved, join(dir, "alias"));
+    const refused = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "alias"),
+    ]);
+    expect(refused.envelope.error.code).toBe("invalid");
+    await c.cli.json(["folders", "status", named]);
+
+    await c.cli.json(["folders", "remove", named]);
+    expect(existsSync(join(resolved, ".marfa", "core.sqlite"))).toBe(false);
+    expect(existsSync(join(resolved, "dropped.md"))).toBe(true);
   });
 
   it("is in step after the one push that writes its files", async () => {
