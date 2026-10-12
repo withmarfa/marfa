@@ -216,6 +216,7 @@ impl Folder {
                         });
                     if !passed_over {
                         gate.changed(Instant::now());
+                        telling.health_changed = true;
                     } else if !gate.passed_over_is_due(Instant::now()) {
                         continue;
                     }
@@ -223,7 +224,9 @@ impl Folder {
                 Ok(Wake::File(Err(error))) => {
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Server) => {}
+                Ok(Wake::Server) => {
+                    telling.health_changed = true;
+                }
                 Ok(Wake::Retrying(error, wait)) => {
                     tell(WatchEvent::Retrying { error, wait }).map_err(WatchError::Told)?;
                 }
@@ -322,22 +325,32 @@ impl Folder {
             && drain.report.unsent == 0
             && drain.report.held == 0
             && drain.report.unmade == 0;
-        self.health_observe(
-            complete,
+        let event = telling.passed(
             full,
-            Some(&pull),
-            problem.as_ref(),
-            settings.flagged.is_some()
-                || settings.unwritten.is_some()
-                || pull.settings.flagged.is_some()
-                || pull.settings.unwritten.is_some(),
+            settings.clone(),
+            scan.clone(),
+            drain.clone(),
+            pull.clone(),
         );
+        if full || event.is_some() || telling.health_changed {
+            self.health_observe(
+                complete,
+                full,
+                Some(&pull),
+                problem.as_ref(),
+                settings.flagged.is_some()
+                    || settings.unwritten.is_some()
+                    || pull.settings.flagged.is_some()
+                    || pull.settings.unwritten.is_some(),
+            );
+            telling.health_changed = false;
+        }
         if complete {
             progress.consumed = generation;
         }
         drop(progress);
         let refused = credential_refused(&drain);
-        if let Some(event) = telling.passed(full, settings, scan, drain, pull) {
+        if let Some(event) = event {
             tell(event).map_err(WatchError::Told)?;
         }
         refused.map_or(Ok(()), |error| Err(WatchError::CredentialRefused(error)))
@@ -501,6 +514,7 @@ struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
     unsettled: bool,
+    health_changed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -565,10 +579,12 @@ impl Telling {
         match lost {
             Some(reason) if !self.unreachable => {
                 self.unreachable = true;
+                self.health_changed = true;
                 Some(WatchEvent::Reach(Some(reason)))
             }
             None if self.unreachable => {
                 self.unreachable = false;
+                self.health_changed = true;
                 Some(WatchEvent::Reach(None))
             }
             _ => None,
