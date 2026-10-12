@@ -191,30 +191,49 @@ fn hydrate_inner(
             }
         }
 
-        let pinned = store::pins(&*core.conn()?)?;
-        for id in pinned {
-            crate::catch_up::refuse_if_stopped(stop)?;
-            if store::item_held(&*core.conn()?, &id)? {
-                continue;
+        // A pin the answer leaves out names no row the key may read, and
+        // stays without one (`device/pin-gone-kept`).
+        let pinned: Vec<String> = {
+            let conn = core.conn()?;
+            let mut unheld = Vec::new();
+            for id in store::pins(&conn)? {
+                if !store::item_held(&conn, &id)? {
+                    unheld.push(id);
+                }
             }
-            let Some((row, edges)) = read_with_edges(http, &id)? else {
-                continue;
-            };
+            unheld
+        };
+        for ids in pinned.chunks(crate::http::BULK_GET_LIMIT) {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let rows = http.items_by_id(ids)?;
+            let mut overflow: Vec<WireEdge> = Vec::new();
+            for row in &rows {
+                for (edge_type, block) in row.item.edges.iter().flatten() {
+                    overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                }
+            }
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            crate::read_view::set_listed(
-                &tx,
-                &row.item.id,
-                row.listed.ok_or_else(crate::read_view::invalid)?,
-            )?;
-            store::put_server_item(
-                &tx,
-                &row.item,
-                Some(&row.metadata.tags),
-                &catalog.indexing(&row.item.r#type),
-            )?;
-            for edge in &edges {
+            for row in &rows {
+                crate::read_view::set_listed(
+                    &tx,
+                    &row.item.id,
+                    row.listed.ok_or_else(crate::read_view::invalid)?,
+                )?;
+                store::put_server_item(
+                    &tx,
+                    &row.item,
+                    Some(&row.metadata.tags),
+                    &catalog.indexing(&row.item.r#type),
+                )?;
+                for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                    for edge in &block.data {
+                        store::put_server_edge(&tx, edge)?;
+                    }
+                }
+            }
+            for edge in &overflow {
                 store::put_server_edge(&tx, edge)?;
             }
             tx.commit()?;
@@ -704,11 +723,261 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use crate::scripted::{self, Scripted};
+    use serde_json::{Value, json};
+
+    use crate::scripted::{self, Answer, Scripted, Then};
     use crate::stop_tests::copy;
-    use crate::{CoreError, SliceTier, store};
+    use crate::{Core, CoreError, SliceTier, store};
+
+    /// A copy whose slice lists nothing, holding `count` pins, and a server
+    /// whose head and replay end live.
+    fn pinned_copy(server: &Scripted, count: usize) -> (std::sync::Arc<Core>, Vec<String>) {
+        let core = copy(server);
+        let pinned: Vec<String> = (0..count).map(|at| format!("pin-{at:03}")).collect();
+        {
+            let conn = core.conn().unwrap();
+            for id in &pinned {
+                store::pin(&conn, id).unwrap();
+            }
+        }
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            ))],
+        );
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "11"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        (core, pinned)
+    }
+
+    /// The body `POST /items/bulk-get` answers for `rows`, each an id and
+    /// its `listed`.
+    fn bulk_body(rows: &[(&str, bool)]) -> Value {
+        let items: Vec<Value> = rows
+            .iter()
+            .map(|(id, _)| {
+                serde_json::from_str::<Value>(&scripted::item_payload(
+                    "item.updated",
+                    id,
+                    "core.note",
+                    1,
+                ))
+                .unwrap()["item"]
+                    .clone()
+            })
+            .collect();
+        let metadata: Vec<Value> = rows
+            .iter()
+            .map(|(id, _)| json!({"item_id": id, "tags": [], "extensions": {}}))
+            .collect();
+        let listed: Vec<bool> = rows.iter().map(|(_, listed)| *listed).collect();
+        json!({"items": items, "metadata": metadata, "listed": listed})
+    }
+
+    fn bulk(rows: &[(&str, bool)]) -> Answer {
+        scripted::certified(scripted::json(200, &bulk_body(rows).to_string()))
+    }
+
+    fn hydrate(core: &Core) -> crate::Result<crate::HydrateReport> {
+        core.hydrate_until(
+            &["core.note".into()],
+            SliceTier::Library,
+            &[],
+            &AtomicBool::new(false),
+        )
+    }
+
+    #[test]
+    fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_under_its_read_view() {
+        let server = Scripted::start();
+        let (core, pinned) = pinned_copy(&server, 250);
+        server.on(
+            "/items/bulk-get",
+            vec![
+                bulk(&[("pin-000", true), ("pin-001", false)]),
+                bulk(&[]),
+                bulk(&[("pin-249", true)]),
+            ],
+        );
+
+        let report = hydrate(&core).unwrap();
+
+        let asked = server.seen("/items/bulk-get");
+        let mut named = Vec::new();
+        for seen in &asked {
+            assert_eq!(seen.read_view.as_deref(), Some(scripted::FENCE));
+            let body: Value = serde_json::from_slice(&seen.body).unwrap();
+            assert_eq!(body["include"], json!(["edges", "metadata", "system"]));
+            named.extend(
+                body["ids"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|id| id.as_str().unwrap().to_string()),
+            );
+        }
+        assert_eq!(
+            asked
+                .iter()
+                .map(
+                    |seen| serde_json::from_slice::<Value>(&seen.body).unwrap()["ids"]
+                        .as_array()
+                        .unwrap()
+                        .len()
+                )
+                .collect::<Vec<_>>(),
+            [100, 100, 50],
+            "the pinned rows were not read 100 to a request"
+        );
+        assert_eq!(named, pinned);
+        assert_eq!(report.items, 3);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::pins(&conn).unwrap(),
+            pinned,
+            "a pin left out was dropped"
+        );
+        for (id, held) in [
+            ("pin-000", true),
+            ("pin-001", true),
+            ("pin-100", false),
+            ("pin-249", true),
+        ] {
+            assert_eq!(store::item_held(&conn, id).unwrap(), held, "{id}");
+        }
+        assert!(crate::read_view::listed(&conn, "pin-000").unwrap());
+        assert!(
+            !crate::read_view::listed(&conn, "pin-001").unwrap(),
+            "the answer's listed was not kept for the row it pairs with"
+        );
+    }
+
+    /// Each is an answer the hydration cannot take as the server's word on
+    /// its read view, so the copy expires as on any other conditional read.
+    #[test]
+    fn a_bulk_answer_of_pinned_rows_that_cannot_be_trusted_expires_the_copy() {
+        let mut short = bulk_body(&[("pin-000", true), ("pin-001", true)]);
+        short["listed"] = json!([true]);
+        let mut unlisted = bulk_body(&[("pin-000", true)]);
+        unlisted.as_object_mut().unwrap().remove("listed");
+        let mut unpaired = bulk_body(&[("pin-000", true), ("pin-001", true)]);
+        unpaired["metadata"][0]["item_id"] = json!("pin-001");
+        let cases = [
+            (
+                "listed shorter than items",
+                scripted::certified(scripted::json(200, &short.to_string())),
+                "read_view_invalid",
+            ),
+            (
+                "no listed",
+                scripted::certified(scripted::json(200, &unlisted.to_string())),
+                "read_view_invalid",
+            ),
+            (
+                "metadata of another row",
+                scripted::certified(scripted::json(200, &unpaired.to_string())),
+                "read_view_invalid",
+            ),
+            (
+                "a row not asked for",
+                bulk(&[("stranger", true)]),
+                "read_view_invalid",
+            ),
+            (
+                "a row twice",
+                bulk(&[("pin-000", true), ("pin-000", true)]),
+                "read_view_invalid",
+            ),
+            (
+                "no certificate",
+                scripted::json(200, &bulk_body(&[("pin-000", true)]).to_string()),
+                "read_view_invalid",
+            ),
+            (
+                "a changed view",
+                scripted::refusal(409, "read_view_changed"),
+                "read_view_changed",
+            ),
+        ];
+        for (case, answer, reason) in cases {
+            let server = Scripted::start();
+            let (core, pinned) = pinned_copy(&server, 2);
+            server.on("/items/bulk-get", vec![answer]);
+            assert_eq!(
+                hydrate(&core).unwrap_err(),
+                CoreError::CopyExpired {
+                    reason: reason.into()
+                },
+                "{case}"
+            );
+            let conn = core.conn().unwrap();
+            assert!(crate::read_view::expired(&conn).unwrap(), "{case}");
+            assert_eq!(store::pins(&conn).unwrap(), pinned, "{case}");
+        }
+        // The witness: the same copy hydrates on an answer it can trust.
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 2);
+        server.on(
+            "/items/bulk-get",
+            vec![bulk(&[("pin-000", true), ("pin-001", true)])],
+        );
+        assert_eq!(hydrate(&core).unwrap().items, 2);
+    }
+
+    #[test]
+    fn a_hydration_stopped_between_reads_of_pinned_rows_asks_for_no_more() {
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 101);
+        server.on(
+            "/items/bulk-get",
+            vec![
+                Answer::Slow {
+                    after: std::time::Duration::from_millis(400),
+                    answer: Box::new(bulk(&[("pin-000", true)])),
+                },
+                bulk(&[("pin-100", true)]),
+            ],
+        );
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let hydrating = scope.spawn(|| {
+                core.hydrate_until(&["core.note".into()], SliceTier::Library, &[], &stop)
+            });
+            server.wait_for("/items/bulk-get", 1, std::time::Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            assert!(matches!(
+                hydrating.join().unwrap(),
+                Err(CoreError::Canceled)
+            ));
+        });
+        assert_eq!(
+            server.seen("/items/bulk-get").len(),
+            1,
+            "a read of pinned rows was sent after the stop"
+        );
+        assert!(matches!(
+            core.get("pin-000"),
+            Err(CoreError::HydrationIncomplete)
+        ));
+    }
 
     /// A credential that is not a key cannot read its own map, so the device
     /// cannot tell before listing whether it may read a type. The listing's

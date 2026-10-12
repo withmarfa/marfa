@@ -14,11 +14,15 @@ use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
 use crate::model::SliceTier;
 use crate::wire::{
-    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItemWithMetadata, WirePage,
-    WireType,
+    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItem, WireItemWithMetadata,
+    WireMetadata, WirePage, WireType,
 };
 
 pub const PAGE_LIMIT: u32 = 200;
+
+/// The most ids `POST /items/bulk-get` takes in one request
+/// (`items/bulk-get-cap`).
+pub const BULK_GET_LIMIT: usize = 100;
 
 /// How long a server may take to begin an answer, and to send the body of
 /// one read whole.
@@ -838,6 +842,81 @@ impl Http {
         }
     }
 
+    /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, each row with
+    /// its metadata, the first page of its edges of each type and, under a
+    /// read view, `listed`. It asks for `system` because a pin can name a
+    /// `system.*` row, which the door otherwise leaves out
+    /// (`items/bulk-get-system`). An id the answer leaves out names no row
+    /// the key may read outside the bin (`items/bulk-get-omits`).
+    pub(crate) fn items_by_id(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<WireItemWithMetadata>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Metadata {
+            item_id: String,
+            #[serde(default)]
+            tags: Vec<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            items: Vec<WireItem>,
+            metadata: Vec<Metadata>,
+            #[serde(default)]
+            listed: Option<Vec<bool>>,
+        }
+        if ids.len() > BULK_GET_LIMIT {
+            return Err(CoreError::Invalid(format!(
+                "a bulk read takes at most {BULK_GET_LIMIT} ids, not {}",
+                ids.len()
+            )));
+        }
+        let body = serde_json::json!({
+            "ids": ids,
+            "include": ["edges", "metadata", "system"],
+        })
+        .to_string();
+        let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
+        let unreadable = |why: &str| {
+            if self.view.is_some() {
+                crate::read_view::invalid()
+            } else {
+                CoreError::Decoding(format!("/items/bulk-get: {why}"))
+            }
+        };
+        let answered = answer.items.len();
+        if answer.metadata.len() != answered {
+            return Err(unreadable("the metadata does not pair with the items"));
+        }
+        let listed = match answer.listed {
+            Some(listed) if listed.len() == answered => listed.into_iter().map(Some).collect(),
+            Some(_) => return Err(unreadable("`listed` does not pair with the items")),
+            None if self.view.is_some() => return Err(unreadable("no `listed` under a read view")),
+            None => vec![None; answered],
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::with_capacity(answered);
+        for ((item, metadata), listed) in answer.items.into_iter().zip(answer.metadata).zip(listed)
+        {
+            if !ids.contains(&item.id) || !seen.insert(item.id.clone()) {
+                return Err(unreadable(
+                    "an item the request did not name, or named twice",
+                ));
+            }
+            if metadata.item_id != item.id {
+                return Err(unreadable("the metadata does not pair with the items"));
+            }
+            rows.push(WireItemWithMetadata {
+                listed,
+                item,
+                metadata: WireMetadata {
+                    tags: metadata.tags,
+                },
+            });
+        }
+        Ok(rows)
+    }
+
     /// Redirects, contract mismatches and transport or renewal failures are
     /// errors. Other responses retain their status and code together for the
     /// drain to classify; `refusal()` drops the status.
@@ -1240,20 +1319,47 @@ impl Http {
         segments: &[&str],
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
+        self.read_json(segments, params, None)
+    }
+
+    /// A read, sent as a `GET`, or as a `POST` of `body` for a read whose
+    /// question is a body. Under a read view it is a conditional read: the
+    /// answer has to carry the view back.
+    fn read_json<T: DeserializeOwned>(
+        &self,
+        segments: &[&str],
+        params: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
         let conditional = self.view.as_deref().filter(|_| !segments.is_empty());
         let response = self.authorized(|authorization| {
-            let mut request = self
-                .agent
-                .get(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", authorization);
-            if let Some(view) = conditional {
-                request = request.header("X-Marfa-Read-View", view);
-            }
-            request
-                .call()
-                .map_err(|error| CoreError::Network(error.to_string()))
+            let sent = match body {
+                None => {
+                    let mut request = self
+                        .agent
+                        .get(url.as_str())
+                        .header("Accept", "application/json")
+                        .header("Authorization", authorization);
+                    if let Some(view) = conditional {
+                        request = request.header("X-Marfa-Read-View", view);
+                    }
+                    request.call()
+                }
+                Some(body) => {
+                    let mut request = self
+                        .agent
+                        .post(url.as_str())
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", authorization);
+                    if let Some(view) = conditional {
+                        request = request.header("X-Marfa-Read-View", view);
+                    }
+                    request.send(body)
+                }
+            };
+            sent.map_err(|error| CoreError::Network(error.to_string()))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
@@ -1284,6 +1390,7 @@ impl Http {
             let value: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))?;
             if conditional.is_some()
+                && body.is_none()
                 && segments.first() == Some(&"items")
                 && (segments.len() == 1 || segments.len() == 2)
             {
