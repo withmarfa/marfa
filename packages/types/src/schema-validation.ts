@@ -2048,6 +2048,41 @@ export const MERGE_POLICY_KEYS: ReadonlySet<string> = new Set(
   } satisfies Record<keyof MergePolicy, true>),
 );
 
+/**
+ * An edge type's properties as a registration stores them: each definition
+ * folded into the canonical `FieldDefinition` as an item type's fields are, so
+ * a string property declaring `format: email` is stored as an `email`
+ * property and judged as one. Only a format that does not suit its property
+ * is refused here; the rest of a definition's shape is checked by the caller.
+ */
+export function normalizeEdgeProperties(
+  properties: Record<string, unknown>,
+):
+  | { success: true; data: Record<string, FieldDefinition> }
+  | { success: false; errors: SchemaValidationIssue[] } {
+  const errors: SchemaValidationIssue[] = [];
+  const data: Record<string, FieldDefinition> = {};
+  for (const [name, def] of Object.entries(properties)) {
+    const found: SchemaValidationIssue[] = [];
+    validateFieldShape(name, def, found);
+    const prefix = `fields.${name}`;
+    const refused = found.filter((e) => e.field === `${prefix}.format`);
+    errors.push(
+      ...refused.map((e) => ({
+        ...e,
+        field: `property_schema.${name}.format`,
+      })),
+    );
+    const record = asRecord(def);
+    if (refused.length === 0 && record) {
+      data[name] = normalizeFieldDefinition(record);
+    }
+  }
+  return errors.length > 0
+    ? { success: false, errors }
+    : { success: true, data };
+}
+
 /** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
 export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
   Object.keys({

@@ -13,9 +13,10 @@ import {
   TYPE_ROLES,
   ROLE_CONSTRAINT_PREFIX,
   FIELD_TYPES,
+  normalizeEdgeProperties,
   unreadKeys,
 } from "@withmarfa/shared";
-import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
+import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -76,7 +77,7 @@ const EdgePropertyFormatSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail.",
+    "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`.",
   );
 
 /** One property an edge of the type carries, as registration takes it and
@@ -264,6 +265,12 @@ export function edgeTypeFromRequest(
       errors: unknownTypes,
     });
   }
+  const properties = normalizeEdgeProperties(body.property_schema ?? {});
+  if (!properties.success) {
+    throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid edge type schema", {
+      errors: properties.errors,
+    });
+  }
   const reverse = body.reverse_name;
   if (reverse !== undefined && !isValidEdgeTypeIdentifier(reverse)) {
     throw new MarfaError(
@@ -295,10 +302,7 @@ export function edgeTypeFromRequest(
     source_type_constraints: body.source_type_constraints ?? ["*"],
     target_type_constraints: body.target_type_constraints ?? ["*"],
     cascade_on_delete: body.cascade_on_delete ?? "orphan",
-    property_schema: (body.property_schema ?? {}) as Record<
-      string,
-      FieldDefinition
-    >,
+    property_schema: properties.data,
     ...(reverse !== undefined && { reverse_name: reverse }),
     written_at: body.written_at ?? "source",
   };

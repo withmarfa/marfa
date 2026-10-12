@@ -63,17 +63,20 @@ function propertyRefusal(key: string, message: string): MarfaError {
  * enum are refused `invalid_properties` naming the property, and a key the
  * schema does not declare passes.
  *
- * A type that resolves to nothing declares nothing, and the doors refuse it
- * before they get here.
+ * `skipDeclared` leaves out the `property_schema` judgment, for a replay of
+ * edges an instance already stored, which stand until they are written.
+ * `in-folder` is judged either way.
  */
 export function assertEdgeProperties(
   edgeType: string,
   properties: Record<string, unknown> | undefined,
+  opts: { skipDeclared?: boolean } = {},
 ): void {
   if (edgeType === FOLDER_EDGE_TYPE) {
     assertFolderEdgeProperties(properties);
     return;
   }
+  if (opts.skipDeclared === true) return;
   const declared = getEdgeTypeSchema(edgeType)?.property_schema;
   if (declared === undefined) return;
   const judged = validateDeclaredProperties(declared, properties ?? {});
@@ -86,20 +89,6 @@ export function assertEdgeProperties(
     `Invalid properties for edge "${edgeType}": ${detail}`,
     { errors: judged.errors, edge_type: edgeType },
   );
-}
-
-/** Whether the edge door would take these properties on a new edge. */
-export function edgePropertiesHold(
-  edgeType: string,
-  properties: Record<string, unknown>,
-): boolean {
-  try {
-    assertEdgeProperties(edgeType, properties);
-    return true;
-  } catch (err) {
-    if (err instanceof MarfaError) return false;
-    throw err;
-  }
 }
 
 function assertFolderEdgeProperties(
@@ -192,8 +181,9 @@ export interface EdgeProposal {
  *    parent-of and supersedes, considering proposed edges as part of the
  *    graph. Both answer `edge_cycle`.
  * 8. The properties are what the edge type requires, and an `in-folder`
- *    edge does not target a revoked folder unless `replay` says an archive
- *    recorded it.
+ *    edge does not target a revoked folder. `replay`, for the edges an
+ *    archive recorded, leaves out the `property_schema` judgment and lets an
+ *    `in-folder` edge target a revoked folder.
  *
  * `replacing` names a stored edge the one proposal moves, which the
  * cardinality counts leave out.
@@ -232,7 +222,9 @@ export async function assertEdgesCanBeCreated(
       );
     }
     assertNotSelfLoop(p.source_id, p.target_id, p.edge_type);
-    assertEdgeProperties(p.edge_type, p.properties);
+    assertEdgeProperties(p.edge_type, p.properties, {
+      skipDeclared: opts.replay === true,
+    });
     resolved.push({ p, schema });
   }
 

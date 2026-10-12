@@ -21,6 +21,7 @@ import {
   SHIPPED_TYPE_SHAPES,
   TYPE_ROLES,
   isRoleConstraint,
+  normalizeEdgeProperties,
   roleFromConstraint,
   unreadKeys,
   validateTypeSchema as validateTypeSchemaShape,
@@ -90,7 +91,12 @@ export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
 // key outside them. The edge doors read a request through a schema that
 // strips what it does not declare, so they ask this of the body as it was
 // sent.
-export { EDGE_PROPERTY_KEYS, EDGE_TYPE_SCHEMA_KEYS, unreadKeys };
+export {
+  EDGE_PROPERTY_KEYS,
+  EDGE_TYPE_SCHEMA_KEYS,
+  normalizeEdgeProperties,
+  unreadKeys,
+};
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)

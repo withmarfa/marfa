@@ -214,7 +214,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+        "Returns the counts. Items and edges keep their IDs, versions and dates, and an edge comes back whether or not its properties fit its edge type's `property_schema`, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
     },
     400: {
       content: {
@@ -864,7 +864,8 @@ async function restoreRows(
         // The archive's own edge types resolve because they were
         // registered earlier in this transaction. `replay` lets a
         // revoked folder keep the placements it held before its
-        // revoke.
+        // revoke, and keeps an edge stored before its type declared a
+        // `property_schema`, which stands until it is next written.
         try {
           await assertEdgesCanBeCreated(
             storage,

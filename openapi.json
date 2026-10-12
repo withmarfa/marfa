@@ -2689,7 +2689,7 @@
           },
           "format": {
             "type": "string",
-            "description": "A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail."
+            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`."
           }
         },
         "required": [
@@ -7327,7 +7327,7 @@
                         "type": "string"
                       }
                     },
-                    "description": "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none."
+                    "description": "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                   }
                 },
                 "required": [
@@ -7399,7 +7399,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+            "description": "- `validation_error`: a field is invalid.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9105,7 +9105,7 @@
                         "type": "string"
                       }
                     },
-                    "description": "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched."
+                    "description": "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                   }
                 },
                 "required": [
@@ -9183,7 +9183,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed or changes nothing.\n- `invalid_id`: the ID or a target isn't valid.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13335,7 +13335,7 @@
                               "type": "string"
                             }
                           },
-                          "description": "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched."
+                          "description": "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write."
                         }
                       },
                       "required": [
@@ -37872,7 +37872,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and an edge comes back whether or not its properties fit its edge type's `property_schema`, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
             "content": {
               "application/json": {
                 "schema": {

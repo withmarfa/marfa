@@ -2754,7 +2754,7 @@ export interface components {
             enum_values?: string[];
             /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
             items_type?: string;
-            /** @description A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail. */
+            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
             format?: string;
         };
         /** @description An error response. */
@@ -4731,7 +4731,7 @@ export interface operations {
                     capture_longitude?: number;
                     /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                     tags?: string[];
-                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. */
+                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -4775,11 +4775,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.
+             * @description - `validation_error`: a field is invalid.
              *     - `missing_required_field`: `type` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `invalid_id`: `id` or an edge target is not a valid ID.
-             *     - `invalid_properties`: the properties don't fit the type.
+             *     - `invalid_id`: `id` or an edge target isn't a valid ID.
+             *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
             400: {
@@ -5568,7 +5568,7 @@ export interface operations {
                     occurred_at?: string;
                     /** @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes. */
                     source_id?: string;
-                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. */
+                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -5602,9 +5602,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing.
-             *     - `validation_error`: the body is malformed, has an undeclared field, or changes nothing.
-             *     - `invalid_id`: the ID or an edge target is not a valid ID.
-             *     - `invalid_properties`: the resulting properties don't fit the type.
+             *     - `validation_error`: the body is malformed or changes nothing.
+             *     - `invalid_id`: the ID or a target isn't valid.
+             *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
@@ -7479,7 +7479,7 @@ export interface operations {
                         version?: number;
                         /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                         tags?: string[];
-                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. */
+                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write. */
                         edges?: {
                             [key: string]: string[];
                         };
@@ -19602,7 +19602,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and an edge comes back whether or not its properties fit its edge type's `property_schema`, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
