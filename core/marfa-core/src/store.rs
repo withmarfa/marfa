@@ -2684,16 +2684,17 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
 /// The released row goes out under a fresh key; the spent one is kept so a
 /// late answer under it is not taken for an answer to the new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some((verdict, key, spent, sent)) = conn
+    let Some((verdict, reason, key, spent, sent)) = conn
         .query_row(
-            "SELECT verdict, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
+            "SELECT verdict, reason, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
             [id],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, i64>(3)? != 0,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)? != 0,
                 ))
             },
         )
@@ -2710,6 +2711,13 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let verdict = verdict.as_deref().map(str::parse::<Verdict>).transpose()?;
     let refused_by_dependency = verdict == Some(Verdict::Refused) && !sent;
     if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
+        return Ok(false);
+    }
+    // Only the answer to the write it waits for releases a held write; a
+    // fresh key would let one already sent go out a second time.
+    if verdict == Some(Verdict::Blocked)
+        && reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+    {
         return Ok(false);
     }
     // Released, a row whose dependency was withdrawn would wait for a write

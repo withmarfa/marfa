@@ -1241,7 +1241,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             };
             output::report(&released, json, || {
                 if released == 0 {
-                    "nothing to release: a write is released only where it is blocked or dead"
+                    "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
                         .into()
                 } else {
                     format!("released {released} write(s), each under a fresh key")

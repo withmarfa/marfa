@@ -1370,7 +1370,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     );
   });
 
-  it("refuses a release by the reason a held write waits under, releasing nothing", async () => {
+  it("releases no write held behind another, by the reason it waits under or by its id", async () => {
     harness = await hydratedHarness("class-release-held", { rows: held() });
     const { device, server } = harness;
     const created = await device.create({
@@ -1404,6 +1404,17 @@ describe("the ceiling, and releasing what it stopped", () => {
     expect(
       await queueOf(harness),
       "a refused release changed the queue",
+    ).toEqual(before);
+
+    const byId = await device.release({ id: edit.value.id });
+    expect(byId.ok, JSON.stringify(byId)).toBe(true);
+    expect(
+      byId.ok && byId.value,
+      "a release by id took a write held behind another, though only the write it waits for being answered releases it",
+    ).toBe(0);
+    expect(
+      await queueOf(harness),
+      "a release that released nothing changed the queue",
     ).toEqual(before);
   });
 
