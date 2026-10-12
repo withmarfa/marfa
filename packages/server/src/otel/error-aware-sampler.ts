@@ -17,17 +17,26 @@ import type {
  * is known.
  *
  * `ErrorBucketFilterSpanProcessor` wraps the real exporting processor (a
- * `BatchSpanProcessor`) and only forwards a span to it when the span errored
- * OR its trace falls in the deterministic baseline bucket. The decision is
- * per-trace (hash of the trace id), so all spans of a sampled-in trace stay
- * together, and it's stateless — the same trace id buckets identically
- * across instances.
+ * `BatchSpanProcessor`). A trace is exported whole or not at all: the
+ * baseline bucket is a hash of the trace id, so every span of a trace in it
+ * is exported, and a trace outside it is exported when any span of it
+ * errored. A request's child spans end before the span that fails, so spans
+ * of a trace not yet known to be exported are held until one errors (they
+ * are then released with it) or the trace's local root ends without one
+ * (they are then dropped). It's stateless across instances: the same trace id
+ * buckets identically.
  *
  * Caveat (documented, not a bug): every span is fully recorded in memory
- * before the drop decision. That's cheap at Marfa's scale. It is NOT
- * cross-service tail sampling — that needs an OTel Collector. For a single
- * in-process service this is exactly right.
+ * before the drop decision, and a trace's undecided spans are held until its
+ * root ends, within the bounds below. That's cheap at Marfa's scale. It is
+ * NOT cross-service tail sampling — that needs an OTel Collector. For a
+ * single in-process service this is exactly right.
  */
+
+/** Most traces held at once; the oldest is let go to make room. */
+const MAX_HELD_TRACES = 1_000;
+/** Most spans held for one trace; later spans of it are not held. */
+const MAX_HELD_SPANS_PER_TRACE = 1_000;
 
 const SCALE = 1_000_000n;
 const TWO_POW_64 = 1n << 64n;
@@ -64,7 +73,21 @@ export function shouldExportSpan(
   return hashTraceIdToUnitInterval(span.spanContext().traceId) < sampleRatio;
 }
 
+/** A span with no parent here: the trace began in this process or in a caller's. */
+function isLocalRoot(span: ReadableSpan): boolean {
+  const parent = span.parentSpanContext;
+  return parent === undefined || parent.isRemote === true;
+}
+
+interface TraceState {
+  /** Set once the trace is known to be exported, so its later spans pass. */
+  exporting: boolean;
+  held: ReadableSpan[];
+}
+
 export class ErrorBucketFilterSpanProcessor implements SpanProcessor {
+  private readonly traces = new Map<string, TraceState>();
+
   constructor(
     private readonly delegate: SpanProcessor,
     private readonly sampleRatio: number,
@@ -75,8 +98,32 @@ export class ErrorBucketFilterSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
-    if (shouldExportSpan(span, this.sampleRatio)) {
+    const traceId = span.spanContext().traceId;
+    const state = this.traces.get(traceId);
+    const root = isLocalRoot(span);
+
+    if (state?.exporting || shouldExportSpan(span, this.sampleRatio)) {
+      for (const held of state?.held ?? []) this.delegate.onEnd(held);
       this.delegate.onEnd(span);
+      if (root) this.traces.delete(traceId);
+      else this.traces.set(traceId, { exporting: true, held: [] });
+      return;
+    }
+
+    if (root) {
+      this.traces.delete(traceId);
+      return;
+    }
+    const undecided = state ?? { exporting: false, held: [] };
+    if (undecided.held.length < MAX_HELD_SPANS_PER_TRACE) {
+      undecided.held.push(span);
+    }
+    if (!state) {
+      this.traces.set(traceId, undecided);
+      if (this.traces.size > MAX_HELD_TRACES) {
+        const oldest = this.traces.keys().next();
+        if (!oldest.done) this.traces.delete(oldest.value);
+      }
     }
   }
 
