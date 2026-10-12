@@ -4518,9 +4518,31 @@ When a device reports a folder's sync health, a device MUST send only `folder_st
 
 ### `folders/report-full-success`
 
-When a confirmed folder sync completes without pending uploads, pending downloads, paused removals, first-sync waiting, or current problems, a device MUST report its completion time in `last_success_at`.
+When a confirmed folder sync completes with a complete readable inventory and without pending uploads, pending downloads, paused removals, first-sync waiting, or current problems, a device MUST report its completion time in `last_success_at`.
 
 **Tests:** `device/folder-health.test.ts › reports a confirmed complete sync using the registry's opaque copy identity`.
+
+### `folders/report-unreadable-inventory`
+
+When a folder scan cannot read a directory, a device MUST include that directory in its `unreadable` problem count independently of whether any file beneath it is bound.
+
+**Tests:** `device/folder-health.test.ts › reports an unreadable unbound directory as incomplete inventory and clears it after readable recovery`.
+
+### `folders/report-incomplete-counts`
+
+While a folder inventory is incomplete, a device MUST preserve its previously observed pending-upload count unless newly observed pending work increases it.
+
+**Reason:** a readable scan is needed to recompute the count, because hidden files may have changed.
+
+**Tests:** `device/folder-health.test.ts › preserves a nonzero known upload count while an unreadable inventory hides unbound files`.
+
+### `folders/report-dead-work`
+
+While a bound file has unresolved effects from a dead queued write, a device MUST include that file in its pending-upload count.
+
+**Reason:** the queue's retry ceiling does not make the held content synchronized; superseded effects follow `queue-and-verdicts/dead-covered-effects`.
+
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
 
 ### `folders/report-first-waiting`
 
