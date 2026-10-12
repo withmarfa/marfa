@@ -3564,6 +3564,12 @@ When a removal takes a registry entry off without deleting folder state, the CLI
 
 **Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
+### `folders/remove-unlisted-names-other`
+
+When a removal takes a listed entry off without deleting folder state because the state at the entry's directory has the store identity that the machine’s folder registry lists for another entry, the CLI MUST name that other entry's listed path in the reason.
+
+**Tests:** `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
+
 ### `folders/registry-removed-state`
 
 When a registry read finds a readable directory whose folder state was removed, a device MUST remove that directory’s registry entry.
@@ -4555,6 +4561,14 @@ If a command other than an add or a removal names a folder by a path that the ma
 If a symbolic link now stands in the path at which the machine’s folder registry lists a folder, then a device MUST refuse every command other than an add or a removal that names the folder by that path with `invalid`.
 
 **Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
+### `folders/listed-link-refusal-names-other`
+
+If a device refuses a path because a symbolic link now stands in the path at which the machine’s folder registry lists a folder, and that listed path now leads to the directory of another listed folder, then a device MUST name the other folder's listed path in the refusal's message.
+
+**Reason:** The directory the link leads to holds another folder, so naming that directory would work on a folder other than the one the path names.
+
+**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`.
 
 ### `folders/root-link-refused-invalid`
 

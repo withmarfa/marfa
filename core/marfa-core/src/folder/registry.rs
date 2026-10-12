@@ -441,16 +441,28 @@ pub(crate) fn first_link(path: &Path) -> Option<PathBuf> {
 }
 
 /// Why a listed path is not opened: a symbolic link that now stands in it,
-/// which a listed folder is never reached through.
+/// which a listed folder is never reached through. A listed folder the path
+/// now leads to is named, since naming that directory would work on that
+/// folder instead.
 pub(crate) fn linked_listing(dir: &Path) -> Option<CoreError> {
-    first_link(dir).map(|link| {
-        CoreError::Invalid(format!(
-            "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one; `folders remove {}` only takes it off the list",
-            dir.display(),
-            link.display(),
-            dir.display()
-        ))
-    })
+    let link = first_link(dir)?;
+    let leads = std::fs::canonicalize(dir)
+        .ok()
+        .and_then(|target| listed_at(&target, &listing()))
+        .map(|other| {
+            format!(
+                "; {} now leads to {}, another listed folder",
+                dir.display(),
+                other.dir.display()
+            )
+        })
+        .unwrap_or_default();
+    Some(CoreError::Invalid(format!(
+        "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one{leads}; `folders remove {}` only takes it off the list",
+        dir.display(),
+        link.display(),
+        dir.display()
+    )))
 }
 
 /// Whether `dir`, following its links, is the directory `target` holds.
@@ -476,11 +488,44 @@ pub(crate) fn absolute(dir: &Path) -> PathBuf {
 pub(crate) fn named(dir: &Path) -> Result<PathBuf> {
     match walk(dir) {
         (path, None) => Ok(path),
-        (_, Some(refused)) => Err(refused),
+        (_, Some(refused)) => Err(refused.into_error()),
     }
 }
 
-fn walk(dir: &Path) -> (PathBuf, Option<CoreError>) {
+/// Why a walk stopped short. It becomes an error only where a path is
+/// [`named`], because saying why reads the registry, whose own path is
+/// [`resolved`].
+enum Refusal {
+    /// A symbolic link the folder would be opened through: the folder's own
+    /// entry where `own`, and what the link, or else the whole path, reaches.
+    Link {
+        link: PathBuf,
+        reached: std::io::Result<PathBuf>,
+        own: bool,
+    },
+    /// A `..` that climbs back out of a directory that does not exist.
+    Missing(CoreError),
+}
+
+impl Refusal {
+    fn into_error(self) -> CoreError {
+        match self {
+            Refusal::Missing(error) => error,
+            Refusal::Link { link, reached, own } => {
+                // A link standing where a folder is listed has taken that
+                // folder's place, so the directory it points to is not the
+                // folder the path names.
+                let replaced = own && listing().iter().any(|entry| entry.dir == link);
+                replaced
+                    .then(|| linked_listing(&link))
+                    .flatten()
+                    .unwrap_or_else(|| through_link(&link, reached, own))
+            }
+        }
+    }
+}
+
+fn walk(dir: &Path) -> (PathBuf, Option<Refusal>) {
     let absolute = absolute(dir);
     let parts: Vec<Component> = absolute.components().collect();
     let mut closed_by: Vec<Option<usize>> = vec![None; parts.len()];
@@ -524,7 +569,11 @@ fn walk(dir: &Path) -> (PathBuf, Option<CoreError>) {
                 at.push(part);
                 if std::fs::symlink_metadata(&at).is_ok_and(|entry| entry.file_type().is_symlink())
                 {
-                    let refused = through_link(&at, std::fs::canonicalize(&at), true);
+                    let refused = Refusal::Link {
+                        link: at.clone(),
+                        reached: std::fs::canonicalize(&at),
+                        own: true,
+                    };
                     at.extend(&parts[index + 1..]);
                     return (at, Some(refused));
                 }
@@ -544,7 +593,7 @@ fn walk(dir: &Path) -> (PathBuf, Option<CoreError>) {
 /// Why a walk through `segment` from `at` did not come back: the first link
 /// on it, or the first directory on it that does not exist. Anything else is
 /// left for the open to report.
-fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<CoreError> {
+fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<Refusal> {
     let mut prefix = at.to_path_buf();
     for part in segment {
         if let Component::Normal(name) = part {
@@ -553,14 +602,18 @@ fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<Co
                 .and_then(|directory| directory.entry_kind(Path::new(name)));
             match kind {
                 Ok(FileType::Symlink) => {
-                    return Some(through_link(&entry, std::fs::canonicalize(absolute), false));
+                    return Some(Refusal::Link {
+                        link: entry,
+                        reached: std::fs::canonicalize(absolute),
+                        own: false,
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Some(CoreError::Invalid(format!(
+                    return Some(Refusal::Missing(CoreError::Invalid(format!(
                         "{} climbs back out of {}, which does not exist, so nothing was created or followed; name the folder without that `..`",
                         absolute.display(),
                         entry.display()
-                    )));
+                    ))));
                 }
                 Ok(_) => {}
                 Err(_) => return None,
@@ -1076,6 +1129,68 @@ mod tests {
     }
 
     #[test]
+    fn a_listed_folder_whose_own_directory_became_a_link_to_another_names_both_folders() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(&first, base.join("a/notes-moved")).unwrap();
+        std::os::unix::fs::symlink(&second, &first).unwrap();
+        let alias = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        std::os::unix::fs::symlink(base, alias.path().join("base")).unwrap();
+        let names_both = |error: Option<CoreError>| match error {
+            Some(CoreError::Invalid(message)) => {
+                message.contains(&format!(
+                    "{} now leads to {}, another listed folder",
+                    first.display(),
+                    second.display()
+                )) && message.contains(&format!("`folders remove {}`", first.display()))
+                    && !message.contains("name the directory")
+            }
+            _ => false,
+        };
+
+        for spelling in [first.clone(), alias.path().join("base/a/notes")] {
+            assert!(
+                names_both(Folder::open(&spelling, None).err()),
+                "{}",
+                spelling.display()
+            );
+            assert!(names_both(Folder::status_of(&spelling).err()));
+        }
+        let through = alias.path().join("base/a/notes");
+        assert!(names_both(Folder::remove_at(&through).err()));
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+        assert!(names_both(
+            Folder::add(
+                &through,
+                "01a00000-0000-7000-8000-000000000001",
+                server,
+                None
+            )
+            .err()
+        ));
+        assert!(second.join(STATE_DIR).join("core.sqlite").exists());
+
+        // The witness: a link that took no listed folder's place is refused
+        // naming the directory it points to.
+        let unlisted = base.join("unlisted");
+        std::os::unix::fs::symlink(&second, &unlisted).unwrap();
+        assert!(matches!(
+            Folder::status_of(&unlisted).err(),
+            Some(CoreError::Invalid(message))
+                if message.ends_with(&format!("name the directory it points to, {}", second.display()))
+        ));
+    }
+
+    #[test]
     fn no_other_spelling_of_a_relinked_listed_folder_removes_the_folder_its_link_leads_to() {
         use crate::folder::Folder;
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
@@ -1231,11 +1346,29 @@ mod tests {
             Folder::remove_at(&first).unwrap(),
             crate::folder::Removal::Unlisted { dir, reason }
                 if dir == first && reason.contains("not the one the registry lists")
+                    && reason.ends_with(&format!("it is the state of the folder listed at {}", second.display()))
         ));
         assert!(
             first.join(STATE_DIR).join("core.sqlite").exists(),
             "the folder moved into the listed folder's place was removed"
         );
+
+        // State the registry lists for no folder is said to be unlisted.
+        let (fourth, fifth) = (base.join("d/notes"), base.join("e/notes"));
+        bound_folder(&fourth, "01a00000-0000-7000-8000-000000000004");
+        bound_folder(&fifth, "01a00000-0000-7000-8000-000000000005");
+        drop(Folder::open(&fourth, None).unwrap());
+        drop(Folder::open(&fifth, None).unwrap());
+        assert!(Folder::forget(&fifth).unwrap());
+        std::fs::rename(base.join("d"), base.join("d-moved")).unwrap();
+        std::fs::create_dir(base.join("d")).unwrap();
+        std::fs::rename(&fifth, &fourth).unwrap();
+        assert!(matches!(
+            Folder::remove_at(&fourth).unwrap(),
+            crate::folder::Removal::Unlisted { reason, .. }
+                if reason.ends_with("it is the state of a folder the registry does not list")
+        ));
+        assert!(fourth.join(STATE_DIR).join("core.sqlite").exists());
 
         // An entry with no store cannot be shown to own the state there.
         let third = base.join("c/notes");

@@ -192,7 +192,10 @@ impl Folder {
                     return Ok(Removal::Deleted(entry.dir));
                 }
                 (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
-                _ => "the folder state there is not the one the registry lists for it".to_string(),
+                (_, found) => format!(
+                    "the folder state there is not the one the registry lists for it; {}",
+                    whose(found.as_deref())
+                ),
             }
         };
         Folder::forget(&entry.dir)?;
@@ -211,6 +214,22 @@ pub enum Removal {
     /// Only the registry entry for this directory went, and nothing was
     /// deleted, for the reason given.
     Unlisted { dir: PathBuf, reason: String },
+}
+
+/// Whose state a listed folder's directory holds instead of its own.
+fn whose(store: Option<&str>) -> String {
+    let holder = store.and_then(|store| {
+        registry::listing()
+            .into_iter()
+            .find(|entry| entry.store.as_deref() == Some(store))
+    });
+    match holder {
+        Some(entry) => format!(
+            "it is the state of the folder listed at {}",
+            entry.dir.display()
+        ),
+        None => "it is the state of a folder the registry does not list".to_string(),
+    }
 }
 
 fn held(root: &Path) -> bool {
