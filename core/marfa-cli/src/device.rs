@@ -810,7 +810,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     (None, _) => String::new(),
                 };
                 let cursor = if report.cursor.is_empty() {
-                    "no cursor, as no hydration completed".to_string()
+                    "no cursor, as it stopped before reading one".to_string()
                 } else {
                     format!("cursor {}", report.cursor)
                 };
