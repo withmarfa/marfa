@@ -174,7 +174,7 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 When the current registration for a source is removed, the server MUST answer a request to the address of each of that source's endpoints with `404`.
 
-**Reason:** an address of a removed registration is one no live endpoint holds, as `inbound-webhooks/address-unknown` says.
+**Reason:** removing the current registration leaves no live endpoint at the address, as `inbound-webhooks/address-unknown` says.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › goes with its registration, and its deliveries with it`.
 
@@ -1016,9 +1016,15 @@ When the current registration for a source is removed, the server MUST remove th
 
 ### `inbound-webhooks/source-binding-rechecked`
 
-If the registration binding changes, its key becomes revoked or expired, its registration is removed, or its endpoint is retired while an inbound body arrives, then the server MUST answer `404 not_found` and store no delivery for that request.
+If the registration binding changes while an inbound body arrives, then the server MUST answer `404 not_found`.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`, `› keeps source endpoint and retained capacity across registration replacement`.
+**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+
+### `inbound-webhooks/source-binding-no-receipt`
+
+If the registration binding changes while an inbound body arrives, then the server MUST NOT store a delivery for that request.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
 
 ### `inbound-webhooks/source-limits-preserved`
 

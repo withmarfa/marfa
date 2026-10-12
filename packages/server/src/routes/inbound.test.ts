@@ -2569,3 +2569,96 @@ it.each(["inbound_sources", "audit_log"])(
     expect((await registerExisting(ctx, ctx.workingKey)).status).toBe(201);
   },
 );
+
+it.each(["live", "revoked", "expired"])(
+  "rechecks a %s key after an authenticated registration awaits writer admission",
+  async (standing) => {
+    const ctx = await context();
+    const old = await register(ctx);
+    const made = await endpoint(ctx, old);
+    const next = await replacement(ctx, old);
+    const waitingKey = (await (
+      await request(ctx.app, "GET", "/keys/current", { key: next.key })
+    ).json()) as { id: string; source: string };
+    const before = await continuityRaw(ctx).__sqliteAll(
+      "SELECT * FROM inbound_sources",
+    );
+    const auditBefore = await continuityRaw(ctx).__sqliteAll(
+      `SELECT * FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
+    );
+    let entered!: () => void;
+    let release!: () => void;
+    const atAdmission = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const originalRegister = ctx.storage.connectors.register.bind(
+      ctx.storage.connectors,
+    );
+    const registers = vi
+      .spyOn(ctx.storage.connectors, "register")
+      .mockImplementation(originalRegister);
+    const transaction = ctx.storage.runInTransaction.bind(ctx.storage);
+    const gate = vi
+      .spyOn(ctx.storage, "runInTransaction")
+      .mockImplementationOnce(async (work, options) => {
+        entered();
+        await resume;
+        return transaction(work, options);
+      });
+    const waiting = request(ctx.app, "POST", "/connectors", {
+      key: next.key,
+      body: { name: "Waiting after authentication" },
+    });
+    await atAdmission;
+    gate.mockRestore();
+    // The audited route has resolved its authenticated key, but its store
+    // operation has not yet run inside an admitted transaction.
+    expect(registers).not.toHaveBeenCalled();
+    if (standing === "revoked") await ctx.storage.keys.revoke(waitingKey.id);
+    else if (standing === "expired")
+      await continuityRaw(ctx).__sqliteRun(
+        "UPDATE api_keys SET expires_at = ? WHERE id = ?",
+        ["2020-01-01T00:00:00.000Z", waitingKey.id],
+      );
+    release();
+    const response = await waiting;
+    if (standing === "live") {
+      expect(registers).toHaveBeenCalledOnce();
+      expect(response.status).toBe(201);
+      const successor = (await response.json()) as { id: string };
+      expect(
+        (await ctx.storage.inbound.listEndpoints(successor.id)).map(
+          (e) => e.id,
+        ),
+      ).toEqual([made.id]);
+      expect(
+        await continuityRaw(ctx).__sqliteAll(
+          `SELECT id FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
+        ),
+      ).toHaveLength(1);
+    } else {
+      expect(registers).not.toHaveBeenCalled();
+      expect(response.status).toBe(401);
+      expect(
+        ((await response.json()) as { error: { code: string } }).error.code,
+      ).toBe("unauthorized");
+      expect((await ctx.storage.connectors.list()).map((c) => c.id)).toEqual([
+        old.id,
+      ]);
+      expect(
+        await continuityRaw(ctx).__sqliteAll("SELECT * FROM inbound_sources"),
+      ).toEqual(before);
+      expect(
+        await continuityRaw(ctx).__sqliteAll(
+          `SELECT * FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
+        ),
+      ).toEqual(auditBefore);
+      expect(
+        (await ctx.storage.inbound.listEndpoints(old.id)).map((e) => e.id),
+      ).toEqual([made.id]);
+    }
+  },
+);

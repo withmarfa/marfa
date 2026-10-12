@@ -373,14 +373,18 @@ describe("source-owned inbound continuity", () => {
     expect((await send(server.apiUrl, endpoint.path, "expired")).status).toBe(
       404,
     );
-    // The public key-management door does not resolve expired keys.
-    // Retire the expired slot while the fixture's server is stopped.
-    await server.restart(() => {
-      sql(
-        `UPDATE api_keys SET revoked_at = '2026-01-01T00:00:00.000Z' WHERE id = '${oldKey.id}'`,
-      );
-    });
+    // Minting the replacement retires the expired source holder publicly.
     const next = await mint(source);
+    expect(
+      sql(
+        `SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = '${oldKey.id}'`,
+      ),
+    ).toBe("1");
+    expect(
+      sql(
+        `SELECT count(*) FROM audit_log WHERE action = 'key.revoke' AND resource_id = '${oldKey.id}' AND json_extract(details, '$.reason') = 'expired'`,
+      ),
+    ).toBe("1");
     expect(
       (await send(server.apiUrl, endpoint.path, "unregistered")).status,
     ).toBe(404);
@@ -467,4 +471,105 @@ describe("source-owned inbound continuity", () => {
       ).data.map((d) => d.id),
     ).toEqual([receipt]);
   });
+  it.each(["revoked", "expired"])(
+    "refuses registration when its key becomes %s while the writer is held",
+    async (standing) => {
+      await server.restart({
+        env: {
+          MARFA_INBOUND_BACKLOG_DELIVERIES: "1000",
+          MARFA_INBOUND_RETAINED_DELIVERIES: "10000",
+        },
+      });
+      const { source, oldKey, old, endpoint } = await fixture();
+      expect((await send(server.apiUrl, endpoint.path, "witness")).status).toBe(
+        202,
+      );
+      expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
+      const waitingKey = await mint(source);
+      expect(
+        (await call("/keys/current", "GET", undefined, waitingKey.key)).status,
+      ).toBe(200);
+      const bindingBefore = sql(
+        `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
+      );
+      const auditBefore = sql(
+        `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
+      );
+      expect(bindingBefore).toBe(old.id);
+      expect(auditBefore).toBe("0");
+      const lock = await HeldLock.take(server.sqlitePath);
+      let completed = false;
+      const waiting = call(
+        "/connectors",
+        "POST",
+        { name: "Waiting registration" },
+        waitingKey.key,
+      ).then((response) => {
+        completed = true;
+        return response;
+      });
+      try {
+        // The held writer can also block credential reads. This black-box
+        // case proves refusal without partial effects; the route fixture
+        // identifies the exact post-authentication admission boundary.
+        expect(
+          sql(
+            `SELECT revoked_at IS NULL AND (expires_at IS NULL OR expires_at > '${new Date().toISOString()}') FROM api_keys WHERE id = '${waitingKey.id}'`,
+          ),
+        ).toBe("1");
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(completed).toBe(false);
+        expect(
+          sql(
+            `SELECT count(*) FROM connectors WHERE key_id = '${waitingKey.id}'`,
+          ),
+        ).toBe("0");
+        const column = standing === "revoked" ? "revoked_at" : "expires_at";
+        await lock.commit([
+          `UPDATE api_keys SET ${column} = '2020-01-01T00:00:00.000Z' WHERE id = '${waitingKey.id}'`,
+        ]);
+        const refused = await waiting;
+        expect(refused.status).toBe(401);
+        expect(
+          ((await refused.json()) as { error: { code: string } }).error.code,
+        ).toBe("unauthorized");
+        expect(
+          sql(
+            `SELECT count(*) FROM connectors WHERE key_id = '${waitingKey.id}'`,
+          ),
+        ).toBe("0");
+        expect(
+          sql(
+            `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
+          ),
+        ).toBe(bindingBefore);
+        expect(
+          sql(
+            `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
+          ),
+        ).toBe(auditBefore);
+      } finally {
+        await lock.release();
+      }
+      const live = await mint(source);
+      const controlLock = await HeldLock.take(server.sqlitePath);
+      const control = register(live.key);
+      await controlLock.commit();
+      const admitted = await control;
+      expect(admitted.status).toBe(201);
+      expect(
+        sql(
+          `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
+        ),
+      ).toBe(admitted.id);
+      expect(
+        sql(
+          `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${live.id}'`,
+        ),
+      ).toBe("1");
+      expect((await send(server.apiUrl, endpoint.path, "control")).status).toBe(
+        202,
+      );
+    },
+  );
 });
