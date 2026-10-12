@@ -915,6 +915,58 @@ describe("a restore of a registration carrying a key the schema does not define"
   });
 });
 
+describe("a restore of an edge type's property formats", () => {
+  const archiveOf = (id: string, property: Record<string, unknown>) =>
+    withEntry(
+      itemsArchive([]),
+      "types.ndjson",
+      `${JSON.stringify({
+        edge_type: {
+          id,
+          cardinality: "many-to-many",
+          property_schema: { contact: property },
+        },
+      })}\n`,
+    );
+
+  it("registers a string property with a format as the type of that format", async () => {
+    const id = `restoreformat.${ctx.runId}`;
+    trackEdgeType(ctx, id);
+    const restored = await owner.restoreArchive(
+      archiveOf(id, { type: "string", format: "email" }),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data).toMatchObject({ edge_types_registered: 1 });
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.find((t) => t.id === id)?.property_schema).toEqual({
+      contact: { type: "email" },
+    });
+  });
+
+  it("refuses an archive whose edge type puts a format on a property it does not suit, naming the property, and registers nothing", async () => {
+    const id = `restoremisfit.${ctx.runId}`;
+    const refused = await owner.restoreArchive(
+      archiveOf(id, { type: "number", format: "url" }),
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(
+      (refused.error?.error.details?.errors as { field: string }[]).map(
+        (error) => error.field,
+      ),
+    ).toEqual(["property_schema.contact.format"]);
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain(id);
+
+    // The witness: the same edge type with a property the format suits.
+    trackEdgeType(ctx, id);
+    const mended = await owner.restoreArchive(
+      archiveOf(id, { type: "string", format: "url" }),
+    );
+    expect(mended.ok, JSON.stringify(mended.error)).toBe(true);
+  });
+});
+
 describe("a restore refused after it began", () => {
   it("leaves no row, type, edge type, blob, event or audit record behind when a later row is refused", async () => {
     const ids = {

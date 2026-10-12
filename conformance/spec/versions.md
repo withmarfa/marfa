@@ -834,9 +834,15 @@ When the server writes a conflicted copy, the server MUST NOT give it an edge wh
 
 ### `versions/copy-edges-stored`
 
-When the server writes a conflicted copy, the server MUST give it a copy of each edge the other rules of this section allow, whether or not its properties fit the `property_schema` its edge type declares, with the properties the original's edge holds.
+When the server writes a conflicted copy, the server MUST give it a copy of an edge of the original, among those the other rules of this section allow, whose properties break the `property_schema` its edge type declares.
 
 **Reason:** an edge stored before its type declared the schema stands until it is written (`edges/properties-stored`), and the copy is made by the server and not by a write of the person's.
+
+**Tests:** `sync/conflict.test.ts › gives the conflicted copy the original's edges, including one whose properties break the property_schema its type now declares`.
+
+### `versions/copy-edges-properties`
+
+When the server writes a conflicted copy, the server MUST give each edge it copies the properties the original's edge holds.
 
 **Tests:** `sync/conflict.test.ts › gives the conflicted copy the original's edges, including one whose properties break the property_schema its type now declares`.
 
