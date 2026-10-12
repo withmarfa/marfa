@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConnection } from "./connection.js";
 import { SqliteInboundStore } from "./inbound-store.js";
-import { connectors, inboundEndpoints, inboundDeliveries } from "./schema.js";
+import {
+  connectors,
+  inboundSources,
+  inboundEndpoints,
+  inboundDeliveries,
+} from "./schema.js";
 
 type DeliveryRow = typeof inboundDeliveries.$inferInsert;
 const stamp = "2026-01-01T00:00:00.000Z";
@@ -30,10 +35,13 @@ beforeEach(async () => {
     registered_at: stamp,
     updated_at: stamp,
   });
+  await connection.db
+    .insert(inboundSources)
+    .values({ source: "test", connector_id: "connector" });
   await connection.db.insert(inboundEndpoints).values(
     ["endpoint", "endpoint:a"].map((id) => ({
       id,
-      connector_id: "connector",
+      source: "test",
       token_hash: id,
       token_last4: "test",
       created_at: stamp,
@@ -60,7 +68,7 @@ async function seed(
   await connection.db.insert(inboundDeliveries).values(
     rows.map((row): DeliveryRow => ({
       endpoint_id: "endpoint",
-      connector_id: "connector",
+      source: "test",
       received_at: stamp,
       method: "POST",
       query: "?a=1",
@@ -92,7 +100,7 @@ function executeSpy() {
   >;
 }
 
-function resolutionCalls(spy: ReturnType<typeof executeSpy>) {
+function resolutionCalls(spy: { mock: { calls: [InStatement | string][] } }) {
   return spy.mock.calls.filter(([statement]) =>
     (typeof statement === "string" ? statement : statement.sql).includes(
       "WITH requested",
@@ -245,7 +253,22 @@ describe("inbound duplicate resolution on native SQLite", () => {
 
   it("batches handling metadata while keeping request order and the first handling mark", async () => {
     await seed(["c", "b", "a"].map((id) => ({ id, dedupe_key: "same" })));
-    const spy = executeSpy();
+    const spy = vi.fn<(statement: InStatement | string) => void>();
+    // Binding sees LibSQL's deprecated no-argument overload; the wrapper
+    // forwards Drizzle's explicit writer mode.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    const transaction = connection.raw.transaction.bind(connection.raw);
+    vi.spyOn(connection.raw, "transaction").mockImplementation(
+      async (...args) => {
+        const tx = await transaction(...args);
+        const execute = tx.execute.bind(tx);
+        vi.spyOn(tx, "execute").mockImplementation(async (statement) => {
+          spy(statement);
+          return execute(statement);
+        });
+        return tx;
+      },
+    );
     const marked = await store.markHandled(
       "connector",
       ["c", "a", "c", "b"],
@@ -279,4 +302,38 @@ describe("inbound duplicate resolution on native SQLite", () => {
     });
     expect(resolutionCalls(spy)).toHaveLength(1);
   });
+});
+
+it("refuses delivery ownership that does not match its endpoint source", async () => {
+  await connection.db.insert(connectors).values({
+    id: "other-connector",
+    key_id: "other-key",
+    source: "other",
+    name: "other",
+    registered_at: stamp,
+    updated_at: stamp,
+  });
+  await connection.db
+    .insert(inboundSources)
+    .values({ source: "other", connector_id: "other-connector" });
+  await expect(
+    connection.db
+      .insert(inboundDeliveries)
+      .values({
+        id: "wrong-source",
+        endpoint_id: "endpoint",
+        source: "other",
+        received_at: stamp,
+        method: "POST",
+        query: "",
+        headers: "[]",
+        size: 0,
+        stored_bytes: 100,
+        sha256: "hash",
+      })
+      .run(),
+  ).rejects.toThrow();
+  expect((await list()).data).toEqual([]);
+  await seed([{ id: "same-source", dedupe_key: null }]);
+  expect((await list()).data.map((row) => row.id)).toEqual(["same-source"]);
 });

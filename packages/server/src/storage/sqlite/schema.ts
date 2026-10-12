@@ -6,6 +6,7 @@ import {
   blob,
   index,
   uniqueIndex,
+  foreignKey,
   primaryKey,
   check,
   type SQLiteColumn,
@@ -1272,13 +1273,21 @@ export const connectorRuns = sqliteTable(
   ],
 );
 
+export const inboundSources = sqliteTable("inbound_sources", {
+  source: text("source").primaryKey(),
+  connector_id: text("connector_id")
+    .notNull()
+    .unique()
+    .references(() => connectors.id, { onDelete: "cascade" }),
+});
+
 export const inboundEndpoints = sqliteTable(
   "inbound_endpoints",
   {
     id: text("id").primaryKey(),
-    connector_id: text("connector_id")
+    source: text("source")
       .notNull()
-      .references(() => connectors.id, { onDelete: "cascade" }),
+      .references(() => inboundSources.source, { onDelete: "cascade" }),
     /** A SHA-256 of the address's token; the token itself is never stored. */
     token_hash: text("token_hash").notNull().unique(),
     token_last4: text("token_last4").notNull(),
@@ -1288,17 +1297,18 @@ export const inboundEndpoints = sqliteTable(
     created_at: text("created_at").notNull(),
     retired_at: text("retired_at"),
   },
-  (table) => [index("idx_inbound_endpoints_connector").on(table.connector_id)],
+  (table) => [
+    index("idx_inbound_endpoints_source").on(table.source),
+    uniqueIndex("idx_inbound_endpoints_id_source").on(table.id, table.source),
+  ],
 );
 
 export const inboundDeliveries = sqliteTable(
   "inbound_deliveries",
   {
     id: text("id").primaryKey(),
-    endpoint_id: text("endpoint_id")
-      .notNull()
-      .references(() => inboundEndpoints.id, { onDelete: "cascade" }),
-    connector_id: text("connector_id").notNull(),
+    endpoint_id: text("endpoint_id").notNull(),
+    source: text("source").notNull(),
     received_at: text("received_at").notNull(),
     method: text("method").notNull(),
     query: text("query").notNull(),
@@ -1313,10 +1323,12 @@ export const inboundDeliveries = sqliteTable(
     outcome: text("outcome"),
   },
   (table) => [
-    // The listing and the backlog count both read a connector's deliveries
-    // by whether they are handled, oldest first.
-    index("idx_inbound_deliveries_connector_handled").on(
-      table.connector_id,
+    foreignKey({
+      columns: [table.endpoint_id, table.source],
+      foreignColumns: [inboundEndpoints.id, inboundEndpoints.source],
+    }).onDelete("cascade"),
+    index("idx_inbound_deliveries_source_handled").on(
+      table.source,
       table.handled_at,
       table.received_at,
       table.id,

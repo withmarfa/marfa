@@ -2,7 +2,7 @@
 
 A connector is a process outside the server that registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under.
 
-The webhook endpoints a registration owns are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
+The source-owned webhook endpoints a current registration exposes are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
 
 ## Registering
 
@@ -202,7 +202,7 @@ The server MUST name `connectors` among the `features` that `GET /` answers.
 
 ## Removing a registration
 
-The webhook endpoints and deliveries of a registration go with it, as `inbound-webhooks/endpoints-go-with-it` and `inbound-webhooks/deliveries-go-with-it` say.
+Removing a source's current registration removes its webhook endpoints and deliveries, as `inbound-webhooks/endpoints-go-with-it` and `inbound-webhooks/deliveries-go-with-it` say. Removing an old registration after takeover preserves them.
 
 ### `connectors/delete-answer`
 
@@ -1349,3 +1349,27 @@ When a registration is returned, the server MUST omit its source's private state
 When `marfa connectors list` returns a registration, the CLI MUST include its current problems.
 
 **Tests:** `cli/connectors.test.ts › registers, heartbeats, reports a run, and is removed by the operator`.
+
+### `connectors/register-source-binding-atomic`
+
+When a key registers a connector, the server MUST make its registration, its own source's inbound binding and the corresponding registration audit entry visible as one all-or-nothing result.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `connectors/register-standing-rechecked`
+
+If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
+
+### `connectors/register-standing-no-write`
+
+If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST preserve the prior registrations, source inbound binding and registration audit history.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
+
+### `connectors/register-successor-fresh`
+
+When a successor key registers for a source, the server MUST give it a registration with its own ID, heartbeat, runs and hold.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.

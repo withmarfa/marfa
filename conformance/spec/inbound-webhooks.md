@@ -6,7 +6,7 @@ The webhooks the instance sends are outbound ones, `events.md`'s. The error enve
 
 ## Endpoints
 
-An endpoint belongs to one registration, which holds at most ten live endpoints. A retired endpoint stays listed.
+An endpoint belongs to one source. The source's current registration exposes its endpoints and retained deliveries. A source holds at most ten live endpoints. A retired endpoint stays listed.
 
 ### `inbound-webhooks/endpoint-created`
 
@@ -172,15 +172,15 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 ### `inbound-webhooks/endpoints-go-with-it`
 
-When a registration is removed, the server MUST answer a request to the address of each of its endpoints with `404`.
+When the current registration for a source is removed, the server MUST answer a request to the address of each of that source's endpoints with `404`.
 
-**Reason:** an address of a removed registration is one no live endpoint holds, as `inbound-webhooks/address-unknown` says.
+**Reason:** removing the current registration leaves no live endpoint at the address, as `inbound-webhooks/address-unknown` says.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › goes with its registration, and its deliveries with it`.
 
 ### `inbound-webhooks/deliveries-go-with-it`
 
-When a registration is removed and its key registers again, the server MUST list none of the removed registration's deliveries under the new one.
+When the current registration for a source is removed and its key registers again, the server MUST list none of that source's removed deliveries under the new registration.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › lists none of a removed registration's deliveries under the next one its key makes`.
 
@@ -286,7 +286,7 @@ When a request posts to the address of a retired endpoint, the server MUST answe
 
 ### `inbound-webhooks/address-key-revoked`
 
-While the key of an endpoint's registration is revoked or past its `expires_at`, the server MUST answer a request to the endpoint's address with `404 not_found`.
+While the key of an endpoint's current registration is revoked or past its `expires_at`, the server MUST answer a request to the endpoint's address with `404 not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › stops answering once the registration's key is revoked`, `› answers 404 at an address whose key has expired, as at a revoked key's`.
 
@@ -496,7 +496,7 @@ If a receipt's charge would take the bytes a registration retains past `MARFA_IN
 
 ### `inbound-webhooks/retained-charge`
 
-When the server charges a receipt against the bytes a registration retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `connector_id`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, `dedupe_key` as the value the delivery carries in its endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
+When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `source`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, `dedupe_key` as the value the delivery carries in its endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
 
 **Reason:** the 32 bytes are kept for the marks a handled delivery gains, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
 
@@ -973,3 +973,61 @@ If a request declares a `Content-Length` over the limit and sends none of the bo
 If the same part of a body takes it past the limit as it is read and would also take the bytes in flight past their limit, then the server MUST answer `413 request_too_large`.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a body read past the limit 413 before the bytes in flight's 503`.
+
+## Source continuity
+
+### `inbound-webhooks/source-binding`
+
+When a key registers a connector, the server MUST expose all endpoints and retained deliveries for the key's own `source` through that registration.
+
+**Reason:** claimed sources do not establish inbound ownership. Inbound queues are operational state and are not included in a portable item archive.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-takeover-preserves`
+
+When a successor key registers for the same source, the server MUST preserve every retained endpoint and delivery, including retired endpoints and handled deliveries, with their IDs, address tokens, labels, timestamps, bodies, outcomes and duplicate history unchanged.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-current-endpoint-id`
+
+When an endpoint is returned through the current registration, the server MUST give its `connector_id` as that registration's ID.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-old-registration-empty`
+
+When a successor registration takes over a source, the server MUST expose none of that source's endpoints or deliveries through the old registration.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-old-delete-keeps`
+
+When an old registration is removed after source takeover, the server MUST preserve the source's endpoints and retained deliveries.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-current-delete-clears`
+
+When the current registration for a source is removed, the server MUST remove that source's endpoints and retained deliveries, including their bodies.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `inbound-webhooks/source-binding-rechecked`
+
+If the registration binding changes while an inbound body arrives, then the server MUST answer `404 not_found`.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+
+### `inbound-webhooks/source-binding-no-receipt`
+
+If the registration binding changes while an inbound body arrives, then the server MUST NOT store a delivery for that request.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+
+### `inbound-webhooks/source-limits-preserved`
+
+When a source's registration changes, the server MUST keep its endpoint rate windows, source capacity accounting, stored receipt charges and retention ages unchanged.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`, `› keeps source endpoint and retained capacity across registration replacement`.

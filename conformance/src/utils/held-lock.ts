@@ -76,6 +76,15 @@ export class HeldLock {
     }
   }
 
+  /** Apply fixture statements and commit before releasing the held writer. */
+  commit(statements: string[] = []): Promise<void> {
+    if (this.releasing) throw new Error("The held writer is already releasing");
+    this.child.stdin.write(
+      statements.map((statement) => statement + ";\n").join("") + "COMMIT;\n",
+    );
+    return this.release();
+  }
+
   /** Closing the shell rolls back its uncommitted transaction. */
   release(): Promise<void> {
     this.releasing ??= (async () => {
