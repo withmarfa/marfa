@@ -93,22 +93,49 @@ impl Registry {
         self.list(dir, folder, store, Unreadable::Refuse)
     }
 
-    /// Lists a folder being added, refusing one nested with another; an
-    /// unreadable registry is written afresh.
-    pub fn add(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
-        let dir = absolute(dir);
-        if let Ok(listed) = self.folders()
-            && let Some(other) = listed.iter().find(|entry| {
-                entry.dir != dir && (dir.starts_with(&entry.dir) || entry.dir.starts_with(&dir))
-            })
-        {
-            return Err(CoreError::Invalid(format!(
+    /// Lists a folder being added at `dir`, whose directory `root` holds,
+    /// refusing one nested with another and taking the place of an entry
+    /// that lists the same directory by another spelling. An unreadable
+    /// registry is written afresh.
+    pub(crate) fn add(
+        &self,
+        dir: &Path,
+        root: &Directory,
+        folder: &str,
+        store: Option<&str>,
+    ) -> Result<()> {
+        let entry = Registered {
+            dir: absolute(dir),
+            folder: folder.to_string(),
+            store: store.map(str::to_string),
+        };
+        let mut nested = None;
+        // Judged under the lock, so two folders added at once cannot each
+        // miss the other.
+        self.change(Unreadable::Replace, |listed| {
+            let mut respelled = Vec::new();
+            for other in listed.iter() {
+                match relation(root, &entry.dir, other) {
+                    Relation::Nested => {
+                        nested = Some(other.dir.clone());
+                        return false;
+                    }
+                    Relation::Same if other.dir != entry.dir => respelled.push(other.dir.clone()),
+                    Relation::Same | Relation::Apart => {}
+                }
+            }
+            let before = listed.len();
+            listed.retain(|other| !respelled.contains(&other.dir));
+            put(listed, &entry) || listed.len() != before
+        })?;
+        match nested {
+            Some(other) => Err(CoreError::Invalid(format!(
                 "{} and the folder {} would hold one another's files; a folder cannot sit inside another",
-                dir.display(),
-                other.dir.display()
-            )));
+                entry.dir.display(),
+                other.display()
+            ))),
+            None => Ok(()),
         }
-        self.list(&dir, folder, store, Unreadable::Replace)
     }
 
     fn list(
@@ -123,17 +150,8 @@ impl Registry {
             folder: folder.to_string(),
             store: store.map(str::to_string),
         };
-        self.change(unreadable, |listed| {
-            if listed.contains(&entry) {
-                return false;
-            }
-            listed.retain(|other| {
-                other.dir != entry.dir && (entry.store.is_none() || other.store != entry.store)
-            });
-            listed.push(entry.clone());
-            true
-        })
-        .map(|_| ())
+        self.change(unreadable, |listed| put(listed, &entry))
+            .map(|_| ())
     }
 
     /// Takes off the entry for `dir`, and every entry for `store` where one
@@ -245,6 +263,76 @@ impl Registry {
             self.path.display()
         ))
     }
+}
+
+/// Lists `entry` in place of any entry for its directory spelled the same,
+/// or for its store. Answers whether the list changed.
+fn put(listed: &mut Vec<Registered>, entry: &Registered) -> bool {
+    if listed.contains(entry) {
+        return false;
+    }
+    listed.retain(|other| {
+        other.dir != entry.dir && (entry.store.is_none() || other.store != entry.store)
+    });
+    listed.push(entry.clone());
+    true
+}
+
+/// How a folder being added stands to a listed one.
+enum Relation {
+    /// The same directory.
+    Same,
+    /// One directory holds the other.
+    Nested,
+    Apart,
+}
+
+/// Judged by the directories themselves, so that no spelling of either path,
+/// such as another letter case on a case-insensitive volume, hides one
+/// folder inside the other. A listed path that does not open without
+/// following links, as on a volume that is away, is judged by its spelling,
+/// which is all there is of it.
+fn relation(root: &Directory, dir: &Path, entry: &Registered) -> Relation {
+    let spelled = || {
+        if entry.dir == dir {
+            Relation::Same
+        } else if dir.starts_with(&entry.dir) || entry.dir.starts_with(dir) {
+            Relation::Nested
+        } else {
+            Relation::Apart
+        }
+    };
+    let Ok(listed) = Directory::open(&entry.dir) else {
+        return spelled();
+    };
+    if listed.same(root).unwrap_or(false) {
+        return Relation::Same;
+    }
+    match (within(&listed, root), within(root, &listed)) {
+        (Some(true), _) | (_, Some(true)) => Relation::Nested,
+        (Some(false), Some(false)) => Relation::Apart,
+        _ => spelled(),
+    }
+}
+
+/// Whether `inner` lies below `outer`, climbing from `inner` one `..` at a
+/// time; `None` where a step cannot be taken.
+fn within(inner: &Directory, outer: &Directory) -> Option<bool> {
+    // No path reaches deeper than `PATH_MAX` allows; a file system that
+    // answers `..` with ever new directories would otherwise never end.
+    const DEEPEST: usize = 4096;
+    let mut at = inner.clone();
+    for _ in 0..DEEPEST {
+        let up = at.up().ok()?;
+        if up.same(&at).ok()? {
+            return Some(false);
+        }
+        if up.same(outer).ok()? {
+            return Some(true);
+        }
+        at = up;
+    }
+    None
 }
 
 fn machine_path(home: &Path) -> PathBuf {
@@ -540,6 +628,11 @@ pub(super) fn gone(entry: &Registered) -> bool {
 mod tests {
     use super::*;
 
+    /// Adds the folder at `dir` as a folder add does, with its directory open.
+    fn add(registry: &Registry, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
+        registry.add(dir, &Directory::open(dir).unwrap(), folder, store)
+    }
+
     fn folder_at(root: &Path, name: &str) -> PathBuf {
         let dir = root.join(name);
         std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
@@ -555,11 +648,95 @@ mod tests {
         let inner = folder_at(&outer, "nested");
         let parent_spelling = resolved(&outer.join("child/.."));
         let registry = Registry::at(temp.path().join(FILE_NAME));
-        registry.add(&parent_spelling, "outer", None).unwrap();
-        assert!(registry.add(&inner, "inner", None).is_err());
+        add(&registry, &parent_spelling, "outer", None).unwrap();
+        assert!(add(&registry, &inner, "inner", None).is_err());
         registry.unregister(&parent_spelling, None).unwrap();
-        registry.add(&inner, "inner", None).unwrap();
-        assert!(registry.add(&parent_spelling, "outer", None).is_err());
+        add(&registry, &inner, "inner", None).unwrap();
+        assert!(add(&registry, &parent_spelling, "outer", None).is_err());
+    }
+
+    #[test]
+    fn a_folder_holding_a_listed_folder_or_inside_one_is_refused_however_either_is_spelled() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let listed = folder_at(&base.join("a"), "notes");
+        std::fs::create_dir(listed.join("inner")).unwrap();
+        std::fs::create_dir(base.join("x")).unwrap();
+        let apart = folder_at(base, "apart");
+        // A spelling through `..` reaches the listed directory on any volume
+        // without either path being a prefix of the other.
+        let spelled = base.join("x/../a/notes");
+        registry.register(&spelled, "f1", Some("s1")).unwrap();
+        let refused = |dir: &Path| {
+            matches!(
+                add(&registry, dir, "f2", Some("s2")),
+                Err(CoreError::Invalid(message)) if message.contains("would hold one another's files")
+            )
+        };
+
+        assert!(refused(&base.join("a")), "a folder holding the listed one");
+        assert!(
+            refused(&listed.join("inner")),
+            "a folder inside the listed one"
+        );
+        // The witness: a directory beside it holds nothing listed.
+        add(&registry, &apart, "f3", Some("s3")).unwrap();
+        let dirs: Vec<PathBuf> = registry
+            .folders()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.dir)
+            .collect();
+        assert_eq!(dirs, vec![spelled, apart]);
+    }
+
+    #[test]
+    fn a_folder_holding_a_listed_folder_is_refused_when_spelled_in_another_case() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let listed = folder_at(&base.join("a"), "notes");
+        std::fs::create_dir(listed.join("inner")).unwrap();
+        registry.register(&listed, "f1", Some("s1")).unwrap();
+
+        for folded in [base.join("A"), base.join("a/NOTES/inner")] {
+            // On a case-sensitive volume the spelling is another directory,
+            // which holds nothing listed and lies inside nothing listed.
+            let insensitive = folded.exists();
+            if !insensitive {
+                std::fs::create_dir_all(&folded).unwrap();
+            }
+            let added = add(&registry, &folded, "f2", Some("s2"));
+            assert_eq!(
+                added.is_err(),
+                insensitive,
+                "{}: {added:?}",
+                folded.display()
+            );
+        }
+    }
+
+    #[test]
+    fn a_folder_added_at_a_listed_directory_by_another_spelling_takes_its_place() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let listed = folder_at(&base.join("a"), "notes");
+        std::fs::create_dir(base.join("x")).unwrap();
+        registry
+            .register(&base.join("x/../a/notes"), "f1", Some("s1"))
+            .unwrap();
+
+        add(&registry, &listed, "f2", Some("s2")).unwrap();
+        assert_eq!(
+            registry.folders().unwrap(),
+            vec![Registered {
+                dir: listed,
+                folder: "f2".into(),
+                store: Some("s2".into()),
+            }]
+        );
     }
 
     #[test]
@@ -634,13 +811,13 @@ mod tests {
         std::os::unix::fs::symlink(&real, temp.path().join("link")).unwrap();
         let one = folder_at(temp.path(), "one");
         let registry = Registry::at(temp.path().join("link").join(FILE_NAME));
-        registry.add(&one, "f1", None).unwrap();
+        add(&registry, &one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
         assert!(real.join(FILE_NAME).is_file());
         std::fs::remove_file(real.join(FILE_NAME)).unwrap();
         std::os::unix::fs::symlink(temp.path().join("elsewhere.json"), real.join(FILE_NAME))
             .unwrap();
-        assert!(registry.add(&one, "f1", None).is_err());
+        assert!(add(&registry, &one, "f1", None).is_err());
         assert!(!temp.path().join("elsewhere.json").exists());
     }
 
@@ -1128,14 +1305,14 @@ mod tests {
         assert!(registry.folders().is_err());
         assert!(registry.register(&one, "f1", None).is_err());
         assert_eq!(std::fs::read(registry.path()).unwrap(), b"");
-        registry.add(&one, "f1", None).unwrap();
+        add(&registry, &one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
 
         use std::os::unix::fs::PermissionsExt;
         let shut = Registry::at(root.path().join("shut.json"));
         std::fs::write(shut.path(), b"").unwrap();
         std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
-        assert!(shut.add(&one, "f1", None).is_err());
+        assert!(add(&shut, &one, "f1", None).is_err());
         std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read(shut.path()).unwrap(), b"");
     }

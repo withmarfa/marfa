@@ -49,18 +49,21 @@ impl Directory {
             match part {
                 Component::Normal(name) => directory = directory.child(Path::new(name), create)?,
                 Component::CurDir => {}
-                Component::ParentDir => {
-                    directory = Self::from_fd(fs::openat(
-                        directory.file(),
-                        "..",
-                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                        Mode::empty(),
-                    )?);
-                }
+                Component::ParentDir => directory = directory.up()?,
                 _ => return Err(invalid_path()),
             }
         }
         Ok(directory)
+    }
+
+    /// The directory this one sits in, whatever path reached it.
+    pub(crate) fn up(&self) -> io::Result<Self> {
+        Ok(Self::from_fd(fs::openat(
+            self.file(),
+            "..",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?))
     }
 
     fn from_fd(fd: std::os::fd::OwnedFd) -> Self {

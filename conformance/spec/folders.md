@@ -3474,6 +3474,14 @@ When adding a folder would enclose or fall inside another listed folder, a devic
 
 **Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`.
 
+### `folders/nested-folder-refused-any-spelling`
+
+When adding a folder would enclose or fall inside another listed folder, a device MUST refuse the add however either folder's path is spelled, including in another letter case on a case-insensitive volume.
+
+**Reason:** More than one spelling can reach one directory, so only the directories themselves show whether two folders would hold one another's files.
+
+**Tests:** `cli/folder.test.ts › refuses a folder that holds a listed folder, or lies inside one, when its path is spelled in another case`.
+
 ### `folders/nested-folder-not-scanned`
 
 When a folder scan encounters a directory holding another folder’s `.marfa/core.sqlite` state, a device MUST exclude that directory’s contents from admission.
@@ -3508,7 +3516,7 @@ When a confirmed folder has unanswered or blocked queued writes, a device MUST r
 
 When the same admitted directory is registered through an equivalent absolute spelling or for another `system.folder`, a device MUST retain only its current registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `cli/folder.test.ts › lists a folder added again under another letter case once, in place of its old entry`.
 
 ### `folders/remove-listed-acts-where-listed`
 

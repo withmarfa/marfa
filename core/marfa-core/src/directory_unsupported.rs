@@ -63,6 +63,9 @@ impl Directory {
     pub(crate) fn child(&self, _: &Path, _: bool) -> io::Result<Self> {
         unsupported()
     }
+    pub(crate) fn up(&self) -> io::Result<Self> {
+        unsupported()
+    }
     pub(crate) fn file(&self) -> &File {
         &self.file
     }
