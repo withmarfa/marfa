@@ -1,9 +1,12 @@
 use std::path::Path;
 
+use super::elsewhere;
+use super::registry::{self, Reached};
 use super::{
     CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport, Synced,
 };
 use crate::Result;
+use crate::directory::Directory;
 use crate::error::CoreError;
 use crate::model::HydrateReport;
 
@@ -138,19 +141,47 @@ impl Folder {
 
     /// Takes the folder at `dir` off this machine: its own state under
     /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed. A folder whose directory
-    /// is gone is only taken off the registry.
+    /// the first sync still waits to be confirmed. A listed folder's state
+    /// goes only where the store at its listed path is the one the registry
+    /// lists for it; otherwise, as where its directory is gone, it is only
+    /// taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
-        let dir = &super::registry::root_of(dir.as_ref())?;
-        let has_store = crate::directory::Directory::open(dir)
-            .and_then(|root| root.child(Path::new(STATE_DIR), false))
-            .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
-            .is_ok();
-        if has_store || !Folder::forget(dir)? {
-            Folder::open_at(dir.clone(), None)?.remove()?;
+        let dir = dir.as_ref();
+        match registry::reach(dir)? {
+            Reached::Listed(entry) => {
+                if held(&entry.dir) {
+                    let folder = Folder::open_without_listing(entry.dir.clone(), None)?;
+                    if entry.store.is_some() && elsewhere::listed_store(&folder.core) == entry.store
+                    {
+                        return folder.remove();
+                    }
+                }
+                Folder::forget(&entry.dir)?;
+                Ok(())
+            }
+            Reached::Unlisted(root) => {
+                // Nothing listed binds the path to a folder, so a removal
+                // follows no link to reach one.
+                let spelled = registry::absolute(dir);
+                if let Ok(target) = Directory::open(&root)
+                    && !registry::stands_at(&spelled, &target)
+                {
+                    return Err(CoreError::Invalid(format!(
+                        "{} passes through a symbolic link, and the folder registry lists no folder by it, so `folders remove` does not follow the link; name the folder by a path without symbolic links",
+                        spelled.display()
+                    )));
+                }
+                Folder::open_without_listing(root, None)?.remove()
+            }
         }
-        Ok(())
     }
+}
+
+fn held(root: &Path) -> bool {
+    Directory::open(root)
+        .and_then(|root| root.child(Path::new(STATE_DIR), false))
+        .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
+        .is_ok()
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take

@@ -147,18 +147,17 @@ impl Registry {
         .map(|(_, changed)| changed)
     }
 
-    /// Whether `dir` is listed as spelled, read without the lock or a
-    /// rewrite, since every write lands whole.
-    fn lists(&self, dir: &Path) -> bool {
+    /// The entries as written, read without the lock or a rewrite, since
+    /// every write lands whole.
+    fn listing(&self) -> Option<Vec<Registered>> {
         let path = resolved(&self.path);
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return false;
-        };
-        Directory::open(parent)
+        let (parent, name) = (path.parent()?, path.file_name()?);
+        let bytes = Directory::open(parent)
             .and_then(|directory| directory.read(Path::new(name)))
+            .ok()?;
+        serde_json::from_slice::<Listing>(&bytes)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<Listing>(&bytes).ok())
-            .is_some_and(|listing| listing.folders.iter().any(|entry| entry.dir == dir))
+            .map(|listing| listing.folders)
     }
 
     /// Reads the list under the registry's lock, tidies it, applies `edit`,
@@ -269,18 +268,87 @@ pub fn resolved(dir: &Path) -> PathBuf {
     walk(dir).0
 }
 
-/// The folder a path reaches: one the registry lists by this spelling is
-/// taken where it is listed, since a link that has replaced its directory
-/// since must not lead to another folder; any other path is [`named`].
-pub(crate) fn root_of(dir: &Path) -> Result<PathBuf> {
-    let spelled = absolute(dir);
-    if Registry::located().is_some_and(|registry| registry.lists(&spelled)) {
-        return Ok(spelled);
-    }
-    named(dir)
+/// What a path given for an existing folder reaches.
+pub(crate) enum Reached {
+    /// The listed folder this path names, at the path it is listed at.
+    Listed(Registered),
+    /// No listed folder: the path as [`named`] resolves it.
+    Unlisted(PathBuf),
 }
 
-fn absolute(dir: &Path) -> PathBuf {
+/// A path the registry lists by this spelling names that entry, never
+/// resolved again. Any other path is [`named`], and names a listed folder
+/// only where that folder's own listed path, opened without following links,
+/// is the directory it reaches. Where a listed path now reaches that
+/// directory only through a link, or two listed paths reach it, the path
+/// could mean either folder, so it is refused.
+pub(crate) fn reach(dir: &Path) -> Result<Reached> {
+    let spelled = absolute(dir);
+    let listed = Registry::located()
+        .and_then(|registry| registry.listing())
+        .unwrap_or_default();
+    if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
+        return Ok(Reached::Listed(entry.clone()));
+    }
+    let root = named(dir)?;
+    let Ok(target) = Directory::open(&root) else {
+        return Ok(match listed.into_iter().find(|entry| entry.dir == root) {
+            Some(entry) => Reached::Listed(entry),
+            None => Reached::Unlisted(root),
+        });
+    };
+    let leading: Vec<&Registered> = listed
+        .iter()
+        .filter(|entry| leads_to(&entry.dir, &target))
+        .collect();
+    match leading.as_slice() {
+        [] => Ok(Reached::Unlisted(root)),
+        [entry] if stands_at(&entry.dir, &target) => Ok(Reached::Listed((*entry).clone())),
+        _ => Err(CoreError::Invalid(format!(
+            "{} could name more than one folder: {} is also reached from the listed folder paths {}, through a symbolic link that has replaced a listed folder's directory, so nothing was changed; name the folder by the path `folders list` shows for it",
+            spelled.display(),
+            root.display(),
+            leading
+                .iter()
+                .map(|entry| entry.dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ))),
+    }
+}
+
+/// Why a listed path is not opened: a symbolic link that now stands in it,
+/// which a listed folder is never reached through.
+pub(crate) fn linked_listing(dir: &Path) -> Option<CoreError> {
+    let mut prefix = PathBuf::new();
+    for part in dir.components() {
+        prefix.push(part);
+        if std::fs::symlink_metadata(&prefix).is_ok_and(|entry| entry.file_type().is_symlink()) {
+            return Some(CoreError::Invalid(format!(
+                "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one; `folders remove {}` only takes it off the list",
+                dir.display(),
+                prefix.display(),
+                dir.display()
+            )));
+        }
+    }
+    None
+}
+
+/// Whether `dir`, following its links, is the directory `target` holds.
+fn leads_to(dir: &Path, target: &Directory) -> bool {
+    std::fs::canonicalize(dir)
+        .and_then(|path| Directory::open(&path))
+        .is_ok_and(|directory| directory.same(target).unwrap_or(false))
+}
+
+/// Whether `dir`, opened without following links, is the directory `target`
+/// holds.
+pub(crate) fn stands_at(dir: &Path, target: &Directory) -> bool {
+    Directory::open(dir).is_ok_and(|directory| directory.same(target).unwrap_or(false))
+}
+
+pub(crate) fn absolute(dir: &Path) -> PathBuf {
     std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
@@ -784,6 +852,101 @@ mod tests {
         assert!(store(&base.join("a-moved/notes")).exists());
         assert!(listed().contains(&second));
         assert!(!listed().contains(&first));
+    }
+
+    #[test]
+    fn no_other_spelling_of_a_relinked_listed_folder_removes_the_folder_its_link_leads_to() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        let alias = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        std::os::unix::fs::symlink(base, alias.path().join("base")).unwrap();
+        let registry = Registry::located().unwrap();
+        let listed = || -> Vec<PathBuf> {
+            registry
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
+        let intact = |spelling: &Path| {
+            assert!(
+                second.join(STATE_DIR).join("core.sqlite").exists(),
+                "{} removed the folder its link leads to",
+                spelling.display()
+            );
+        };
+
+        for spelling in [
+            alias.path().join("base/a/notes"),
+            base.join("A/notes"),
+            base.join("a/NOTES"),
+            base.join("b/../a/notes"),
+        ] {
+            assert!(
+                Folder::open(&spelling, None).is_err(),
+                "{}",
+                spelling.display()
+            );
+            assert!(Folder::status_of(&spelling).is_err());
+            assert!(
+                Folder::remove_at(&spelling).is_err(),
+                "{}",
+                spelling.display()
+            );
+            intact(&spelling);
+            assert!(listed().contains(&first) && listed().contains(&second));
+        }
+
+        let kept = std::fs::read(registry.path()).unwrap();
+        std::fs::remove_file(registry.path()).unwrap();
+        assert!(Folder::remove_at(&first).is_err());
+        intact(&first);
+        std::fs::write(registry.path(), kept).unwrap();
+
+        Folder::remove_at(&first).unwrap();
+        intact(&first);
+        assert!(listed().contains(&second));
+        assert!(!listed().contains(&first));
+        Folder::remove_at(alias.path().join("base/b/notes")).unwrap();
+        assert!(!second.join(STATE_DIR).join("core.sqlite").exists());
+    }
+
+    #[test]
+    fn a_folder_moved_into_a_listed_folders_place_is_never_removed_in_its_stead() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::fs::create_dir(base.join("a")).unwrap();
+        std::fs::rename(&second, &first).unwrap();
+        let registry = Registry::located().unwrap();
+
+        Folder::remove_at(&first).unwrap();
+        assert!(
+            first.join(STATE_DIR).join("core.sqlite").exists(),
+            "the folder moved into the listed folder's place was removed"
+        );
+        let listed = registry.folders().unwrap();
+        assert!(!listed.iter().any(|entry| entry.dir == first));
+        assert!(
+            listed
+                .iter()
+                .any(|entry| entry.dir == second && entry.folder.ends_with('2'))
+        );
     }
 
     #[test]

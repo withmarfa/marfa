@@ -25,6 +25,12 @@ pub(super) fn store_id(core: &Core) -> Result<String> {
     Ok(id)
 }
 
+/// This folder's store id where it has one, without making one.
+pub(super) fn listed_store(core: &Core) -> Option<String> {
+    let conn = core.conn().ok()?;
+    store::meta_get(&conn, META_STORE).ok()?
+}
+
 pub(super) fn listed_in(core: &Core, registry: &Registry) {
     if let Ok(conn) = core.conn() {
         let _ = store::meta_set(
@@ -617,6 +623,7 @@ mod tests {
         make(&first, "01a00000-0000-7000-8000-000000000001");
         make(&second, "01a00000-0000-7000-8000-000000000002");
         drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
         std::fs::rename(temp.path().join("a"), temp.path().join("a-moved")).unwrap();
         std::os::unix::fs::symlink(temp.path().join("b"), temp.path().join("a")).unwrap();
 

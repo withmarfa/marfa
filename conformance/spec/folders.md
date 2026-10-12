@@ -3512,11 +3512,25 @@ When the same admitted directory is registered through an equivalent absolute sp
 
 ### `folders/remove-listed-acts-where-listed`
 
-When a folder is removed by the path the machine’s folder registry lists it at, a device MUST NOT remove or unlist any other folder.
+When a listed folder is removed, a device MUST delete only the state of the folder that the machine’s folder registry lists at that folder’s directory, and never another folder’s state.
 
-**Reason:** A symbolic link can replace a listed folder's directory after it was listed, and the link can lead into another folder.
+**Reason:** After a folder is listed, a symbolic link or another folder can take its directory's place.
 
-**Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`.
+**Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
+
+### `folders/listed-link-remove-unlists`
+
+If a folder is removed by the path at which the machine’s folder registry lists it, and a symbolic link now stands in that path, then a device MUST take that entry off the registry.
+
+**Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
+### `folders/remove-unlisted-no-follow`
+
+If a folder that the machine’s folder registry does not list is removed by a path that passes through a symbolic link, then a device MUST refuse the removal with `invalid`.
+
+**Reason:** No listed entry binds such a path to a folder, so the link could lead to any folder.
+
+**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
 
 ### `folders/registry-removed-state`
 
@@ -4484,21 +4498,41 @@ When opening a folder or any directory below it, a device MUST refuse a symbolic
 
 ### `folders/root-linked-ancestor-resolved`
 
-When a folder is named through a path in which every symbolic link is a directory above the folder that no later `..` climbs back out of, and every directory that a `..` climbs back out of exists, a device MUST admit the folder at the path with those links resolved.
+When a folder is added through a path in which every symbolic link is a directory above the folder that no later `..` climbs back out of, and every directory that a `..` climbs back out of exists, a device MUST admit the folder at the path with those links resolved.
 
 **Reason:** The directories above a folder are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
 
+### `folders/linked-path-reaches-folder`
+
+When a command other than an add or a removal names an existing folder by a path that the machine’s folder registry does not list, in which every symbolic link is a directory above the folder that no later `..` climbs back out of, every directory that a `..` climbs back out of exists, and no listed folder path reaches the same directory only through a symbolic link, a device MUST work the folder at the path with those links resolved.
+
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
+
+### `folders/ambiguous-path-refused`
+
+If a command other than an add names a folder by a path that the machine’s folder registry does not list, and a listed folder path reaches the same directory only through a symbolic link, then a device MUST refuse the path with `invalid`.
+
+**Reason:** The path could mean the folder at that directory or the listed folder whose directory the link replaced.
+
+**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
+### `folders/listed-link-refused`
+
+If a symbolic link now stands in the path at which the machine’s folder registry lists a folder, then a device MUST refuse every command other than an add or a removal that names the folder by that path with `invalid`.
+
+**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
 ### `folders/root-link-refused-invalid`
 
-If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, then a device MUST refuse the path with `invalid`.
+If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the folder by the path at which the machine’s folder registry lists it, then a device MUST refuse the path with `invalid`.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
 ### `folders/root-link-refusal-named`
 
-If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, and no earlier `..` climbs back out of a directory that does not exist, then a device MUST name the first such link in the refusal's message.
+If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the folder by the path at which the machine’s folder registry lists it, and no earlier `..` climbs back out of a directory that does not exist, then a device MUST name the first such link in the refusal's message.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 

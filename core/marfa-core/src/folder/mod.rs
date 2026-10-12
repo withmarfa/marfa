@@ -331,11 +331,19 @@ impl Folder {
     }
 
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
-        Folder::open_at(registry::root_of(root.as_ref())?, server)
+        let opened = Folder::open_without_listing(reached(root.as_ref())?, server)?;
+        // A lost registry is the scan's to notice before listing again.
+        if let Some(registry) = Registry::located()
+            && !elsewhere::lost(&opened.core, &registry)
+        {
+            let _ = opened.register();
+        }
+        Ok(opened)
     }
 
-    /// Opens `root` as given, without resolving it again.
-    fn open_at(root: PathBuf, server: Option<Server>) -> Result<Folder> {
+    /// Opens `root` as given, without resolving it again or listing the
+    /// folder found there.
+    fn open_without_listing(root: PathBuf, server: Option<Server>) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -351,7 +359,7 @@ impl Folder {
             server,
         )?)?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
-        let opened = Folder {
+        Ok(Folder {
             root,
             root_dir,
             store_mark: state_dir
@@ -362,20 +370,13 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
-        };
-        // A lost registry is the scan's to notice before listing again.
-        if let Some(registry) = Registry::located()
-            && !elsewhere::lost(&opened.core, &registry)
-        {
-            let _ = opened.register();
-        }
-        Ok(opened)
+        })
     }
 
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        let root = registry::root_of(root.as_ref())?;
+        let root = reached(root.as_ref())?;
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -688,6 +689,18 @@ fn read_file(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+/// The directory every command but an add and a removal works: a listed
+/// folder at its listed path, refused where a link now stands in that path.
+fn reached(dir: &Path) -> Result<PathBuf> {
+    match registry::reach(dir)? {
+        registry::Reached::Listed(entry) => match registry::linked_listing(&entry.dir) {
+            Some(refused) => Err(refused),
+            None => Ok(entry.dir),
+        },
+        registry::Reached::Unlisted(root) => Ok(root),
+    }
 }
 
 /// A root that became a link since it was named is refused by the open with
