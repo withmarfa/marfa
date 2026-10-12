@@ -366,7 +366,7 @@ If a conditional read whose header equals the credential's current read view nam
 
 ### `read-views/conditional-order`
 
-When a `GET` other than `GET /events`, or a `POST /items/bulk-get`, that names `X-Marfa-Read-View` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a path outside those of the conditional reads, `400`; no valid credential, `401`; an operation that is not a conditional read, `400`; a header that is not one 64-character lowercase hexadecimal value, `400`; an item page without `metadata`, `400`; a read view that differs from the credential's current one, `409`; then the answers of the ordinary read.
+When a `GET` other than `GET /events`, or a `POST /items/bulk-get` whose body is within its operation's cap and nested at most 64 levels, names `X-Marfa-Read-View` and meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a path outside those of the conditional reads, `400`; no valid credential, `401`; an operation that is not a conditional read, `400`; a header that is not one 64-character lowercase hexadecimal value, `400`; an item page without `metadata`, `400`; a read view that differs from the credential's current one, `409`; then the answers of the ordinary read.
 
 **Reason:** a stale read view is refused before the query, the credential's reach or the resource is judged, so that the refusal says nothing about them.
 
