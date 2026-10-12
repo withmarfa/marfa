@@ -85,7 +85,7 @@ describe("what a change runs", () => {
       ["ci-sqlite"],
     ],
     [
-      "the command reference, which a Rust test holds to the binary's help",
+      "the command reference, which a Rust test holds to the binary's command tree",
       ["core/marfa-cli/COMMANDS.md"],
       ["ci-sqlite", "core-checks", "core-checks-linux"],
     ],
