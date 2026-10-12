@@ -2,9 +2,9 @@ use std::io;
 
 use marfa_core::{CoreError, ERROR_CODES};
 
-/// Agents read the exit code and the code string. The help lists the codes
-/// from the lists they are made from, and the exit codes by hand: change an
-/// exit code and `EXIT_CODES_TEXT` together.
+/// Agents read the exit code and the code string. The help and the command
+/// reference list the codes from the lists they are made from, and each exit
+/// code with its `Exit::meaning`.
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error(transparent)]
@@ -167,6 +167,38 @@ pub enum Exit {
     Environment = 3,
     Local = 4,
     Credential = 5,
+}
+
+impl Exit {
+    /// Every exit code, in the order the help lists them.
+    pub const ALL: [Exit; 6] = [
+        Exit::Done,
+        Exit::Refused,
+        Exit::Usage,
+        Exit::Environment,
+        Exit::Local,
+        Exit::Credential,
+    ];
+
+    /// What the code tells an agent, as the help and the command reference say it.
+    pub fn meaning(self) -> &'static str {
+        match self {
+            Exit::Done => "done",
+            Exit::Refused => {
+                "the request was refused, by the server, by the CLI before sending, for an answer on another contract, or for a docs page that does not exist; a retry does not change it"
+            }
+            Exit::Usage => "the command line was wrong, or named no store or server",
+            Exit::Environment => {
+                "the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
+            }
+            Exit::Local => {
+                "the working copy or the queue refused under the device rules, or this system has no keychain"
+            }
+            Exit::Credential => {
+                "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"
+            }
+        }
+    }
 }
 
 /// The core's own errors are named by `CoreError::code`; this names the rest.
@@ -407,32 +439,47 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
-const EXIT_CODES_TEXT: &str = "\
-Exit codes:
-  0  done
-  1  the request was refused, by the server, by the CLI before
-     sending, for an answer on another contract, or for a docs page
-     that does not exist; a retry does not change it
-  2  the command line was wrong, or named no store or server
-  3  the environment failed (unreachable, timed out, a 5xx, a 429, an
-     answer naming no contract, full local storage, a docs site that
-     cannot be read); try again
-  4  the working copy or the queue refused under the device rules, or
-     this system has no keychain
-  5  no credential, the credential was refused, or the sign-in ended;
-     `marfa login` starts one
+/// How a drain's report sets the exit code, said after the exit codes.
+pub const DRAIN_EXITS: &str = "A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.";
 
-A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
+/// The refusal `--json` prints, said after the drain: what it is, its shape,
+/// and the words before the codes its `error.code` can be.
+pub const JSON_REFUSAL: &str = "With --json a refusal is one JSON object on stderr:";
+pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
+pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 
-With --json a refusal is one JSON object on stderr:
-  {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
-where error.code is one of: ";
+/// The width the help wraps an exit code's meaning to, continuing under its first word.
+const MEANING_WIDTH: usize = 70;
 
 /// The exit codes and every code a refusal can carry, the second read from
 /// the lists the codes are made from rather than written out again.
 pub fn exit_codes_help() -> &'static str {
     static HELP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    HELP.get_or_init(|| format!("{EXIT_CODES_TEXT}{}.", codes().join(", ")))
+    HELP.get_or_init(|| {
+        let mut help = String::from("Exit codes:\n");
+        for exit in Exit::ALL {
+            let mut line = format!("  {}  ", exit as u8);
+            let mut first = true;
+            for word in exit.meaning().split(' ') {
+                if !first && line.len() + 1 + word.len() > MEANING_WIDTH {
+                    help.push_str(&line);
+                    help.push('\n');
+                    line = " ".repeat(5);
+                } else if !first {
+                    line.push(' ');
+                }
+                line.push_str(word);
+                first = false;
+            }
+            help.push_str(&line);
+            help.push('\n');
+        }
+        let codes = codes().join(", ");
+        help.push_str(&format!(
+            "\n{DRAIN_EXITS}\n\n{JSON_REFUSAL}\n  {JSON_REFUSAL_SHAPE}\n{JSON_REFUSAL_CODES} {codes}."
+        ));
+        help
+    })
 }
 
 #[cfg(test)]
