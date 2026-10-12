@@ -41,7 +41,11 @@
  * source of truth with nothing keeping it honest, and it would go stale in
  * precisely the case that matters.
  */
-import { ITEM_STATES, TIERS } from "@withmarfa/shared";
+import {
+  ITEM_STATES,
+  TIERS,
+  FOLDER_STATUS_SIGN_IN_KINDS,
+} from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { BLOB_STORE_KINDS } from "./interface.js";
 import { errorMessage } from "../error-text.js";
@@ -112,6 +116,12 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     column: "kind",
     castType: "BlobStoreKind",
     allowed: BLOB_STORE_KINDS,
+  },
+  {
+    table: "folder_status",
+    column: "sign_in_kind",
+    castType: 'FolderStatusSignIn["kind"]',
+    allowed: FOLDER_STATUS_SIGN_IN_KINDS,
   },
 ];
 

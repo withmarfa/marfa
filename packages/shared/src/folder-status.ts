@@ -29,8 +29,10 @@ export interface FolderStatusAck {
   sequence: number;
   received_at: string;
 }
+export const FOLDER_STATUS_SIGN_IN_KINDS = ["browser", "app", "key"] as const;
+
 export type FolderStatusSignIn = Omit<VersionWriter, "kind"> & {
-  kind: "key" | "app" | "browser";
+  kind: (typeof FOLDER_STATUS_SIGN_IN_KINDS)[number];
 };
 export interface StoredFolderStatus extends FolderStatusReport {
   sign_in: FolderStatusSignIn;

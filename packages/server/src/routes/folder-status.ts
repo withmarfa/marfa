@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
   FOLDER_PROBLEM_CODES,
+  FOLDER_STATUS_SIGN_IN_KINDS,
   MarfaError,
   isValidId,
 } from "@withmarfa/shared";
@@ -131,7 +132,7 @@ const Copy = z
   });
 const SignIn = VersionWriterSchema.extend({
   kind: z
-    .enum(["browser", "app", "key"])
+    .enum(FOLDER_STATUS_SIGN_IN_KINDS)
     .describe(
       "browser: owner browser session; app: signed-in app grant; key: API key.",
     ),
