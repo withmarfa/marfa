@@ -118,7 +118,7 @@ async function start(): Promise<void> {
     { registerInstrumentations },
     { HttpInstrumentation },
     { PiiRedactionSpanProcessor, PiiRedactionLogRecordProcessor },
-    { ErrorBucketFilterSpanProcessor },
+    { BATCH_QUEUE_SIZE, ErrorBucketFilterSpanProcessor },
   ] = await Promise.all([
     import("@opentelemetry/sdk-trace-node"),
     import("@opentelemetry/sdk-trace-base"),
@@ -142,6 +142,7 @@ async function start(): Promise<void> {
             url: tracesEndpoint,
             headers: otel.tracesHeaders,
           }),
+          { maxQueueSize: BATCH_QUEUE_SIZE },
         ),
         sampleRatio,
       ),
