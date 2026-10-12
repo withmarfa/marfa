@@ -31,7 +31,9 @@ import type {
  * the count reaches zero. That covers a child that ends after its root and
  * two local roots that share a trace id (a propagated `traceparent`), and
  * `onEnd` never creates an entry, so a span that ends with none cannot leave
- * one behind. It is judged alone, by {@link shouldExportSpan}.
+ * one behind. It is judged alone, by {@link shouldExportSpan}. A span that
+ * starts after the count has reached zero begins a new entry, so it is not
+ * released with an error trace that was exported before it started.
  *
  * **Bounds** ({@link HOLD_LIMITS}). A span can stay open for a long time (an
  * event stream) or for ever (a span nothing ends), so every entry also has
