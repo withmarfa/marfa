@@ -7,10 +7,44 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { InStatement } from "@libsql/client";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { guardStoreWithReadContext } from "../storage/sqlite/request-context.js";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
+import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
 import { PiiRedactionSpanProcessor } from "./redaction.js";
+
+const failure = vi.hoisted(() => ({ commit: false }));
+vi.mock("@libsql/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@libsql/client")>();
+  return {
+    ...actual,
+    createClient: (...args: Parameters<typeof actual.createClient>) => {
+      const client = actual.createClient(...args);
+      const execute = client.execute.bind(client);
+      client.execute = async (
+        statement: InStatement | string,
+        ...rest: unknown[]
+      ) => {
+        const text = typeof statement === "string" ? statement : statement.sql;
+        if (failure.commit && text === "COMMIT") {
+          failure.commit = false;
+          throw new Error("commit acknowledgment lost");
+        }
+        return execute(statement, ...(rest as []));
+      };
+      return client;
+    },
+  };
+});
 
 const CANARY = "canary-content-6b3f0d92";
 
@@ -210,6 +244,35 @@ describe("the SQLite storage", () => {
     for (const span of spans) {
       expect(span.status.code).toBe(SpanStatusCode.UNSET);
     }
+  });
+
+  it("marks a transaction whose commit fails as an error, with no message and no exception recorded", async () => {
+    let thrown: unknown;
+    await inRequest(async () => {
+      failure.commit = true;
+      try {
+        await ctx.storage.runInTransaction(async () => {
+          await ctx.storage.settings.set("telemetry-commit", CANARY);
+        });
+      } catch (error) {
+        thrown = error;
+      }
+    });
+    // The witness: the commit did fail, with a transaction failure.
+    expect(thrown).toBeInstanceOf(TransactionFailure);
+    const span = storageSpans().find(
+      (candidate) => candidate.name === "storage.runInTransaction",
+    );
+    expect(span?.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(span?.events).toEqual([]);
+    expect(span?.attributes["error.type"]).toBe("TransactionFailure");
+    expect(
+      JSON.stringify(
+        exporter
+          .getFinishedSpans()
+          .map((s) => [s.attributes, s.events, s.status]),
+      ),
+    ).not.toContain(CANARY);
   });
 
   it("still marks a store call that fails inside a transaction as the error, and not the transaction", async () => {

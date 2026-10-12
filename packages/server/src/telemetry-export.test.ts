@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SpanKind, trace } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
+import type { InStatement } from "@libsql/client";
 import {
   afterAll,
   afterEach,
@@ -27,12 +28,37 @@ import {
   it,
   vi,
 } from "vitest";
+import { TransactionFailure } from "./storage/sqlite/transaction-control.js";
 import {
   startStubCollector,
   type ReceivedSpan,
   type StubCollector,
 } from "./otel/stub-collector.js";
 import { createTestContext, request, type TestContext } from "./test-utils.js";
+
+const failure = vi.hoisted(() => ({ commit: false }));
+vi.mock("@libsql/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@libsql/client")>();
+  return {
+    ...actual,
+    createClient: (...args: Parameters<typeof actual.createClient>) => {
+      const client = actual.createClient(...args);
+      const execute = client.execute.bind(client);
+      client.execute = async (
+        statement: InStatement | string,
+        ...rest: unknown[]
+      ) => {
+        const text = typeof statement === "string" ? statement : statement.sql;
+        if (failure.commit && text === "COMMIT") {
+          failure.commit = false;
+          throw new Error("commit acknowledgment lost");
+        }
+        return execute(statement, ...(rest as []));
+      };
+      return client;
+    },
+  };
+});
 
 const SERVER_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -362,6 +388,39 @@ describe("what is exported at each sample ratio", () => {
     );
     await globalThis.__marfaOtelShutdown?.();
     expect(collector.spans().filter((s) => s.traceId === traceId)).toEqual([]);
+  });
+
+  it("exports the whole trace of a request whose transaction could not commit, though the route answered normally, at ratio 0", async () => {
+    await startTelemetry(collector.url, "0");
+    let thrown: unknown;
+    const { traceId } = await inTrace(
+      "POST /bulk",
+      "ratio-zero-commit",
+      async () => {
+        await listItems("ratio-zero-commit")();
+        failure.commit = true;
+        // A bulk route answers a partial result for this failure.
+        await ctx.storage
+          .runInTransaction(async () => {
+            await ctx.storage.settings.set("telemetry-commit", "value");
+          })
+          .catch((error: unknown) => {
+            thrown = error;
+          });
+        return new Response(null, { status: 200 });
+      },
+    );
+    expect(thrown).toBeInstanceOf(TransactionFailure);
+    await globalThis.__marfaOtelShutdown?.();
+
+    const spans = collector.spans().filter((s) => s.traceId === traceId);
+    const transaction = spans.find(
+      (s) => s.name === "storage.runInTransaction",
+    );
+    expect(transaction?.status?.code).toBe(2);
+    expect(spans.some((s) => s.name === "POST /bulk")).toBe(true);
+    expect(spans.some((s) => s.name === "settings.set")).toBe(true);
+    expect(spans.some((s) => s.name.startsWith("items."))).toBe(true);
   });
 
   it("exports the whole trace of a request that failed, whatever the ratio", async () => {

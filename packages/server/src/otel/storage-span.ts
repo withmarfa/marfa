@@ -2,6 +2,7 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 import { MarfaError } from "@withmarfa/shared";
 import { refusalInCauses } from "../refusal.js";
+import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
 
 /**
  * Runs one storage call inside a span, so a request's trace shows where its
@@ -26,8 +27,12 @@ import { refusalInCauses } from "../refusal.js";
  * **A call that runs the route's own code** (`callsRouteCode`: a transaction
  * or a read snapshot) says nothing of what that code throws. A route may roll
  * a transaction back with an error of its own as a signal, which is not a
- * storage failure, and a real one is already on the span of the store call
- * that failed and on the request's.
+ * storage failure, and a real one from a store call is already on that call's
+ * span. The wrapper itself throws a `TransactionFailure` when a transaction
+ * cannot begin or commit, or when its outcome is unknown, and no store call
+ * carries that: a route may answer it as a normal partial result, so the span
+ * is marked as an error, with the status and the error's class name and no
+ * message, unless the failure's cause is a refusal the route chose.
  *
  * The span ends when the call settles. A call that returns a value other than
  * a promise ends it at once.
@@ -75,14 +80,10 @@ export function inStorageSpan<T>(
 }
 
 function finish(span: Span, error: unknown, callsRouteCode: boolean): void {
-  if (callsRouteCode) {
-    span.end();
-    return;
-  }
   const refused = error instanceof MarfaError ? error : refusalInCauses(error);
   if (refused) {
-    span.setAttribute("error.code", refused.code);
-  } else {
+    if (!callsRouteCode) span.setAttribute("error.code", refused.code);
+  } else if (!callsRouteCode || error instanceof TransactionFailure) {
     span.setAttribute(
       "error.type",
       error instanceof Error ? error.constructor.name : typeof error,
