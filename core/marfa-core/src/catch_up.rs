@@ -186,7 +186,7 @@ pub const SERVER_REACHABLE: &str = "server.reachable";
 pub struct FollowReport {
     pub applied: u64,
     pub skipped: u64,
-    /// Empty where the follow was stopped before the copy held a cursor.
+    /// Empty where the follow was stopped before it read the copy's cursor.
     pub cursor: String,
     /// Streams asked for after the first, for any reason.
     pub reconnects: u64,
