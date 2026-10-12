@@ -506,7 +506,7 @@ CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records`
 CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`endpoint_id` text NOT NULL,
-	`connector_id` text NOT NULL,
+	`source` text NOT NULL,
 	`received_at` text NOT NULL,
 	`method` text NOT NULL,
 	`query` text NOT NULL,
@@ -517,10 +517,10 @@ CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
 	`dedupe_key` text,
 	`handled_at` text,
 	`outcome` text,
-	FOREIGN KEY (`endpoint_id`) REFERENCES `inbound_endpoints`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`endpoint_id`,`source`) REFERENCES `inbound_endpoints`(`id`,`source`) ON UPDATE no action ON DELETE cascade
 );
 
-CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_connector_handled` ON `inbound_deliveries` (`connector_id`,`handled_at`,`received_at`,`id`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_source_handled` ON `inbound_deliveries` (`source`,`handled_at`,`received_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_endpoint_dedupe` ON `inbound_deliveries` (`endpoint_id`,`dedupe_key`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_received` ON `inbound_deliveries` (`received_at`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_handled_age` ON `inbound_deliveries` (`handled_at`,`id`) WHERE "inbound_deliveries"."handled_at" IS NOT NULL;
@@ -533,18 +533,26 @@ CREATE TABLE IF NOT EXISTS `inbound_delivery_bodies` (
 
 CREATE TABLE IF NOT EXISTS `inbound_endpoints` (
 	`id` text PRIMARY KEY NOT NULL,
-	`connector_id` text NOT NULL,
+	`source` text NOT NULL,
 	`token_hash` text NOT NULL,
 	`token_last4` text NOT NULL,
 	`label` text,
 	`duplicate_header` text,
 	`created_at` text NOT NULL,
 	`retired_at` text,
-	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`source`) REFERENCES `inbound_sources`(`source`) ON UPDATE no action ON DELETE cascade
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `inbound_endpoints_token_hash_unique` ON `inbound_endpoints` (`token_hash`);
-CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_connector` ON `inbound_endpoints` (`connector_id`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_source` ON `inbound_endpoints` (`source`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_inbound_endpoints_id_source` ON `inbound_endpoints` (`id`,`source`);
+CREATE TABLE IF NOT EXISTS `inbound_sources` (
+	`source` text PRIMARY KEY NOT NULL,
+	`connector_id` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `inbound_sources_connector_id_unique` ON `inbound_sources` (`connector_id`);
 CREATE TABLE IF NOT EXISTS `item_blob_references` (
 	`hash` text NOT NULL,
 	`item_id` text NOT NULL,

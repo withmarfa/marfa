@@ -394,7 +394,7 @@ describe("inbound webhook endpoints", () => {
         __sqliteAll: (query: string) => Promise<unknown[]>;
       }
     ).__sqliteAll(
-      `SELECT id FROM inbound_deliveries WHERE connector_id = '${connector.id}'`,
+      `SELECT id FROM inbound_deliveries WHERE source = (SELECT source FROM inbound_sources WHERE connector_id = '${connector.id}')`,
     );
     expect(rows).toEqual([]);
   });
@@ -1378,7 +1378,7 @@ describe("authoritative inbound capacity", () => {
     const original = await post(ctx, made.path, "x");
     const { id } = (await original.json()) as { id: string };
     await raw.__sqliteRun(
-      `INSERT INTO inbound_deliveries SELECT 'copy-' || printf('%04d', value), endpoint_id, connector_id, received_at, method, query, headers, size, stored_bytes, sha256, dedupe_key, handled_at, outcome FROM inbound_deliveries, (WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value < 500) SELECT value FROM n) WHERE id = ?`,
+      `INSERT INTO inbound_deliveries SELECT 'copy-' || printf('%04d', value), endpoint_id, source, received_at, method, query, headers, size, stored_bytes, sha256, dedupe_key, handled_at, outcome FROM inbound_deliveries, (WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value < 500) SELECT value FROM n) WHERE id = ?`,
       [id],
     );
     await raw.__sqliteRun("UPDATE inbound_deliveries SET received_at = ?", [
@@ -1446,7 +1446,7 @@ describe("inbound charged storage and cleanup", () => {
     const metadata = {
       id: row!.id,
       endpoint_id: row!.endpoint_id,
-      connector_id: row!.connector_id,
+      source: row!.source,
       received_at: row!.received_at,
       method: row!.method,
       query: row!.query,
@@ -2122,3 +2122,450 @@ describe("a body field the operation does not declare", () => {
     }
   });
 });
+
+function continuityRaw(ctx: TestContext) {
+  return ctx.storage as unknown as {
+    __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+    __sqliteAll(query: string): Promise<unknown[]>;
+  };
+}
+describe("source-owned inbound continuity", () => {
+  it.each(["revoked", "expired"])(
+    "adopts every retained endpoint and delivery after a %s key",
+    async (standing) => {
+      const ctx = await context();
+      const old = await register(ctx);
+      const current = await request(ctx.app, "GET", "/keys/current", {
+        key: old.key,
+      });
+      const key = (await current.json()) as { id: string; source: string };
+      await ctx.storage.connectors.takeHold(old.id, "reader", 60000);
+      const fence = { connectorId: old.id, keyId: key.id, process: "reader" };
+      await ctx.storage.connectorState.putState(
+        fence,
+        key.source,
+        { cursor: "kept" },
+        { vendor: "kept" },
+      );
+      const itemResponse = await request(ctx.app, "POST", "/items", {
+        key: old.key,
+        body: { type: "core.note", properties: { body: "agreement" } },
+      });
+      expect(itemResponse.status).toBe(201);
+      const { item } = (await itemResponse.json()) as { item: { id: string } };
+      await ctx.storage.connectorState.writeAgreements(
+        fence,
+        key.source,
+        {
+          set: [{ item_id: item.id, waiting: true, record: { etag: "kept" } }],
+          clear: [],
+        },
+        () => true,
+      );
+      const stateBefore = await ctx.storage.connectorState.getState(key.source);
+      const agreementsBefore =
+        await ctx.storage.connectorState.lookupAgreements(
+          key.source,
+          [item.id],
+          () => true,
+        );
+      const made = await endpoint(ctx, old, {
+        label: "kept",
+        duplicate_header: "X-Delivery",
+      });
+      const retired = await endpoint(ctx, old, { label: "retired" });
+      const bytes = new Uint8Array([0, 255, 13, 10, 128]);
+      const original = (
+        (await (
+          await post(ctx, made.path, bytes, { "X-Delivery": "same" })
+        ).json()) as { id: string }
+      ).id;
+      await ctx.storage.inbound.markHandled(old.id, [original], "processed");
+      const pending = (
+        (await (
+          await post(ctx, made.path, "pending", { "X-Delivery": "same" })
+        ).json()) as { id: string }
+      ).id;
+      const page = await ctx.storage.inbound.listDeliveries(
+        old.id,
+        { state: "any" },
+        { limit: 1 },
+      );
+      expect(page.data[0]?.id).toBe(original);
+      expect(page.next_cursor).not.toBeNull();
+      await ctx.storage.inbound.retireEndpoint(old.id, retired.id);
+      if (standing === "expired")
+        await continuityRaw(ctx).__sqliteRun(
+          "UPDATE api_keys SET expires_at = ? WHERE id = ?",
+          [new Date(Date.now() - 1000).toISOString(), key.id],
+        );
+      else await ctx.storage.keys.revoke(key.id);
+      expect((await post(ctx, made.path, "refused")).status).toBe(404);
+      // The unique live-source index requires revoking an expired key before replacement.
+      if (standing === "expired") await ctx.storage.keys.revoke(key.id);
+      const successorKey = await mintWorkingKey(ctx, { source: key.source });
+      expect((await post(ctx, made.path, "before registration")).status).toBe(
+        404,
+      );
+      const registered = await request(ctx.app, "POST", "/connectors", {
+        key: successorKey,
+        body: { name: "successor" },
+      });
+      expect(registered.status).toBe(201);
+      const successor = {
+        key: successorKey,
+        id: ((await registered.json()) as { id: string }).id,
+      };
+      expect(successor.id).not.toBe(old.id);
+      expect(
+        (
+          await ctx.storage.inbound.listDeliveries(
+            successor.id,
+            { state: "any" },
+            { limit: 1, cursor: page.next_cursor! },
+          )
+        ).data.map((d) => d.id),
+      ).toEqual([pending]);
+      const inherited = await ctx.storage.inbound.listEndpoints(successor.id);
+      expect(inherited.map((e) => e.id).sort()).toEqual(
+        [made.id, retired.id].sort(),
+      );
+      expect(inherited.every((e) => e.connector_id === successor.id)).toBe(
+        true,
+      );
+      expect(inherited.find((e) => e.id === made.id)).toMatchObject({
+        label: "kept",
+        created_at: made.created_at,
+      });
+      expect(
+        inherited.find((e) => e.id === retired.id)?.retired_at,
+      ).not.toBeNull();
+      expect(await ctx.storage.inbound.listEndpoints(old.id)).toEqual([]);
+      expect(
+        await ctx.storage.inbound.retireEndpoint(old.id, made.id),
+      ).toBeNull();
+      expect(await ctx.storage.inbound.body(successor.id, original)).toEqual(
+        Buffer.from(bytes),
+      );
+      expect(
+        (await deliveries(ctx, successor, "?state=any")).data.map((d) => d.id),
+      ).toEqual([original, pending]);
+      expect((await deliveries(ctx, successor)).data[0]?.duplicate_of).toEqual({
+        id: original,
+        outcome: "processed",
+      });
+      expect((await post(ctx, retired.path, "retired")).status).toBe(404);
+      expect((await post(ctx, made.path, "after registration")).status).toBe(
+        202,
+      );
+      expect(await ctx.storage.connectors.remove(old.id)).toBe(true);
+      expect(await ctx.storage.inbound.body(successor.id, original)).toEqual(
+        Buffer.from(bytes),
+      );
+      expect(await ctx.storage.connectors.remove(successor.id)).toBe(true);
+      expect(await ctx.storage.connectorState.getState(key.source)).toEqual(
+        stateBefore,
+      );
+      expect(
+        await ctx.storage.connectorState.lookupAgreements(
+          key.source,
+          [item.id],
+          () => true,
+        ),
+      ).toEqual(agreementsBefore);
+      expect((await post(ctx, made.path, "deleted")).status).toBe(404);
+      expect(
+        await continuityRaw(ctx).__sqliteAll(
+          "SELECT id FROM inbound_deliveries",
+        ),
+      ).toEqual([]);
+      expect(
+        await continuityRaw(ctx).__sqliteAll(
+          "SELECT delivery_id FROM inbound_delivery_bodies",
+        ),
+      ).toEqual([]);
+    },
+  );
+});
+
+async function replacement(ctx: TestContext, old: { id: string; key: string }) {
+  const key = (await (
+    await request(ctx.app, "GET", "/keys/current", { key: old.key })
+  ).json()) as { id: string; source: string };
+  await ctx.storage.keys.revoke(key.id);
+  return {
+    key: await mintWorkingKey(ctx, { source: key.source }),
+    oldKey: key,
+  };
+}
+async function registerExisting(ctx: TestContext, key: string) {
+  const res = await request(ctx.app, "POST", "/connectors", {
+    key,
+    body: { name: "successor" },
+  });
+  expect([200, 201]).toContain(res.status);
+  return {
+    key,
+    id: ((await res.json()) as { id: string }).id,
+    status: res.status,
+  };
+}
+
+describe("inbound binding transaction boundaries", () => {
+  it.each(["takeover", "delete", "retire"])(
+    "refuses a held body after %s and accepts a later body when served",
+    async (change) => {
+      const ctx = await context();
+      const old = await register(ctx);
+      const made = await endpoint(ctx, old);
+      expect((await post(ctx, made.path, "witness")).status).toBe(202);
+      let entered!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const original = ctx.storage.inbound.backlog.bind(ctx.storage.inbound);
+      const spy = vi
+        .spyOn(ctx.storage.inbound, "backlog")
+        .mockImplementation(async (id) => {
+          const value = await original(id);
+          entered();
+          return value;
+        });
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const answer = Promise.resolve(
+        ctx.app.request(made.path, {
+          method: "POST",
+          duplex: "half",
+          body: new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              c.enqueue(new Uint8Array([1]));
+            },
+          }),
+        }),
+      );
+      await ready;
+      spy.mockRestore();
+      let current = old;
+      if (change === "takeover")
+        current = await registerExisting(
+          ctx,
+          (await replacement(ctx, old)).key,
+        );
+      else if (change === "delete") await ctx.storage.connectors.remove(old.id);
+      else await ctx.storage.inbound.retireEndpoint(old.id, made.id);
+      controller.close();
+      expect((await answer).status).toBe(404);
+      expect(
+        (
+          await ctx.storage.inbound.listDeliveries(
+            current.id,
+            { state: "any" },
+            { limit: 100 },
+          )
+        ).data,
+      ).toHaveLength(change === "delete" ? 0 : 1);
+      expect((await post(ctx, made.path, "later")).status).toBe(
+        change === "takeover" ? 202 : 404,
+      );
+    },
+  );
+
+  it("serializes successor requests, retains its own run and hold, and refuses stale registration", async () => {
+    const ctx = await context();
+    const old = await register(ctx);
+    const made = await endpoint(ctx, old);
+    await ctx.storage.connectors.recordRun(old.id, {
+      outcome: "succeeded",
+      started_at: "2026-01-01T00:00:00.000Z",
+      finished_at: "2026-01-01T00:00:01.000Z",
+    });
+    await ctx.storage.connectors.takeHold(old.id, "old", 60000);
+    const next = await replacement(ctx, old);
+    const answers = await Promise.all([
+      registerExisting(ctx, next.key),
+      registerExisting(ctx, next.key),
+    ]);
+    expect(answers.map((a) => a.status).sort()).toEqual([200, 201]);
+    expect(answers[0].id).toBe(answers[1].id);
+    const current = await ctx.storage.connectors.get(answers[0].id);
+    expect(current?.last_run).toBeNull();
+    expect(current?.hold_expires_at).toBeNull();
+    await expect(
+      ctx.storage.connectors.register(next.oldKey, "late", null),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    expect(
+      (await ctx.storage.inbound.listEndpoints(answers[0].id)).map((e) => e.id),
+    ).toEqual([made.id]);
+  });
+
+  it.each(["inbound_sources", "audit_log"])(
+    "rolls back successor insertion and binding when %s fails",
+    async (table) => {
+      const ctx = await context();
+      const old = await register(ctx);
+      const made = await endpoint(ctx, old);
+      const next = await replacement(ctx, old);
+      await continuityRaw(ctx).__sqliteRun(
+        `CREATE TRIGGER fixture_registration_failure BEFORE ${table === "inbound_sources" ? "UPDATE" : "INSERT"} ON ${table} BEGIN SELECT RAISE(ABORT, 'fixture failure'); END`,
+        [],
+      );
+      const refused = await request(ctx.app, "POST", "/connectors", {
+        key: next.key,
+        body: { name: "refused" },
+      });
+      expect(refused.status).toBe(500);
+      expect((await ctx.storage.connectors.list()).map((c) => c.id)).toEqual([
+        old.id,
+      ]);
+      expect(
+        (await ctx.storage.inbound.listEndpoints(old.id)).map((e) => e.id),
+      ).toEqual([made.id]);
+      expect((await post(ctx, made.path, "still revoked")).status).toBe(404);
+      await continuityRaw(ctx).__sqliteRun(
+        "DROP TRIGGER fixture_registration_failure",
+        [],
+      );
+      const successor = await registerExisting(ctx, next.key);
+      expect(
+        (await ctx.storage.inbound.listEndpoints(successor.id)).map(
+          (e) => e.id,
+        ),
+      ).toEqual([made.id]);
+    },
+  );
+
+  it.each(["delete-first", "takeover-first"])(
+    "commits the defined deletion outcome for %s",
+    async (order) => {
+      const ctx = await context();
+      const old = await register(ctx);
+      const made = await endpoint(ctx, old);
+      const original = (
+        (await (await post(ctx, made.path, "body")).json()) as { id: string }
+      ).id;
+      const next = await replacement(ctx, old);
+      if (order === "delete-first") await ctx.storage.connectors.remove(old.id);
+      const successor = await registerExisting(ctx, next.key);
+      if (order === "takeover-first")
+        await ctx.storage.connectors.remove(old.id);
+      expect(await ctx.storage.inbound.body(successor.id, original)).toEqual(
+        order === "takeover-first" ? Buffer.from("body") : null,
+      );
+      expect((await post(ctx, made.path, "after")).status).toBe(
+        order === "takeover-first" ? 202 : 404,
+      );
+    },
+  );
+
+  it("keeps inherited endpoint, backlog and retained byte caps and receipt ages", async () => {
+    const ctx = await context({
+      inbound: { ...DEFAULT_INBOUND_LIMITS, backlogDeliveries: 1 },
+    });
+    const old = await register(ctx);
+    const made = await endpoint(ctx, old);
+    for (let i = 1; i < 10; i++) await endpoint(ctx, old);
+    const original = (
+      (await (await post(ctx, made.path, "body")).json()) as { id: string }
+    ).id;
+    const before = await continuityRaw(ctx).__sqliteAll(
+      "SELECT * FROM inbound_deliveries",
+    );
+    const successor = await registerExisting(
+      ctx,
+      (await replacement(ctx, old)).key,
+    );
+    expect(
+      await continuityRaw(ctx).__sqliteAll("SELECT * FROM inbound_deliveries"),
+    ).toEqual(before);
+    expect((await post(ctx, made.path, "over backlog")).status).toBe(503);
+    expect(
+      (
+        await request(
+          ctx.app,
+          "POST",
+          `/connectors/${successor.id}/endpoints`,
+          { key: successor.key, body: {} },
+        )
+      ).status,
+    ).toBe(409);
+    await ctx.storage.inbound.markHandled(
+      successor.id,
+      [original],
+      "processed",
+    );
+    const rows = (await continuityRaw(ctx).__sqliteAll(
+      "SELECT stored_bytes FROM inbound_deliveries",
+    )) as { stored_bytes: number }[];
+    ctx.config.inbound!.retainedBytes = rows[0]!.stored_bytes;
+    expect((await post(ctx, made.path, "")).status).toBe(503);
+    await continuityRaw(ctx).__sqliteRun(
+      "UPDATE inbound_deliveries SET handled_at = ? WHERE id = ?",
+      [new Date(Date.now() - 8 * 86400000).toISOString(), original],
+    );
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 0, pendingDays: 0 }),
+    ).toEqual({ deleted: 0, remaining: false });
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: false });
+    expect(await ctx.storage.inbound.body(successor.id, original)).toBeNull();
+  });
+
+  it("uses the key's own source instead of claimed sources and refuses cross-source reads", async () => {
+    const ctx = await context();
+    const old = await register(ctx);
+    const key = (await (
+      await request(ctx.app, "GET", "/keys/current", { key: old.key })
+    ).json()) as { source: string };
+    const made = await endpoint(ctx, old);
+    const receipt = (
+      (await (await post(ctx, made.path, "private")).json()) as { id: string }
+    ).id;
+    const otherKey = await mintWorkingKey(ctx, {
+      source: "unrelated",
+      sources: [key.source],
+    });
+    const other = await registerExisting(ctx, otherKey);
+    expect(await ctx.storage.inbound.listEndpoints(other.id)).toEqual([]);
+    expect(await ctx.storage.inbound.body(other.id, receipt)).toBeNull();
+    expect(
+      await ctx.storage.inbound.markHandled(other.id, [receipt], "processed"),
+    ).toBeNull();
+    expect(
+      (
+        await request(ctx.app, "GET", `/connectors/${old.id}/deliveries`, {
+          key: other.key,
+        })
+      ).status,
+    ).toBe(403);
+  });
+});
+
+it.each(["inbound_sources", "audit_log"])(
+  "rolls back a first registration when inserting %s fails",
+  async (table) => {
+    const ctx = await context();
+    await continuityRaw(ctx).__sqliteRun(
+      `CREATE TRIGGER fixture_first_registration_failure BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'fixture failure'); END`,
+      [],
+    );
+    expect(
+      (
+        await request(ctx.app, "POST", "/connectors", {
+          key: ctx.workingKey,
+          body: { name: "first" },
+        })
+      ).status,
+    ).toBe(500);
+    expect(await ctx.storage.connectors.list()).toEqual([]);
+    expect(
+      await continuityRaw(ctx).__sqliteAll("SELECT * FROM inbound_sources"),
+    ).toEqual([]);
+    await continuityRaw(ctx).__sqliteRun(
+      "DROP TRIGGER fixture_first_registration_failure",
+      [],
+    );
+    expect((await registerExisting(ctx, ctx.workingKey)).status).toBe(201);
+  },
+);

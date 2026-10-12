@@ -181,3 +181,54 @@ describe("a database whose schema is not this build's", () => {
     await second.close();
   });
 });
+
+it("refuses a populated registration-owned inbound schema without modifying its file", async () => {
+  const path = scratch();
+  const old = SCHEMA_SQL.replace(
+    /CREATE TABLE IF NOT EXISTS `inbound_sources` \([\s\S]*?CREATE UNIQUE INDEX IF NOT EXISTS `inbound_sources_connector_id_unique`[^;]+;/,
+    "",
+  )
+    .replace(
+      /CREATE TABLE IF NOT EXISTS `inbound_endpoints` \([\s\S]*?CREATE UNIQUE INDEX IF NOT EXISTS `idx_inbound_endpoints_id_source`[^;]+;/,
+      `
+      CREATE TABLE inbound_endpoints (
+        id TEXT PRIMARY KEY, connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE, token_last4 TEXT NOT NULL, label TEXT,
+        duplicate_header TEXT, created_at TEXT NOT NULL, retired_at TEXT
+      );
+      CREATE INDEX idx_inbound_endpoints_connector ON inbound_endpoints(connector_id);
+    `,
+    )
+    .replace(
+      /(CREATE TABLE IF NOT EXISTS `inbound_deliveries` \([\s\S]*?)`source` text NOT NULL,([\s\S]*?)FOREIGN KEY \(`endpoint_id`,`source`\) REFERENCES `inbound_endpoints`\(`id`,`source`\)/,
+      "$1`connector_id` text NOT NULL,$2FOREIGN KEY (`endpoint_id`) REFERENCES `inbound_endpoints`(`id`)",
+    )
+    .replace(
+      "idx_inbound_deliveries_source_handled",
+      "idx_inbound_deliveries_connector_handled",
+    )
+    .replace(
+      "ON `inbound_deliveries` (`source`,",
+      "ON `inbound_deliveries` (`connector_id`,",
+    );
+  expect(old).not.toContain("CREATE TABLE IF NOT EXISTS `inbound_sources`");
+  await seed(
+    path,
+    old +
+      A_ROW +
+      `
+    INSERT INTO connectors(id,key_id,source,name,registered_at,updated_at)
+      VALUES ('c','k1','integration:acme/thing','Reader','2026-01-01','2026-01-01');
+    INSERT INTO inbound_endpoints(id,connector_id,token_hash,token_last4,created_at)
+      VALUES ('e','c','hash','last','2026-01-01');
+    INSERT INTO inbound_deliveries(id,endpoint_id,connector_id,received_at,method,query,headers,size,stored_bytes,sha256)
+      VALUES ('d','e','c','2026-01-01','POST','','[]',3,100,'hash');
+    INSERT INTO inbound_delivery_bodies(delivery_id,body) VALUES ('d',X'00ff80');
+  `,
+  );
+  const before = digest(path);
+  await expect(createConnection(path)).rejects.toBeInstanceOf(
+    RefusedDatabaseError,
+  );
+  expect(digest(path)).toBe(before);
+});

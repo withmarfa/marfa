@@ -156,7 +156,9 @@ const InboundEndpointSchema = z
     id: z.string().describe("Unique identifier for the webhook endpoint."),
     connector_id: z
       .string()
-      .describe("The ID of the connector the endpoint belongs to."),
+      .describe(
+        "The ID of the current connector registration for the endpoint's source.",
+      ),
     label: z
       .string()
       .nullable()
@@ -364,7 +366,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register a connector",
   description:
-    "Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`.",
+    "Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`. Registration binds your key's own source to this registration, preserving its inbound endpoints and retained deliveries when a successor key takes over.",
   security: [{ bearerAuth: [] }],
   middleware: workingKeyOnly,
   request: {

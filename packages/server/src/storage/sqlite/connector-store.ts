@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
-import { generateId } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type {
   Connector,
@@ -14,11 +14,14 @@ import {
   encodeKeyedCursor,
 } from "../interface.js";
 import {
+  apiKeys,
+  inboundSources,
   connectorHolds,
   connectorRuns,
   connectors,
   connectorStates,
 } from "./schema.js";
+import { notRevokedOrExpired } from "./key-store.js";
 import type { DrizzleDb } from "./connection.js";
 
 /** Runs kept per connector: a bound on the table, not a retention. */
@@ -88,38 +91,58 @@ export class SqliteConnectorStore implements ConnectorStore {
     name: string,
     description: string | null,
   ): Promise<{ connector: Connector; created: boolean }> {
-    const now = new Date().toISOString();
-    // One statement decides who registers first: two first registrations by
-    // one key race on the UNIQUE, and the loser takes the update path below
-    // rather than surfacing the constraint as an error nothing names.
-    const inserted = await this.db
-      .insert(connectors)
-      .values({
-        id: generateId(),
-        key_id: key.id,
-        source: key.source,
-        name,
-        description,
-        registered_at: now,
-        updated_at: now,
-        last_heartbeat_at: null,
-      })
-      .onConflictDoNothing({ target: connectors.key_id })
-      .returning()
-      .all();
-    if (inserted[0]) {
-      return { connector: await this.toConnector(inserted[0]), created: true };
-    }
-    const updated = await this.db
-      .update(connectors)
-      .set({ name, description, updated_at: now })
-      .where(eq(connectors.key_id, key.id))
-      .returning()
-      .all();
-    // The row went between the two statements, a removal landing in the
-    // gap: this call registers afresh.
-    if (!updated[0]) return this.register(key, name, description);
-    return { connector: await this.toConnector(updated[0]), created: false };
+    return this.db.transaction(async (tx) => {
+      const now = new Date().toISOString();
+      // Revalidate after writer admission: a request authenticated before
+      // revocation must not take the source back from its successor.
+      const live = await tx
+        .select({ source: apiKeys.source })
+        .from(apiKeys)
+        .where(and(eq(apiKeys.id, key.id), notRevokedOrExpired(now)))
+        .get();
+      if (live?.source !== key.source) {
+        throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
+      }
+      const inserted = await tx
+        .insert(connectors)
+        .values({
+          id: generateId(),
+          key_id: key.id,
+          source: live.source,
+          name,
+          description,
+          registered_at: now,
+          updated_at: now,
+          last_heartbeat_at: null,
+        })
+        .onConflictDoNothing({ target: connectors.key_id })
+        .returning()
+        .all();
+      const row =
+        inserted[0] ??
+        (
+          await tx
+            .update(connectors)
+            .set({ name, description, updated_at: now })
+            .where(eq(connectors.key_id, key.id))
+            .returning()
+            .all()
+        )[0];
+      if (!row)
+        throw new Error("Registration disappeared inside writer transaction");
+      await tx
+        .insert(inboundSources)
+        .values({ source: live.source, connector_id: row.id })
+        .onConflictDoUpdate({
+          target: inboundSources.source,
+          set: { connector_id: row.id },
+        })
+        .run();
+      return {
+        connector: await this.toConnector(row),
+        created: inserted.length > 0,
+      };
+    });
   }
 
   async list(): Promise<Connector[]> {

@@ -2932,9 +2932,9 @@ export type ConnectorHoldOutcome =
   | { taken: false; expires_at: string };
 
 export interface ConnectorStore {
-  /** Register the key, or update its registration: one per key, decided
-   *  by one statement so two first registrations at once answer as a first
-   *  and a repeat. */
+  /** Revalidate and register the key, or update its registration, and bind
+   *  its own source's inbound state in one writer transaction. Concurrent
+   *  first registrations answer as a first and a repeat. */
   register(
     key: { id: string; source: string },
     name: string,
@@ -2943,7 +2943,8 @@ export interface ConnectorStore {
   /** Every registration, newest first. */
   list(): Promise<Connector[]>;
   get(id: string): Promise<Connector | null>;
-  /** Remove the registration and its runs. True when one went. */
+  /** Remove the registration and its runs and hold. Removing a source's
+   *  current registration also removes its inbound state. True when one went. */
   remove(id: string): Promise<boolean>;
   /** Stamp the heartbeat with the server's clock; the stamp, or null when
    *  there is no such registration. */
@@ -3033,7 +3034,7 @@ export interface ConnectorStateStore {
   clear(source: string): Promise<{ state: boolean; agreements: number }>;
 }
 
-/** An address a sender posts to, belonging to one connector registration. */
+/** An address owned by a source and exposed through its current registration. */
 export interface InboundEndpoint {
   id: string;
   connector_id: string;
@@ -3068,11 +3069,12 @@ export interface InboundDelivery {
 export interface InboundTarget {
   endpoint_id: string;
   connector_id: string;
+  source: string;
   duplicate_header: string | null;
 }
 
 export interface InboundStore {
-  /** A new endpoint; `"limit"` when the registration already holds
+  /** A new endpoint; `"limit"` when the source already holds
    *  `maxLive` live ones; `"key_dead"` when its key is revoked or past its
    *  expiry, so no address on it would answer. */
   createEndpoint(
@@ -3100,11 +3102,12 @@ export interface InboundStore {
   /** How many deliveries the registration has not handled, and their
    *  bytes. */
   backlog(connectorId: string): Promise<{ count: number; bytes: number }>;
-  /** Recheck standing and prospective registration capacity, then insert
+  /** Recheck the initial binding, standing and prospective source capacity, then insert
    * metadata and body in one writer transaction after the body arrives. */
   receive(
     input: {
       tokenHash: string;
+      connectorId: string;
       method: string;
       query: string;
       headers: [string, string][];

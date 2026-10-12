@@ -895,7 +895,7 @@ export interface paths {
         put?: never;
         /**
          * Register a connector
-         * @description Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`.
+         * @description Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`. Registration binds your key's own source to this registration, preserving its inbound endpoints and retained deliveries when a successor key takes over.
          */
         post: operations["registerConnector"];
         delete?: never;
@@ -3563,7 +3563,7 @@ export interface components {
         InboundEndpoint: {
             /** @description Unique identifier for the webhook endpoint. */
             id: string;
-            /** @description The ID of the connector the endpoint belongs to. */
+            /** @description The ID of the current connector registration for the endpoint's source. */
             connector_id: string;
             /** @description A name for people to read; `null` if none was given. */
             label: string | null;

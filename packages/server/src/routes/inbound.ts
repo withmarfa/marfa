@@ -161,6 +161,7 @@ export function inboundRoutes(storage: Storage, config: AppConfig) {
       const received = await storage.inbound.receive(
         {
           tokenHash: hashInboundToken(c.req.param("token")),
+          connectorId: target.connector_id,
           method: c.req.method,
           query: rawQuery(c.req.url),
           headers,

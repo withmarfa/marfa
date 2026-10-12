@@ -33,6 +33,7 @@ interface Registration {
   readonly client: MarfaClient;
   id: string;
   keyId: string;
+  source: string;
 }
 
 /** A `Retry-After` in whole seconds, and not zero. */
@@ -67,6 +68,7 @@ async function register(
     },
     id: registered.data.id,
     keyId: minted.data.id,
+    source: label,
   };
 }
 
@@ -285,11 +287,11 @@ describe("the retained bytes of a registration, to the byte", () => {
 
   /** The charge of a receipt: its body, the canonical text of what is stored
    *  beside it, and thirty-two bytes. */
-  function charge(row: InboundDeliveryRow, connectorId: string, body: Buffer) {
+  function charge(row: InboundDeliveryRow, source: string, body: Buffer) {
     const metadata = {
       id: row.id,
       endpoint_id: row.endpoint_id,
-      connector_id: connectorId,
+      source,
       received_at: row.received_at,
       method: row.method,
       query: row.query,
@@ -315,7 +317,7 @@ describe("the retained bytes of a registration, to the byte", () => {
     idOf(await receipt(server.apiUrl));
     const [first] = await stored(owner);
     if (first === undefined) throw new Error("the first receipt was not kept");
-    const each = charge(first, owner.id, body);
+    const each = charge(first, owner.source, body);
 
     // Two charges fit exactly, and one byte less does not take the second.
     await server.restart({
@@ -335,7 +337,7 @@ describe("the retained bytes of a registration, to the byte", () => {
     expect(kept).toHaveLength(2);
     const [, second] = kept;
     if (second === undefined) throw new Error("the second was not kept");
-    expect(charge(second, owner.id, body)).toBe(each);
+    expect(charge(second, owner.source, body)).toBe(each);
 
     // Full: a third needs another charge.
     const third = await receipt(server.apiUrl);

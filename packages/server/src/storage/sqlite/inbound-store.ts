@@ -20,6 +20,7 @@ import {
   inboundDeliveries,
   inboundDeliveryBodies,
   inboundEndpoints,
+  inboundSources,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { notRevokedOrExpired } from "./key-store.js";
@@ -29,10 +30,10 @@ type DeliveryRow = typeof inboundDeliveries.$inferSelect;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function toEndpoint(row: EndpointRow): InboundEndpoint {
+function toEndpoint(row: EndpointRow, connectorId: string): InboundEndpoint {
   return {
     id: row.id,
-    connector_id: row.connector_id,
+    connector_id: connectorId,
     label: row.label,
     duplicate_header: row.duplicate_header,
     token_last4: row.token_last4,
@@ -43,6 +44,10 @@ function toEndpoint(row: EndpointRow): InboundEndpoint {
 
 export class SqliteInboundStore implements InboundStore {
   constructor(private db: DrizzleDb) {}
+
+  private sourceFor(connectorId: string) {
+    return sql`(SELECT source FROM inbound_sources WHERE connector_id = ${connectorId})`;
+  }
 
   async createEndpoint(
     input: {
@@ -60,22 +65,23 @@ export class SqliteInboundStore implements InboundStore {
     // and none lands on a key that went dead between a check and the insert.
     const inserted = await this.db.all<EndpointRow>(sql`
       INSERT INTO inbound_endpoints
-        (id, connector_id, token_hash, token_last4, label, duplicate_header, created_at, retired_at)
-      SELECT ${id}, ${input.connectorId}, ${input.tokenHash}, ${input.tokenLast4},
+        (id, source, token_hash, token_last4, label, duplicate_header, created_at, retired_at)
+      SELECT ${id}, ${this.sourceFor(input.connectorId)}, ${input.tokenHash}, ${input.tokenLast4},
              ${input.label}, ${input.duplicateHeader}, ${createdAt}, NULL
       WHERE EXISTS (
         SELECT 1 FROM connectors
         JOIN api_keys ON api_keys.id = connectors.key_id
+        JOIN inbound_sources ON inbound_sources.connector_id = connectors.id
         WHERE connectors.id = ${input.connectorId}
           AND ${notRevokedOrExpired(createdAt)}
       ) AND (
         SELECT COUNT(*) FROM inbound_endpoints
-        WHERE connector_id = ${input.connectorId} AND retired_at IS NULL
+        WHERE source = ${this.sourceFor(input.connectorId)} AND retired_at IS NULL
       ) < ${maxLive}
       RETURNING *
     `);
     const row = inserted[0];
-    if (row !== undefined) return toEndpoint(row);
+    if (row !== undefined) return toEndpoint(row, input.connectorId);
     const live = await this.db
       .select({ id: connectors.id })
       .from(connectors)
@@ -94,29 +100,34 @@ export class SqliteInboundStore implements InboundStore {
     const rows = await this.db
       .select()
       .from(inboundEndpoints)
-      .where(eq(inboundEndpoints.connector_id, connectorId))
+      .where(eq(inboundEndpoints.source, this.sourceFor(connectorId)))
       .orderBy(desc(inboundEndpoints.created_at), desc(inboundEndpoints.id))
       .all();
-    return rows.map(toEndpoint);
+    return rows.map((row) => toEndpoint(row, connectorId));
   }
 
   async retireEndpoint(
     connectorId: string,
     endpointId: string,
   ): Promise<{ endpoint: InboundEndpoint; retired: boolean } | null> {
-    const mine = and(
-      eq(inboundEndpoints.id, endpointId),
-      eq(inboundEndpoints.connector_id, connectorId),
-    );
-    const result = await this.db
-      .update(inboundEndpoints)
-      .set({ retired_at: new Date().toISOString() })
-      .where(and(mine, isNull(inboundEndpoints.retired_at)))
-      .run();
-    const row = await this.db.select().from(inboundEndpoints).where(mine).get();
-    return row === undefined
-      ? null
-      : { endpoint: toEndpoint(row), retired: result.rowsAffected > 0 };
+    return this.db.transaction(async (tx) => {
+      const mine = and(
+        eq(inboundEndpoints.id, endpointId),
+        eq(inboundEndpoints.source, this.sourceFor(connectorId)),
+      );
+      const result = await tx
+        .update(inboundEndpoints)
+        .set({ retired_at: new Date().toISOString() })
+        .where(and(mine, isNull(inboundEndpoints.retired_at)))
+        .run();
+      const row = await tx.select().from(inboundEndpoints).where(mine).get();
+      return row === undefined
+        ? null
+        : {
+            endpoint: toEndpoint(row, connectorId),
+            retired: result.rowsAffected > 0,
+          };
+    });
   }
 
   async target(tokenHash: string): Promise<InboundTarget | null> {
@@ -131,11 +142,16 @@ export class SqliteInboundStore implements InboundStore {
     const row = await db
       .select({
         endpoint_id: inboundEndpoints.id,
-        connector_id: inboundEndpoints.connector_id,
+        connector_id: inboundSources.connector_id,
+        source: inboundEndpoints.source,
         duplicate_header: inboundEndpoints.duplicate_header,
       })
       .from(inboundEndpoints)
-      .innerJoin(connectors, eq(connectors.id, inboundEndpoints.connector_id))
+      .innerJoin(
+        inboundSources,
+        eq(inboundSources.source, inboundEndpoints.source),
+      )
+      .innerJoin(connectors, eq(connectors.id, inboundSources.connector_id))
       .innerJoin(apiKeys, eq(apiKeys.id, connectors.key_id))
       .where(
         and(
@@ -159,7 +175,7 @@ export class SqliteInboundStore implements InboundStore {
       .from(inboundDeliveries)
       .where(
         and(
-          eq(inboundDeliveries.connector_id, connectorId),
+          eq(inboundDeliveries.source, this.sourceFor(connectorId)),
           isNull(inboundDeliveries.handled_at),
         ),
       )
@@ -176,7 +192,8 @@ export class SqliteInboundStore implements InboundStore {
     return this.db.transaction(async (tx) => {
       const now = new Date().toISOString();
       const target = await this.liveTarget(tx, input.tokenHash, now);
-      if (target === null) return { kind: "not_found" };
+      if (target?.connector_id !== input.connectorId)
+        return { kind: "not_found" };
       const dedupeKey =
         target.duplicate_header === null
           ? null
@@ -186,7 +203,7 @@ export class SqliteInboundStore implements InboundStore {
       const metadata = {
         id,
         endpoint_id: target.endpoint_id,
-        connector_id: target.connector_id,
+        source: target.source,
         received_at: now,
         method: input.method,
         query: input.query,
@@ -215,7 +232,7 @@ export class SqliteInboundStore implements InboundStore {
             COALESCE(SUM(stored_bytes), 0) AS retained_bytes,
             COUNT(CASE WHEN handled_at IS NULL THEN 1 END) AS pending_count,
             COALESCE(SUM(CASE WHEN handled_at IS NULL THEN size ELSE 0 END), 0) AS pending_bytes
-          FROM inbound_deliveries WHERE connector_id = ${target.connector_id}
+          FROM inbound_deliveries WHERE source = ${target.source}
         )
       `);
       if (capacity[0]?.fits !== 1) return { kind: "capacity" };
@@ -249,7 +266,7 @@ export class SqliteInboundStore implements InboundStore {
       .from(inboundDeliveries)
       .where(
         and(
-          eq(inboundDeliveries.connector_id, connectorId),
+          eq(inboundDeliveries.source, this.sourceFor(connectorId)),
           filter.state === "pending"
             ? isNull(inboundDeliveries.handled_at)
             : filter.state === "handled"
@@ -298,7 +315,7 @@ export class SqliteInboundStore implements InboundStore {
       .where(
         and(
           eq(inboundDeliveries.id, deliveryId),
-          eq(inboundDeliveries.connector_id, connectorId),
+          eq(inboundDeliveries.source, this.sourceFor(connectorId)),
         ),
       )
       .get();
@@ -312,36 +329,31 @@ export class SqliteInboundStore implements InboundStore {
   ): Promise<InboundDelivery[] | null> {
     const unique = [...new Set(ids)];
     const mine = and(
-      eq(inboundDeliveries.connector_id, connectorId),
+      eq(inboundDeliveries.source, this.sourceFor(connectorId)),
       inArray(inboundDeliveries.id, unique),
     );
-    const marked = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const found = await tx
         .select({ id: inboundDeliveries.id })
         .from(inboundDeliveries)
         .where(mine)
         .all();
-      if (found.length !== unique.length) return false;
+      if (found.length !== unique.length) return null;
       await tx
         .update(inboundDeliveries)
         .set({ handled_at: new Date().toISOString(), outcome })
         .where(and(mine, isNull(inboundDeliveries.handled_at)))
         .run();
-      return true;
+      const rows = await tx.select().from(inboundDeliveries).where(mine).all();
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      return this.withDuplicates(
+        unique.flatMap((id) => {
+          const row = byId.get(id);
+          return row === undefined ? [] : [row];
+        }),
+        tx,
+      );
     });
-    if (!marked) return null;
-    const rows = await this.db
-      .select()
-      .from(inboundDeliveries)
-      .where(mine)
-      .all();
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    return this.withDuplicates(
-      unique.flatMap((id) => {
-        const row = byId.get(id);
-        return row === undefined ? [] : [row];
-      }),
-    );
   }
 
   async cleanup(retention: {
@@ -405,6 +417,7 @@ export class SqliteInboundStore implements InboundStore {
 
   private async withDuplicates(
     rows: DeliveryRow[],
+    db: Pick<DrizzleDb, "all"> = this.db,
   ): Promise<InboundDelivery[]> {
     const pairs = new Map<string, Set<string>>();
     for (const row of rows) {
@@ -425,7 +438,7 @@ export class SqliteInboundStore implements InboundStore {
       const requested = [...pairs].flatMap(([endpoint, dedupeKeys]) =>
         [...dedupeKeys].map((key) => sql`(${endpoint}, ${key})`),
       );
-      const originals = await this.db.all<
+      const originals = await db.all<
         Original & {
           endpoint_id: string;
           dedupe_key: string;
