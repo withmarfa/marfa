@@ -28,6 +28,7 @@ export {
   RESERVED_ITEM_FIELDS,
   ROLE_CONSTRAINT_PREFIX,
   isRoleConstraint,
+  normalizeEdgeProperties,
   roleFromConstraint,
   unreadKeys,
   validateTypeSchema,

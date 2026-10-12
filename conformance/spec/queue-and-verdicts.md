@@ -1220,11 +1220,11 @@ While a drain cannot confirm which instance the server is, a device MUST send no
 
 ## Writes laid over the copy
 
-A write waits until it is answered, and a `blocked` or `dead` write is waiting still, because a release sends it again. A local read goes on answering each waiting write until its own verdict settles the row.
+A write waits until it is answered, and a `blocked` or `dead` write remains available for release. The local projection retains unresolved effects; a later accepted write can supersede effects of a dead attempt without removing its recoverable body.
 
 ### `queue-and-verdicts/waiting-over-answer`
 
-When a device takes a row or an edge from the answer to a write, or from the read after it, a device MUST lay every write still waiting to that row or edge back over it.
+When a device takes a row or an edge from the answer to a write, or from the read after it, a device MUST lay every write still waiting to that row or edge back over it, except effects superseded under `queue-and-verdicts/dead-covered-effects`.
 
 **Reason:** a copy that took the answer to a create over the edit queued after it would show the edit as undone while the queue still sends it, and a tag or a delete answered later would never come back, because their answers carry no row to take.
 
@@ -1232,19 +1232,43 @@ When a device takes a row or an edge from the answer to a write, or from the rea
 
 ### `queue-and-verdicts/waiting-over-event`
 
-When a device applies an event to a row or an edge, by a catch-up or on a held stream, a device MUST lay every write still waiting to that row or edge back over it.
+When a device applies an event to a row or an edge, by a catch-up or on a held stream, a device MUST lay every write still waiting to that row or edge back over it, except effects superseded under `queue-and-verdicts/dead-covered-effects`.
 
 **Tests:** `device/catch-up.test.ts › applies an event beneath a write it has not had answered`, `› applies an edge event beneath an edge edit it has not had answered`, `› applies an event beneath a blocked write, which a release sends again`, `› applies an event on a held stream beneath a write it has not had answered`, `› applies an edge event on a held stream beneath an edge edit it has not had answered`.
 
 ### `queue-and-verdicts/dead-over-event`
 
-When a later row or edge from the server comes beneath a `dead` write, a device MUST keep the write laid over it.
+When a later row or edge from the server comes beneath a `dead` write, a device MUST keep its unresolved effects laid over it, except effects superseded under `queue-and-verdicts/dead-covered-effects`.
 
 **Tests:** `device/waiting-projections.test.ts › keeps a %s edit visible after a newer server row arrives`, `› keeps a dead edge edit over a newer edge event`, `› keeps a dead edge create over an existing server edge`, `device/waiting-projections-live.test.ts › keeps a dead %s visible over real later changes and on release`.
 
+### `queue-and-verdicts/dead-covered-effects`
+
+When a later queued write to the same row or edge is answered `accepted` while an earlier update, tag change, metadata replacement, state change, or edge deletion is `dead`, a device MUST omit from the dead attempt's local projection only those effects that the accepted write applies to the same fields or state.
+
+**Reason:** a later confirmed edit takes precedence over an older failed edit, while unresolved content remains available; an item's merge-mode null applies no change (`queue-and-verdicts/merge-null-leaves`), while an edge update stores null (`edges/update-merge`).
+
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
+
+### `queue-and-verdicts/dead-covered-persistent`
+
+When a caller clears answered writes or reopens a working copy, a device MUST preserve the suppression of dead effects established by `queue-and-verdicts/dead-covered-effects`.
+
+**Reason:** removing an accepted receipt from the queue does not make its older superseded content current again.
+
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
+
+### `queue-and-verdicts/dead-covered-release`
+
+When a caller releases a dead write whose effects were superseded, a device MUST restore the original write's full effects to the local projection independently of delayed receipts for attempts already queued when it was released.
+
+**Reason:** explicit release renews the caller's intent without changing the original recoverable body (`queue-and-verdicts/release-lays-over` and `queue-and-verdicts/queue-shows-body`).
+
+**Tests:** `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `› preserves accepted %s membership when projecting dead metadata intent`.
+
 ### `queue-and-verdicts/waiting-over-hydration`
 
-When a copy is hydrated again, a device MUST lay every write still waiting back over the rows and edges the hydration pulled.
+When a copy is hydrated again, a device MUST lay every write still waiting back over the rows and edges the hydration pulled, except effects superseded under `queue-and-verdicts/dead-covered-effects`.
 
 **Tests:** `device/queue.test.ts › keeps the writes it has not had answered through a re-hydration`, `› keeps a blocked write through a re-hydration`.
 

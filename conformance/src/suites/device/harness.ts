@@ -174,6 +174,8 @@ export function scriptHydration(
   server: ScriptedServer,
   options: {
     head: string;
+    /** Folder report responses; defaults to accepting the observed sequence. */
+    statusReport?: Responder[];
     instance?: () => string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /edges` lists, by edge type; scripted only where named. */
@@ -189,6 +191,21 @@ export function scriptHydration(
     key?: Responder[];
   },
 ): void {
+  server.answer(
+    "PUT",
+    /^\/folders\/[^/]+\/status$/,
+    ...(options.statusReport ?? [
+      (request) => ({
+        kind: "json",
+        status: 200,
+        body: {
+          accepted: true,
+          sequence: (JSON.parse(request.body) as { sequence: number }).sequence,
+          received_at: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    ]),
+  );
   const copyInstance = (answer: Answer): Answer => {
     if (options.instance === undefined || answer.kind !== "sse") return answer;
     return {
@@ -534,6 +551,7 @@ export async function folderHarness(
      *  machine bound to the same folder. */
     folder?: FolderRow;
     head?: string;
+    statusReport?: Responder[];
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /keys/current` answers, a key placing files unless named. */
     key?: Responder[];
@@ -606,6 +624,7 @@ export async function folderHarness(
   if (options.sharing === undefined) {
     scriptHydration(server, {
       head: options.head ?? "1",
+      statusReport: options.statusReport,
       rows: options.rows,
       // A folder holds whole every edge type a file may write at its target.
       edges: options.edges ?? {},

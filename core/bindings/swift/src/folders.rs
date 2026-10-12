@@ -87,6 +87,7 @@ pub struct WaitingFirstSync {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FolderStatus {
+    pub directories: Vec<FlaggedFile>,
     pub files: Vec<FileStatus>,
     pub paused: PausedRemoval,
     /// Set while the folder's first sync waits to be confirmed.
@@ -328,6 +329,7 @@ impl Folders {
     pub fn status(&self, dir: String) -> Result<FolderStatus, MarfaError> {
         let report = marfa_core::Folder::status_of(&dir)?;
         Ok(FolderStatus {
+            directories: report.directories.into_iter().map(flagged_file).collect(),
             files: report
                 .files
                 .into_iter()

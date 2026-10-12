@@ -39,6 +39,7 @@ const READS: Record<string, string> = {
   ConnectorStore: "list get listRuns",
   ConnectorStateStore: "getState lookupAgreements listAgreements",
   InboundStore: "listEndpoints target backlog listDeliveries body",
+  FolderStatusStore: "list isCurrent",
 };
 // Storage primitives themselves can be used by several kinds of boundary. The
 // caller inventory below distinguishes audited units, contained subwrites,
@@ -76,6 +77,7 @@ const WRITES: Record<string, string> = {
   ConnectorStore: "register remove heartbeat recordRun takeHold releaseHold",
   ConnectorStateStore: "putState writeAgreements clear",
   InboundStore: "createEndpoint retireEndpoint receive markHandled cleanup",
+  FolderStatusStore: "put",
 };
 const CONTROL = {
   Storage:

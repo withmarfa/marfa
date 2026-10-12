@@ -72,6 +72,8 @@ const NOT_A_DOOR: Record<string, string> = {
 /** Files that name the key table itself, each with why. */
 const KEY_TABLE: Record<string, string> = {
   "storage/sqlite/schema.ts": "declares the table",
+  "storage/sqlite/folder-status-store.ts":
+    "checks canonical sign-in liveness for retained reports, exposing no key metadata",
   "storage/sqlite/key-store.ts": "the key store",
   "storage/sqlite/connector-store.ts":
     "revalidates the presented registration key's standing and stored own source after writer admission; the route supplies its authenticated key, and no arbitrary key metadata is exposed; covered by inbound.test.ts: rejects mismatched and expired registration keys without changing their binding",

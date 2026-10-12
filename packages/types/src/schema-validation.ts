@@ -1932,8 +1932,7 @@ export function validateEdgeTypeSchema(
       for (const [name, def] of Object.entries(props)) {
         const before = errors.length;
         validateFieldShape(name, def, errors);
-        // An edge carries no thumbnail: nothing reads one from an edge, and
-        // a value nothing reads is a value nothing checks.
+        // An edge carries no thumbnail: nothing reads one from an edge.
         if (isThumbnail(def)) {
           errors.push(
             issue({
@@ -2049,6 +2048,41 @@ export const MERGE_POLICY_KEYS: ReadonlySet<string> = new Set(
   } satisfies Record<keyof MergePolicy, true>),
 );
 
+/**
+ * An edge type's properties as a registration stores them: each definition
+ * folded into the canonical `FieldDefinition` as an item type's fields are, so
+ * a string property declaring `format: email` is stored as an `email`
+ * property and judged as one. Only a format that does not suit its property
+ * is refused here; the rest of a definition's shape is checked by the caller.
+ */
+export function normalizeEdgeProperties(
+  properties: Record<string, unknown>,
+):
+  | { success: true; data: Record<string, FieldDefinition> }
+  | { success: false; errors: SchemaValidationIssue[] } {
+  const errors: SchemaValidationIssue[] = [];
+  const data: Record<string, FieldDefinition> = {};
+  for (const [name, def] of Object.entries(properties)) {
+    const found: SchemaValidationIssue[] = [];
+    validateFieldShape(name, def, found);
+    const prefix = `fields.${name}`;
+    const refused = found.filter((e) => e.field === `${prefix}.format`);
+    errors.push(
+      ...refused.map((e) => ({
+        ...e,
+        field: `property_schema.${name}.format`,
+      })),
+    );
+    const record = asRecord(def);
+    if (refused.length === 0 && record) {
+      data[name] = normalizeFieldDefinition(record);
+    }
+  }
+  return errors.length > 0
+    ? { success: false, errors }
+    : { success: true, data };
+}
+
 /** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
 export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
@@ -2069,7 +2103,7 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
  * Every key of a property an edge type declares. A field's definition less
  * the three keys that only mean something to the items a type validates:
  * `searchable`, `maxLength` and `maxItems`. `POST /edge-types` does not
- * declare them, and nothing checks an edge against its edge type's properties.
+ * declare them, and an edge write does not apply them.
  */
 export const EDGE_PROPERTY_KEYS: ReadonlySet<string> = new Set(
   Object.keys({

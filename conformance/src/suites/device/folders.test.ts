@@ -56,6 +56,7 @@ import type {
 import type { WireItemOptions } from "../../device/marfa-answers.js";
 import {
   EdgeDoor,
+  isContentWrite,
   bodyOf,
   frontOf,
   idIn,
@@ -5108,10 +5109,10 @@ describe("a folder's first sync", () => {
   const typed = (title: string): string =>
     `---\ntitle: ${title}\n---\nwritten by hand\n`;
 
-  /** Every request that is not a read, so a quiet folder shows an empty list. */
+  /** Content writes, so a folder awaiting confirmation has sent no content. */
   function writesSent(made: FolderHarness): string[] {
     return made.server.requests
-      .filter((request) => request.method !== "GET")
+      .filter(isContentWrite)
       .map((request) => `${request.method} ${request.pathname}`);
   }
 

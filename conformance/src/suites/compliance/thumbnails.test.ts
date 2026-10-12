@@ -236,7 +236,7 @@ describe("a thumbnail field", () => {
     });
     expect(
       edge.status,
-      "an edge type declared a thumbnail property, which nothing checks and nothing reads",
+      "an edge type declared a thumbnail property, which nothing reads",
     ).toBe(400);
     expect(edge.error?.error.code).toBe("validation_error");
     // The format that stands for a thumbnail on a type's field is refused

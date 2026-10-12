@@ -53,6 +53,13 @@ Fixture paths are under `src/suites/`.
 | `PUT /items/{id}/extensions/{namespace}`    | covered | `compliance/extensions.test.ts`, `compliance/export-roundtrip.test.ts`, `compliance/write-refusal-details.test.ts` |                                                      |
 | `DELETE /items/{id}/extensions/{namespace}` | covered | `compliance/extensions.test.ts`, `compliance/write-refusal-details.test.ts`                                        |                                                      |
 
+## Folder sync reports
+
+| Operation                  | Status  | Fixture                            | Notes                                                                                   |
+| -------------------------- | ------- | ---------------------------------- | --------------------------------------------------------------------------------------- |
+| `PUT /folders/{id}/status` | covered | `compliance/folder-status.test.ts` | Own sign-in, read reach, strict privacy, monotonic sequences, and receipt preservation. |
+| `GET /folders/{id}/status` | covered | `compliance/folder-status.test.ts` | Current and historical copies, receipt ages, and bounded current totals.                |
+
 ## Edges
 
 | Operation                  | Status  | Fixture                                                                                                                                                               | Notes                                                                                                                 |
