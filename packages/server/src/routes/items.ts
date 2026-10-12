@@ -333,7 +333,7 @@ const createItemRoute = createRoute({
               .record(z.string(), z.array(z.string()))
               .optional()
               .describe(
-                "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none.",
+                "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
               ),
           }),
         },
@@ -369,7 +369,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+        "- `validation_error`: a field is invalid.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {
@@ -868,7 +868,7 @@ const updateItemRoute = createRoute({
               .record(z.string(), z.array(z.string()))
               .optional()
               .describe(
-                "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched.",
+                "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. An edge made this way carries no properties, so an edge type that requires one refuses the write.",
               ),
           }),
         },
@@ -898,7 +898,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+        "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed or changes nothing.\n- `invalid_id`: the ID or a target isn't valid.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {

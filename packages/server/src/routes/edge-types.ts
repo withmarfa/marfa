@@ -13,9 +13,10 @@ import {
   TYPE_ROLES,
   ROLE_CONSTRAINT_PREFIX,
   FIELD_TYPES,
+  normalizeEdgeProperties,
   unreadKeys,
 } from "@withmarfa/shared";
-import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
+import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -57,8 +58,7 @@ const TypeConstraintSchema = z
     },
   );
 
-/** Nothing reads a thumbnail from an edge, and a value nothing reads is a
- *  value nothing checks. */
+/** Nothing reads a thumbnail from an edge. */
 const EdgePropertyTypeSchema = z
   .string()
   .refine((type) => type !== "thumbnail", {
@@ -77,7 +77,7 @@ const EdgePropertyFormatSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail.",
+    "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`.",
   );
 
 /** One property an edge of the type carries, as registration takes it and
@@ -89,7 +89,7 @@ export const EdgePropertyDefinitionSchema = z
     required: z
       .boolean()
       .optional()
-      .describe("`true` if every edge of the type should have the property."),
+      .describe("`true` if every edge of the type must have the property."),
     enum_values: z
       .array(z.string())
       .optional()
@@ -118,7 +118,7 @@ const TARGET_CONSTRAINTS =
 const CASCADE =
   "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.";
 const PROPERTY_SCHEMA =
-  "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it.";
+  "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list.";
 const REVERSE_NAME =
   "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.";
 const WRITTEN_AT =
@@ -265,6 +265,12 @@ export function edgeTypeFromRequest(
       errors: unknownTypes,
     });
   }
+  const properties = normalizeEdgeProperties(body.property_schema ?? {});
+  if (!properties.success) {
+    throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid edge type schema", {
+      errors: properties.errors,
+    });
+  }
   const reverse = body.reverse_name;
   if (reverse !== undefined && !isValidEdgeTypeIdentifier(reverse)) {
     throw new MarfaError(
@@ -296,10 +302,7 @@ export function edgeTypeFromRequest(
     source_type_constraints: body.source_type_constraints ?? ["*"],
     target_type_constraints: body.target_type_constraints ?? ["*"],
     cascade_on_delete: body.cascade_on_delete ?? "orphan",
-    property_schema: (body.property_schema ?? {}) as Record<
-      string,
-      FieldDefinition
-    >,
+    property_schema: properties.data,
     ...(reverse !== undefined && { reverse_name: reverse }),
     written_at: body.written_at ?? "source",
   };

@@ -37,6 +37,38 @@ function writerWhole(
   );
 }
 
+export const folderStatus = sqliteTable(
+  "folder_status",
+  {
+    folder_id: text("folder_id").notNull(),
+    sign_in_kind: text("sign_in_kind").notNull(),
+    sign_in_id: text("sign_in_id").notNull(),
+    sign_in_name: text("sign_in_name").notNull(),
+    folder_store_id: text("folder_store_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    report: text("report").notNull(),
+    received_at: text("received_at").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.folder_id,
+        table.sign_in_kind,
+        table.sign_in_id,
+        table.folder_store_id,
+      ],
+    }),
+    check(
+      "folder_status_kind",
+      sql`${table.sign_in_kind} IN ('browser', 'app', 'key')`,
+    ),
+    check(
+      "folder_status_sequence",
+      sql`${table.sequence} BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
 export const items = sqliteTable(
   "items",
   {

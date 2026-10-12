@@ -21,6 +21,7 @@ import {
   SHIPPED_TYPE_SHAPES,
   TYPE_ROLES,
   isRoleConstraint,
+  normalizeEdgeProperties,
   roleFromConstraint,
   unreadKeys,
   validateTypeSchema as validateTypeSchemaShape,
@@ -90,7 +91,12 @@ export { ALWAYS_SEARCHED_FIELDS, FIELD_TYPES, FIELD_FORMATS };
 // key outside them. The edge doors read a request through a schema that
 // strips what it does not declare, so they ask this of the body as it was
 // sent.
-export { EDGE_PROPERTY_KEYS, EDGE_TYPE_SCHEMA_KEYS, unreadKeys };
+export {
+  EDGE_PROPERTY_KEYS,
+  EDGE_TYPE_SCHEMA_KEYS,
+  normalizeEdgeProperties,
+  unreadKeys,
+};
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -923,20 +929,54 @@ function getZodSchema(
   const fields = getResolvedFields(typeId);
   if (!fields) return undefined;
 
+  const schema = fieldsToZod(fields, strict);
+  cache.set(key, schema);
+  return schema;
+}
+
+function fieldsToZod(
+  fields: Readonly<Record<string, FieldDefinition>>,
+  strict: boolean,
+): z.ZodType {
   const shape: Record<string, z.ZodType> = {};
   for (const [name, field] of Object.entries(fields)) {
     shape[name] = fieldToZod(field);
   }
-
-  const schema = strict ? z.strictObject(shape) : z.looseObject(shape);
-  cache.set(key, schema);
-  return schema;
+  return strict ? z.strictObject(shape) : z.looseObject(shape);
 }
 
 /** Validation result for property validation. */
 type ValidationResult =
   | { success: true; data: Record<string, unknown> }
   | { success: false; errors: { field: string; message: string }[] };
+
+/**
+ * Holds `properties` to a set of declared fields: each declared field is
+ * checked and anything else passes through. The one judgment an item type's
+ * `fields` and an edge type's `property_schema` both get, so a value has the
+ * same verdict on either.
+ */
+function judgeFields(
+  schema: z.ZodType,
+  properties: Record<string, unknown>,
+): ValidationResult {
+  // Without a prototype, a field named like an object's built-in member
+  // (`toString`, `constructor`) that the write leaves out reads as absent
+  // rather than as the inherited function.
+  const own = Object.assign(Object.create(null) as object, properties);
+  const result = schema.safeParse(own);
+  if (result.success) {
+    return {
+      success: true,
+      data: { ...(result.data as Record<string, unknown>) },
+    };
+  }
+  const errors = result.error.issues.map((issue) => ({
+    field: issue.path.join(".") || "_root",
+    message: issue.message,
+  }));
+  return { success: false, errors };
+}
 
 /**
  * Validates item properties against the type schema.
@@ -956,27 +996,38 @@ export function validateProperties(
     };
   }
 
-  // Without a prototype, a field named like an object's built-in member
-  // (`toString`, `constructor`) that the write leaves out reads as absent
-  // rather than as the inherited function.
-  const own = Object.assign(Object.create(null) as object, properties);
-  const result = schema.safeParse(own);
-  if (result.success) {
-    const data = { ...(result.data as Record<string, unknown>) };
+  const judged = judgeFields(schema, properties);
+  if (judged.success) {
     // An event's rule is unfolded on every calendar read, so a rule no read
     // can unfold is refused here, where every item write is judged.
     if (isSubtypeOf(typeId, EVENT_TYPE)) {
-      const errors = eventScheduleIssues(data);
+      const errors = eventScheduleIssues(judged.data);
       if (errors.length > 0) return { success: false, errors };
     }
-    return { success: true, data };
   }
+  return judged;
+}
 
-  const errors = result.error.issues.map((issue) => ({
-    field: issue.path.join(".") || "_root",
-    message: issue.message,
-  }));
-  return { success: false, errors };
+// A registered schema is frozen and replaced whole, never edited, so the
+// schema object itself is a sound key for what is built from it.
+const declaredPropertyChecks = new WeakMap<object, z.ZodType>();
+
+/**
+ * Validates the properties of an edge against its edge type's
+ * `property_schema`, with the judgment `validateProperties` gives an item's.
+ * A declared property is checked for its type, its enum values and, where
+ * `required`, its presence; a property the schema does not declare passes.
+ */
+export function validateDeclaredProperties(
+  declared: Readonly<Record<string, FieldDefinition>>,
+  properties: Record<string, unknown>,
+): ValidationResult {
+  let schema = declaredPropertyChecks.get(declared);
+  if (!schema) {
+    schema = fieldsToZod(declared, false);
+    declaredPropertyChecks.set(declared, schema);
+  }
+  return judgeFields(schema, properties);
 }
 
 /**

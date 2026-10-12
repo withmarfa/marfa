@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./folder-status.js";
 export * from "./errors.js";
 export * from "./ids.js";
 export * from "./validation.js";

@@ -9859,6 +9859,8 @@ Commands:
            for a first sync still waiting to be confirmed, which this cancels. A folder whose
            directory is gone is taken off the list
   status   Say where every file in the folder stands, from its own store, asking the server nothing
+  health   Read the server's latest reports from every sign-in and local copy. Receipt ages describe
+           reports; they do not establish current reachability
   confirm  Let a folder's first sync go, or a paused large removal: its deletes are queued, and
            files whose items left elsewhere are taken away
   restore  Cancel a paused large removal: files gone from the disk are written back, and items that
@@ -10034,6 +10036,45 @@ Usage: marfa folders status [OPTIONS] <DIR>
 Arguments:
   <DIR>
           The folder
+
+Options:
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is
+          readable by other users of the machine and stays in shell history. Falls back to
+          MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one
+
+      --allow-http
+          Send a credential over plain http to a host that is not this machine without the warning,
+          for a network that is private. MARFA_ALLOW_HTTP=1 does the same
+
+      --socket <PATH>
+          Use private local process authority through this Unix socket, without a keychain
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning,
+          which is one plain line
+```
+
+### marfa folders health
+
+```text
+Read the server's latest reports from every sign-in and local copy. Receipt ages describe reports;
+they do not establish current reachability
+
+Usage: marfa folders health [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          The folder's `system.folder` id
 
 Options:
   -h, --help

@@ -294,6 +294,12 @@
       "runAuditedTransaction": 2
     }
   },
+  "routes/folder-status.ts": {
+    "boundary": "Operational folder-copy observations, not item or sign-in mutations; canonical sign-in and folder read authority are checked inside admitted storage transactions. Reordered reports preserve receipts and native update failure preserves the previous report, exercised by compliance/folder-status.test.ts.",
+    "calls": {
+      "FolderStatusStore.put": 1
+    }
+  },
   "routes/folders.ts": {
     "boundary": "Audited folder create/update/delete unit includes key permission cascades; audit-atomicity.test.ts and key-audit-atomicity.test.ts.",
     "calls": {

@@ -3,6 +3,7 @@ import {
   MarfaError,
   getEdgeTypeSchema,
   satisfiesEdgeConstraint,
+  validateDeclaredProperties,
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
@@ -55,14 +56,45 @@ function propertyRefusal(key: string, message: string): MarfaError {
 
 /**
  * Holds an edge's properties, as they would stand after the write, to what
- * its type requires. Only `in-folder` requires anything: a `path` naming a
- * file inside the folder, and nothing else.
+ * its type requires. `in-folder` takes a `path` naming a file inside the
+ * folder and nothing else. Any other type takes the properties its
+ * `property_schema` declares, judged as an item type's fields are: a value
+ * of the wrong type, a missing `required` property and a value outside an
+ * enum are refused `invalid_properties` naming the property, and a key the
+ * schema does not declare passes.
+ *
+ * `skipDeclared` leaves out the `property_schema` judgment, for a replay of
+ * edges an instance already stored, which stand until they are written.
+ * `in-folder` is judged either way.
  */
 export function assertEdgeProperties(
   edgeType: string,
   properties: Record<string, unknown> | undefined,
+  opts: { skipDeclared?: boolean } = {},
 ): void {
-  if (edgeType !== FOLDER_EDGE_TYPE) return;
+  if (edgeType === FOLDER_EDGE_TYPE) {
+    assertFolderEdgeProperties(properties);
+    return;
+  }
+  if (opts.skipDeclared === true) return;
+  const declared = getEdgeTypeSchema(edgeType)?.property_schema;
+  if (declared === undefined) return;
+  const judged = validateDeclaredProperties(declared, properties ?? {});
+  if (judged.success) return;
+  const detail = judged.errors
+    .map((e) => `${e.field}: ${e.message}`)
+    .join("; ");
+  throw new MarfaError(
+    ErrorCode.INVALID_PROPERTIES,
+    `Invalid properties for edge "${edgeType}": ${detail}`,
+    { errors: judged.errors, edge_type: edgeType },
+  );
+}
+
+function assertFolderEdgeProperties(
+  properties: Record<string, unknown> | undefined,
+): void {
+  const edgeType = FOLDER_EDGE_TYPE;
   const { path, ...rest } = properties ?? {};
   const [undeclared] = Object.keys(rest);
   if (undeclared !== undefined) {
@@ -149,8 +181,9 @@ export interface EdgeProposal {
  *    parent-of and supersedes, considering proposed edges as part of the
  *    graph. Both answer `edge_cycle`.
  * 8. The properties are what the edge type requires, and an `in-folder`
- *    edge does not target a revoked folder unless `replay` says an archive
- *    recorded it.
+ *    edge does not target a revoked folder. `replay`, for the edges an
+ *    archive recorded, leaves out the `property_schema` judgment and lets an
+ *    `in-folder` edge target a revoked folder.
  *
  * `replacing` names a stored edge the one proposal moves, which the
  * cardinality counts leave out.
@@ -189,7 +222,9 @@ export async function assertEdgesCanBeCreated(
       );
     }
     assertNotSelfLoop(p.source_id, p.target_id, p.edge_type);
-    assertEdgeProperties(p.edge_type, p.properties);
+    assertEdgeProperties(p.edge_type, p.properties, {
+      skipDeclared: opts.replay === true,
+    });
     resolved.push({ p, schema });
   }
 

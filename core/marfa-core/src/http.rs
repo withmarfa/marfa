@@ -67,6 +67,7 @@ pub struct Http {
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     view: Option<String>,
+    call_budget: Option<Duration>,
 }
 
 type KeepOrigin = Box<dyn Fn(&AtomicBool) -> Result<(), CoreError> + Send + Sync>;
@@ -347,6 +348,27 @@ impl Http {
             let_go: Arc::new(AtomicBool::new(false)),
             relocation: Arc::new(OnceLock::new()),
             view: None,
+            call_budget: None,
+        })
+    }
+
+    pub(crate) fn for_reporting(&self) -> Result<Self, CoreError> {
+        if let Some(relocation) = self.relocation.get() {
+            let verified = relocation
+                .try_lock()
+                .map(|held| held.verified)
+                .unwrap_or(false);
+            if !verified {
+                return Err(CoreError::Canceled);
+            }
+        }
+        // Content owns renewal. A report keeps its outbox on refusal and
+        // uses the authorization that content later renews, without delaying
+        // watch shutdown on a refresh callback.
+        Ok(Self {
+            call_budget: Some(Duration::from_secs(2)),
+            renew: Arc::new(OnceLock::new()),
+            ..self.clone()
         })
     }
 
@@ -1131,7 +1153,15 @@ impl Http {
         budget: Budget,
     ) -> Result<Response, ureq::Error> {
         match budget {
-            Budget::Whole => self.agent.run(request),
+            Budget::Whole => match self.call_budget {
+                Some(budget) => self.agent.run(
+                    self.agent
+                        .configure_request(request)
+                        .timeout_global(Some(budget))
+                        .build(),
+                ),
+                None => self.agent.run(request),
+            },
             Budget::Stream(deadline) => {
                 let agent = (self.stream_agent)(deadline);
                 agent.run(

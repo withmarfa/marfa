@@ -33,6 +33,67 @@ impl Folder {
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
+        let result = self.sync_observed();
+        match &result {
+            Ok(Synced::Done(report)) => {
+                let complete = report.catch_up.is_ok()
+                    && report.pull.is_some()
+                    && report.drain.report.unavailable.is_none()
+                    && report.drain.report.stopped.is_none()
+                    && report.drain.report.undelivered == 0
+                    && report.drain.report.unsent == 0
+                    && report.drain.report.held == 0
+                    && report.drain.report.unmade == 0
+                    && report.scan.root_gone.is_none()
+                    && !report
+                        .scan
+                        .directories
+                        .iter()
+                        .any(|entry| matches!(entry.flag, "unreadable" | "gone"));
+                let unavailable = report
+                    .catch_up
+                    .as_ref()
+                    .err()
+                    .cloned()
+                    .or_else(|| {
+                        report
+                            .drain
+                            .report
+                            .unavailable
+                            .as_ref()
+                            .map(|_| CoreError::Network("unavailable".into()))
+                    })
+                    .or_else(|| {
+                        report
+                            .drain
+                            .report
+                            .stopped
+                            .as_ref()
+                            .map(|_| CoreError::Unauthorized {
+                                code: "unauthorized".into(),
+                                message: "credential refused".into(),
+                            })
+                    });
+                self.health_observe(
+                    complete,
+                    true,
+                    report.pull.as_ref(),
+                    unavailable.as_ref(),
+                    report.settings.flagged.is_some()
+                        || report.settings.unwritten.is_some()
+                        || report.pull.as_ref().is_some_and(|pull| {
+                            pull.settings.flagged.is_some() || pull.settings.unwritten.is_some()
+                        }),
+                );
+            }
+            Ok(Synced::Waiting(_)) => self.health_observe(false, true, None, None, false),
+            Err(error) => self.health_observe(false, true, None, Some(error), false),
+        }
+        self.health_send();
+        result
+    }
+
+    fn sync_observed(&self) -> Result<Synced> {
         if self.awaiting_confirmation()?
             && let Some(plan) = self.plan_first_sync()?
         {

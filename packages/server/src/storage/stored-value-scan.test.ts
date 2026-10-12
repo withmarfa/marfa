@@ -19,7 +19,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import { ITEM_STATES, TIERS } from "@withmarfa/shared";
+import {
+  ITEM_STATES,
+  TIERS,
+  FOLDER_STATUS_SIGN_IN_KINDS,
+} from "@withmarfa/shared";
 import {
   SCANNED_COLUMNS,
   scanStoredValues,
@@ -261,6 +265,9 @@ describe("scanStoredValues", () => {
     // than by a cast, which is the same restated-union defect wearing
     // different syntax.
     expect(allowedFor("items", "tier")).toBe(TIERS);
+    expect(allowedFor("folder_status", "sign_in_kind")).toBe(
+      FOLDER_STATUS_SIGN_IN_KINDS,
+    );
   });
 });
 
@@ -283,6 +290,81 @@ describe("storedValueScan", () => {
 });
 
 describe("the query the boot runs", () => {
+  it("diagnoses unknown folder sign-in kinds through the real scan query", async () => {
+    const ctx = await createTestContext();
+    try {
+      const store = ctx.storage as unknown as {
+        __sqliteAll: (q: string) => Promise<unknown[]>;
+        __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+      };
+      const report = JSON.stringify({
+        folder_store_id: "copy-a",
+        sequence: 1,
+        last_success_at: null,
+        pending_uploads: 0,
+        pending_downloads: 0,
+        paused_removals: 0,
+        first_sync_waiting: false,
+        problems: [],
+      });
+      await store.__sqliteRun("PRAGMA ignore_check_constraints = ON", []);
+      try {
+        for (const [index, kind] of [
+          "browser",
+          "app",
+          "key",
+          "future",
+          "future",
+        ].entries()) {
+          await store.__sqliteRun(
+            "INSERT INTO folder_status (folder_id, sign_in_kind, sign_in_id, sign_in_name, folder_store_id, sequence, report, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              "01920000-0000-7000-8000-000000000000",
+              kind,
+              `sign-in-${String(index)}`,
+              "Fixture",
+              "copy-a",
+              1,
+              report,
+              "2026-01-01T00:00:00.000Z",
+            ],
+          );
+        }
+      } finally {
+        await store.__sqliteRun("PRAGMA ignore_check_constraints = OFF", []);
+      }
+      const counts = sqliteStoredValueCounts((sql) => store.__sqliteAll(sql));
+      expect(await counts("folder_status", "sign_in_kind")).toEqual([
+        { value: "app", count: 1 },
+        { value: "browser", count: 1 },
+        { value: "future", count: 2 },
+        { value: "key", count: 1 },
+      ]);
+      expect(await scanStoredValues(counts)).toEqual({
+        scanned: true,
+        values: [
+          {
+            table: "folder_status",
+            column: "sign_in_kind",
+            value: "future",
+            count: 2,
+          },
+        ],
+      });
+      expect(logSpy).toHaveBeenCalledWith(
+        "error",
+        "stored values are not ones this build recognizes",
+        {
+          table: "folder_status",
+          column: "sign_in_kind",
+          stored_value: "future",
+          rows: 2,
+        },
+      );
+    } finally {
+      await ctx.cleanup();
+    }
+  });
   it("finds a real row through the query the boot uses", async () => {
     // The unit cases above prove the comparison. This proves the thing
     // feeding it: one aggregate per column, against real tables, through

@@ -35,6 +35,7 @@ import {
   KEY,
   acceptUploads,
   fileOf,
+  folderHarness,
   hashOf,
   hydratedHarness,
   requireBinary,
@@ -44,6 +45,7 @@ import {
   scriptWrites,
   startHarness,
   type Harness,
+  type FolderHarness,
 } from "./harness.js";
 
 /**
@@ -60,12 +62,15 @@ const run = promisify(execFile);
 let server: ScriptedServer | undefined;
 
 let harness: Harness | undefined;
+let boundFolder: FolderHarness | undefined;
 
 afterEach(async () => {
   await server?.stop();
   server = undefined;
   await harness?.stop();
   harness = undefined;
+  await boundFolder?.stop();
+  boundFolder = undefined;
 });
 
 const builtFor = Number(BUILT_FOR);
@@ -795,6 +800,7 @@ const invocations: Record<string, () => string[]> = {
   "folders create": () => ["--title", "t"],
   "folders change": () => ["--version", "1", "--title", "t", ID],
   "folders revoke": () => [ID],
+  "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
   "sign-ins list": () => [],
@@ -877,7 +883,8 @@ const GROUPS = ["items bulk-action"];
 /**
  * Roots whose commands go through the core's transport rather than the
  * binary's, which the working-copy block below holds to the contract; those
- * the table names (`folders create`, `change`, `revoke`) are driven above.
+ * the table names (`folders create`, `change`, `revoke`, `health`) are driven above.
+ * `folders push` requires the bound-copy contract cases below.
  */
 const THROUGH_THE_CORE = ["device", "folders"];
 
@@ -905,12 +912,19 @@ async function commandTree(path: string[] = []): Promise<string[]> {
   return leaves;
 }
 
+/** PUT health is best effort within content sync and requires a bound copy.
+ * The bound-folder cases below prove both the content and receipt contract gates. */
+const BOUND_CORE_TABLE: Record<string, string> = {
+  "folders push":
+    "bound-folder content refusal and invalid-contract receipt cases",
+};
+
 /** Every command driven here, as the table names it and beyond it. */
 async function driven(): Promise<{ command: string }[]> {
   const outcome = await marfa(["--json", "operations"]);
   const rows = JSON.parse(outcome.stdout) as { command: string }[];
   return [
-    ...rows,
+    ...rows.filter((row) => !Object.hasOwn(BOUND_CORE_TABLE, row.command)),
     ...Object.keys(beyondTheTable).map((command) => ({ command })),
   ];
 }
@@ -962,10 +976,88 @@ describe("every command holds the server to the contract", () => {
   it("names an invocation for every command in the table, and nothing else", async () => {
     const commands = (await table()).map((row) => row.command);
     expect(commands.length).toBeGreaterThan(0);
-    expect(Object.keys(invocations).sort()).toEqual(
-      commands.filter((command) => command !== DESCRIBES).sort(),
-    );
+    expect(
+      [...Object.keys(invocations), ...Object.keys(BOUND_CORE_TABLE)].sort(),
+    ).toEqual(commands.filter((command) => command !== DESCRIBES).sort());
     expect(commands).toContain(DESCRIBES);
+  });
+
+  it("refuses a content response on another contract from a bound folder push", async () => {
+    expect((await table()).some((row) => row.command === "folders push")).toBe(
+      true,
+    );
+    boundFolder = await folderHarness("contract-bound-push");
+    expect((await boundFolder.folder.push()).ok).toBe(true);
+    const before = boundFolder.server.requests.length;
+    boundFolder.server.contract = String(builtFor + 1);
+    const outcome = await marfa(
+      [
+        "--json",
+        "--url",
+        boundFolder.server.url,
+        "--key",
+        KEY,
+        "folders",
+        "push",
+        boundFolder.dir,
+      ],
+      undefined,
+      { MARFA_FOLDER_REGISTRY: boundFolder.registry },
+    );
+    expect(outcome.code, outcome.stderr).toBe(1);
+    expect(codeOf(outcome.stderr)).toBe("contract_mismatch");
+    expect(outcome.stdout).toBe("");
+    expect(boundFolder.server.requests.slice(before).length).toBeGreaterThan(0);
+  });
+
+  it("rejects a health receipt on another contract without stopping content or learning its sequence floor", async () => {
+    boundFolder = await folderHarness("contract-health-receipt", {
+      statusReport: [
+        {
+          kind: "json",
+          status: 200,
+          contract: String(builtFor + 1),
+          body: {
+            accepted: false,
+            sequence: 10_000,
+            received_at: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        (request) => ({
+          kind: "json",
+          status: 200,
+          body: {
+            accepted: true,
+            sequence: (JSON.parse(request.body) as { sequence: number })
+              .sequence,
+            received_at: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      ],
+    });
+    expect((await boundFolder.folder.push()).ok).toBe(true);
+    const reports = () =>
+      boundFolder!.server.requests
+        .filter(
+          (request) =>
+            request.method === "PUT" &&
+            request.pathname === `/folders/${boundFolder!.settings.id}/status`,
+        )
+        .map(
+          (request) =>
+            JSON.parse(request.body) as {
+              sequence: number;
+              last_success_at: string | null;
+            },
+        );
+    expect(reports()).toHaveLength(1);
+    expect(reports()[0]?.sequence).toBe(1);
+    expect(reports()[0]?.last_success_at).not.toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect((await boundFolder.folder.push()).ok).toBe(true);
+    expect(reports()).toHaveLength(2);
+    expect(reports()[1]?.sequence).toBe(2);
+    expect(reports()[1]?.last_success_at).not.toBeNull();
   });
 
   it("sends nothing to print the table", async () => {

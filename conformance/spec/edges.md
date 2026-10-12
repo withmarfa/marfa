@@ -1399,6 +1399,184 @@ When `DELETE /edge-types/{id}` naming no `force=true` races an edge write of the
 
 **Tests:** `compliance/edge-races.test.ts › either keeps an edge type with its new edge or deletes it and refuses the edge`.
 
+## What an edge's properties hold
+
+An edge type's `property_schema` declares properties by name, each with a `type` and optionally `required`, `enum_values` and `format`. Every door that writes an edge judges the properties the edge would hold after the write against it, as `items/property-invalid` does for an item. `in-folder` is held to its own rules, under "The folder and collection edge types", and not to these.
+
+### `edges/properties-wrong-type`
+
+If `POST /edges` names a property the edge type's `property_schema` declares with a value that is not of the declared type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a wrong-typed value, a value outside an enum and a missing required property with 400 invalid_properties naming the property`.
+
+### `edges/properties-enum`
+
+If `POST /edges` names a property the edge type's `property_schema` declares an `enum` with a value outside its `enum_values`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a wrong-typed value, a value outside an enum and a missing required property with 400 invalid_properties naming the property`.
+
+### `edges/properties-required`
+
+If `POST /edges` names no value for a property the edge type's `property_schema` declares `required`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Reason:** an edge that names no `properties` holds none, so it breaks the schema of a type that requires one.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a wrong-typed value, a value outside an enum and a missing required property with 400 invalid_properties naming the property`.
+
+### `edges/properties-undeclared`
+
+When `POST /edges` names a property the edge type's `property_schema` does not declare, the server MUST create the edge holding it.
+
+**Reason:** an undeclared item property is accepted outside strict mode, and an undeclared edge property is accepted the same way.
+
+**Tests:** `compliance/edge-property-schema.test.ts › accepts a property the schema does not declare and stores it`.
+
+### `edges/properties-empty-schema`
+
+Where an edge type's `property_schema` declares no property, the server MUST create an edge of the type holding any properties the request names.
+
+**Tests:** `compliance/edge-property-schema.test.ts › takes any properties on an edge type whose property_schema is empty`.
+
+### `edges/properties-update-wrong-type`
+
+If `PATCH /edges/{id}` would leave an edge, judged on the properties as they would stand after the merge, holding a value that is not of the type its `property_schema` declares, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a patch that sets a value of the wrong type with 400 invalid_properties naming the property, and changes nothing`.
+
+### `edges/properties-update-enum`
+
+If `PATCH /edges/{id}` would leave an edge, judged on the properties as they would stand after the merge, holding a value outside the `enum_values` its `property_schema` declares, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a patch that sets a value outside an enum with 400 invalid_properties naming the property, and changes nothing`.
+
+### `edges/properties-update-unchanged`
+
+If `PATCH /edges/{id}` is refused `invalid_properties`, then the server MUST leave the edge at its version, holding the properties it held.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a patch that sets a value of the wrong type with 400 invalid_properties naming the property, and changes nothing`, `› refuses a patch that sets a value outside an enum with 400 invalid_properties naming the property, and changes nothing`.
+
+### `edges/properties-update-required`
+
+If `PATCH /edges/{id}` would leave an edge, judged on the properties as they would stand after the merge, without a property its `property_schema` declares `required`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Reason:** a patch is judged on the merged result, so one that names none of the required properties passes where the edge holds them and is refused where it does not.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a patch that leaves a required property missing, judged on the merged result`, `› leaves an edge stored before its type declared a schema as it is until the edge is next written`.
+
+### `edges/properties-move`
+
+If `PATCH /edges/{id}` moves an end and would leave the edge, judged on the merged properties, breaking its `property_schema`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › holds a move of an end to the same schema, judged on the merged properties`.
+
+### `edges/properties-bulk-entry`
+
+If an entry of `POST /edges/bulk` under `atomic: false` would leave an edge, created or merged, breaking its `property_schema`, then the server MUST refuse the entry with `error.code` `invalid_properties` and `error.details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses each broken entry, created or merged, as an errored entry naming the property, and writes the others`.
+
+### `edges/properties-bulk-atomic`
+
+If an entry of `POST /edges/bulk` under `atomic: true` would leave an edge, created or merged, breaking its `property_schema`, then the server MUST answer `400 bulk_atomic_rollback` with `details.code` `invalid_properties` and `details.index` the entry's position.
+
+**Tests:** `compliance/edge-property-schema.test.ts › rolls the batch back under atomic, with the refusal's code and position`.
+
+### `edges/properties-inline`
+
+If `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names an inline edge of a type whose `property_schema` declares a property `required`, then the server MUST refuse the write `invalid_properties` with `details.errors` naming the property in `field`.
+
+**Reason:** an inline edge carries no properties, so a required property is what it lacks.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`.
+
+### `edges/properties-inline-none`
+
+Where an edge type's `property_schema` declares no `required` property, when `POST /items` names an inline edge of the type, the server MUST create the edge.
+
+**Tests:** `compliance/edge-property-schema.test.ts › takes an inline edge of an edge type that requires nothing`.
+
+### `edges/properties-shipped`
+
+If a write names, on an edge of a shipped type other than `in-folder`, a value that is not of the type the type's `property_schema` lists for that property, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › holds a shipped edge type to its property_schema`.
+
+### `edges/properties-null-optional`
+
+When a write names `null` for an optional property its edge type's `property_schema` declares, the server MUST keep the `null` on the edge as sent.
+
+**Tests:** `compliance/edge-property-schema.test.ts › keeps a null on an optional declared property as sent and refuses one on a required property`.
+
+### `edges/properties-null-required`
+
+If a write names `null` for a property its edge type's `property_schema` declares `required`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › keeps a null on an optional declared property as sent and refuses one on a required property`.
+
+### `edges/properties-format`
+
+Where an edge type's `property_schema` declares a property as `url`, `email`, `date` or `datetime`, or as a `string` with that `format`, if a write names a value that is not of that format, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`.
+
+### `edges/types-register-format`
+
+When `POST /edge-types` declares a `string` property with the `format` `url`, `email`, `date` or `datetime`, the server MUST list the property with that format as its `type` and no `format`.
+
+**Reason:** a type's fields store the same declaration the same way (`types/format-collapses`).
+
+**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`.
+
+### `edges/types-register-format-fit`
+
+If `POST /edge-types` declares a `format` on a property whose `type` the format does not suit, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.format`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a registration that puts a format on a property it does not suit, naming the property`.
+
+### `edges/properties-stored`
+
+When a key registers an edge type whose `property_schema` an edge already stored under that id breaks, the server MUST leave the edge as it was and answer reads of it unchanged, until a write to the edge.
+
+**Reason:** edges meet the schema at their next write, as items meet a field their type gains (`types/field-gained`).
+
+**Tests:** `compliance/edge-property-schema.test.ts › leaves an edge stored before its type declared a schema as it is until the edge is next written`.
+
+### `edges/properties-restore-kept`
+
+When `POST /restore` meets an archived edge whose properties break its edge type's `property_schema`, the server MUST restore the edge with the properties it carries.
+
+**Reason:** an archive records edges as they were stored, and an edge stored before its type declared the schema stands until it is written (`edges/properties-stored`).
+
+**Tests:** `compliance/restore-archive.test.ts › restores an archived edge whose properties break its edge type's property_schema, and counts it as imported`.
+
+### `edges/properties-restore-counted`
+
+When `POST /restore` restores an archived edge whose properties break its edge type's `property_schema`, the server MUST count it in `edges_imported`.
+
+**Tests:** `compliance/restore-archive.test.ts › restores an archived edge whose properties break its edge type's property_schema, and counts it as imported`.
+
+### `edges/types-restore-format`
+
+When `POST /restore` carries an edge type that declares a `string` property with the `format` `url`, `email`, `date` or `datetime`, the server MUST register the property with that format as its `type` and no `format`.
+
+**Reason:** a registration through `POST /edge-types` stores the same declaration the same way (`edges/types-register-format`).
+
+**Tests:** `compliance/restore-archive.test.ts › registers a string property with a format as the type of that format`.
+
+### `edges/types-restore-format-fit`
+
+If `POST /restore` carries an edge type that declares a `format` on a property whose `type` the format does not suit, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.format`.
+
+**Reason:** an archive is judged as the registration it stands for (`edges/types-register-format-fit`).
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose edge type puts a format on a property it does not suit, naming the property, and registers nothing`.
+
+### `edges/types-restore-format-nothing`
+
+If `POST /restore` is refused `invalid_schema` for an edge type's property `format`, then the server MUST register no edge type of the archive.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose edge type puts a format on a property it does not suit, naming the property, and registers nothing`.
+
 ## What a key may read
 
 ### `edges/read-list-withheld`

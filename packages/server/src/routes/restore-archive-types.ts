@@ -18,6 +18,7 @@ import {
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
   getEdgeTypeSchema,
+  normalizeEdgeProperties,
   validateTypeSchema,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
@@ -99,6 +100,21 @@ function sameSchema(a: unknown, b: unknown): boolean {
 function normalizeForCompare(schema: TypeSchema): TypeSchema {
   const result = validateTypeSchema(schema);
   return result.success ? result.data : schema;
+}
+
+/**
+ * The archive's edge types arrive with their properties normalized, as a
+ * registration stores them, so a stored row is put through the same pass
+ * for the comparison only. A row registered before that pass, with a format
+ * on a string or a `required: false`, then reads as the same registration;
+ * the row itself is not rewritten. One that no longer normalizes is left as
+ * it is and compares unequal.
+ */
+function normalizeEdgeForCompare(schema: EdgeTypeSchema): EdgeTypeSchema {
+  const properties = normalizeEdgeProperties(schema.property_schema);
+  return properties.success
+    ? { ...schema, property_schema: properties.data }
+    : schema;
 }
 
 /**
@@ -326,7 +342,7 @@ export async function planArchiveTypes(
     const existing = existingEdgeTypes.get(schema.id);
     if (!existing) {
       edgeTypesToWrite.push(schema);
-    } else if (sameSchema(existing, schema)) {
+    } else if (sameSchema(normalizeEdgeForCompare(existing), schema)) {
       edgeTypesSkipped += 1;
     } else {
       conflicts.push(schema.id);
