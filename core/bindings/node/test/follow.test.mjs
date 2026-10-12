@@ -52,13 +52,16 @@ function held(res) {
 
 /**
  * @param {Array<(res: Response) => void>} streams
+ * @param {() => boolean} [registered] adds a type to the catalog
  */
-async function scripted(streams) {
+async function scripted(streams, registered = () => false) {
   /** @type {Set<Response>} */
   const open = new Set();
   let followed = 0;
+  let asked = 0;
   let building = false;
   const server = createServer((req, res) => {
+    asked += 1;
     const path = (req.url ?? "").split("?")[0];
     const json = (/** @type {unknown} */ body) => {
       res.writeHead(200, {
@@ -72,7 +75,12 @@ async function scripted(streams) {
       json({ instance_id: INSTANCE });
     } else if (path === "/types") {
       json({
-        data: [{ id: "core.note", display_hints: { title_field: "title" } }],
+        data: [
+          { id: "core.note", display_hints: { title_field: "title" } },
+          ...(registered()
+            ? [{ id: "acme.late", parent: "core.note", version: 0, fields: {} }]
+            : []),
+        ],
         next_cursor: null,
       });
     } else if (path === "/edge-types") {
@@ -114,6 +122,7 @@ async function scripted(streams) {
   return {
     url: `http://127.0.0.1:${address.port}`,
     followed: () => followed,
+    asked: () => asked,
     close: () => {
       for (const res of open) res.destroy();
       server.closeAllConnections();
@@ -378,5 +387,83 @@ test(
         }),
       /^Error: reading_handle: /,
     );
+  },
+);
+
+test(
+  "tells a catalog that changed as a change of its own kind, and an event by its type",
+  { timeout: 20_000 },
+  async (t) => {
+    let registered = false;
+    const server = await scripted(
+      [
+        (res) => {
+          res.write(created("n11", 11));
+          held(res);
+        },
+      ],
+      () => registered,
+    );
+    t.after(server.close);
+    const core = MarfaCore.open(storeFor(t), server.url, "k");
+    await core.hydrate(["core.note"], SliceTier.Library);
+    registered = true;
+    /** @type {import("../index.js").Change[]} */
+    const told = [];
+    const subscription = core.follow(
+      (change) => told.push(change),
+      () => {},
+    );
+    t.after(() => subscription.stop());
+    const deadline = Date.now() + 10_000;
+    while (told.length < 2 && Date.now() < deadline) await sleep(20);
+    assert.deepEqual(
+      told[0],
+      { kind: "catalogChanged", cursor: "10" },
+      "a changed catalog was not told as a change of its own kind",
+    );
+    const applied = told[1];
+    assert.ok(applied?.kind === "applied", "an applied event was told as another kind");
+    assert.deepEqual(
+      [applied.event, applied.itemId, applied.cursor],
+      ["item.created", "n11", "11"],
+    );
+  },
+);
+
+test(
+  "waits for a first hydration, asking nothing, then follows",
+  { timeout: 20_000 },
+  async (t) => {
+    const server = await scripted([
+      (res) => {
+        res.write(created("n11", 11));
+        held(res);
+      },
+    ]);
+    t.after(server.close);
+    const core = MarfaCore.open(storeFor(t), server.url, "k");
+    /** @type {import("../index.js").Change[]} */
+    const told = [];
+    /** @type {unknown} */
+    let ended;
+    const subscription = core.follow(
+      (change) => told.push(change),
+      (error) => {
+        ended = error ?? "stopped";
+      },
+    );
+    t.after(() => subscription.stop());
+    await sleep(500);
+    assert.equal(ended, undefined, "a follow on a copy never hydrated ended");
+    assert.equal(server.asked(), 0, "a follow waiting for a hydration asked the server");
+
+    await core.hydrate(["core.note"], SliceTier.Library);
+    const deadline = Date.now() + 10_000;
+    while (told.length === 0 && Date.now() < deadline) await sleep(20);
+    assert.equal(told[0]?.cursor, "11", "the follow did not follow once the copy was hydrated");
+    subscription.stop();
+    while (ended === undefined && Date.now() < deadline) await sleep(20);
+    assert.equal(ended, "stopped");
   },
 );

@@ -700,6 +700,8 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 A device MUST give a `blocked` write exactly one of the reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved` and `awaiting_dependency`, and no other.
 
+**Reason:** `awaiting_dependency` is kept so the queue says why a drain held a write (`queue-and-verdicts/held-reason`), though nothing outside the queue stops such a write: a binding shows it as waiting (`queue-and-verdicts/binding-shows-waiting`), and no caller releases it (`queue-and-verdicts/release-reason-held`, `queue-and-verdicts/release-held-by-id`).
+
 **Tests:** `device/classification.test.ts › reports one of the five blocked reasons and no other`.
 
 ### `queue-and-verdicts/blocked-not-counted`
@@ -1022,7 +1024,7 @@ A caller can release a write that has stopped, withdraw one that can never be se
 
 ### `queue-and-verdicts/release-stopped`
 
-When a caller releases a write that is `blocked` or `dead`, a device MUST take it back to no verdict so the next drain sends it.
+When a caller releases a write that is `dead`, or `blocked` for a reason other than `awaiting_dependency`, a device MUST take it back to no verdict so the next drain sends it.
 
 **Tests:** `device/classification.test.ts › sends a released row again under a fresh key`, `› releases by reason the rows blocked for it, and never a dead one`.
 
@@ -1049,6 +1051,22 @@ When a caller releases by a blocked reason, a device MUST release every write bl
 **Reason:** a reason names blocked writes only, so a release by reason never takes a `dead` write, which carries no reason and is released by its id.
 
 **Tests:** `device/classification.test.ts › releases by reason the rows blocked for it, and never a dead one`.
+
+### `queue-and-verdicts/release-reason-held`
+
+If a caller releases by the reason `awaiting_dependency`, then a device MUST refuse the release, releasing nothing.
+
+**Reason:** a held write is released by the answer to the write it waits for, and by nothing a caller does (`queue-and-verdicts/held-released-same-pass`).
+
+**Tests:** `device/classification.test.ts › releases no write held behind another, by the reason it waits under or by its id`.
+
+### `queue-and-verdicts/release-held-by-id`
+
+When a caller releases by its id a write `blocked` with the reason `awaiting_dependency`, a device MUST leave the write as it was and answer that it released nothing.
+
+**Reason:** a fresh key would let a write that was sent before, and whose answer never came, go out a second time under a key the server has no record of.
+
+**Tests:** `device/classification.test.ts › releases no write held behind another, by the reason it waits under or by its id`.
 
 ### `queue-and-verdicts/release-unsent-refused`
 

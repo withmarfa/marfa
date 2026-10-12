@@ -52,7 +52,7 @@ use serde_json::Value;
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField};
-pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
+pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
@@ -63,11 +63,11 @@ pub use folder::{
 pub use folder_settings::FolderRow;
 pub use lock::Handle;
 pub use model::{
-    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft,
-    EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
-    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
-    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
-    UnregisteredType, Verdict, WriteKind,
+    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport, Draft, Edge,
+    EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item,
+    ItemState, ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal,
+    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail,
+    Tier, UnregisteredType, Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -104,12 +104,51 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
 /// For the calls that cannot be stopped.
 pub(crate) static NEVER_STOPPED: AtomicBool = AtomicBool::new(false);
 
-struct StreamClaim<'a>(&'a AtomicBool);
+/// What moves the one cursor now.
+#[derive(Default)]
+struct Streaming {
+    holder: Option<Mover>,
+    /// A follow is open, holding the stream or waiting for a hydration
+    /// without it, so a second follow is refused at once.
+    following: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mover {
+    Hydration,
+    CatchUp,
+    Follow,
+}
+
+struct StreamClaim<'a>(&'a Mutex<Streaming>);
 
 impl Drop for StreamClaim<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        streaming_of(self.0).holder = None;
     }
+}
+
+struct FollowClaim<'a>(&'a Mutex<Streaming>);
+
+impl Drop for FollowClaim<'_> {
+    fn drop(&mut self) {
+        streaming_of(self.0).following = false;
+    }
+}
+
+/// Holds nothing a panic could leave half-written.
+fn streaming_of(streaming: &Mutex<Streaming>) -> MutexGuard<'_, Streaming> {
+    streaming
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn one_at_a_time() -> CoreError {
+    CoreError::Invalid(
+        "this working copy is already hydrating, catching up or following; one at a time moves \
+         its cursor"
+            .into(),
+    )
 }
 
 /// The key is held in memory and never written.
@@ -130,7 +169,7 @@ pub struct Core {
     /// Hydration, catch-up and follow each move the one cursor, so two at
     /// once could move it backwards, apply an event twice, or apply one to a
     /// copy a hydration has replaced.
-    streaming: AtomicBool,
+    streaming: Mutex<Streaming>,
     /// Two drains at once would each send every unanswered write, so a
     /// second waits for the one under way.
     draining: Mutex<()>,
@@ -228,7 +267,7 @@ impl Core {
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock: Arc::new(lock::WriterLock::reader()),
-            streaming: AtomicBool::new(false),
+            streaming: Mutex::default(),
             draining: Mutex::new(()),
         })
     }
@@ -311,7 +350,7 @@ impl Core {
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
-            streaming: AtomicBool::new(false),
+            streaming: Mutex::default(),
             draining: Mutex::new(()),
         })
     }
@@ -386,7 +425,7 @@ impl Core {
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream()?;
+        let _streaming = self.claim_stream(Mover::Hydration)?;
         let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)?;
         self.settle_bodies(stop)?;
         Ok(report)
@@ -412,7 +451,7 @@ impl Core {
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream()?;
+        let _streaming = self.claim_stream(Mover::Hydration)?;
         let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)?;
         self.settle_bodies(stop)?;
         Ok(report)
@@ -493,22 +532,48 @@ impl Core {
         Ok(pinned)
     }
 
+    /// A failure does not say whether the catalog changed before it;
+    /// `catch_up_until` does.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
         self.catch_up_until(&NEVER_STOPPED)
+            .map_err(|failed| failed.error)
     }
 
     /// Ended with `Canceled` soon after `stop` is raised, keeping the cursor
     /// of the last event applied.
-    pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
+    pub fn catch_up_until(
+        &self,
+        stop: &AtomicBool,
+    ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream()?;
-        let report = catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)?;
-        self.settle_bodies(stop)?;
-        Ok(report)
+        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let mut catalog_changed = false;
+        catch_up::catch_up(
+            self,
+            self.http()?,
+            self.catch_up_idle,
+            stop,
+            &mut catalog_changed,
+        )
+        .and_then(|report| {
+            self.settle_bodies(stop)?;
+            Ok(report)
+        })
+        .map_err(|error| CatchUpFailed {
+            error,
+            catalog_changed,
+        })
     }
 
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
+    ///
+    /// On a copy never hydrated, or whose hydration is under way or was
+    /// interrupted, it waits, asking the server nothing, until a hydration
+    /// completes and no hydration or catch-up still holds the stream, then
+    /// follows. `stop` ends the wait as it ends the follow. An expired copy
+    /// is refused at once, as it stands. A second follow is refused at once,
+    /// waiting or not.
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
@@ -519,19 +584,63 @@ impl Core {
         told_unreachable: bool,
         on_change: impl FnMut(&Change),
     ) -> Result<FollowReport> {
-        self.follow_observed(stop, told_unreachable, on_change, |_| {})
+        self.lock.refuse_unless_writer()?;
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let _following = self.claim_follow()?;
+        let Some(streaming) = self.claim_stream_once_hydrated(stop)? else {
+            return Ok(FollowReport::default());
+        };
+        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, |_| {})
     }
 
+    /// A folder's watch hydrates its copy on the thread that follows it, so
+    /// this refuses a copy that is not hydrated rather than wait for a
+    /// hydration that thread would never run.
     pub(crate) fn follow_observed(
         &self,
+        stop: &AtomicBool,
+        told_unreachable: bool,
+        on_change: impl FnMut(&Change),
+        on_live: impl FnMut(bool),
+    ) -> Result<FollowReport> {
+        self.lock.refuse_unless_writer()?;
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let _following = self.claim_follow()?;
+        let streaming = self.claim_stream(Mover::Follow)?;
+        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, on_live)
+    }
+
+    /// `None` where `stop` was raised while it waited.
+    fn claim_stream_once_hydrated(&self, stop: &AtomicBool) -> Result<Option<StreamClaim<'_>>> {
+        let mut waited = false;
+        loop {
+            match catch_up::refuse_unless_current(&mut *self.conn()?) {
+                Ok(()) => match self.try_claim_stream(Mover::Follow) {
+                    Ok(claim) => return Ok(Some(claim)),
+                    // The hydration waited for holds it until it has
+                    // settled, and a catch-up may have taken it since.
+                    Err(Mover::Hydration | Mover::CatchUp) if waited => {}
+                    Err(_) => return Err(one_at_a_time()),
+                },
+                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => waited = true,
+                Err(error) => return Err(error),
+            }
+            if stop.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            std::thread::sleep(catch_up::PACE.stop_poll);
+        }
+    }
+
+    fn follow_claimed(
+        &self,
+        http: Arc<http::Http>,
+        _streaming: StreamClaim<'_>,
         stop: &AtomicBool,
         told_unreachable: bool,
         mut on_change: impl FnMut(&Change),
         mut on_live: impl FnMut(bool),
     ) -> Result<FollowReport> {
-        self.lock.refuse_unless_writer()?;
-        let http = self.http.clone().ok_or(CoreError::NoServer)?;
-        let _streaming = self.claim_stream()?;
         // A binding says the follow ended when this returns: a fault that
         // unwound past here would end the thread silently, and a caller
         // waiting to be told would wait for good.
@@ -776,8 +885,9 @@ impl Core {
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
-    /// blocked, dead or refused without being sent, and for one refused
-    /// because what it waited for was withdrawn.
+    /// blocked, dead or refused without being sent, for one held behind
+    /// another write, and for one refused because what it waited for was
+    /// withdrawn.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -1835,17 +1945,27 @@ impl Core {
         self.http.as_deref().ok_or(CoreError::NoServer)
     }
 
-    fn claim_stream(&self) -> Result<StreamClaim<'_>> {
-        self.streaming
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| {
-                CoreError::Invalid(
-                    "this working copy is already hydrating, catching up or following; one \
-                     at a time moves its cursor"
-                        .into(),
-                )
-            })?;
+    fn claim_stream(&self, mover: Mover) -> Result<StreamClaim<'_>> {
+        self.try_claim_stream(mover).map_err(|_| one_at_a_time())
+    }
+
+    /// Refused with what holds the stream.
+    fn try_claim_stream(&self, mover: Mover) -> std::result::Result<StreamClaim<'_>, Mover> {
+        let mut streaming = streaming_of(&self.streaming);
+        if let Some(holder) = streaming.holder {
+            return Err(holder);
+        }
+        streaming.holder = Some(mover);
         Ok(StreamClaim(&self.streaming))
+    }
+
+    fn claim_follow(&self) -> Result<FollowClaim<'_>> {
+        let mut streaming = streaming_of(&self.streaming);
+        if streaming.following {
+            return Err(one_at_a_time());
+        }
+        streaming.following = true;
+        Ok(FollowClaim(&self.streaming))
     }
 
     pub(crate) fn cache(&self) -> Result<&blob::Cache> {
@@ -4531,7 +4651,8 @@ mod tests {
                 "catch_up_until",
                 reader
                     .catch_up_until(&std::sync::atomic::AtomicBool::new(false))
-                    .unwrap_err(),
+                    .unwrap_err()
+                    .error,
             ),
             (
                 "hydrate_until",
@@ -5075,7 +5196,7 @@ mod tests {
                         while !go.load(Ordering::Acquire) {
                             std::hint::spin_loop();
                         }
-                        if let Ok(claim) = core.claim_stream() {
+                        if let Ok(claim) = core.claim_stream(Mover::CatchUp) {
                             won.fetch_add(1, Ordering::SeqCst);
                             if holding.fetch_add(1, Ordering::SeqCst) > 0 {
                                 overlapped.store(true, Ordering::SeqCst);

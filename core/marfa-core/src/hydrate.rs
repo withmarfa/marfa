@@ -220,7 +220,14 @@ fn hydrate_inner(
             tx.commit()?;
         }
 
-        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle, stop)?;
+        let replay = crate::catch_up::replay_build(
+            core,
+            http,
+            &context,
+            core.catch_up_idle,
+            stop,
+            &mut false,
+        )?;
         let cursor = replay.cursor;
         let (items, edges) = {
             let mut conn = core.conn()?;

@@ -412,15 +412,12 @@ fn follow(
                 ended,
                 unreachable,
                 |change| {
-                    let _ = wakes.send(match change.event.as_str() {
-                        crate::SERVER_UNREACHABLE => {
+                    let _ = wakes.send(match &change.event {
+                        crate::ChangeEvent::ServerUnreachable(reason) => {
                             unreachable = true;
-                            Wake::Reach(Some(change.reason.as_ref().map_or_else(
-                                || "the event stream could not be opened".into(),
-                                ToString::to_string,
-                            )))
+                            Wake::Reach(Some(reason.to_string()))
                         }
-                        crate::SERVER_REACHABLE => {
+                        crate::ChangeEvent::ServerReachable => {
                             unreachable = false;
                             Wake::Reach(None)
                         }

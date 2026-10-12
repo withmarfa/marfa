@@ -1946,6 +1946,44 @@ If a held stream cannot be had for a reason that clears on its own, and its call
 
 **Tests:** waiting on #1890.
 
+### `device/follow-change-kinds`
+
+Where an app follows through a binding, a device MUST tell it `catalog.changed`, `server.unreachable` and `server.reachable` each as a change of its own kind, apart from the events the stream applied.
+
+**Reason:** an app that told them from events by name would take an event of that name for one of them, and would miss one renamed.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-waits-hydration`
+
+If a caller follows a working copy that reports its hydration `never` (`device/report-never`) or `in_progress` (`device/report-in-progress`), then a device MUST wait, sending nothing, until a hydration completes, the copy reports its hydration `expired` (`device/report-expired`), or the caller stops the follow.
+
+**Reason:** an app opens its follow when it starts, before it knows whether its copy was ever hydrated, and a refusal would have it catch an error for a normal state and start the follow again after the hydration.
+
+**Tests:** `device/catch-up.test.ts › waits for a first hydration rather than refusing a follow on a copy that has never had one, sending nothing`, `› waits for a hydration rather than refusing a follow on a copy whose hydration was interrupted, sending nothing`.
+
+### `device/follow-expired-refused`
+
+If a caller follows a working copy that reports its hydration `expired` (`device/report-expired`), then a device MUST end the follow `copy_expired` at once, sending nothing and leaving the copy as it was.
+
+**Reason:** an expired copy is current again only after a hydration its caller asks for (`device/expire-aged-cursor`), which a follow waiting without a word would never prompt.
+
+**Tests:** `device/catch-up.test.ts › ends a follow at once on a copy whose first hydration expired, leaving the copy as it was`.
+
+### `device/follow-expired-waiting`
+
+When the copy a follow waits on comes to report its hydration `expired` (`device/report-expired`), a device MUST end the follow `copy_expired` at once, sending nothing and leaving the copy as it was.
+
+**Reason:** the hydration the follow waited for ended in a state only another hydration, which its caller asks for, can mend (`device/follow-expired-refused`).
+
+**Tests:** waiting on #1890.
+
+### `device/follow-after-hydration`
+
+When a hydration completes while a follow waits for it, a device MUST open the follow's stream from the cursor the hydration stored.
+
+**Tests:** waiting on #1890.
+
 ### `device/event-id-number`
 
 If a catch-up's or a held stream's stream names an event id that is not a number, then a device MUST end it `decoding` and keep the cursor it had.
@@ -2207,6 +2245,20 @@ When a refresh changes either catalog, a device MUST move the catalog version it
 When a held stream reads a catalog that differs from the one the copy held, a device MUST tell its caller `catalog.changed`, naming no item and no edge, with the cursor the stream holds.
 
 **Tests:** `device/catalog.test.ts › tells a held stream's caller when it reads a changed catalog`.
+
+### `device/catch-up-catalog-told`
+
+When a catch-up ends on its live marker, a device MUST report whether it changed the catalog the copy holds.
+
+**Tests:** `device/catalog.test.ts › says in a catch-up's report whether it changed the catalog`.
+
+### `device/catch-up-failed-catalog-told`
+
+If a catch-up fails after it changed the catalog the copy holds, then a device MUST tell its caller with the failure that the catalog changed.
+
+**Reason:** the copy keeps the catalog a catch-up took whatever ends the catch-up, and a caller told only of the failure would go on showing rows by the types it held before.
+
+**Tests:** `device/catalog.test.ts › says a failed catch-up changed the catalog before it failed`.
 
 ## Certified read access
 
