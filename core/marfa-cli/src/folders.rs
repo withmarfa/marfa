@@ -46,6 +46,12 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
+    /// Read the server's latest reports from every sign-in and local copy.
+    /// Receipt ages describe reports; they do not establish current reachability.
+    Health {
+        /// The folder's `system.folder` id.
+        id: String,
+    },
     /// Let a folder's first sync go, or a paused large removal: its deletes
     /// are queued, and files whose items left elsewhere are taken away.
     Confirm {
@@ -188,6 +194,12 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Status { dir } => {
             let report = Folder::status_of(&dir)?;
             output::report(&report, json, || describe_status(&report))
+        }
+        FoldersCommand::Health { id } => {
+            let report = Remote::resolve(named)?.json(&crate::remote::request::Request::get(&[
+                "folders", &id, "status",
+            ]))?;
+            output::report(&report, json, || describe_health(&report))
         }
         FoldersCommand::Confirm { dir } => {
             let folder = Folder::open(&dir, None).map_err(held(&dir))?;
@@ -357,6 +369,60 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             json,
         ),
     }
+}
+
+fn describe_health(report: &serde_json::Value) -> String {
+    let mut lines = vec![format!(
+        "folder {}",
+        report["folder_id"].as_str().unwrap_or_default()
+    )];
+    let totals = &report["totals"];
+    let qualifier = if totals["saturated"].as_bool() == Some(true) {
+        "at least "
+    } else {
+        ""
+    };
+    lines.push(format!("current reports: {qualifier}{} file(s) waiting to upload; {qualifier}{} known file(s) pending or blocked on download; {qualifier}{} paused removal(s); {qualifier}{} copy/copies waiting for first sync",
+        totals["pending_uploads"], totals["pending_downloads"], totals["paused_removals"], totals["first_sync_waiting"]));
+    if let Some(sign_ins) = report["sign_ins"].as_array() {
+        for sign_in in sign_ins {
+            let identity = &sign_in["sign_in"];
+            let current = if sign_in["current"].as_bool() == Some(true) {
+                "current sign-in"
+            } else {
+                "ended sign-in; historical reports"
+            };
+            lines.push(format!(
+                "{} {} ({}): {current}",
+                identity["kind"].as_str().unwrap_or_default(),
+                identity["name"].as_str().unwrap_or_default(),
+                identity["id"].as_str().unwrap_or_default()
+            ));
+            if let Some(copies) = sign_in["copies"].as_array() {
+                for copy in copies {
+                    lines.push(format!(
+                        "  copy {}: received {} ({} second(s) ago); last full successful sync {}",
+                        copy["folder_store_id"].as_str().unwrap_or_default(),
+                        copy["received_at"].as_str().unwrap_or_default(),
+                        copy["age_seconds"],
+                        copy["last_success_at"].as_str().unwrap_or("never reported")
+                    ));
+                    lines.push(format!("    {} file(s) waiting to upload; {} known file(s) pending or blocked on download; {} paused removal(s); first sync waiting: {}",
+                        copy["pending_uploads"], copy["pending_downloads"], copy["paused_removals"], copy["first_sync_waiting"]));
+                    if let Some(problems) = copy["problems"].as_array() {
+                        for problem in problems {
+                            lines.push(format!(
+                                "    {}: {}",
+                                problem["code"].as_str().unwrap_or_default(),
+                                problem["count"]
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 fn send(
@@ -878,6 +944,11 @@ impl Conflicts {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_health_is_a_folder_command() {
+        use clap::Parser;
+        assert!(crate::Cli::try_parse_from(["marfa", "folders", "health", "folder"]).is_ok());
+    }
     use super::*;
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use std::collections::HashMap;

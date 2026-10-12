@@ -16,6 +16,7 @@ mod removal;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
 pub use removal::{Confirmed, Restored};
+mod health;
 pub mod registry;
 pub mod settings;
 mod settings_file;

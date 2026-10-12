@@ -517,7 +517,17 @@ impl Core {
         &self,
         stop: &AtomicBool,
         told_unreachable: bool,
+        on_change: impl FnMut(&Change),
+    ) -> Result<FollowReport> {
+        self.follow_observed(stop, told_unreachable, on_change, |_| {})
+    }
+
+    pub(crate) fn follow_observed(
+        &self,
+        stop: &AtomicBool,
+        told_unreachable: bool,
         mut on_change: impl FnMut(&Change),
+        mut on_live: impl FnMut(bool),
     ) -> Result<FollowReport> {
         self.lock.refuse_unless_writer()?;
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
@@ -526,7 +536,14 @@ impl Core {
         // unwound past here would end the thread silently, and a caller
         // waiting to be told would wait for good.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            catch_up::follow(self, http, stop, told_unreachable, &mut on_change)
+            catch_up::follow(
+                self,
+                http,
+                stop,
+                told_unreachable,
+                &mut on_change,
+                &mut on_live,
+            )
         }))
         .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
     }
@@ -4533,6 +4550,17 @@ mod tests {
                     .drain_until(&std::sync::atomic::AtomicBool::new(false))
                     .unwrap_err(),
             ),
+            (
+                "follow_observed",
+                reader
+                    .follow_observed(
+                        &std::sync::atomic::AtomicBool::new(true),
+                        false,
+                        |_| {},
+                        |_| {},
+                    )
+                    .unwrap_err(),
+            ),
             ("declare_types", reader.declare_types(&[]).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
@@ -4558,7 +4586,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            38,
+            39,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
