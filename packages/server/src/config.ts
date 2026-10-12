@@ -1329,7 +1329,7 @@ const settingsShape = {
     "The service name on exported telemetry.",
   ),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
-    "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and no telemetry code is loaded.",
+    "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
   ),
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl(
     "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",

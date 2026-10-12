@@ -105,7 +105,7 @@ A `degraded` instance still answers `200`, because it is still serving. A caller
 
 ## Sending telemetry to a collector
 
-One setting turns telemetry on: `OTEL_EXPORTER_OTLP_ENDPOINT`, the base URL of an OpenTelemetry (OTLP over HTTP) receiver. With it set, the server exports its traces to `v1/traces` and its logs to `v1/logs` under that URL. With it unset, the server exports nothing and loads none of the telemetry code. There is no second switch.
+One setting turns telemetry on: `OTEL_EXPORTER_OTLP_ENDPOINT`, the base URL of an OpenTelemetry (OTLP over HTTP) receiver. With it set, the server exports its traces to `v1/traces` and its logs to `v1/logs` under that URL. With it unset, the server exports nothing and does not load the telemetry SDK. There is no second switch.
 
 | Name                                                                     | What it does                                                                                                                                            |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
