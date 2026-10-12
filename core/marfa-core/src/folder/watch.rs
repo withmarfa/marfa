@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -104,6 +104,26 @@ impl<E> From<CoreError> for WatchError<E> {
     }
 }
 
+#[derive(Default)]
+struct FollowHealth {
+    generation: u64,
+    consumed: u64,
+    live: bool,
+}
+
+impl FollowHealth {
+    fn observe(&mut self, live: bool) {
+        self.live = live;
+        if live {
+            self.generation = self.generation.saturating_add(1);
+        }
+    }
+
+    fn available(&self) -> bool {
+        self.live && self.generation > self.consumed
+    }
+}
+
 enum Wake {
     File(notify::Result<notify::Event>),
     Server,
@@ -130,15 +150,20 @@ impl Folder {
         // hydration it runs end with them.
         let ended = AtomicBool::new(false);
         let (sender, wakes) = mpsc::channel::<Wake>();
+        let health = Mutex::new(FollowHealth::default());
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
-            let follower = scope.spawn(|| follow(self, &ended, server_wakes));
+            let follower = scope.spawn(|| follow(self, &ended, server_wakes, &health));
+            let reporter = scope.spawn(|| self.health_follow(&ended));
             let watched = {
                 // A guard, so a pass or a `tell` that panics still ends the
                 // follow: the scope waits for it before the panic goes on.
                 let _ending = Raise(&ended);
-                self.watch_files(stop, sender, &wakes, &mut tell)
+                self.watch_files(stop, sender, &wakes, &mut tell, &health)
             };
+            reporter.join().map_err(|_| {
+                WatchError::Unwatchable("folder health reporting ended in a fault".into())
+            })?;
             let followed = follower.join().map_err(|_| {
                 WatchError::Unwatchable(
                     "the follow of the server's changes ended in a fault".into(),
@@ -154,6 +179,7 @@ impl Folder {
         sender: mpsc::Sender<Wake>,
         events: &mpsc::Receiver<Wake>,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
+        health: &Mutex<FollowHealth>,
     ) -> Result<(), WatchError<E>> {
         let absolute = std::path::absolute(&self.root)
             .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
@@ -218,11 +244,16 @@ impl Folder {
             if !gate.due(Instant::now()) {
                 continue;
             }
-            let full = full_due(last_full, Instant::now());
+            let full = full_due(last_full, Instant::now())
+                || health.lock().expect("follow health lock").available();
             if full {
                 last_full = Some(Instant::now());
             }
-            match self.pass(full, &mut telling, tell) {
+            let passed = self.pass(full, &mut telling, tell, health);
+            if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
+                self.health_observe(false, full, None, Some(error), false);
+            }
+            match passed {
                 Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
                 // The follow kept changing the copy under the pull; the next
                 // pass reads it again.
@@ -246,17 +277,20 @@ impl Folder {
         full: bool,
         telling: &mut Telling,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
+        health: &Mutex<FollowHealth>,
     ) -> Result<(), WatchError<E>> {
         let settings = self.send_settings_edit()?;
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
         if scan.root_gone.is_some() {
+            self.health_observe(false, full, None, None, false);
             if let Some(event) = telling.waiting(settings, scan) {
                 tell(event).map_err(WatchError::Told)?;
             }
             return Ok(());
         }
+        let generation = health.lock().expect("follow health lock").generation;
         let drain = self.drain()?;
         let reached = match &drain.report.unavailable {
             Some(why) => telling.reach(Some(why.clone())),
@@ -267,6 +301,42 @@ impl Folder {
             tell(event).map_err(WatchError::Told)?;
         }
         let pull = self.pull()?;
+        let problem = drain
+            .report
+            .unavailable
+            .as_ref()
+            .map(|_| CoreError::Network("unavailable".into()))
+            .or_else(|| credential_refused(&drain))
+            .or_else(|| {
+                telling
+                    .unreachable
+                    .then(|| CoreError::Network("unavailable".into()))
+            });
+        let mut progress = health.lock().expect("follow health lock");
+        let complete = full
+            && progress.available()
+            && progress.generation == generation
+            && problem.is_none()
+            && drain.report.unavailable.is_none()
+            && drain.report.stopped.is_none()
+            && drain.report.undelivered == 0
+            && drain.report.unsent == 0
+            && drain.report.held == 0
+            && drain.report.unmade == 0;
+        self.health_observe(
+            complete,
+            full,
+            Some(&pull),
+            problem.as_ref(),
+            settings.flagged.is_some()
+                || settings.unwritten.is_some()
+                || pull.settings.flagged.is_some()
+                || pull.settings.unwritten.is_some(),
+        );
+        if complete {
+            progress.consumed = generation;
+        }
+        drop(progress);
         let refused = credential_refused(&drain);
         if let Some(event) = telling.passed(full, settings, scan, drain, pull) {
             tell(event).map_err(WatchError::Told)?;
@@ -303,7 +373,12 @@ impl Drop for Raise<'_> {
     }
 }
 
-fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CoreError> {
+fn follow(
+    folder: &Folder,
+    ended: &AtomicBool,
+    wakes: mpsc::Sender<Wake>,
+    health: &Mutex<FollowHealth>,
+) -> Result<(), CoreError> {
     let mut retry = RETRY_FIRST;
     // Told once for each run of failures, as the reachability is.
     let mut said = false;
@@ -317,22 +392,29 @@ fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Res
             if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
             }
-            folder.core().follow(ended, unreachable, |change| {
-                let _ = wakes.send(match change.event.as_str() {
-                    crate::SERVER_UNREACHABLE => {
-                        unreachable = true;
-                        Wake::Reach(Some(change.reason.as_ref().map_or_else(
-                            || "the event stream could not be opened".into(),
-                            ToString::to_string,
-                        )))
-                    }
-                    crate::SERVER_REACHABLE => {
-                        unreachable = false;
-                        Wake::Reach(None)
-                    }
-                    _ => Wake::Server,
-                });
-            })
+            folder.core().follow_observed(
+                ended,
+                unreachable,
+                |change| {
+                    let _ = wakes.send(match change.event.as_str() {
+                        crate::SERVER_UNREACHABLE => {
+                            unreachable = true;
+                            Wake::Reach(Some(change.reason.as_ref().map_or_else(
+                                || "the event stream could not be opened".into(),
+                                ToString::to_string,
+                            )))
+                        }
+                        crate::SERVER_REACHABLE => {
+                            unreachable = false;
+                            Wake::Reach(None)
+                        }
+                        _ => Wake::Server,
+                    });
+                },
+                |live| {
+                    health.lock().expect("follow health lock").observe(live);
+                },
+            )
         });
         match followed {
             Ok(_) => break,
@@ -645,6 +727,26 @@ fn hydrated_by_the_follow(error: &CoreError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn health_markers_are_consumed_once_and_invalidated_by_lost_or_incomplete_follow() {
+        let mut health = super::FollowHealth::default();
+        assert!(!health.available());
+        health.observe(true);
+        assert!(health.available());
+        health.consumed = health.generation;
+        assert!(
+            !health.available(),
+            "quiet refresh cannot claim another success"
+        );
+        health.observe(true);
+        assert!(health.available());
+        health.observe(false);
+        assert!(
+            !health.available(),
+            "a lost or incomplete follow cannot authorise success"
+        );
+    }
+
     use super::*;
 
     const SECOND: Duration = Duration::from_secs(1);
