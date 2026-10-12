@@ -690,7 +690,7 @@ Where the `enforcement.source_filter` that holds for the reading key, its own ov
 
 The server MUST NOT apply `enforcement.source_filter` to a read by id.
 
-**Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`.
+**Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`, `compliance/read-views.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ## Shipped types
 

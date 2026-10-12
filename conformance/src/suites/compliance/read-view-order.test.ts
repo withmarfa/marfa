@@ -333,32 +333,95 @@ describe("the read view header on a write", () => {
     );
     await expectRefused(reused, 422, "idempotency_key_reused");
   });
+});
 
-  it("answers POST /items/bulk-get as it does without the header, since it is not a conditional read", async () => {
-    const rows = [await seed("bulk-get one"), await seed("bulk-get two")];
-    const ids = rows.map((row) => row.id);
-    const read = (proof?: string) =>
+describe("the order POST /items/bulk-get asks its refusals in", () => {
+  it("answers 401, then 400 to a malformed read view, then 409 to a stale one before it reads the body or asks whether the key reaches any type", async () => {
+    const row = await seed("bulk-get order");
+    const proof = await bootstrap();
+    const bulkGet = (
+      body: unknown,
+      view?: string,
+      key?: string | null,
+    ): Promise<Response> =>
       request("/items/bulk-get", {
         method: "POST",
-        ...(proof === undefined ? {} : { proof }),
-        body: { ids, include: ["metadata"] },
+        body,
+        ...(view === undefined ? {} : { proof: view }),
+        ...(key === undefined ? {} : { key }),
       });
 
-    const plain = await read();
-    expect(plain.status).toBe(200);
-    const expected = (await plain.json()) as {
-      items: Array<{ id: string }>;
-      metadata: unknown[];
-    };
-    expect(expected.items.map((item) => item.id)).toEqual(ids);
-    expect(expected.metadata).toHaveLength(2);
+    // The witness: the door is a conditional read, so the matching view is
+    // certified on it.
+    const witness = await bulkGet({ ids: [row.id] }, proof.read_view);
+    expect(witness.status).toBe(200);
+    expect(witness.headers.get("X-Marfa-Read-View")).toBe(proof.read_view);
+    await witness.body?.cancel();
 
-    for (const proof of [STALE, "not-a-read-view"]) {
-      const answer = await read(proof);
-      expect(answer.status, proof).toBe(200);
-      expect(answer.headers.get("X-Marfa-Read-View"), proof).toBeNull();
-      expect(await answer.json(), proof).toEqual(expected);
+    for (const key of [null, "invalid"]) {
+      for (const view of [STALE, "not-a-read-view"]) {
+        const anonymous = await bulkGet({ ids: "not-a-list" }, view, key);
+        expect(anonymous.status, `${String(key)} ${view}`).toBe(401);
+        expect(anonymous.headers.get("X-Marfa-Read-View")).toBeNull();
+        await anonymous.body?.cancel();
+      }
     }
+
+    for (const [name, malformed] of [
+      ["uppercase", proof.read_view.toUpperCase()],
+      ["short", proof.read_view.slice(1)],
+      ["not hexadecimal", `g${proof.read_view.slice(1)}`],
+      ["empty", ""],
+      ["listed twice", `${proof.read_view}, ${proof.read_view}`],
+    ] as const) {
+      await expectRefused(
+        await bulkGet({ ids: [row.id] }, malformed),
+        400,
+        "validation_error",
+        name,
+      );
+    }
+
+    const bodies: Array<[string, unknown, string]> = [
+      ["ids not a list", { ids: "not-a-list" }, "validation_error"],
+      ["no ids", {}, "missing_required_field"],
+      [
+        "over the cap",
+        { ids: Array.from({ length: 101 }, () => uuidv7()) },
+        "validation_error",
+      ],
+      ["a malformed id", { ids: ["not-an-id"] }, "invalid_id"],
+    ];
+    for (const [name, body, code] of bodies) {
+      // The witness: under the matching view the body is refused, and the
+      // refusal is not certified.
+      await expectRefused(
+        await bulkGet(body, proof.read_view),
+        400,
+        code,
+        name,
+      );
+      await changed(await bulkGet(body, STALE), name);
+    }
+
+    const capped = await bulkGet(
+      { ids: Array.from({ length: 101 }, () => uuidv7()) },
+      proof.read_view,
+    );
+    expect(capped.status).toBe(400);
+    expect(
+      ((await capped.json()) as { error: { details?: { cap?: number } } }).error
+        .details?.cap,
+    ).toBe(100);
+
+    // The witness: without the header, the key that reaches no type is
+    // refused 403.
+    await expectRefused(
+      await bulkGet({ ids: [row.id] }, undefined, nowhere),
+      403,
+      "type_not_permitted",
+    );
+    await changed(await bulkGet({ ids: [row.id] }, STALE, nowhere));
   });
 });
 

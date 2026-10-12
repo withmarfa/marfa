@@ -30,6 +30,7 @@ import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import { ItemSchema, MetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
+import { itemListed } from "../storage/read-view.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,6 +80,12 @@ const BulkGetResponseSchema = z.object({
     .describe(
       "The metadata of each item returned, in the same order. Present only when `include` has `metadata`.",
     ),
+  listed: z
+    .array(z.boolean())
+    .optional()
+    .describe(
+      "For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Read-View`.",
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -110,7 +117,7 @@ const bulkGetRoute = createRoute({
         "application/json": { schema: BulkGetResponseSchema },
       },
       description:
-        "Returns the items you can read, and `metadata` if you asked for it.",
+        "Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Read-View`.",
     },
     400: {
       content: {
@@ -186,9 +193,19 @@ export function bulkGetRoutes(storage: Storage) {
     const includeExtensions = includeSet.has("extensions");
     const includeSystem = includeSet.has("system");
 
+    const readAuthority = c.get("readViewAuthority");
+    const listedOf = (rows: Item[]) =>
+      readAuthority && {
+        listed: rows.map((item) => itemListed(readAuthority, item)),
+      };
+
     if (ids.length === 0) {
       return c.json(
-        includeMetadata ? { items: [], metadata: [] } : { items: [] },
+        {
+          items: [],
+          ...(includeMetadata && { metadata: [] }),
+          ...listedOf([]),
+        },
         200,
       );
     }
@@ -246,10 +263,10 @@ export function bulkGetRoutes(storage: Storage) {
           apiKey,
         ),
       );
-      return c.json({ items: decorated, metadata }, 200);
+      return c.json({ items: decorated, metadata, ...listedOf(visible) }, 200);
     }
 
-    return c.json({ items: decorated }, 200);
+    return c.json({ items: decorated, ...listedOf(visible) }, 200);
   });
 
   return router;

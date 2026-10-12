@@ -20,6 +20,7 @@ export const CONDITIONAL_READ_OPERATIONS = new Set([
   "listTypes",
   "listEdgeTypes",
   "getCurrentKey",
+  "bulkGetItems",
 ]);
 const ATTRIBUTED_REFUSALS = new Set<string>([
   ErrorCode.ITEM_NOT_FOUND,
@@ -39,10 +40,17 @@ export function requestReadView(c: Context<AppEnv>): string | undefined {
   return raw;
 }
 
-/** Installed on declared doors ahead of their standing rules and validators. */
+/**
+ * Installed on declared doors ahead of their standing rules and validators.
+ * `POST /items/bulk-get` is the one conditional read that is not a `GET`; a
+ * `HEAD` stays an ordinary read.
+ */
 export const conditionalReadBoundary = createMiddleware<AppEnv>(
   async (c, next) => {
-    if (c.req.method !== "GET" || c.req.header(READ_VIEW_HEADER) === undefined)
+    if (
+      (c.req.method !== "GET" && c.req.method !== "POST") ||
+      c.req.header(READ_VIEW_HEADER) === undefined
+    )
       return next();
     return c.get("copyReadBoundary")(c, next);
   },

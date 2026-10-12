@@ -224,6 +224,7 @@ describe("the published spec declares the headers the server sets", () => {
       "GET /types",
       "GET /edge-types",
       "GET /keys/current",
+      "POST /items/bulk-get",
     ]);
     const declared = new Set<string>();
     for (const [key, responses] of operations) {
@@ -242,8 +243,8 @@ describe("the published spec declares the headers the server sets", () => {
     expect([...declared].sort()).toEqual([...reads].sort());
     const paths = spec.paths as Record<string, Record<string, Operation>>;
     for (const key of [...reads, "GET /events"]) {
-      const path = key.slice(4);
-      const operation = paths[path]!.get!;
+      const [method, path] = key.split(" ") as [string, string];
+      const operation = paths[path]![method.toLowerCase()]!;
       const parameters = operation.parameters as { name: string; in: string }[];
       expect(
         parameters.filter(
