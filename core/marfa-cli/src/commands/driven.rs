@@ -178,11 +178,10 @@ fn skipped(words: &[String]) -> bool {
         || first == Some("operations")
         // Reads the docs site, never a server.
         || first == Some("docs")
-        // A folder on this machine is listed in a registry of the person's own;
-        // only the three that write a folder's settings to the server are
-        // requests.
+        // Remote settings and health commands need no local folder. Other
+        // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")
-            && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke")))
+            && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke" | "health")))
         // A browser and the keychain.
         || matches!(first, Some("login" | "logout"))
         // Private transport is exercised independently of this HTTP walk.
@@ -641,6 +640,9 @@ impl Document {
 /// a command whose first request is another door's, and a command not driven,
 /// do not reach theirs.
 const MISSED: &[&str] = &[
+    // `folders push`: needs a bound working copy, exercised by the
+    // `device/folder-health.test.ts` fixtures.
+    "reportFolderStatus",
     // `login`: found by discovery and sent in a browser flow.
     "registerOAuthClient",
     // `setup claim`: secret input is driven by the child-process fixture above.
