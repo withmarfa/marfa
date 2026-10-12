@@ -58,6 +58,9 @@ writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential
 report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text
 count.
 
+A device catch-up that fails says whether it had changed the catalog the copy holds, which the copy
+keeps; with --json, as "catalog_changed" beside "exit".
+
 With --json a refusal is one JSON object on stderr:
   {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 where error.code is one of: not_found, unauthorized, forbidden, validation, unknown_type,
@@ -6745,7 +6748,11 @@ Output:
 
 ```text
 Hold the event stream open and apply each event as it arrives, printing a line for each that changed
-the copy
+the copy.
+
+On a copy no hydration has completed, it waits for one and asks the server nothing, as an app's
+follow does. This process holds the store until it ends, so no other can hydrate it meanwhile:
+hydrate first.
 
 Usage: marfa device follow [OPTIONS]
 
@@ -6764,7 +6771,7 @@ Options:
           where no store has been made
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 
 Server:
       --url <URL>

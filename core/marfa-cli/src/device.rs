@@ -63,6 +63,10 @@ pub enum DeviceCommand {
     CatchUp,
     /// Hold the event stream open and apply each event as it arrives,
     /// printing a line for each that changed the copy.
+    ///
+    /// On a copy no hydration has completed, it waits for one and asks the
+    /// server nothing, as an app's follow does. This process holds the store
+    /// until it ends, so no other can hydrate it meanwhile: hydrate first.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -757,6 +761,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             stop_on_interrupt();
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
+            if !json
+                && matches!(
+                    core.status()?.hydration,
+                    marfa_core::Hydration::Never | marfa_core::Hydration::InProgress
+                )
+            {
+                eprintln!(
+                    "no hydration of this copy has completed, so the follow waits for one; this process holds the store until it ends, so run `device hydrate` first"
+                );
+            }
             let mut unwritten: Option<CliError> = None;
             let report = core.follow(stop, false, |change| {
                 if unwritten.is_some() {
@@ -794,9 +808,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                     (None, _) => String::new(),
                 };
+                let cursor = if report.cursor.is_empty() {
+                    "no cursor, as no hydration completed".to_string()
+                } else {
+                    format!("cursor {}", report.cursor)
+                };
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}; {} reconnect(s){failed}",
-                    report.applied, report.skipped, report.cursor, report.reconnects
+                    "applied {} event(s), skipped {}; {cursor}; {} reconnect(s){failed}",
+                    report.applied, report.skipped, report.reconnects
                 )
             })
         }
@@ -839,8 +858,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}",
-                    report.applied, report.skipped, report.cursor,
+                    "applied {} event(s), skipped {}; cursor {}{}",
+                    report.applied,
+                    report.skipped,
+                    report.cursor,
+                    if report.catalog_changed {
+                        "; the catalog changed"
+                    } else {
+                        ""
+                    },
                 )
             })
         }

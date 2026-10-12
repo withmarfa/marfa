@@ -398,6 +398,29 @@ pub struct CatchUpReport {
     pub skipped: u64,
     pub cursor: String,
     pub reached_head: bool,
+    /// The catch-up replaced the catalog the copy holds with one that
+    /// differs from it.
+    pub catalog_changed: bool,
+}
+
+/// A catch-up that failed. A catch-up commits the catalog it reads before it
+/// applies an event, and keeps it when it then fails.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("{error}")]
+pub struct CatchUpFailed {
+    pub error: CoreError,
+    /// The catch-up had replaced the catalog the copy holds with one that
+    /// differs from it before it failed.
+    pub catalog_changed: bool,
+}
+
+impl From<CoreError> for CatchUpFailed {
+    fn from(error: CoreError) -> Self {
+        CatchUpFailed {
+            error,
+            catalog_changed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

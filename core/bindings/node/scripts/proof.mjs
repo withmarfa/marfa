@@ -195,7 +195,7 @@ if (phase === "hydrate") {
   );
   const made = () =>
     changes.find((change) => {
-      const item = change.itemId ? core.get(change.itemId) : null;
+      const item = change.kind === "applied" && change.itemId ? core.get(change.itemId) : null;
       return item?.properties.title === "Made by the binary";
     });
   const deadline = Date.now() + 30_000;
@@ -204,8 +204,9 @@ if (phase === "hydrate") {
   }
   subscription.stop();
   const change = made();
-  console.log(`followed: ${change ? `${change.event} ${change.itemId} at ${change.cursor}` : "nothing"}`);
-  expect(change?.event === "item.created", "the note the binary made did not arrive through follow");
+  const applied = change?.kind === "applied" ? change : undefined;
+  console.log(`followed: ${applied ? `${applied.event} ${applied.itemId} at ${applied.cursor}` : "nothing"}`);
+  expect(applied?.event === "item.created", "the note the binary made did not arrive through follow");
   expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
 } else if (phase === "thumbnail") {
   // "Held before" was written before binding-proof.sh made the property a

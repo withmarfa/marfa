@@ -183,6 +183,9 @@ pub struct CatchUpReport {
     pub skipped: i64,
     pub cursor: String,
     pub reached_head: bool,
+    /// The catch-up changed the catalog the copy holds. A catch-up that
+    /// fails says the same on its error, as `catalogChanged`.
+    pub catalog_changed: bool,
 }
 
 #[napi(object)]
@@ -925,6 +928,10 @@ fn failure(env: Env, error: marfa_core::CoreError) -> Error {
 
 /// The JS error `failure` throws, for a callback that is handed one.
 fn error_value<'env>(env: &'env Env, error: &marfa_core::CoreError) -> Result<Unknown<'env>> {
+    error_object(env, error)?.into_unknown(env)
+}
+
+fn error_object<'env>(env: &'env Env, error: &marfa_core::CoreError) -> Result<Object<'env>> {
     let (message, fields) = describe(error);
     let mut thrown = env.create_error(Error::new(napi::Status::GenericFailure, message))?;
     // The core's name replaces napi's own status in `code`.
@@ -932,7 +939,7 @@ fn error_value<'env>(env: &'env Env, error: &marfa_core::CoreError) -> Result<Un
     for (name, value) in fields {
         thrown.set_named_property(name, value)?;
     }
-    thrown.into_unknown(env)
+    Ok(thrown)
 }
 
 /// In `compute`, on a thread that cannot make a JS value: the core's error is
@@ -1105,20 +1112,48 @@ pub struct Thumbnail {
     pub bytes: Buffer,
 }
 
-/// What a held stream changed in the copy: an event it applied, named by the
-/// event's type with the item or edge it was about, or `catalog.changed`,
-/// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. Or what became of the server: `server.unreachable`, with
-/// `reason`, once when a stream cannot be had, and `server.reachable` once
-/// when one is had again, which is when to drain what waited. `cursor` is
-/// the cursor held after it.
-#[napi(object)]
-pub struct Change {
-    pub event: String,
-    pub item_id: Option<String>,
-    pub edge_id: Option<String>,
-    pub cursor: String,
-    pub reason: Option<String>,
+/// What a held stream changed in the copy, or what became of the server,
+/// told apart by `kind`. `cursor` is the cursor held after it.
+#[napi(discriminant = "kind", discriminant_case = "camelCase")]
+pub enum Change {
+    /// An event the stream applied, by the event's type, with the item or
+    /// edge it was about.
+    Applied {
+        event: String,
+        item_id: Option<String>,
+        edge_id: Option<String>,
+        cursor: String,
+    },
+    /// A stream it opened read a catalog that differs from the one held.
+    CatalogChanged { cursor: String },
+    /// No stream can be had, for `reason`; told once until one is had again.
+    ServerUnreachable { reason: String, cursor: String },
+    /// A stream is had again, which is when to drain what waited.
+    ServerReachable { cursor: String },
+}
+
+impl From<&marfa_core::Change> for Change {
+    fn from(change: &marfa_core::Change) -> Self {
+        let cursor = change.cursor.clone();
+        match &change.event {
+            marfa_core::ChangeEvent::Applied(event) => Change::Applied {
+                event: event.clone(),
+                item_id: change.item_id.clone(),
+                edge_id: change.edge_id.clone(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::CatalogChanged => Change::CatalogChanged { cursor },
+            // The core gives every `ServerUnreachable` its reason.
+            marfa_core::ChangeEvent::ServerUnreachable => Change::ServerUnreachable {
+                reason: change
+                    .reason
+                    .as_ref()
+                    .map_or_else(String::new, ToString::to_string),
+                cursor,
+            },
+            marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
+        }
+    }
 }
 
 enum Told {
@@ -1275,6 +1310,7 @@ pub struct CatchUp {
     core: Arc<marfa_core::Core>,
     stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
+    catalog_changed: bool,
 }
 
 #[napi]
@@ -1283,13 +1319,19 @@ impl Task for CatchUp {
     type JsValue = CatchUpReport;
 
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
-        Err(rethrown(env, self.failed.take(), error))
+        let Some(failed) = self.failed.take() else {
+            return Err(error);
+        };
+        let mut thrown = error_object(&env, &failed)?;
+        thrown.set_named_property("catalogChanged", self.catalog_changed)?;
+        Err(Error::from(thrown.into_unknown(&env)?))
     }
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core
-            .catch_up_until(&self.stop)
-            .map_err(|error| record(&mut self.failed, error))
+        self.core.catch_up_until(&self.stop).map_err(|failed| {
+            self.catalog_changed = failed.catalog_changed;
+            record(&mut self.failed, failed.error)
+        })
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
@@ -1298,6 +1340,7 @@ impl Task for CatchUp {
             skipped: count(report.skipped),
             cursor: report.cursor,
             reached_head: report.reached_head,
+            catalog_changed: report.catalog_changed,
         })
     }
 }
@@ -1526,13 +1569,7 @@ impl MarfaCore {
         std::thread::spawn(move || {
             let result = core.follow(&flag, false, |change| {
                 tell.call(
-                    Told::Change(Change {
-                        event: change.event.clone(),
-                        item_id: change.item_id.clone(),
-                        edge_id: change.edge_id.clone(),
-                        cursor: change.cursor.clone(),
-                        reason: change.reason.as_ref().map(ToString::to_string),
-                    }),
+                    Told::Change(change.into()),
                     ThreadsafeFunctionCallMode::NonBlocking,
                 );
             });
@@ -1630,6 +1667,7 @@ impl MarfaCore {
         AsyncTask::new(CatchUp {
             core: Arc::clone(&self.inner),
             failed: None,
+            catalog_changed: false,
             stop: flag_of(stop),
         })
     }

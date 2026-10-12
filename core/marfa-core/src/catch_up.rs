@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt;
 use std::io::{self, BufReader};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,23 +113,59 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
-/// What a held stream changed in the copy: an event it applied, named by the
-/// event's type with the item or edge it was about, or `catalog.changed`,
-/// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. Or what became of the server: `server.unreachable`, with
-/// why, once when a stream cannot be had, and `server.reachable` once when
-/// one is had again. `cursor` is the cursor held after it.
+/// What a held stream changed in the copy: an event it applied, with the
+/// item or edge it was about, or a catalog that differs from the one held,
+/// naming neither. Or what became of the server: unreachable, with why, once
+/// when a stream cannot be had, and reachable once when one is had again.
+/// `cursor` is the cursor held after it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
-    pub event: String,
+    pub event: ChangeEvent,
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
-    /// Why the server cannot be reached, on `server.unreachable` alone:
-    /// the failure a stream could not be had for, written out as its
-    /// sentence.
+    /// Why the server cannot be reached, on `ServerUnreachable` alone: the
+    /// failure a stream could not be had for, written out as its sentence.
     #[serde(serialize_with = "sentence")]
     pub reason: Option<CoreError>,
+}
+
+/// What a `Change` tells. Written as text by its name: the applied event's
+/// type, or `catalog.changed`, `server.unreachable` or `server.reachable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChangeEvent {
+    /// An event the stream applied, by the event's type.
+    Applied(String),
+    /// A stream it opened read a catalog that differs from the one held.
+    CatalogChanged,
+    ServerUnreachable,
+    ServerReachable,
+}
+
+impl ChangeEvent {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ChangeEvent::Applied(event) => event,
+            ChangeEvent::CatalogChanged => CATALOG_CHANGED,
+            ChangeEvent::ServerUnreachable => SERVER_UNREACHABLE,
+            ChangeEvent::ServerReachable => SERVER_REACHABLE,
+        }
+    }
+}
+
+impl fmt::Display for ChangeEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for ChangeEvent {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
 fn sentence<S: serde::Serializer>(
@@ -141,6 +178,7 @@ fn sentence<S: serde::Serializer>(
     }
 }
 
+const CATALOG_CHANGED: &str = "catalog.changed";
 pub const SERVER_UNREACHABLE: &str = "server.unreachable";
 pub const SERVER_REACHABLE: &str = "server.reachable";
 
@@ -148,6 +186,7 @@ pub const SERVER_REACHABLE: &str = "server.reachable";
 pub struct FollowReport {
     pub applied: u64,
     pub skipped: u64,
+    /// Empty where the follow was stopped before the copy held a cursor.
     pub cursor: String,
     /// Streams asked for after the first, for any reason.
     pub reconnects: u64,
@@ -199,17 +238,22 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 }
 
 /// Written only where it differs from the one held, so a reader told of every
-/// save is not told of this. Says whether the catalog version moved.
-fn adopt(core: &Core, context: &Context, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
+/// save is not told of this. `changed` is set once a changed catalog is
+/// committed, before it is read back, so a caller learns of it even where
+/// the read fails.
+fn adopt(
+    core: &Core,
+    context: &Context,
+    catalog: &WireCatalog,
+    changed: &mut bool,
+) -> Result<Catalog> {
     let conn = core.conn()?;
     context.same_copy(&conn)?;
-    let moved = store::replace_catalog(&conn, catalog)?;
-    Ok((Catalog::load(&conn)?, moved))
+    if store::replace_catalog(&conn, catalog)? {
+        *changed = true;
+    }
+    Catalog::load(&conn)
 }
-
-/// The event a held stream tells its caller of when the catalog it reads
-/// differs from the one the copy held.
-const CATALOG_CHANGED: &str = "catalog.changed";
 
 /// The reading thread outlives a caller that lets the frames go: it learns
 /// they are unwanted only when it next has a frame to hand on, so it keeps
@@ -280,7 +324,7 @@ fn take(
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
     tx.commit()?;
     Ok(applied.then(|| Change {
-        event: kind.to_string(),
+        event: ChangeEvent::Applied(kind.to_string()),
         item_id: payload.item.as_ref().map(|item| item.id.clone()),
         edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
         cursor: id.to_string(),
@@ -343,17 +387,20 @@ fn next_frame<T>(
     }
 }
 
+/// `catalog_changed` is set on success and on failure alike: the catalog a
+/// catch-up commits stays committed whatever ends it.
 pub(crate) fn catch_up(
     core: &Core,
     http: &Http,
     idle: Duration,
     stop: &AtomicBool,
+    catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
     refuse_if_stopped(stop)?;
     start(core)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);
-    let result = replay_build(core, &scoped, &context, idle, stop)
+    let result = replay_build(core, &scoped, &context, idle, stop, catalog_changed)
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
     unless_stopped(result, stop)
 }
@@ -364,11 +411,12 @@ pub(crate) fn replay_build(
     context: &Context,
     idle: Duration,
     stop: &AtomicBool,
+    catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
     let catalog = read_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
-    let (mut catalog, _) = adopt(core, context, &catalog)?;
+    let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     refuse_if_stopped(stop)?;
     // So a type the server will not describe costs one read of the catalog
@@ -380,6 +428,7 @@ pub(crate) fn replay_build(
         skipped: 0,
         cursor: cursor.clone(),
         reached_head: false,
+        catalog_changed: false,
     };
     let mut head: Option<u64> = None;
     let mut greatest = read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
@@ -471,7 +520,7 @@ pub(crate) fn replay_build(
                             refreshed.insert(named);
                             let refreshed_catalog = http.catalog()?;
                             refuse_if_stopped(stop)?;
-                            catalog = adopt(core, context, &refreshed_catalog)?.0;
+                            catalog = adopt(core, context, &refreshed_catalog, catalog_changed)?;
                         }
                         if take(core, context, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
@@ -489,6 +538,7 @@ pub(crate) fn replay_build(
             reason: "replay_failed".into(),
         });
     }
+    report.catalog_changed = *catalog_changed;
     Ok(report)
 }
 
@@ -683,7 +733,7 @@ fn follow_paced(
                     if reachable != Some(false) {
                         reachable = Some(false);
                         on_change(&Change {
-                            event: SERVER_UNREACHABLE.into(),
+                            event: ChangeEvent::ServerUnreachable,
                             item_id: None,
                             edge_id: None,
                             cursor: report.cursor.clone(),
@@ -699,7 +749,7 @@ fn follow_paced(
             same_instance(core, &instance, context.generation)?;
             if reachable == Some(false) {
                 on_change(&Change {
-                    event: SERVER_REACHABLE.into(),
+                    event: ChangeEvent::ServerReachable,
                     item_id: None,
                     edge_id: None,
                     cursor: report.cursor.clone(),
@@ -707,16 +757,18 @@ fn follow_paced(
                 });
             }
             reachable = Some(true);
-            let (catalog, moved) = adopt(core, &context, &fetched)?;
+            let mut moved = false;
+            let catalog = adopt(core, &context, &fetched, &mut moved);
             if moved {
                 on_change(&Change {
-                    event: CATALOG_CHANGED.into(),
+                    event: ChangeEvent::CatalogChanged,
                     item_id: None,
                     edge_id: None,
                     cursor: report.cursor.clone(),
                     reason: None,
                 });
             }
+            let catalog = catalog?;
             let opened = Instant::now();
             let ended = read_stream(
                 core,
@@ -1049,8 +1101,8 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
-    use crate::Server;
     use crate::scripted::{Answer, Scripted, Then, connected, event, refusal};
+    use crate::{CatchUpFailed, Server};
 
     fn types(entries: &[(&str, Option<&str>)]) -> Answer {
         crate::scripted::certified(crate::scripted::types(entries))
@@ -1238,10 +1290,10 @@ mod tests {
         };
         // The witness: a follow told nothing says nothing of a server it has
         // at once.
-        assert_eq!(events(false), Vec::<String>::new());
+        assert_eq!(events(false), Vec::<ChangeEvent>::new());
         assert_eq!(
             events(true),
-            [SERVER_REACHABLE],
+            [ChangeEvent::ServerReachable],
             "a follow started after the server was told unreachable did not say it came back, once"
         );
     }
@@ -1669,8 +1721,8 @@ mod tests {
         run.stop();
         run.ended().unwrap();
         assert_eq!(
-            (told.event.as_str(), told.item_id, told.edge_id),
-            (CATALOG_CHANGED, None, None),
+            (told.event, told.item_id, told.edge_id),
+            (ChangeEvent::CatalogChanged, None, None),
             "the second stream read a changed catalog and its caller was not told"
         );
         assert_eq!(
@@ -1781,8 +1833,12 @@ mod tests {
         run.stop();
         run.ended().unwrap();
         assert_eq!(
-            (change.event.as_str(), change.item_id, change.edge_id),
-            ("edge.created", None, Some("e1".to_string()))
+            (change.event, change.item_id, change.edge_id),
+            (
+                ChangeEvent::Applied("edge.created".into()),
+                None,
+                Some("e1".to_string())
+            )
         );
     }
 
@@ -2016,9 +2072,13 @@ mod tests {
             store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS).unwrap();
         }
         assert_eq!(core.catch_up(), Err(CoreError::HydrationIncomplete));
+        let (stop, done) = follow_for_real(&core);
+        thread::sleep(MS(300));
+        stop.store(true, Ordering::Relaxed);
         assert_eq!(
-            core.follow(&AtomicBool::new(false), false, |_| {}),
-            Err(CoreError::HydrationIncomplete)
+            done.recv_timeout(Duration::from_secs(5))
+                .expect("a follow waiting for a hydration did not end when stopped"),
+            Ok(FollowReport::default())
         );
         assert!(server.seen("/types").is_empty());
         // Witness: the same store, its hydration finished, reads the catalog.
@@ -2031,6 +2091,251 @@ mod tests {
             !server.seen("/types").is_empty(),
             "the catch-up read no catalog, so its absence above proves nothing"
         );
+    }
+
+    /// A store that names its server and holds nothing else, and a server
+    /// that hydrates it to the cursor `10` and then holds a stream carrying
+    /// `n1` at `11`.
+    fn never_hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
+        use crate::scripted::{certified, copy_marker, edge_types, json};
+        server.on(
+            "/types",
+            vec![certified(crate::scripted::types(&[(NOTE, None)]))],
+        );
+        server.on("/edge-types", vec![certified(edge_types(&[]))]);
+        server.on(
+            "/keys/current",
+            vec![certified(json(
+                200,
+                r#"{"type_permissions":{"core.note":"read"}}"#,
+            ))],
+        );
+        server.on(
+            "/items",
+            vec![certified(json(200, r#"{"data":[],"next_cursor":null}"#))],
+        );
+        server.on(
+            "/events",
+            vec![
+                stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+                stream(
+                    vec![
+                        copy_marker("stream_cursor", "10"),
+                        copy_marker("stream_live", "10"),
+                    ],
+                    Then::End,
+                ),
+                stream(vec![connected(), created("n1", "11")], held()),
+            ],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        (dir, Arc::new(core))
+    }
+
+    #[test]
+    fn a_follow_on_a_copy_never_hydrated_waits_for_its_first_hydration_then_follows() {
+        let server = Scripted::start();
+        let (_dir, core) = never_hydrated(&server);
+        let (stop, done) = mpsc::channel();
+        let (told, changes) = mpsc::channel();
+        let flag = Arc::new(AtomicBool::new(false));
+        {
+            let (core, flag) = (Arc::clone(&core), Arc::clone(&flag));
+            thread::spawn(move || {
+                let _ = stop.send(core.follow(&flag, false, |change| {
+                    let _ = told.send(change.clone());
+                }));
+            });
+        }
+        thread::sleep(MS(400));
+        assert!(
+            matches!(done.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "a follow on a copy that was never hydrated ended rather than waiting"
+        );
+        assert!(
+            server.seen("/events").is_empty() && server.seen("/types").is_empty(),
+            "a follow waiting for a hydration asked the server"
+        );
+        // The hydration runs beside the waiting follow, on the same store.
+        core.hydrate(&[NOTE.into()], SliceTier::Library).unwrap();
+        let change = changes
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the follow did not follow once the copy was hydrated");
+        assert_eq!(
+            (change.item_id.as_deref(), change.cursor.as_str()),
+            (Some("n1"), "11")
+        );
+        flag.store(true, Ordering::Relaxed);
+        let report = done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the follow did not end when stopped")
+            .unwrap();
+        assert_eq!((report.applied, report.cursor.as_str()), (1, "11"));
+    }
+
+    #[test]
+    fn a_follow_waiting_for_a_hydration_ends_when_stopped_having_asked_nothing() {
+        let server = Scripted::start();
+        let (_dir, core) = never_hydrated(&server);
+        let (stop, done) = follow_for_real(&core);
+        thread::sleep(MS(300));
+        let asked = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        let ended = done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a follow waiting for a hydration did not end when stopped");
+        assert!(asked.elapsed() < Duration::from_secs(1));
+        assert_eq!(ended, Ok(FollowReport::default()));
+        assert!(server.seen("/events").is_empty());
+        // The witness: the same store refuses a catch-up, which does not wait.
+        assert_eq!(core.catch_up(), Err(CoreError::NoCursor));
+    }
+
+    #[test]
+    fn a_follow_on_a_copy_whose_cursor_aged_out_ends_at_once_rather_than_waiting() {
+        let server = Scripted::start();
+        let (_dir, core) = hydrated(&server);
+        store::meta_delete(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap();
+        let (stop, done) = follow_for_real(&core);
+        let ended = done.recv_timeout(Duration::from_secs(5));
+        stop.store(true, Ordering::Relaxed);
+        assert!(
+            matches!(ended, Ok(Err(CoreError::CopyExpired { .. }))),
+            "a follow on a copy that must hydrate again waited for a hydration: {ended:?}"
+        );
+        assert!(server.seen("/events").is_empty());
+    }
+
+    fn at_head() -> Answer {
+        stream(
+            vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+            Then::End,
+        )
+    }
+
+    fn registered() -> Answer {
+        types(&[(NOTE, None), ("user.late", Some(NOTE))])
+    }
+
+    #[test]
+    fn a_catch_up_says_whether_it_changed_the_catalog() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)]), registered()]);
+        server.on("/events", vec![at_head()]);
+        let (_dir, core) = hydrated(&server);
+        assert!(
+            !core.catch_up().unwrap().catalog_changed,
+            "a catch-up that read the catalog the copy holds said it changed"
+        );
+        assert!(
+            core.catch_up().unwrap().catalog_changed,
+            "a catch-up that changed the catalog did not say so"
+        );
+    }
+
+    /// The failure of a catch-up whose `/types` and `/events` answer as
+    /// given, raising `stop` once the stream has been asked for when told to.
+    fn failed_catch_up(types: Vec<Answer>, events: Answer, stopped: bool) -> CatchUpFailed {
+        let server = Scripted::start();
+        server.on("/types", types);
+        server.on("/events", vec![events]);
+        let (_dir, core) = hydrated(&server);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        {
+            let (core, stop) = (Arc::clone(&core), Arc::clone(&stop));
+            thread::spawn(move || {
+                let _ = ended.send(core.catch_up_until(&stop));
+            });
+        }
+        if stopped {
+            server.wait_for("/events", 1, Duration::from_secs(5));
+            thread::sleep(MS(100));
+            stop.store(true, Ordering::Relaxed);
+        }
+        done.recv_timeout(Duration::from_secs(10))
+            .expect("the catch-up did not end")
+            .expect_err("the catch-up did not fail")
+    }
+
+    #[test]
+    fn a_catch_up_that_fails_after_changing_the_catalog_says_it_changed() {
+        let silent = || {
+            stream(
+                vec![connected(), stream_cursor("10")],
+                Then::Hold {
+                    keepalive: Some(MS(5)),
+                    lasting: None,
+                },
+            )
+        };
+        let unknown_then_cut = || {
+            stream(
+                vec![
+                    connected(),
+                    stream_cursor("12"),
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "late", "user.late", 1),
+                    ),
+                ],
+                Then::Break,
+            )
+        };
+        let aged = || {
+            stream(
+                vec![
+                    connected(),
+                    "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\"}\n\n".into(),
+                ],
+                Then::End,
+            )
+        };
+        let unchanged = || types(&[(NOTE, None)]);
+        for (path, types, events, stopped) in [
+            (
+                "the stream refused",
+                vec![registered()],
+                refusal(503, "unavailable"),
+                false,
+            ),
+            ("stopped on the stream", vec![registered()], silent(), true),
+            (
+                "the log aged past the cursor",
+                vec![registered()],
+                aged(),
+                false,
+            ),
+            (
+                "read again for a type an event named, then cut off",
+                vec![unchanged(), registered()],
+                unknown_then_cut(),
+                false,
+            ),
+        ] {
+            let failed = failed_catch_up(types, events.clone(), stopped);
+            assert!(
+                failed.catalog_changed,
+                "{path}: a catch-up that changed the catalog and then failed ({}) did not say the catalog changed",
+                failed.error
+            );
+            // The witness: the same failure against the catalog the copy holds.
+            let witness = failed_catch_up(vec![unchanged()], events, stopped);
+            assert_eq!(
+                (witness.error.code(), witness.catalog_changed),
+                (failed.error.code(), false),
+                "{path}: the same failure against an unchanged catalog"
+            );
+        }
     }
 
     fn stored_cursor(core: &Core) -> Option<String> {
@@ -2142,7 +2447,7 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
         assert!(matches!(
-            catch_up(&core, &http, MS(200), &AtomicBool::new(false)),
+            catch_up(&core, &http, MS(200), &AtomicBool::new(false), &mut false),
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
@@ -2173,7 +2478,7 @@ mod tests {
         );
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(1000), &AtomicBool::new(false)).unwrap();
+        let report = catch_up(&core, &http, MS(1000), &AtomicBool::new(false), &mut false).unwrap();
         assert!(report.reached_head);
         assert_eq!(report.cursor, "14");
     }
@@ -2205,7 +2510,7 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
         assert!(matches!(
-            catch_up(&core, &http, MS(1000), &AtomicBool::new(false)),
+            catch_up(&core, &http, MS(1000), &AtomicBool::new(false), &mut false),
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));

@@ -385,7 +385,7 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let mut changed = 0;
         let result = core.follow(&stop, false, |change| {
-            if change.event != "item.updated" {
+            if change.event != crate::ChangeEvent::Applied("item.updated".into()) {
                 return;
             }
             changed += 1;
@@ -783,7 +783,8 @@ mod tests {
         );
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
-            let catching = scope.spawn(|| core.catch_up_until(&stop));
+            let catching =
+                scope.spawn(|| core.catch_up_until(&stop).map_err(|failed| failed.error));
             server.wait_for("/events", 1, std::time::Duration::from_secs(5));
             std::thread::sleep(std::time::Duration::from_millis(300));
             let raised = std::time::Instant::now();

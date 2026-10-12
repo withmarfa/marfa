@@ -52,7 +52,7 @@ use serde_json::Value;
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField};
-pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
+pub use catch_up::{Change, ChangeEvent, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
@@ -63,11 +63,11 @@ pub use folder::{
 pub use folder_settings::FolderRow;
 pub use lock::Handle;
 pub use model::{
-    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft,
-    EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
-    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
-    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
-    UnregisteredType, Verdict, WriteKind,
+    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport, Draft, Edge,
+    EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item,
+    ItemState, ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal,
+    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail,
+    Tier, UnregisteredType, Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -493,22 +493,45 @@ impl Core {
         Ok(pinned)
     }
 
+    /// A failure does not say whether the catalog changed before it;
+    /// `catch_up_until` does.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
         self.catch_up_until(&NEVER_STOPPED)
+            .map_err(|failed| failed.error)
     }
 
     /// Ended with `Canceled` soon after `stop` is raised, keeping the cursor
     /// of the last event applied.
-    pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
+    pub fn catch_up_until(
+        &self,
+        stop: &AtomicBool,
+    ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        let report = catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)?;
-        self.settle_bodies(stop)?;
-        Ok(report)
+        let mut catalog_changed = false;
+        catch_up::catch_up(
+            self,
+            self.http()?,
+            self.catch_up_idle,
+            stop,
+            &mut catalog_changed,
+        )
+        .and_then(|report| {
+            self.settle_bodies(stop)?;
+            Ok(report)
+        })
+        .map_err(|error| CatchUpFailed {
+            error,
+            catalog_changed,
+        })
     }
 
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
+    ///
+    /// On a copy with no completed hydration it waits, asking the server
+    /// nothing, until one completes and no hydration or catch-up still holds
+    /// the stream, then follows. `stop` ends the wait as it ends the follow.
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
@@ -519,19 +542,61 @@ impl Core {
         told_unreachable: bool,
         on_change: impl FnMut(&Change),
     ) -> Result<FollowReport> {
-        self.follow_observed(stop, told_unreachable, on_change, |_| {})
+        self.lock.refuse_unless_writer()?;
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let Some(streaming) = self.claim_stream_once_hydrated(stop)? else {
+            return Ok(FollowReport::default());
+        };
+        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, |_| {})
     }
 
+    /// A folder's watch hydrates its copy on the thread that follows it, so
+    /// this refuses a copy with no completed hydration rather than wait for
+    /// one that thread would never run.
     pub(crate) fn follow_observed(
         &self,
+        stop: &AtomicBool,
+        told_unreachable: bool,
+        on_change: impl FnMut(&Change),
+        on_live: impl FnMut(bool),
+    ) -> Result<FollowReport> {
+        self.lock.refuse_unless_writer()?;
+        let http = self.http.clone().ok_or(CoreError::NoServer)?;
+        let streaming = self.claim_stream()?;
+        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, on_live)
+    }
+
+    /// `None` where `stop` was raised while it waited.
+    fn claim_stream_once_hydrated(&self, stop: &AtomicBool) -> Result<Option<StreamClaim<'_>>> {
+        let mut waited = false;
+        loop {
+            match catch_up::refuse_unless_current(&mut *self.conn()?) {
+                Ok(()) => match self.claim_stream() {
+                    Ok(claim) => return Ok(Some(claim)),
+                    // The hydration waited for holds it until it has
+                    // settled, and a catch-up may have taken it since.
+                    Err(_) if waited => {}
+                    Err(error) => return Err(error),
+                },
+                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => waited = true,
+                Err(error) => return Err(error),
+            }
+            if stop.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            std::thread::sleep(catch_up::PACE.stop_poll);
+        }
+    }
+
+    fn follow_claimed(
+        &self,
+        http: Arc<http::Http>,
+        _streaming: StreamClaim<'_>,
         stop: &AtomicBool,
         told_unreachable: bool,
         mut on_change: impl FnMut(&Change),
         mut on_live: impl FnMut(bool),
     ) -> Result<FollowReport> {
-        self.lock.refuse_unless_writer()?;
-        let http = self.http.clone().ok_or(CoreError::NoServer)?;
-        let _streaming = self.claim_stream()?;
         // A binding says the follow ended when this returns: a fault that
         // unwound past here would end the thread silently, and a caller
         // waiting to be told would wait for good.
@@ -4531,7 +4596,8 @@ mod tests {
                 "catch_up_until",
                 reader
                     .catch_up_until(&std::sync::atomic::AtomicBool::new(false))
-                    .unwrap_err(),
+                    .unwrap_err()
+                    .error,
             ),
             (
                 "hydrate_until",

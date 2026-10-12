@@ -16,6 +16,8 @@ const RECIPE = {
   fields: { servings: { type: "number", required: true } },
 };
 
+const LATE = { id: "acme.late", parent: "core.note", version: 0, fields: {} };
+
 const MENTOR = {
   id: "mentor-of",
   cardinality: "one-to-many",
@@ -28,7 +30,12 @@ const MENTOR = {
   shipped: false,
 };
 
-async function scripted() {
+/**
+ * @param {{ registered?: () => boolean, streamFails?: () => boolean }} [options]
+ *   `registered` adds a type to the catalog; `streamFails` answers a
+ *   catch-up's stream 500.
+ */
+async function scripted(options = {}) {
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
     const json = (/** @type {unknown} */ body) => {
@@ -50,6 +57,7 @@ async function scripted() {
             display_hints: { title_field: "title" },
           },
           RECIPE,
+          ...(options.registered?.() ? [LATE] : []),
         ],
         next_cursor: null,
       });
@@ -59,6 +67,20 @@ async function scripted() {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {
       json({ data: [], next_cursor: null });
+    } else if (
+      path === "/events" &&
+      req.headers["last-event-id"] !== undefined &&
+      options.streamFails?.()
+    ) {
+      res.writeHead(500, {
+        "content-type": "application/json",
+        "x-marfa-contract": CONTRACT,
+      });
+      res.end(
+        JSON.stringify({
+          error: { code: "internal_error", message: "scripted" },
+        }),
+      );
     } else if (path === "/events") {
       const cursor = streamHead(req, res);
       if (cursor !== null) res.write(marker("stream_live", cursor));
@@ -141,4 +163,44 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
       return true;
     },
   );
+});
+
+test("says whether a catch-up changed the catalog, and says it of one that then failed", async (t) => {
+  let registered = false;
+  let streamFails = false;
+  const server = await scripted({
+    registered: () => registered,
+    streamFails: () => streamFails,
+  });
+  t.after(server.close);
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
+  await core.hydrate(["core.note"], SliceTier.Library);
+
+  assert.equal((await core.catchUp()).catalogChanged, false);
+  registered = true;
+  assert.equal(
+    (await core.catchUp()).catalogChanged,
+    true,
+    "a catch-up that changed the catalog did not say so",
+  );
+
+  streamFails = true;
+  /** @param {boolean} changed */
+  const failsSaying = (changed) => (/** @type {any} */ error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.code, "server");
+    assert.equal(error.catalogChanged, changed);
+    return true;
+  };
+  // The witness: the same failure against the catalog the copy holds.
+  await assert.rejects(core.catchUp(), failsSaying(false));
+  registered = false;
+  await assert.rejects(
+    core.catchUp(),
+    failsSaying(true),
+    "a catch-up that changed the catalog and then failed did not say the catalog changed",
+  );
+  assert.throws(() => core.itemType("acme.late"), /^Error: not_found: /);
 });

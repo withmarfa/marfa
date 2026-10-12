@@ -173,7 +173,9 @@ fn a_stopped_read_still_expires_a_copy_when_the_credential_ended() {
                     if hydration {
                         hydrate(core, stop).map(|_| ())
                     } else {
-                        core.catch_up_until(stop).map(|_| ())
+                        core.catch_up_until(stop)
+                            .map(|_| ())
+                            .map_err(|failed| failed.error)
                     }
                 },
             )
@@ -195,7 +197,7 @@ fn a_stopped_catch_up_reports_canceled_after_a_failed_read() {
                 path,
                 vec![scripted::refusal(503, "server_unavailable")],
                 core.clone(),
-                Core::catch_up_until,
+                |core, stop| core.catch_up_until(stop).map_err(|failed| failed.error),
             )
             .unwrap_err(),
             CoreError::Canceled,
@@ -340,7 +342,8 @@ fn a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server() {
     assert_eq!(
         ends_soon_after_its_stop(copy_at(&url), |core, stop| core
             .catch_up_until(stop)
-            .map(|_| ())),
+            .map(|_| ())
+            .map_err(|failed| failed.error)),
         Err(CoreError::Canceled)
     );
     let draining = copy_at(&url);
