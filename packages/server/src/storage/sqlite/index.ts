@@ -1,5 +1,6 @@
 import { validateRequestAuthority } from "../../auth/request-authority.js";
 import { readSnapshotRunner } from "./read-snapshot.js";
+import { inStorageSpan } from "../../otel/storage-span.js";
 import { initializeStructuralGeneration } from "./structural-generation.js";
 import { ensureInstanceId } from "../instance-id.js";
 import { publishBootRegistry } from "./registry-context.js";
@@ -163,40 +164,72 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   });
   reportEdgeNameCollisions(edgeNameCollisions());
 
+  const runInReadSnapshot = readSnapshotRunner(captureRead);
   const storage = {
-    folderStatus: guardStoreWithReadContext(new SqliteFolderStatusStore(db)),
-    items: guardStoreWithReadContext(itemStore),
-    metadata: guardStoreWithReadContext(metadataStore),
-    versions: guardStoreWithReadContext(versionStore),
-    types: guardStoreWithReadContext(typeStore),
-    search: guardStoreWithReadContext(searchStore),
-    keys: guardStoreWithReadContext(keyStore),
-    blobs: guardStoreWithReadContext(blobRegistry),
-    edges: guardStoreWithReadContext(edgeStore),
-    edgeTypes: guardStoreWithReadContext(edgeTypeStore),
-    enrichment: guardStoreWithReadContext(enrichmentStore),
+    folderStatus: guardStoreWithReadContext(
+      new SqliteFolderStatusStore(db),
+      "folderStatus",
+    ),
+    items: guardStoreWithReadContext(itemStore, "items"),
+    metadata: guardStoreWithReadContext(metadataStore, "metadata"),
+    versions: guardStoreWithReadContext(versionStore, "versions"),
+    types: guardStoreWithReadContext(typeStore, "types"),
+    search: guardStoreWithReadContext(searchStore, "search"),
+    keys: guardStoreWithReadContext(keyStore, "keys"),
+    blobs: guardStoreWithReadContext(blobRegistry, "blobs"),
+    edges: guardStoreWithReadContext(edgeStore, "edges"),
+    edgeTypes: guardStoreWithReadContext(edgeTypeStore, "edgeTypes"),
+    enrichment: guardStoreWithReadContext(enrichmentStore, "enrichment"),
     // Shared provider-table access joins credential and grant transactions.
-    oauthProvider: guardStoreWithReadContext(oauthProviderStore),
-    outboundWebhooks: guardStoreWithReadContext(webhookStore),
-    outboundWebhookDeliveries: guardStoreWithReadContext(deliveryStore),
-    audit: guardStoreWithReadContext(auditStore),
-    eventLog: guardStoreWithReadContext(eventLogStore),
-    authSessions: guardStoreWithReadContext(authSessionStore),
-    owner: guardStoreWithReadContext(new SqliteOwnerStore(db)),
-    settings: guardStoreWithReadContext(new SqliteSettingsStore(db)),
+    oauthProvider: guardStoreWithReadContext(
+      oauthProviderStore,
+      "oauthProvider",
+    ),
+    outboundWebhooks: guardStoreWithReadContext(
+      webhookStore,
+      "outboundWebhooks",
+    ),
+    outboundWebhookDeliveries: guardStoreWithReadContext(
+      deliveryStore,
+      "outboundWebhookDeliveries",
+    ),
+    audit: guardStoreWithReadContext(auditStore, "audit"),
+    eventLog: guardStoreWithReadContext(eventLogStore, "eventLog"),
+    authSessions: guardStoreWithReadContext(authSessionStore, "authSessions"),
+    owner: guardStoreWithReadContext(new SqliteOwnerStore(db), "owner"),
+    settings: guardStoreWithReadContext(
+      new SqliteSettingsStore(db),
+      "settings",
+    ),
     // `bulk-action-job-store.ts` carries how a job is claimed without two
     // loops taking the same one.
-    bulkActionJobs: guardStoreWithReadContext(new SqliteBulkActionJobStore(db)),
+    bulkActionJobs: guardStoreWithReadContext(
+      new SqliteBulkActionJobStore(db),
+      "bulkActionJobs",
+    ),
     // A claim has to commit whether or not the write's own transaction
     // does, and `db` is the only instance there is.
-    idempotency: guardStoreWithReadContext(new SqliteIdempotencyStore(db)),
-    rateLimits: guardStoreWithReadContext(new SqliteRateLimitStore(db)),
-    housekeeping: guardStoreWithReadContext(new SqliteHousekeepingStore(db)),
-    connectors: guardStoreWithReadContext(new SqliteConnectorStore(db)),
+    idempotency: guardStoreWithReadContext(
+      new SqliteIdempotencyStore(db),
+      "idempotency",
+    ),
+    rateLimits: guardStoreWithReadContext(
+      new SqliteRateLimitStore(db),
+      "rateLimits",
+    ),
+    housekeeping: guardStoreWithReadContext(
+      new SqliteHousekeepingStore(db),
+      "housekeeping",
+    ),
+    connectors: guardStoreWithReadContext(
+      new SqliteConnectorStore(db),
+      "connectors",
+    ),
     connectorState: guardStoreWithReadContext(
       new SqliteConnectorStateStore(db),
+      "connectorState",
     ),
-    inbound: guardStoreWithReadContext(new SqliteInboundStore(db)),
+    inbound: guardStoreWithReadContext(new SqliteInboundStore(db), "inbound"),
     /**
      * Through the wrapped handle, so a call made inside an open transaction
      * becomes a savepoint of it, as the stores' own transactions do.
@@ -207,19 +240,31 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       if (scope?.mode === "read") scope.assertActive();
     },
     assertInWriteTransaction,
-    runInReadSnapshot: readSnapshotRunner(captureRead),
+    runInReadSnapshot: ((fn, options) =>
+      inStorageSpan(
+        "storage",
+        "runInReadSnapshot",
+        () => runInReadSnapshot(fn, options),
+        { callsRouteCode: true },
+      )) as ReturnType<typeof readSnapshotRunner>,
     async runInTransaction<T>(
       fn: () => T | Promise<T>,
       options?: { retainCommitHooksOnUncertain?: boolean },
     ): Promise<T> {
-      return await withCommitHooks(
-        (body) =>
-          db.transaction(async () => {
-            await validateRequestAuthority();
-            return await body();
-          }),
-        fn,
-        options?.retainCommitHooksOnUncertain,
+      return await inStorageSpan(
+        "storage",
+        "runInTransaction",
+        () =>
+          withCommitHooks(
+            (body) =>
+              db.transaction(async () => {
+                await validateRequestAuthority();
+                return await body();
+              }),
+            fn,
+            options?.retainCommitHooksOnUncertain,
+          ),
+        { callsRouteCode: true },
       );
     },
     betterAuthDb: db,

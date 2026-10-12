@@ -11,6 +11,7 @@ import {
   assertRegistryReady,
 } from "./registry-context.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { inStorageSpan } from "../../otel/storage-span.js";
 import type { ReadLifetime } from "./read-lifetime.js";
 import type { DrizzleDb } from "./connection.js";
 import {
@@ -225,7 +226,14 @@ function runWithReadContext<T>(scope: SqliteReadScope, fn: () => T): T {
   return registryContext.run(scope, () => sqliteRequestContext.run(scope, fn));
 }
 
-export function guardStoreWithReadContext<T extends object>(store: T): T {
+/**
+ * Holds a store to the read scope it was reached from, and gives each call a
+ * span named for the store, so `store` is a fixed name and never a value.
+ */
+export function guardStoreWithReadContext<T extends object>(
+  store: T,
+  name: string,
+): T {
   const methods = new WeakMap<
     (...args: unknown[]) => unknown,
     (...args: unknown[]) => unknown
@@ -248,7 +256,10 @@ export function guardStoreWithReadContext<T extends object>(store: T): T {
               ? captured
               : sqliteRequestContext.getStore();
           if (scope?.mode === "read") scope.assertActive();
-          const invoke = () => Reflect.apply(fn, target, args);
+          const invoke = () =>
+            inStorageSpan(name, String(prop), () =>
+              Reflect.apply(fn, target, args),
+            );
           const result: unknown =
             scope?.mode === "read"
               ? runWithReadContext(scope, invoke)

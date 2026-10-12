@@ -1,11 +1,11 @@
 import type { Context, ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { MarfaError } from "@withmarfa/shared";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { formatErrorSummary, log, serializeError } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
 import { errorStack, reportableError } from "../error-text.js";
+import { refusalInCauses } from "../refusal.js";
 import { loggablePath } from "../inbound/address.js";
 import { diskFull } from "../storage/disk-space.js";
 import { PasswordAttemptsSpent } from "../auth/sign-in-throttle.js";
@@ -92,12 +92,7 @@ function isMarfaError(err: unknown): err is ShapedError {
  */
 export function shapedError(err: unknown): ShapedError | undefined {
   if (isMarfaError(err)) return err;
-  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
-    if (step === null || typeof step !== "object") break;
-    step = (step as { cause?: unknown }).cause;
-    if (step instanceof MarfaError) return step;
-  }
-  return diskFull(err);
+  return refusalInCauses(err) ?? diskFull(err);
 }
 
 export function createErrorHandler(config: {

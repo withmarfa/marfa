@@ -108,6 +108,9 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     await globalThis.__marfaOtelShutdown?.();
     globalThis.__marfaOtelShutdown = undefined;
     globalThis.__marfaReportException = undefined;
+    // The first provider registered wins, so the next case's would be ignored.
+    trace.disable();
+    logs.disable();
     vi.doUnmock("posthog-node");
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -116,7 +119,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
 
   it("reports a thrown error as an exception with its stack and environment", async () => {
     const boot = await bootInstrumentation({
-      MARFA_OTEL_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
     });
@@ -151,7 +154,6 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     });
     // The endpoint, the PostHog pair and nothing that names an environment.
     await bootInstrumentation({
-      MARFA_OTEL_ENABLED: "true",
       OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
@@ -181,16 +183,10 @@ describe("unhandled errors reach PostHog's error tracking", () => {
       (e) => e.event === "$exception",
     );
     expect(exception?.properties["deployment.environment"]).toBe("production");
-    trace.disable();
-    logs.disable();
   });
 
-  it("loads and sends nothing with telemetry off", async () => {
-    const boot = await bootInstrumentation({
-      MARFA_OTEL_ENABLED: "false",
-      MARFA_POSTHOG_HOST: collector.url,
-      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
-    });
+  it("loads and sends nothing with no endpoint set", async () => {
+    const boot = await bootInstrumentation({});
 
     const response = await appThatFails().request("/explode");
     expect(response.status).toBe(500);
@@ -198,6 +194,26 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     expect(boot.loadedPostHog()).toBe(false);
     expect(globalThis.__marfaReportException).toBeUndefined();
     expect(globalThis.__marfaOtelShutdown).toBeUndefined();
+    expect(collector.events).toHaveLength(0);
+  });
+
+  it("stops the process on a PostHog pair without the endpoint, naming the setting", async () => {
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exited");
+    });
+    await expect(
+      bootInstrumentation({
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      }),
+    ).rejects.toThrow("exited");
+    const written = write.mock.calls.map((call) => String(call[0])).join("");
+    expect(written).toContain(
+      "MARFA_POSTHOG_HOST needs OTEL_EXPORTER_OTLP_ENDPOINT set too",
+    );
     expect(collector.events).toHaveLength(0);
   });
 
@@ -210,7 +226,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     });
     await expect(
       bootInstrumentation({
-        MARFA_OTEL_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
         MARFA_POSTHOG_HOST: collector.url,
       }),
     ).rejects.toThrow("exited");
