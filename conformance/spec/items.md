@@ -500,6 +500,12 @@ When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answe
 
 **Tests:** `compliance/bulk-get.test.ts › hydrates metadata when include carries metadata`.
 
+### `items/bulk-get-system`
+
+If `POST /items/bulk-get` names a `system.*` item and its `include` does not hold `system`, then the server MUST leave the item out of the answer.
+
+**Tests:** `compliance/read-views.test.ts › answers a system row to a bulk read under a read view only when include names system`.
+
 ## Updating an item
 
 What a write at a stale version does is `versions.md`'s.
