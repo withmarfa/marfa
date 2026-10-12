@@ -366,7 +366,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register a connector",
   description:
-    "Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`. Registration binds your key's own source to this registration, preserving its inbound endpoints and retained deliveries when a successor key takes over.",
+    "Registers your key as a connector and returns it. Repeating registration updates its name and description and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.",
   security: [{ bearerAuth: [] }],
   middleware: workingKeyOnly,
   request: {

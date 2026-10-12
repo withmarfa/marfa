@@ -2660,3 +2660,48 @@ it.each(["live", "revoked", "expired"])(
     }
   },
 );
+
+it("rejects mismatched and expired registration keys without changing their binding", async () => {
+  const ctx = await context();
+  const key = (await (
+    await request(ctx.app, "GET", "/keys/current", { key: ctx.workingKey })
+  ).json()) as { id: string; source: string };
+  await expect(
+    ctx.storage.connectors.register(
+      { id: key.id, source: "another-source" },
+      "mismatched",
+      null,
+    ),
+  ).rejects.toMatchObject({ code: "unauthorized" });
+  expect(await ctx.storage.connectors.list()).toEqual([]);
+  expect(
+    await continuityRaw(ctx).__sqliteAll("SELECT * FROM inbound_sources"),
+  ).toEqual([]);
+  const accepted = await ctx.storage.connectors.register(
+    key,
+    "own source",
+    null,
+  );
+  expect(accepted.created).toBe(true);
+  expect(accepted.connector.source).toBe(key.source);
+  expect(
+    await continuityRaw(ctx).__sqliteAll(
+      "SELECT source,connector_id FROM inbound_sources",
+    ),
+  ).toEqual([{ source: key.source, connector_id: accepted.connector.id }]);
+  await continuityRaw(ctx).__sqliteRun(
+    "UPDATE api_keys SET expires_at = ? WHERE id = ?",
+    ["2020-01-01T00:00:00.000Z", key.id],
+  );
+  await expect(
+    ctx.storage.connectors.register(key, "expired", null),
+  ).rejects.toMatchObject({ code: "unauthorized" });
+  expect((await ctx.storage.connectors.get(accepted.connector.id))?.name).toBe(
+    "own source",
+  );
+  expect(
+    await continuityRaw(ctx).__sqliteAll(
+      "SELECT source,connector_id FROM inbound_sources",
+    ),
+  ).toEqual([{ source: key.source, connector_id: accepted.connector.id }]);
+});

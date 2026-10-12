@@ -73,6 +73,8 @@ const NOT_A_DOOR: Record<string, string> = {
 const KEY_TABLE: Record<string, string> = {
   "storage/sqlite/schema.ts": "declares the table",
   "storage/sqlite/key-store.ts": "the key store",
+  "storage/sqlite/connector-store.ts":
+    "revalidates the presented registration key's standing and stored own source after writer admission; the route supplies its authenticated key, and no arbitrary key metadata is exposed; covered by inbound.test.ts: rejects mismatched and expired registration keys without changing their binding",
   "storage/sqlite/connector-state-store.ts":
     "revalidates the presented writing key's liveness and ownership of its connector inside the state or agreement transaction, as the bearer check does; it exposes no key metadata and looks up no arbitrary key ID",
   "storage/sqlite/inbound-store.ts":

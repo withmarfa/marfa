@@ -895,7 +895,7 @@ export interface paths {
         put?: never;
         /**
          * Register a connector
-         * @description Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`. Registration binds your key's own source to this registration, preserving its inbound endpoints and retained deliveries when a successor key takes over.
+         * @description Registers your key as a connector and returns it. Repeating registration updates its name and description and keeps its ID. A successor key inherits its own source's inbound endpoints and retained deliveries.
          */
         post: operations["registerConnector"];
         delete?: never;
