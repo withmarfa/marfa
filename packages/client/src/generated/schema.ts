@@ -19602,7 +19602,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and an edge comes back whether or not its properties fit its edge type's `property_schema`, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

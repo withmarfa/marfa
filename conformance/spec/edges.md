@@ -1485,7 +1485,7 @@ If an entry of `POST /edges/bulk` under `atomic: true` would leave an edge, crea
 
 If `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names an inline edge of a type whose `property_schema` declares a property `required`, then the server MUST refuse the write `invalid_properties` with `details.errors` naming the property in `field`.
 
-**Reason:** an inline edge carries no properties, so a required property is what it lacks. An edge type that requires nothing takes inline edges as before.
+**Reason:** an inline edge carries no properties, so a required property is what it lacks. An edge type that requires nothing takes inline edges.
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`, `› takes an inline edge of an edge type that requires nothing`.
 
