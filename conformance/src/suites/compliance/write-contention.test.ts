@@ -34,13 +34,28 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  * on the default, where the retry outwaits a lock held briefly and the
  * same write lands. A fixture doing this against the run's shared server
  * would change the budget for every other file on the instance.
+ *
+ * **The housekeeping scheduler is off on the impatient server.** It polls
+ * for due jobs on a clock of its own, and `trash-purge` falls due a few
+ * seconds after boot, which is about when this file's later tests run. A
+ * scheduled run that claims the job as the lock is taken fails to record
+ * its end, and the job reads as running until the next poll, so the
+ * housekeeping test's released run would be refused with
+ * `409 housekeeping_job_running` through no fault of the server. A poll
+ * interval at the setting's ceiling means the scheduler never claims
+ * anything; a run asked for over HTTP does not wait on a poll. It also
+ * keeps a scheduled write from taking the lock a request is about to ask
+ * for, with a busy budget of zero.
  */
+const SCHEDULER_NEVER_POLLS_MS = "2147483647";
+
 let impatient: FreshServer | undefined;
 let patient: FreshServer | undefined;
 
 beforeAll(async () => {
   impatient = await bootFreshServer("contention-impatient", {
     SQLITE_BUSY_BUDGET_MS: "0",
+    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
   });
   patient = await bootFreshServer("contention-patient");
 }, 4 * FRESH_SERVER_TIMEOUT_MS);
@@ -204,6 +219,22 @@ describe("contention on the write lock", () => {
       baseUrl: impatient!.apiUrl,
       apiKey: impatient!.managementKey,
     });
+
+    // The premise of the whole test: no run of this job has started on this
+    // server, so the only runs are the two asked for below.
+    const before = await operator.rawRequest<{
+      data: {
+        name: string;
+        running_since: string | null;
+        last_started_at: string | null;
+      }[];
+    }>("/housekeeping");
+    expect(before.ok, JSON.stringify(before.error)).toBe(true);
+    expect(
+      before.data.data.find((job) => job.name === "trash-purge"),
+      "the scheduler ran trash-purge on a server booted with it switched off",
+    ).toMatchObject({ running_since: null, last_started_at: null });
+
     const lock = await HeldLock.take(impatient!.sqlitePath);
     try {
       const run = await operator.rawRequest("/housekeeping/trash-purge/run", {
