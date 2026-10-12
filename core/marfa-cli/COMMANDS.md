@@ -3038,6 +3038,18 @@ marfa folders status [OPTIONS] <DIR>
 | --- | --- |
 | `<DIR>` | The folder. |
 
+### marfa folders health
+
+Read the server's latest reports from every sign-in and local copy. Receipt ages describe reports; they do not establish current reachability.
+
+```text
+marfa folders health [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The folder's `system.folder` id. |
+
 ### marfa folders confirm
 
 Let a folder's first sync go, or a paused large removal: its deletes are queued, and files whose items left elsewhere are taken away.
