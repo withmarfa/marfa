@@ -1,20 +1,10 @@
 /**
- * A reconnect's replay withholds only what it actually sent.
+ * Replay settles valid rows whether sent or legitimately withheld.
  *
- * The replay records the ids it sent and the release withholds against
- * that set, which is the only thing double delivery can mean; withholding
- * everything at or below the highest id walked would drop a row the
- * replay skipped. The property below: a row the replay *skipped* is not
- * treated as though it had been sent, so its buffered live copy is still
- * delivered, while a row it did send, item or edge, goes out once.
- *
- * **What is real here and what is arranged.** The write is real and the
- * damaged row is really stored. The one thing arranged is *when* the
- * replay reads the log, by substituting `getAfter` with a gated wrapper —
- * and that is scheduling, which is what varies in production. The test
- * asserts on the rows that gated read returned, so a stray caller
- * consuming the gate fails the test by name instead of quietly reducing
- * it to a no-op.
+ * A stored row the replay cannot classify retains its live carrier.
+ * These tests damage real stored rows while their intact live copies
+ * wait behind an explicit replay gate, and verify both carriers and
+ * healthy replay twins by exact event ID.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Edge, Item } from "@withmarfa/shared";
@@ -130,109 +120,109 @@ function rawQuery(sql: string): Promise<unknown> {
 }
 
 describe("GET /events replay dedupe", () => {
-  it("delivers the live copy of a row the replay skipped, exactly once", async () => {
-    const SKIPPED = "ZZskippedrowZZ";
-    const HEALTHY = "ZZhealthyrowZZ";
-    const END = "ZZskipdrainedZZ";
+  it.each(["not valid json", "null", "[]", '{"item":{"type":42}}'])(
+    "delivers the live copy of an unreadable row %s, exactly once",
+    async (payload) => {
+      const SKIPPED = "ZZskippedrowZZ";
+      const HEALTHY = "ZZhealthyrowZZ";
+      const END = "ZZskipdrainedZZ";
 
-    const skippedItem = await createNote(SKIPPED);
-    const healthyItem = await createNote(HEALTHY);
-    const endItem = await createNote(END);
-    // A real edge from a note; its event is published during the gate
-    // below, like the rows', carrying its source's type as a door's does.
-    const edgeRes = await request(ctx.app, "POST", "/edges", {
-      key: ctx.workingKey,
-      body: {
-        source_id: healthyItem.id,
-        target_id: endItem.id,
-        edge_type: "references",
-      },
-    });
-    expect(edgeRes.status).toBe(201);
-    const healthyEdge = ((await edgeRes.json()) as { edge: Edge }).edge;
-    const cursor = await latestEventId();
-
-    const gate = gateFirstRead();
-    try {
-      // `?type=` is what makes the replay decode a stored payload at all.
-      // Without a filter it never parses, never skips, and the property
-      // below has no way to arise — which is also why a suite run only
-      // with an unfiltered credential cannot tell recording-on-send
-      // from recording-on-walk.
-      const stream = await request(ctx.app, "GET", "/events?type=core.note", {
+      const skippedItem = await createNote(SKIPPED);
+      const healthyItem = await createNote(HEALTHY);
+      const endItem = await createNote(END);
+      // A real edge from a note; its event is published during the gate
+      // below, like the rows', carrying its source's type as a door's does.
+      const edgeRes = await request(ctx.app, "POST", "/edges", {
         key: ctx.workingKey,
-        headers: { "Last-Event-ID": String(cursor) },
+        body: {
+          source_id: healthyItem.id,
+          target_id: endItem.id,
+          edge_type: "references",
+        },
       });
-      expect(stream.status).toBe(200);
+      expect(edgeRes.status).toBe(201);
+      const healthyEdge = ((await edgeRes.json()) as { edge: Edge }).edge;
+      const cursor = await latestEventId();
 
-      const reading = readSse(stream, { until: (t) => t.includes(END) });
-      void reading.catch(() => undefined);
-      await settle();
+      const gate = gateFirstRead();
+      try {
+        const stream = await request(ctx.app, "GET", "/events?type=core.note", {
+          key: ctx.workingKey,
+          headers: { "Last-Event-ID": String(cursor) },
+        });
+        expect(stream.status).toBe(200);
 
-      // Emitted into the live buffer and committed, so the replay will
-      // walk this row.
-      const skippedId = await publish({ type: "updated", item: skippedItem });
-      if (skippedId === undefined) {
-        throw new Error("publish appended no event id; the log is unwired");
+        const reading = readSse(stream, { until: (t) => t.includes(END) });
+        void reading.catch(() => undefined);
+        await settle();
+
+        // Emitted into the live buffer and committed, so the replay will
+        // walk this row.
+        const skippedId = await publish({ type: "updated", item: skippedItem });
+        if (skippedId === undefined) {
+          throw new Error("publish appended no event id; the log is unwired");
+        }
+        // A healthy row beside it, walked by the same replay and held by
+        // the same buffer: the replay sends it, and the release must then
+        // drop its held copy. Without it, a release that sent every held
+        // frame would pass on the damaged row alone, whose only copy is
+        // the held one.
+        const healthyId = await publish({ type: "updated", item: healthyItem });
+        if (healthyId === undefined) {
+          throw new Error("publish appended no event id; the log is unwired");
+        }
+        // And an edge event beside them: the replay records both kinds and
+        // the release withholds both, or a held edge frame would follow its
+        // replayed copy out.
+        const edgeId = await publishEdge({
+          type: "edge_updated",
+          edge: healthyEdge,
+          sourceType: healthyItem.type,
+        });
+        if (edgeId === undefined) {
+          throw new Error(
+            "publishEdge appended no event id; the log is unwired",
+          );
+        }
+
+        // Now damage the stored row. The replay decodes it, fails, warns
+        // and skips — while the buffered live copy is an object and is
+        // untouched. This is the one skip whose live twin the stream can
+        // still deliver, which makes it the only place the difference
+        // between recording what was sent and recording what was walked is
+        // observable.
+        await rawQuery(
+          `UPDATE event_log SET payload = '${payload}' WHERE id = ${String(skippedId)}`,
+        );
+
+        gate.open();
+        const replayed = (await gate.rows).map((row) => row.id);
+        // The replay really did walk both rows; without this the test
+        // could pass on a read that never reached them.
+        expect(replayed).toContain(skippedId);
+        expect(replayed).toContain(healthyId);
+        expect(replayed).toContain(edgeId);
+
+        await settle();
+        await publish({ type: "updated", item: endItem });
+
+        const { text } = await reading;
+        // The marker cannot have come from the replay: the stored row no
+        // longer contains it. Its presence is therefore proof that the
+        // buffered live copy was delivered, which happens only because a
+        // unreadable row retains its live carrier.
+        expect(text).toContain(SKIPPED);
+        expect(frames(text, skippedId)).toBe(1);
+        // The healthy row went out with the replay and its held copy was
+        // dropped: once, not twice.
+        expect(text).toContain(HEALTHY);
+        expect(frames(text, healthyId)).toBe(1);
+        expect(text).toContain('"edge.updated"');
+        expect(frames(text, edgeId)).toBe(1);
+      } finally {
+        gate.open();
+        gate.restore();
       }
-      // A healthy row beside it, walked by the same replay and held by
-      // the same buffer: the replay sends it, and the release must then
-      // drop its held copy. Without it, a release that sent every held
-      // frame would pass on the damaged row alone, whose only copy is
-      // the held one.
-      const healthyId = await publish({ type: "updated", item: healthyItem });
-      if (healthyId === undefined) {
-        throw new Error("publish appended no event id; the log is unwired");
-      }
-      // And an edge event beside them: the replay records both kinds and
-      // the release withholds both, or a held edge frame would follow its
-      // replayed copy out.
-      const edgeId = await publishEdge({
-        type: "edge_updated",
-        edge: healthyEdge,
-        sourceType: healthyItem.type,
-      });
-      if (edgeId === undefined) {
-        throw new Error("publishEdge appended no event id; the log is unwired");
-      }
-
-      // Now damage the stored row. The replay decodes it, fails, warns
-      // and skips — while the buffered live copy is an object and is
-      // untouched. This is the one skip whose live twin the stream can
-      // still deliver, which makes it the only place the difference
-      // between recording what was sent and recording what was walked is
-      // observable.
-      await rawQuery(
-        `UPDATE event_log SET payload = 'not valid json' WHERE id = ${String(skippedId)}`,
-      );
-
-      gate.open();
-      const replayed = (await gate.rows).map((row) => row.id);
-      // The replay really did walk both rows; without this the test
-      // could pass on a read that never reached them.
-      expect(replayed).toContain(skippedId);
-      expect(replayed).toContain(healthyId);
-      expect(replayed).toContain(edgeId);
-
-      await settle();
-      await publish({ type: "updated", item: endItem });
-
-      const { text } = await reading;
-      // The marker cannot have come from the replay: the stored row no
-      // longer contains it. Its presence is therefore proof that the
-      // buffered live copy was delivered, which happens only because a
-      // skipped row is not recorded as sent.
-      expect(text).toContain(SKIPPED);
-      expect(frames(text, skippedId)).toBe(1);
-      // The healthy row went out with the replay and its held copy was
-      // dropped: once, not twice.
-      expect(text).toContain(HEALTHY);
-      expect(frames(text, healthyId)).toBe(1);
-      expect(text).toContain('"edge.updated"');
-      expect(frames(text, edgeId)).toBe(1);
-    } finally {
-      gate.open();
-      gate.restore();
-    }
-  });
+    },
+  );
 });

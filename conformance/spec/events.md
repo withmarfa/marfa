@@ -131,6 +131,14 @@ Where the server announced a head, the server MUST give the `cursor` of `stream_
 
 **Tests:** `sync/stream-contract.test.ts › marks the end of the replay with a cursor a filtered reader can resume from`.
 
+### `events/stream-live-drain-cursor`
+
+When a stream's final drain consumes a logged live frame, the server MUST give `stream_live` a cursor at or past that frame's id, including when the credential withholds it.
+
+**Reason:** the drain settles delivery just as replay does, so its withheld frames are also covered by the marker.
+
+**Tests:** waiting on #1444.
+
 ### `events/stream-live-skips-covered`
 
 When a client resumes from the `cursor` of `stream_live`, the server MUST NOT send it what the replay covered, the events the filter or the credential withheld included.
@@ -607,6 +615,22 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 ## A stream and its credential
 
+### `events/held-authority`
+
+When replay or the final drain consumes a live frame selected by a stream's immutable `type` and `edges` request filters, the server MUST judge whether to send that frame under the credential's authority at consumption.
+
+**Reason:** authority can widen while a frame waits, so an earlier credential read cannot settle whether it will be delivered.
+
+**Tests:** waiting on #1444.
+
+### `events/replay-consumed`
+
+When a replay has sent or legitimately withheld a readable logged event, the server MUST suppress that event's live twin on the same stream, including after the credential's authority widens.
+
+**Reason:** replay has settled the row, and a later widening cannot revive it behind a higher delivered cursor; `events/unreadable-row-live-copy` still governs rows the replay could not classify.
+
+**Tests:** `sync/authority-consumption.test.ts › does not revive a replay-withheld row after widening, while new events of its type arrive`.
+
 ### `events/credential-narrowed`
 
 When `PATCH /keys/{id}` narrows a key that holds a stream open, the server MUST withhold from the stream the events of a type the key may no longer read.
@@ -725,9 +749,9 @@ If the read of a stream's credential at a heartbeat or before a batch of live fr
 
 ### `events/backlog-overflow`
 
-If more than 500 live frames a stream would send are waiting before it sends `stream_live`, and either no replay is reading or one of them is a row the replay cannot read from the log, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
+If more than 500 live frames selected by a stream's immutable `type` and `edges` request filters are waiting before it sends `stream_live`, and either no replay is reading or one of them is a row the replay cannot read from the log, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
 
-**Reason:** the frames a stream holds while it opens are bounded. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
+**Reason:** the frames a stream holds while it opens are bounded, including those excluded only by mutable credential authority because that authority can widen before delivery. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
 
 **Tests:** waiting on #1444.
 

@@ -184,10 +184,8 @@ describe("a catch-up that throws partway through", () => {
 
 describe("live frames held past the limit while the catch-up runs", () => {
   /**
-   * One more than the buffer holds. The cap is the replay's dedupe window,
-   * and the constant's comment in `routes/events.ts` says why it can be no
-   * larger; moving either number moves this, and a red here is the
-   * intended way to be told so.
+   * One more than the candidate buffer holds. The cap matches one replay page;
+   * changing it changes the boundary this test observes.
    */
   const OVER_THE_CAP = 501;
 
@@ -226,26 +224,9 @@ describe("live frames held past the limit while the catch-up runs", () => {
 });
 
 /**
- * The cap counts what the subscriber would receive, not what arrived.
- *
- * A held frame passes through the same two questions the release path
- * asks — does this stream take edges at all, and does this credential's
- * type projection admit this item — before it occupies a slot. Without
- * that, the buffer could be filled entirely by frames guaranteed to be
- * discarded on release, so **traffic a subscriber explicitly excluded
- * could terminate its stream**, and narrowing a subscription made it
- * more fragile rather than less.
- *
- * Both probes below are the shapes a real client takes. `edges: "none"`
- * is what a subscriber that holds items asks for, because it would
- * discard every edge frame anyway; a credential scoped to a single type
- * is the ordinary shape of a narrow connector credential. Neither
- * should be reachable by the traffic it opted out of.
- *
- * Asserted by completion rather than by absence: the catch-up finishes,
- * the stream stays open, and the anchor published afterwards arrives.
- * "No `stream_incomplete` appeared" alone would be equally true of a
- * stream that delivered nothing at all.
+ * Only immutable request filters exclude frames from the hold's capacity.
+ * Credential reach can widen before delivery, so currently unreadable
+ * candidates still occupy slots until replay or drain settles them.
  */
 describe("frames the subscriber would never receive", () => {
   const OVER_THE_CAP = 501;
@@ -285,7 +266,7 @@ describe("frames the subscriber would never receive", () => {
     expect(text).not.toContain("ZZexcludededge0ZZ");
   });
 
-  it("do not fill the hold when the credential cannot read their type", async () => {
+  it("do not fill the hold when the request excludes their type", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "scoped seed" } },
@@ -294,11 +275,11 @@ describe("frames the subscriber would never receive", () => {
     const cursor = await latestEventId();
 
     const { storage, open } = gatedEventLog(ctx.storage);
-    // The permission map is what this probe is about, so it names one
-    // narrower than the default rather than inheriting it.
     const res = await eventsAppWithKey(ctx, storage, {
       type_permissions: { "core.task": "read" },
-    }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
+    }).request("/events?type=core.task", {
+      headers: { "Last-Event-ID": String(cursor) },
+    });
     expect(res.status).toBe(200);
     await settle();
 
@@ -320,5 +301,26 @@ describe("frames the subscriber would never receive", () => {
     });
     expect(text).not.toContain("stream_incomplete");
     expect(text).not.toContain("ZZunreadable0ZZ");
+  });
+});
+
+describe("permission-excluded candidates still occupy the hold", () => {
+  it("ends with backlog_overflow on 501 unlogged candidates excluded only by mutable authority", async () => {
+    const cursor = await latestEventId();
+    const { storage, reached, open } = gatedEventLog(ctx.storage);
+    const res = await eventsAppWithKey(ctx, storage, {
+      type_permissions: { "core.task": "read" },
+    }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
+    await reached;
+    try {
+      emitNotes(501, "mutableexcluded");
+      const { text, closed } = await readSse(res, { untilClosed: true });
+      expect(closed).toBe(true);
+      expect(text).toContain('"reason":"backlog_overflow"');
+      expect(text).not.toContain("event: stream_live");
+      expect(text).not.toContain("ZZmutableexcluded0ZZ");
+    } finally {
+      open();
+    }
   });
 });
