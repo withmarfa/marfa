@@ -154,16 +154,17 @@ impl Registry {
         unreadable: Unreadable,
         edit: impl FnOnce(&mut Vec<Registered>) -> bool,
     ) -> Result<(Vec<Registered>, bool)> {
-        let parent = self
-            .path
+        // Resolved as a file, so a link at the registry's own directory is
+        // followed and only the file itself is opened without following.
+        let path = resolved(&self.path);
+        let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let directory = Directory::create(&resolved(parent))
+        let directory = Directory::create(parent)
             .map_err(|error| self.failed("make the directory of", &error))?;
         let name = Path::new(
-            self.path
-                .file_name()
+            path.file_name()
                 .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?,
         );
         // Two folders registering at once would each write back a list
@@ -427,6 +428,24 @@ mod tests {
         let climbed = base.join("link/../real/notes");
         assert_eq!(resolved(&climbed), climbed);
         assert!(Directory::open(&resolved(&climbed)).is_err());
+    }
+
+    #[test]
+    fn a_registry_inside_a_linked_directory_is_written_where_it_resolves() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, temp.path().join("link")).unwrap();
+        let one = folder_at(temp.path(), "one");
+        let registry = Registry::at(temp.path().join("link").join(FILE_NAME));
+        registry.add(&one, "f1", None).unwrap();
+        assert_eq!(registry.folders().unwrap().len(), 1);
+        assert!(real.join(FILE_NAME).is_file());
+        std::fs::remove_file(real.join(FILE_NAME)).unwrap();
+        std::os::unix::fs::symlink(temp.path().join("elsewhere.json"), real.join(FILE_NAME))
+            .unwrap();
+        assert!(registry.add(&one, "f1", None).is_err());
+        assert!(!temp.path().join("elsewhere.json").exists());
     }
 
     #[test]
