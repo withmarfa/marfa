@@ -1,7 +1,7 @@
 use crate::directory::Directory;
-use crate::directory::{Mode, OFlags};
+use crate::directory::{FileType, Mode, OFlags};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -96,7 +96,7 @@ impl Registry {
     /// Lists a folder being added, refusing one nested with another; an
     /// unreadable registry is written afresh.
     pub fn add(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
-        let dir = resolved(dir);
+        let dir = absolute(dir);
         if let Ok(listed) = self.folders()
             && let Some(other) = listed.iter().find(|entry| {
                 entry.dir != dir && (dir.starts_with(&entry.dir) || entry.dir.starts_with(&dir))
@@ -119,7 +119,7 @@ impl Registry {
         unreadable: Unreadable,
     ) -> Result<()> {
         let entry = Registered {
-            dir: resolved(dir),
+            dir: absolute(dir),
             folder: folder.to_string(),
             store: store.map(str::to_string),
         };
@@ -136,15 +136,32 @@ impl Registry {
         .map(|_| ())
     }
 
-    /// Answers whether the folder was listed.
-    pub fn unregister(&self, dir: &Path) -> Result<bool> {
-        let dir = resolved(dir);
+    /// Takes off the entry for `dir`, and every entry for `store` where one
+    /// is given, so a folder moved since it was listed leaves no entry
+    /// behind. Answers whether any was listed.
+    pub fn unregister(&self, dir: &Path, store: Option<&str>) -> Result<bool> {
+        let dir = absolute(dir);
         self.change(Unreadable::Refuse, |listed| {
             let before = listed.len();
-            listed.retain(|entry| entry.dir != dir);
+            listed.retain(|entry| {
+                entry.dir != dir && (store.is_none() || entry.store.as_deref() != store)
+            });
             listed.len() != before
         })
         .map(|(_, changed)| changed)
+    }
+
+    /// The entries as written, read without the lock or a rewrite, since
+    /// every write lands whole.
+    fn listing(&self) -> Option<Vec<Registered>> {
+        let path = resolved(&self.path);
+        let (parent, name) = (path.parent()?, path.file_name()?);
+        let bytes = Directory::open(parent)
+            .and_then(|directory| directory.read(Path::new(name)))
+            .ok()?;
+        serde_json::from_slice::<Listing>(&bytes)
+            .ok()
+            .map(|listing| listing.folders)
     }
 
     /// Reads the list under the registry's lock, tidies it, applies `edit`,
@@ -154,16 +171,17 @@ impl Registry {
         unreadable: Unreadable,
         edit: impl FnOnce(&mut Vec<Registered>) -> bool,
     ) -> Result<(Vec<Registered>, bool)> {
-        let parent = self
-            .path
+        // Resolved as a file, so a link at the registry's own directory is
+        // followed and only the file itself is opened without following.
+        let path = resolved(&self.path);
+        let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let directory = Directory::create(parent)
             .map_err(|error| self.failed("make the directory of", &error))?;
         let name = Path::new(
-            self.path
-                .file_name()
+            path.file_name()
                 .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?,
         );
         // Two folders registering at once would each write back a list
@@ -193,11 +211,12 @@ impl Registry {
             Err(error) => return Err(self.failed("read", &error)),
         };
         let mut tidied: Vec<Registered> = Vec::new();
-        for mut entry in std::mem::take(&mut listing.folders) {
+        // Entries are listed resolved; resolving one again would follow a
+        // link that replaced its directory since.
+        for entry in std::mem::take(&mut listing.folders) {
             if gone(&entry) {
                 continue;
             }
-            entry.dir = resolved(&entry.dir);
             tidied.retain(|kept| {
                 kept.dir != entry.dir && (entry.store.is_none() || kept.store != entry.store)
             });
@@ -242,36 +261,267 @@ fn machine_path(home: &Path) -> PathBuf {
     base.join(FILE_NAME)
 }
 
-/// Parent components are removed only after both spellings open the same
-/// directory without following links, so a link before `..` cannot disappear.
+/// The directories above a root are the person's and outside the folder, and
+/// the system links some of them (`/var` and `/tmp` on macOS), so links there
+/// are followed. The root's own entry, and every component a later `..`
+/// climbs back out of, are opened without following links, and a `..` is
+/// removed only after the walk through it returns to the directory it left,
+/// so a link before `..` cannot disappear. A path [`named`] refuses keeps
+/// its spelling from the refused component on.
 pub fn resolved(dir: &Path) -> PathBuf {
-    let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
-    if !absolute
-        .components()
-        .any(|part| part == std::path::Component::ParentDir)
-    {
-        return absolute;
+    walk(dir).0
+}
+
+/// What a path given for an existing folder reaches.
+pub(crate) enum Reached {
+    /// The listed folder this path names, at the path it is listed at.
+    Listed(Registered),
+    /// No listed folder: the path as [`named`] resolves it.
+    Unlisted(PathBuf),
+}
+
+/// A path the registry lists by this spelling names that entry, never
+/// resolved again. Any other path is [`named`], and names a listed folder
+/// only where that folder's own listed path, opened without following links,
+/// is the directory it reaches. Where a listed path now reaches that
+/// directory only through a link, or two listed paths reach it, the path
+/// could mean either folder, so it is refused.
+pub(crate) fn reach(dir: &Path) -> Result<Reached> {
+    let spelled = absolute(dir);
+    let listed = listing();
+    if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
+        return Ok(Reached::Listed(entry.clone()));
     }
-    let Ok(admitted) = Directory::open(&absolute) else {
-        return absolute;
+    let root = named(dir)?;
+    let Ok(target) = Directory::open(&root) else {
+        return Ok(match listed.into_iter().find(|entry| entry.dir == root) {
+            Some(entry) => Reached::Listed(entry),
+            None => Reached::Unlisted(root),
+        });
     };
-    let mut normalized = PathBuf::new();
-    for part in absolute.components() {
-        match part {
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            std::path::Component::CurDir => {}
-            part => normalized.push(part.as_os_str()),
+    let leading: Vec<&Registered> = listed
+        .iter()
+        .filter(|entry| leads_to(&entry.dir, &target))
+        .collect();
+    match leading.as_slice() {
+        [] => Ok(Reached::Unlisted(root)),
+        [entry] if stands_at(&entry.dir, &target) => Ok(Reached::Listed((*entry).clone())),
+        _ => Err(CoreError::Invalid(format!(
+            "{} could name more than one folder: {} is also reached from the listed folder paths {}, through a symbolic link that has replaced a listed folder's directory, so nothing was changed; name the folder by the path `folders list` shows for it",
+            spelled.display(),
+            root.display(),
+            leading
+                .iter()
+                .map(|entry| entry.dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ))),
+    }
+}
+
+/// The machine's registry as written, or nothing where there is none or it
+/// cannot be read.
+pub(crate) fn listing() -> Vec<Registered> {
+    Registry::located()
+        .and_then(|registry| registry.listing())
+        .unwrap_or_default()
+}
+
+/// The entry listed at the directory `root` names: the one whose listed path,
+/// opened without following links, is that directory, or where nothing opens
+/// there, the one listed by that path.
+pub(crate) fn listed_at(root: &Path, listed: &[Registered]) -> Option<Registered> {
+    match Directory::open(root) {
+        Ok(target) => listed
+            .iter()
+            .find(|entry| stands_at(&entry.dir, &target))
+            .cloned(),
+        Err(_) => listed.iter().find(|entry| entry.dir == root).cloned(),
+    }
+}
+
+/// The first symbolic link on `path`, checked one spelled prefix at a time.
+pub(crate) fn first_link(path: &Path) -> Option<PathBuf> {
+    let mut prefix = PathBuf::new();
+    for part in path.components() {
+        prefix.push(part);
+        if std::fs::symlink_metadata(&prefix).is_ok_and(|entry| entry.file_type().is_symlink()) {
+            return Some(prefix);
         }
     }
-    if Directory::open(&normalized)
-        .is_ok_and(|directory| admitted.same(&directory).unwrap_or(false))
-    {
-        normalized
-    } else {
-        absolute
+    None
+}
+
+/// Why a listed path is not opened: a symbolic link that now stands in it,
+/// which a listed folder is never reached through.
+pub(crate) fn linked_listing(dir: &Path) -> Option<CoreError> {
+    first_link(dir).map(|link| {
+        CoreError::Invalid(format!(
+            "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one; `folders remove {}` only takes it off the list",
+            dir.display(),
+            link.display(),
+            dir.display()
+        ))
+    })
+}
+
+/// Whether `dir`, following its links, is the directory `target` holds.
+fn leads_to(dir: &Path, target: &Directory) -> bool {
+    std::fs::canonicalize(dir)
+        .and_then(|path| Directory::open(&path))
+        .is_ok_and(|directory| directory.same(target).unwrap_or(false))
+}
+
+/// Whether `dir`, opened without following links, is the directory `target`
+/// holds.
+pub(crate) fn stands_at(dir: &Path, target: &Directory) -> bool {
+    Directory::open(dir).is_ok_and(|directory| directory.same(target).unwrap_or(false))
+}
+
+pub(crate) fn absolute(dir: &Path) -> PathBuf {
+    std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// [`resolved`], or why a folder cannot be named by this path: a symbolic
+/// link it would be opened through, or a `..` that climbs back out of a
+/// directory that does not exist, which creating the folder would make.
+pub(crate) fn named(dir: &Path) -> Result<PathBuf> {
+    match walk(dir) {
+        (path, None) => Ok(path),
+        (_, Some(refused)) => Err(refused),
     }
+}
+
+fn walk(dir: &Path) -> (PathBuf, Option<CoreError>) {
+    let absolute = absolute(dir);
+    let parts: Vec<Component> = absolute.components().collect();
+    let mut closed_by: Vec<Option<usize>> = vec![None; parts.len()];
+    let mut entered = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
+        match part {
+            Component::Normal(_) => entered.push(index),
+            Component::ParentDir => {
+                if let Some(start) = entered.pop() {
+                    closed_by[start] = Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    let own = entered.last().copied();
+    let mut at = PathBuf::new();
+    let mut settled = true;
+    let mut index = 0;
+    while index < parts.len() {
+        let part = parts[index];
+        match (part, closed_by[index]) {
+            (Component::Normal(_), Some(close)) => {
+                if !settled {
+                    at = existing_prefix_resolved(&at);
+                    settled = true;
+                }
+                let climbed: PathBuf = parts[index..=close].iter().collect();
+                if !returns(&at, &climbed) {
+                    let refused = climb_refused(&at, &parts[index..=close], &absolute);
+                    at.extend(&parts[index..]);
+                    return (at, refused);
+                }
+                index = close;
+            }
+            (Component::Normal(_), None) if Some(index) == own => {
+                if !settled {
+                    at = existing_prefix_resolved(&at);
+                    settled = true;
+                }
+                at.push(part);
+                if std::fs::symlink_metadata(&at).is_ok_and(|entry| entry.file_type().is_symlink())
+                {
+                    let refused = through_link(&at, std::fs::canonicalize(&at), true);
+                    at.extend(&parts[index + 1..]);
+                    return (at, Some(refused));
+                }
+            }
+            (Component::Normal(_), None) => {
+                at.push(part);
+                settled = false;
+            }
+            (Component::ParentDir, _) if at.has_root() => {}
+            (part, _) => at.push(part),
+        }
+        index += 1;
+    }
+    (at, None)
+}
+
+/// Why a walk through `segment` from `at` did not come back: the first link
+/// on it, or the first directory on it that does not exist. Anything else is
+/// left for the open to report.
+fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<CoreError> {
+    let mut prefix = at.to_path_buf();
+    for part in segment {
+        if let Component::Normal(name) = part {
+            let entry = prefix.join(name);
+            let kind = Directory::open(&prefix)
+                .and_then(|directory| directory.entry_kind(Path::new(name)));
+            match kind {
+                Ok(FileType::Symlink) => {
+                    return Some(through_link(&entry, std::fs::canonicalize(absolute), false));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Some(CoreError::Invalid(format!(
+                        "{} climbs back out of {}, which does not exist, so nothing was created or followed; name the folder without that `..`",
+                        absolute.display(),
+                        entry.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        prefix.push(part);
+    }
+    None
+}
+
+/// The no-follow open refuses a link with the system's own error, such as
+/// `Not a directory` on macOS, which names neither the link nor the
+/// directory to name instead.
+fn through_link(link: &Path, reached: std::io::Result<PathBuf>, own: bool) -> CoreError {
+    let instead = match (reached, own) {
+        (Ok(target), true) => format!("the directory it points to, {}", target.display()),
+        (Ok(target), false) => format!("the directory the path reaches, {}", target.display()),
+        (Err(_), true) => "the directory itself".into(),
+        (Err(_), false) => "the folder by a path without it".into(),
+    };
+    CoreError::Invalid(format!(
+        "{} is a symbolic link, and a folder is never opened through one; name {instead}",
+        link.display()
+    ))
+}
+
+/// Whether walking `climbed` from `at` without following links comes back
+/// to the directory `at` names.
+fn returns(at: &Path, climbed: &Path) -> bool {
+    let (Ok(left), Ok(back)) = (Directory::open(at), Directory::open(&at.join(climbed))) else {
+        return false;
+    };
+    left.same(&back).unwrap_or(false)
+}
+
+/// Resolves the longest prefix that exists and keeps the components that do
+/// not exist yet, since a folder being added need not exist.
+fn existing_prefix_resolved(path: &Path) -> PathBuf {
+    for base in path.ancestors() {
+        if let Ok(mut found) = std::fs::canonicalize(base) {
+            if let Ok(missing) = path.strip_prefix(base)
+                && !missing.as_os_str().is_empty()
+            {
+                found.push(missing);
+            }
+            return found;
+        }
+    }
+    path.to_path_buf()
 }
 
 /// Missing or unreadable roots are kept, since a disconnected volume or a
@@ -303,13 +553,555 @@ mod tests {
         let outer = folder_at(temp.path(), "outer");
         std::fs::create_dir(outer.join("child")).unwrap();
         let inner = folder_at(&outer, "nested");
-        let parent_spelling = outer.join("child/..");
+        let parent_spelling = resolved(&outer.join("child/.."));
         let registry = Registry::at(temp.path().join(FILE_NAME));
         registry.add(&parent_spelling, "outer", None).unwrap();
         assert!(registry.add(&inner, "inner", None).is_err());
-        registry.unregister(&parent_spelling).unwrap();
+        registry.unregister(&parent_spelling, None).unwrap();
         registry.add(&inner, "inner", None).unwrap();
         assert!(registry.add(&parent_spelling, "outer", None).is_err());
+    }
+
+    #[test]
+    fn a_linked_ancestor_is_resolved_and_nothing_at_or_below_the_root_is_followed() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes/child")).unwrap();
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        let named = base.join("link/notes");
+        assert!(Directory::open(&named).is_err());
+        assert_eq!(resolved(&named), real.join("notes"));
+        assert!(Directory::open(&resolved(&named)).is_ok());
+        assert_eq!(
+            resolved(&base.join("link/new/deeper")),
+            real.join("new/deeper")
+        );
+        assert_eq!(
+            resolved(&base.join("link/notes/child/..")),
+            real.join("notes")
+        );
+
+        std::os::unix::fs::symlink(real.join("notes"), base.join("alias")).unwrap();
+        assert_eq!(resolved(&base.join("alias")), base.join("alias"));
+        assert!(Directory::open(&resolved(&base.join("alias"))).is_err());
+        assert!(Directory::open(&resolved(&base.join("alias/child/.."))).is_err());
+        std::os::unix::fs::symlink(base.join("elsewhere"), real.join("notes/inside")).unwrap();
+        let root = Directory::open(&resolved(&named)).unwrap();
+        assert!(root.child(Path::new("child"), false).is_ok());
+        assert!(root.child(Path::new("inside"), false).is_err());
+        let back = base.join("link/notes/inside/..");
+        assert_eq!(resolved(&back), real.join("notes/inside/.."));
+        assert!(Directory::open(&resolved(&back)).is_err());
+    }
+
+    #[test]
+    fn a_link_after_the_last_parent_component_is_resolved_and_one_climbed_out_of_is_not() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes")).unwrap();
+        std::fs::create_dir(real.join("child")).unwrap();
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+
+        let after = base.join("elsewhere/../link/notes");
+        assert_eq!(resolved(&after), real.join("notes"));
+        assert!(Directory::open(&resolved(&after)).is_ok());
+        assert_eq!(
+            resolved(&base.join("elsewhere/../link/child/../notes")),
+            real.join("notes")
+        );
+        assert_eq!(
+            resolved(&base.join("elsewhere/../link/fresh")),
+            real.join("fresh")
+        );
+        assert_eq!(
+            resolved(&base.join("real/../real/notes")),
+            real.join("notes")
+        );
+        let climbed = base.join("link/../real/notes");
+        assert_eq!(resolved(&climbed), climbed);
+        assert!(Directory::open(&resolved(&climbed)).is_err());
+    }
+
+    #[test]
+    fn a_registry_inside_a_linked_directory_is_written_where_it_resolves() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, temp.path().join("link")).unwrap();
+        let one = folder_at(temp.path(), "one");
+        let registry = Registry::at(temp.path().join("link").join(FILE_NAME));
+        registry.add(&one, "f1", None).unwrap();
+        assert_eq!(registry.folders().unwrap().len(), 1);
+        assert!(real.join(FILE_NAME).is_file());
+        std::fs::remove_file(real.join(FILE_NAME)).unwrap();
+        std::os::unix::fs::symlink(temp.path().join("elsewhere.json"), real.join(FILE_NAME))
+            .unwrap();
+        assert!(registry.add(&one, "f1", None).is_err());
+        assert!(!temp.path().join("elsewhere.json").exists());
+    }
+
+    #[test]
+    fn a_folder_named_through_a_linked_ancestor_is_added_opened_and_removed_where_it_resolves() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let real = temp.path().join("real");
+        let root = real.join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        std::os::unix::fs::symlink(&real, temp.path().join("link")).unwrap();
+        let named = temp.path().join("link/notes");
+
+        assert_eq!(Folder::open(&named, None).unwrap().root(), root);
+        // Its copy holds no settings, so the status is refused only after
+        // the folder opened.
+        assert!(!matches!(
+            Folder::status_of(&named),
+            Err(CoreError::Invalid(message)) if message.contains("is not a folder")
+        ));
+        // A removal through a link is refused, naming the listed path.
+        assert!(matches!(
+            Folder::remove_at(&named),
+            Err(CoreError::Invalid(message))
+                if message.contains(&format!("listed at {}", root.display()))
+        ));
+        assert!(root.join(STATE_DIR).join("core.sqlite").exists());
+        assert_eq!(
+            Folder::remove_at(&root).unwrap(),
+            crate::folder::Removal::Deleted(root.clone())
+        );
+        assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
+
+        let server = crate::scripted::Scripted::start();
+        let added = Folder::add(
+            temp.path().join("link/fresh"),
+            "01a00000-0000-7000-8000-000000000002",
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+            None,
+        );
+        assert!(!matches!(added, Err(CoreError::Io(_))), "{:?}", added.err());
+        assert!(real.join("fresh").join(STATE_DIR).is_dir());
+    }
+
+    #[test]
+    fn a_folder_named_by_a_link_is_refused_naming_the_link_and_its_directory() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = temp.path().join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let names = |error: Option<CoreError>, instead: &str| match error {
+            Some(CoreError::Invalid(message)) => {
+                message.starts_with(&format!("{} is a symbolic link", alias.display()))
+                    && message.ends_with(instead)
+            }
+            _ => false,
+        };
+        let target = format!("points to, {}", root.display());
+
+        assert_eq!(Folder::open(&root, None).unwrap().root(), root);
+        assert!(names(Folder::open(&alias, None).err(), &target));
+        assert!(names(Folder::status_of(&alias).err(), &target));
+        assert!(names(Folder::remove_at(&alias).err(), &target));
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+        let added = Folder::add(&alias, "01a00000-0000-7000-8000-000000000001", server, None);
+        assert!(names(added.err(), &target));
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(names(
+            Folder::status_of(&alias).err(),
+            "the directory itself"
+        ));
+    }
+
+    #[test]
+    fn a_listed_folder_whose_directory_became_a_link_is_judged_where_it_was_listed() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let first = folder_at(&base.join("a"), "notes");
+        registry.register(&first, "f1", Some("s1")).unwrap();
+        let listed = |dir: &Path, folder: &str, store: &str| Registered {
+            dir: dir.to_path_buf(),
+            folder: folder.into(),
+            store: Some(store.into()),
+        };
+
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::fs::create_dir_all(base.join("plain/notes")).unwrap();
+        std::os::unix::fs::symlink(base.join("plain"), base.join("a")).unwrap();
+        assert_eq!(
+            registry.folders().unwrap(),
+            vec![listed(&first, "f1", "s1")]
+        );
+
+        let second = folder_at(&base.join("b"), "notes");
+        registry.register(&second, "f2", Some("s2")).unwrap();
+        std::fs::remove_file(base.join("a")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        assert_eq!(
+            registry.folders().unwrap(),
+            vec![listed(&first, "f1", "s1"), listed(&second, "f2", "s2")]
+        );
+    }
+
+    #[test]
+    fn a_path_climbing_out_of_a_missing_directory_is_refused_before_anything_is_made() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        let named = base.join("missing/../link/notes");
+        let missing = format!(
+            "climbs back out of {}, which does not exist",
+            base.join("missing").display()
+        );
+        let refused = |error: Option<CoreError>| matches!(error, Some(CoreError::Invalid(message)) if message.contains(&missing));
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+
+        assert!(refused(
+            Folder::add(&named, "01a00000-0000-7000-8000-000000000001", server, None).err()
+        ));
+        assert!(!base.join("missing").exists());
+        assert!(refused(Folder::open(&named, None).err()));
+        assert!(refused(Folder::status_of(&named).err()));
+        assert!(refused(Folder::remove_at(&named).err()));
+        assert!(!base.join("missing").exists());
+        assert_eq!(resolved(&named), named);
+    }
+
+    #[test]
+    fn a_refused_link_on_the_named_path_is_named_in_the_refusal() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        let root = real.join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        std::os::unix::fs::symlink(base.join("elsewhere"), root.join("inside")).unwrap();
+        let server = || {
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            })
+        };
+
+        for (named, link, reaches) in [
+            (
+                base.join("link/../real/notes"),
+                base.join("link"),
+                root.clone(),
+            ),
+            (
+                root.join("inside/.."),
+                root.join("inside"),
+                base.to_path_buf(),
+            ),
+        ] {
+            let names = |error: Option<CoreError>| match error {
+                Some(CoreError::Invalid(message)) => {
+                    message.starts_with(&format!("{} is a symbolic link", link.display()))
+                        && message.ends_with(&format!(
+                            "the directory the path reaches, {}",
+                            reaches.display()
+                        ))
+                }
+                _ => false,
+            };
+            assert!(
+                names(Folder::open(&named, None).err()),
+                "{}",
+                named.display()
+            );
+            assert!(names(Folder::status_of(&named).err()));
+            assert!(names(Folder::remove_at(&named).err()));
+            assert!(names(
+                Folder::add(
+                    &named,
+                    "01a00000-0000-7000-8000-000000000001",
+                    server(),
+                    None
+                )
+                .err()
+            ));
+        }
+        assert!(root.join(STATE_DIR).join("core.sqlite").exists());
+        assert!(Folder::open(&root, None).is_ok());
+    }
+
+    fn bound_folder(dir: &Path, folder: &str) {
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, folder).unwrap();
+    }
+
+    #[test]
+    fn a_listed_folder_whose_directory_became_a_link_to_another_folder_is_only_unlisted() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        let store = |dir: &Path| dir.join(STATE_DIR).join("core.sqlite");
+        let listed = || -> Vec<PathBuf> {
+            Registry::located()
+                .unwrap()
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
+
+        assert!(Folder::open(&first, None).is_err());
+        assert!(Folder::status_of(&first).is_err());
+        assert!(matches!(
+            Folder::remove_at(&first).unwrap(),
+            crate::folder::Removal::Unlisted { dir, reason }
+                if dir == first && reason == format!("{} is now a symbolic link", base.join("a").display())
+        ));
+        assert!(
+            store(&second).exists(),
+            "the other folder's store was removed"
+        );
+        assert!(store(&base.join("a-moved/notes")).exists());
+        assert!(listed().contains(&second));
+        assert!(!listed().contains(&first));
+    }
+
+    #[test]
+    fn no_other_spelling_of_a_relinked_listed_folder_removes_the_folder_its_link_leads_to() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        let alias = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        std::os::unix::fs::symlink(base, alias.path().join("base")).unwrap();
+        let registry = Registry::located().unwrap();
+        let listed = || -> Vec<PathBuf> {
+            registry
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
+        let intact = |spelling: &Path| {
+            assert!(
+                second.join(STATE_DIR).join("core.sqlite").exists(),
+                "{} removed the folder its link leads to",
+                spelling.display()
+            );
+        };
+
+        for spelling in [
+            alias.path().join("base/a/notes"),
+            base.join("A/notes"),
+            base.join("a/NOTES"),
+            base.join("b/../a/notes"),
+        ] {
+            assert!(
+                Folder::open(&spelling, None).is_err(),
+                "{}",
+                spelling.display()
+            );
+            assert!(Folder::status_of(&spelling).is_err());
+            assert!(
+                Folder::remove_at(&spelling).is_err(),
+                "{}",
+                spelling.display()
+            );
+            intact(&spelling);
+            assert!(listed().contains(&first) && listed().contains(&second));
+        }
+
+        let kept = std::fs::read(registry.path()).unwrap();
+        std::fs::remove_file(registry.path()).unwrap();
+        assert!(Folder::remove_at(&first).is_err());
+        intact(&first);
+        std::fs::write(registry.path(), kept).unwrap();
+
+        Folder::remove_at(&first).unwrap();
+        intact(&first);
+        assert!(listed().contains(&second));
+        assert!(!listed().contains(&first));
+        assert!(Folder::remove_at(alias.path().join("base/b/notes")).is_err());
+        intact(&second);
+        assert_eq!(
+            Folder::remove_at(&second).unwrap(),
+            crate::folder::Removal::Deleted(second.clone())
+        );
+        assert!(!second.join(STATE_DIR).join("core.sqlite").exists());
+    }
+
+    #[test]
+    fn a_relinked_listed_path_never_removes_the_folder_it_leads_to_however_often_or_unlisted() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        let store = second.join(STATE_DIR).join("core.sqlite");
+        let registry = Registry::located().unwrap();
+
+        assert!(
+            Folder::remove_at(&first).is_ok(),
+            "the listed path is taken off the list"
+        );
+        assert!(
+            Folder::remove_at(&first).is_err(),
+            "a second removal followed the link"
+        );
+        assert!(store.exists());
+
+        // A pass through the path once the registry is lost lists the folder
+        // the path leads to, as a scan does.
+        std::fs::remove_file(registry.path()).unwrap();
+        Folder::open(&first, None).unwrap().register();
+        assert!(
+            registry
+                .folders()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == second)
+        );
+        assert!(
+            Folder::remove_at(&first).is_err(),
+            "a removal followed the link once the registry was lost"
+        );
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn removing_a_moved_folder_takes_every_entry_for_its_store_off_the_list() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let first = base.join("a/notes");
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        drop(Folder::open(&first, None).unwrap());
+        std::fs::create_dir(base.join("c")).unwrap();
+        let moved = base.join("c/notes");
+        std::fs::rename(&first, &moved).unwrap();
+
+        Folder::remove_at(&moved).unwrap();
+        assert!(!moved.join(STATE_DIR).join("core.sqlite").exists());
+        let listed = Registry::located().unwrap().folders().unwrap();
+        assert!(
+            !listed
+                .iter()
+                .any(|entry| entry.dir == first || entry.dir == moved),
+            "{listed:?}"
+        );
+    }
+
+    #[test]
+    fn a_folder_moved_into_a_listed_folders_place_is_never_removed_in_its_stead() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::fs::create_dir(base.join("a")).unwrap();
+        std::fs::rename(&second, &first).unwrap();
+        let registry = Registry::located().unwrap();
+
+        assert!(matches!(
+            Folder::remove_at(&first).unwrap(),
+            crate::folder::Removal::Unlisted { dir, reason }
+                if dir == first && reason.contains("not the one the registry lists")
+        ));
+        assert!(
+            first.join(STATE_DIR).join("core.sqlite").exists(),
+            "the folder moved into the listed folder's place was removed"
+        );
+
+        // An entry with no store cannot be shown to own the state there.
+        let third = base.join("c/notes");
+        bound_folder(&third, "01a00000-0000-7000-8000-000000000003");
+        registry
+            .register(&third, "01a00000-0000-7000-8000-000000000003", None)
+            .unwrap();
+        assert!(matches!(
+            Folder::remove_at(&third).unwrap(),
+            crate::folder::Removal::Unlisted { reason, .. } if reason.contains("lists no store")
+        ));
+        assert!(third.join(STATE_DIR).join("core.sqlite").exists());
+        let listed = registry.folders().unwrap();
+        assert!(!listed.iter().any(|entry| entry.dir == first));
+        assert!(
+            listed
+                .iter()
+                .any(|entry| entry.dir == second && entry.folder.ends_with('2'))
+        );
+    }
+
+    #[test]
+    fn a_listed_folder_whose_directory_became_a_link_to_a_plain_directory_is_unlisted() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let first = base.join("a/notes");
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        drop(Folder::open(&first, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::fs::create_dir_all(base.join("plain/notes")).unwrap();
+        std::os::unix::fs::symlink(base.join("plain"), base.join("a")).unwrap();
+
+        Folder::remove_at(&first).unwrap();
+        let registry = Registry::located().unwrap();
+        assert!(
+            !registry
+                .folders()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == first)
+        );
+        assert!(!base.join("plain/notes").join(STATE_DIR).exists());
     }
 
     #[test]

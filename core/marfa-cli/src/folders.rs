@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::Subcommand;
 use marfa_core::Confirmed;
 use marfa_core::folder::Registry;
-use marfa_core::{CoreError, FirstSync, Folder, SyncReport, Synced};
+use marfa_core::{CoreError, FirstSync, Folder, Removal, SyncReport, Synced};
 
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
@@ -34,8 +34,11 @@ pub enum FoldersCommand {
     /// Take a folder off this machine: its own state under `.marfa` goes,
     /// and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
-    /// waiting to be confirmed, which this cancels. A
-    /// folder whose directory is gone is taken off the list.
+    /// waiting to be confirmed, which this cancels. Follows no symbolic
+    /// link, and takes a path through one only where it is the path
+    /// `folders list` shows. Where that path is gone, passes through a link,
+    /// or holds state the registry does not show to be the folder's own, the
+    /// folder is only taken off the list and nothing is deleted.
     Remove {
         /// The folder.
         dir: PathBuf,
@@ -183,14 +186,23 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     .join("\n")
             })
         }
-        FoldersCommand::Remove { dir } => {
-            Folder::remove_at(&dir).map_err(held(&dir))?;
-            output::report(
+        FoldersCommand::Remove { dir } => match Folder::remove_at(&dir).map_err(held(&dir))? {
+            Removal::Deleted(dir) => output::report(
                 &serde_json::json!({ "dir": dir, "removed": true }),
                 json,
                 || format!("{} is no longer a folder; its files stay", dir.display()),
-            )
-        }
+            ),
+            Removal::Unlisted { dir, reason } => output::report(
+                &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
+                json,
+                || {
+                    format!(
+                        "{} was taken off the list; nothing was deleted because {reason}",
+                        dir.display()
+                    )
+                },
+            ),
+        },
         FoldersCommand::Status { dir } => {
             let report = Folder::status_of(&dir)?;
             output::report(&report, json, || describe_status(&report))

@@ -3,12 +3,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
@@ -33,6 +35,34 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
+
+/** Adds a folder at `<dir>/<name>/notes` and answers the directory listed. */
+async function addNotes(name: string): Promise<string> {
+  const settings = await c.cli.json<ItemEnvelope>([
+    "folders",
+    "create",
+    "--title",
+    unique(`listed-${name}`),
+    "--search",
+    JSON.stringify({ types: ["core.note"] }),
+  ]);
+  trackFolder(c.ctx, settings.item.id);
+  const added = await c.cli.json<{ dir: string }>([
+    "folders",
+    "add",
+    join(dir, name, "notes"),
+    "--folder",
+    settings.item.id,
+    "--yes",
+  ]);
+  return added.dir;
+}
+
+async function listed(): Promise<string[]> {
+  return (await c.cli.json<Array<{ dir: string }>>(["folders", "list"])).map(
+    (entry) => entry.dir,
+  );
+}
 
 interface PushReport {
   scan: {
@@ -371,6 +401,316 @@ describe("a folder round trip", () => {
     );
     expect(corrected.updated).toBe(0);
     expect(corrected.flagged).toEqual([]);
+  });
+
+  it("adds a folder named through a linked directory where it resolves, and follows no link inside it", async () => {
+    // A directory above a folder is the person's, and may be a link, as
+    // `/var` and `/tmp` are on macOS.
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const named = join(dir, "linked", "notes");
+    const resolved = join(realpathSync(real), "notes");
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    writeFileSync(
+      join(outside, "outside.md"),
+      `---\ntitle: ${unique("behind-a-link")}\n---\nBehind a link.\n`,
+    );
+    symlinkSync(outside, join(resolved, "inside"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("linked-ancestor"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    // Named from the working directory, with a `..` before the link; a
+    // template keeps the spelling that path.join would normalize.
+    const spelled = `${relative(process.cwd(), dir)}/real/../linked/notes`;
+    const added = await c.cli.json<{ dir: string }>([
+      "folders",
+      "add",
+      spelled,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    expect(added.dir).toBe(resolved);
+    const listed = await c.cli.json<Array<{ dir: string; folder: string }>>([
+      "folders",
+      "list",
+    ]);
+    expect(
+      listed
+        .filter((entry) => entry.folder === settings.item.id)
+        .map((entry) => entry.dir),
+    ).toEqual([resolved]);
+
+    writeFileSync(
+      join(resolved, "dropped.md"),
+      `---\ntitle: ${unique("linked-ancestor-note")}\n---\nDropped here.\n`,
+    );
+    const pushed = await c.cli.json<PushReport>(["folders", "push", named]);
+    // The file beside the link is taken in, and the one behind it is not.
+    expect(pushed.scan.created).toBe(1);
+    const minted = /marfa_id: (\S+)/.exec(
+      readFileSync(join(resolved, "dropped.md"), "utf8"),
+    )![1]!;
+    trackItem(c.ctx, minted);
+    expect(readFileSync(join(outside, "outside.md"), "utf8")).not.toContain(
+      "marfa_id",
+    );
+
+    // The folder's own directory is not followed when it is the link.
+    symlinkSync(resolved, join(dir, "alias"));
+    const refused = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "alias"),
+    ]);
+    expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(
+      `${join(realpathSync(dir), "alias")} is a symbolic link`,
+    );
+    await c.cli.json(["folders", "status", named]);
+
+    // A removal through a link is refused, naming the path the registry
+    // lists.
+    const throughLink = await c.cli.refused(["folders", "remove", named]);
+    expect(throughLink.envelope.error.code).toBe("invalid");
+    expect(throughLink.envelope.error.message).toContain(
+      `listed at ${resolved}`,
+    );
+    expect(existsSync(join(resolved, ".marfa", "core.sqlite"))).toBe(true);
+    const removed = await c.cli.json<{ dir: string; removed: boolean }>([
+      "folders",
+      "remove",
+      resolved,
+    ]);
+    expect(removed).toEqual({ dir: resolved, removed: true });
+    expect(existsSync(join(resolved, ".marfa", "core.sqlite"))).toBe(false);
+    expect(existsSync(join(resolved, "dropped.md"))).toBe(true);
+  });
+
+  it("refuses a folder named through a link that a later parent component climbs back out of", async () => {
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("climbed-link"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      join(real, "notes"),
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    await c.cli.json(["folders", "hydrate", join(real, "notes")]);
+    // Templates keep the spellings that path.join would normalize. The
+    // witness: the same spelling through a directory opens the folder.
+    await c.cli.json(["folders", "status", `${dir}/real/../real/notes`]);
+    const climbed = `${dir}/linked/../real/notes`;
+    const link = `${join(realpathSync(dir), "linked")} is a symbolic link`;
+    for (const command of [
+      ["folders", "status", climbed],
+      ["folders", "add", climbed, "--folder", settings.item.id, "--yes"],
+    ]) {
+      const refused = await c.cli.refused(command);
+      expect(refused.code, command.join(" ")).toBe(1);
+      expect(refused.envelope.error.code).toBe("invalid");
+      expect(refused.envelope.error.message).toContain(link);
+    }
+  });
+
+  it("removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    expect(await listed()).toEqual(expect.arrayContaining([first, second]));
+
+    renameSync(join(dir, "a"), join(dir, "a-moved"));
+    symlinkSync(join(dir, "b"), join(dir, "a"));
+    const unlisted = await c.cli.json<{
+      dir: string;
+      removed: boolean;
+      reason: string;
+    }>(["folders", "remove", first]);
+    expect(unlisted).toEqual({
+      dir: first,
+      removed: false,
+      reason: `${join(realpathSync(dir), "a")} is now a symbolic link`,
+    });
+    expect(
+      existsSync(join(second, ".marfa", "core.sqlite")),
+      "removing the first folder removed the folder its link leads to",
+    ).toBe(true);
+    expect(
+      existsSync(join(dir, "a-moved", "notes", ".marfa", "core.sqlite")),
+    ).toBe(true);
+    const after = await listed();
+    expect(after).toContain(second);
+    expect(after).not.toContain(first);
+    // Unlisted now, the same path is a spelling through a link.
+    const again = await c.cli.refused(["folders", "remove", first]);
+    expect(again.envelope.error.code).toBe("invalid");
+    expect(
+      existsSync(join(second, ".marfa", "core.sqlite")),
+      "a second removal removed the folder the link leads to",
+    ).toBe(true);
+  });
+
+  it("refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    renameSync(join(dir, "a"), join(dir, "a-moved"));
+    symlinkSync(join(dir, "b"), join(dir, "a"));
+    // A link above both folders, as `/tmp` and `/var` are on macOS.
+    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-cli-alias-"));
+    symlinkSync(dir, join(elsewhere, "base"));
+    const store = join(second, ".marfa", "core.sqlite");
+    try {
+      for (const spelling of [
+        join(elsewhere, "base", "a", "notes"),
+        // A template keeps the spelling that path.join would normalize.
+        `${dir}/b/../a/notes`,
+        ...(realpathSync(dir) === dir ? [] : [join(dir, "a", "notes")]),
+      ]) {
+        for (const command of [
+          ["folders", "status", spelling],
+          ["folders", "push", spelling],
+          ["folders", "remove", spelling],
+        ]) {
+          const refused = await c.cli.refused(command);
+          expect(refused.envelope.error.code, command.join(" ")).toBe(
+            "invalid",
+          );
+        }
+        expect(existsSync(store), spelling).toBe(true);
+        expect(await listed()).toEqual(expect.arrayContaining([first, second]));
+      }
+      const atListed = await c.cli.refused(["folders", "status", first]);
+      expect(atListed.envelope.error.code).toBe("invalid");
+      // With the registry lost, a removal follows no link, even once a
+      // pass through the path has listed the folder it leads to.
+      const lost = c.cli.withEnv({
+        MARFA_FOLDER_REGISTRY: join(elsewhere, "lost", "folders.json"),
+      });
+      expect(
+        (await lost.refused(["folders", "remove", first])).envelope.error.code,
+      ).toBe("invalid");
+      await lost.json(["folders", "push", first]);
+      expect(
+        (await lost.refused(["folders", "remove", first])).envelope.error.code,
+      ).toBe("invalid");
+      expect(existsSync(store)).toBe(true);
+
+      await c.cli.json(["folders", "remove", first]);
+      expect(existsSync(store)).toBe(true);
+      const after = await listed();
+      expect(after).toContain(second);
+      expect(after).not.toContain(first);
+      // A spelling through a link above the folder is refused, naming the
+      // listed path, which is the witness that removes it.
+      const named = await c.cli.refused([
+        "folders",
+        "remove",
+        join(elsewhere, "base", "b", "notes"),
+      ]);
+      expect(named.envelope.error.message).toContain(`listed at ${second}`);
+      expect(existsSync(store)).toBe(true);
+      await c.cli.json(["folders", "remove", second]);
+      expect(existsSync(store)).toBe(false);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("takes a listed folder off the list without removing a folder moved into its place", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    renameSync(join(dir, "a"), join(dir, "a-moved"));
+    mkdirSync(join(dir, "a"));
+    renameSync(join(dir, "b", "notes"), join(dir, "a", "notes"));
+    const unlisted = await c.cli.json<{ removed: boolean; reason: string }>([
+      "folders",
+      "remove",
+      first,
+    ]);
+    expect(unlisted.removed).toBe(false);
+    expect(unlisted.reason).toContain("not the one the registry lists");
+    expect(
+      existsSync(join(first, ".marfa", "core.sqlite")),
+      "removing the first folder removed the folder moved into its place",
+    ).toBe(true);
+    const after = await listed();
+    expect(after).not.toContain(first);
+    expect(after).toContain(second);
+  });
+
+  it("takes a moved folder's old entry off the list when it is removed at its new place", async () => {
+    const first = await addNotes("a");
+    mkdirSync(join(dir, "c"));
+    renameSync(join(dir, "a", "notes"), join(dir, "c", "notes"));
+    const moved = join(realpathSync(dir), "c", "notes");
+    const removed = await c.cli.json<{ dir: string; removed: boolean }>([
+      "folders",
+      "remove",
+      moved,
+    ]);
+    expect(removed).toEqual({ dir: moved, removed: true });
+    expect(existsSync(join(moved, ".marfa", "core.sqlite"))).toBe(false);
+    expect(await listed(), "the old entry stayed listed").not.toContain(first);
+  });
+
+  it("refuses a path that climbs out of a directory that does not exist, and makes nothing", async () => {
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("missing-climb"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    // A template keeps the spelling that path.join would normalize.
+    const refused = await c.cli.refused([
+      "folders",
+      "add",
+      `${dir}/missing/../linked/notes`,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    expect(refused.code).toBe(1);
+    expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(
+      `climbs back out of ${join(realpathSync(dir), "missing")}, which does not exist`,
+    );
+    expect(existsSync(join(dir, "missing"))).toBe(false);
+    expect(existsSync(join(real, "notes", ".marfa"))).toBe(false);
+    // The witness: without the climb, the same folder is added.
+    await c.cli.json([
+      "folders",
+      "add",
+      join(dir, "linked", "notes"),
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    expect(existsSync(join(real, "notes", ".marfa", "core.sqlite"))).toBe(true);
   });
 
   it("is in step after the one push that writes its files", async () => {

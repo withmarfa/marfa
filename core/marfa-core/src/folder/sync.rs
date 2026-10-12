@@ -1,9 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use super::elsewhere;
+use super::registry::{self, Reached, Registered};
 use super::{
     CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport, Synced,
 };
 use crate::Result;
+use crate::directory::Directory;
 use crate::error::CoreError;
 use crate::model::HydrateReport;
 
@@ -138,19 +141,83 @@ impl Folder {
 
     /// Takes the folder at `dir` off this machine: its own state under
     /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed. A folder whose directory
-    /// is gone is only taken off the registry.
-    pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
+    /// the first sync still waits to be confirmed. No symbolic link is
+    /// followed, and a path through one is taken only where it is the path
+    /// the registry lists. A listed folder's state goes
+    /// only where the store at its listed path is the one the registry lists
+    /// for it; otherwise its entry alone is taken off the registry.
+    pub fn remove_at(dir: impl AsRef<Path>) -> Result<Removal> {
         let dir = dir.as_ref();
-        let has_store = crate::directory::Directory::open(dir)
-            .and_then(|root| root.child(Path::new(STATE_DIR), false))
-            .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
-            .is_ok();
-        if has_store || !Folder::forget(dir)? {
-            Folder::open(dir, None)?.remove()?;
+        let spelled = registry::absolute(dir);
+        let listed = registry::listing();
+        if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
+            return Folder::remove_listed(entry.clone());
         }
-        Ok(())
+        if let Some(link) = registry::first_link(&spelled) {
+            let instead = match registry::reach(dir)? {
+                Reached::Listed(entry) => format!(
+                    "the folder it reaches is listed at {}; to remove that folder, name that path, as `folders list` shows it",
+                    entry.dir.display()
+                ),
+                Reached::Unlisted(_) => "name the folder by a path without symbolic links".into(),
+            };
+            return Err(CoreError::Invalid(format!(
+                "{} passes through the symbolic link {}, and `folders remove` takes a path through a link only where it is the path the folder registry lists; {instead}",
+                spelled.display(),
+                link.display()
+            )));
+        }
+        let root = registry::named(dir)?;
+        match registry::listed_at(&root, &listed) {
+            Some(entry) => Folder::remove_listed(entry),
+            None => {
+                Folder::open_without_listing(root.clone(), None)?.remove()?;
+                Ok(Removal::Deleted(root))
+            }
+        }
     }
+
+    /// Bound to the store the registry lists for `entry`, so a folder that
+    /// has taken its directory's place is never removed in its stead.
+    fn remove_listed(entry: Registered) -> Result<Removal> {
+        let reason = if let Some(link) = registry::first_link(&entry.dir) {
+            format!("{} is now a symbolic link", link.display())
+        } else if !held(&entry.dir) {
+            "no folder state is there".to_string()
+        } else {
+            let folder = Folder::open_without_listing(entry.dir.clone(), None)?;
+            match (&entry.store, elsewhere::listed_store(&folder.core)) {
+                (Some(listed), Some(found)) if *listed == found => {
+                    folder.remove()?;
+                    return Ok(Removal::Deleted(entry.dir));
+                }
+                (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
+                _ => "the folder state there is not the one the registry lists for it".to_string(),
+            }
+        };
+        Folder::forget(&entry.dir)?;
+        Ok(Removal::Unlisted {
+            dir: entry.dir,
+            reason,
+        })
+    }
+}
+
+/// What a removal did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removal {
+    /// The folder's own state at this directory went; its files stay.
+    Deleted(PathBuf),
+    /// Only the registry entry for this directory went, and nothing was
+    /// deleted, for the reason given.
+    Unlisted { dir: PathBuf, reason: String },
+}
+
+fn held(root: &Path) -> bool {
+    Directory::open(root)
+        .and_then(|root| root.child(Path::new(STATE_DIR), false))
+        .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
+        .is_ok()
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take

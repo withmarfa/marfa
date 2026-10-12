@@ -5,8 +5,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use marfa_core::folder::registry;
-
 use crate::{DrainReport, HydrateReport, MarfaError, Subscription, drained};
 
 /// A folder as the machine's registry lists it.
@@ -305,7 +303,7 @@ impl Folders {
     pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
         let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)?;
         Ok(ListedFolder {
-            dir: registry::resolved(added.root()).display().to_string(),
+            dir: added.root().display().to_string(),
             folder: added.folder_id().to_string(),
         })
     }
@@ -422,10 +420,15 @@ impl Folders {
 
     /// Takes the folder off this machine: its state under `.marfa` goes and
     /// its files stay. Refused while writes wait, except for a first sync
-    /// still waiting to be confirmed, which this cancels. A folder whose
-    /// directory is gone is only taken off the registry.
+    /// still waiting to be confirmed, which this cancels. Follows no symbolic
+    /// link, and takes a path through one only where it is the path the
+    /// registry lists. Where that path is
+    /// gone, passes through a link, or holds state the registry does not
+    /// show to be the folder's own, the folder is only taken off the
+    /// registry.
     pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
-        Ok(marfa_core::Folder::remove_at(&dir)?)
+        marfa_core::Folder::remove_at(&dir)?;
+        Ok(())
     }
 
     /// Keeps the folder in step on a thread of its own, as the command

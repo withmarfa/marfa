@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
-use super::registry::{Registered, Registry, gone, resolved};
+use super::registry::{Registered, Registry, gone};
 use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
 use crate::{Core, Result, store};
@@ -23,6 +23,12 @@ pub(super) fn store_id(core: &Core) -> Result<String> {
     let id = uuid::Uuid::now_v7().to_string();
     store::meta_set(&conn, META_STORE, &id)?;
     Ok(id)
+}
+
+/// This folder's store id where it has one, without making one.
+pub(super) fn listed_store(core: &Core) -> Option<String> {
+    let conn = core.conn().ok()?;
+    store::meta_get(&conn, META_STORE).ok()?
 }
 
 pub(super) fn listed_in(core: &Core, registry: &Registry) {
@@ -324,7 +330,10 @@ impl<'a> Peers<'a> {
             let Some(registry) = Registry::located() else {
                 return (Vec::new(), None);
             };
-            let own = resolved(&self.of.root);
+            // This root and every listed entry are already resolved, and
+            // resolving an entry again would follow a link that has replaced
+            // its directory since.
+            let own = &self.of.root;
             let listed = match registry.folders() {
                 Ok(listed) => listed,
                 Err(error) => return (Vec::new(), Some(error.to_string())),
@@ -337,13 +346,13 @@ impl<'a> Peers<'a> {
                 .unwrap_or_default();
             let mut others: Vec<Registered> = listed
                 .into_iter()
-                .filter(|entry| resolved(&entry.dir) != own)
+                .filter(|entry| &entry.dir != own)
                 .collect();
             for entry in known {
                 let listed = others.iter().any(|other| {
                     other.dir == entry.dir || (entry.store.is_some() && other.store == entry.store)
                 });
-                if !listed && !gone(&entry) && resolved(&entry.dir) != own {
+                if !listed && !gone(&entry) && &entry.dir != own {
                     others.push(entry);
                 }
             }
@@ -599,6 +608,32 @@ mod tests {
             .any(|file| file.mark.as_deref() == Some(mark.as_str()));
         std::fs::set_permissions(&moved, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(retained, "the peer lost the moved file's observed identity");
+    }
+
+    #[test]
+    fn a_peer_whose_directory_now_leads_into_this_folder_stays_a_peer() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let make = |dir: &Path, folder: &str| {
+            std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+            let core = Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+            super::super::settings_file::bind(&core, folder).unwrap();
+        };
+        let first = temp.path().join("a/notes");
+        let second = temp.path().join("b/notes");
+        make(&first, "01a00000-0000-7000-8000-000000000001");
+        make(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(temp.path().join("a"), temp.path().join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(temp.path().join("b"), temp.path().join("a")).unwrap();
+
+        let folder = Folder::open(&second, None).unwrap();
+        let peers = Peers::of(&folder, None);
+        let listed = peers.all().iter().find(|peer| peer.root == first);
+        assert!(
+            listed.is_some_and(|peer| peer.root_dir.is_none()),
+            "a folder listed where a link now leads into this one was not kept as a peer it cannot read"
+        );
     }
 
     #[test]
