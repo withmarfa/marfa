@@ -9,11 +9,13 @@ A receipt time and its age describe when the server received a report. They do n
 ## What a report means
 
 - `last_success_at` is the last confirmed complete sync that reached the server, finished catching up and pulling, and had no pending files, paused removals, or blocking problems. It remains unchanged after an offline scan or incomplete sync. A watch uses its existing event follow as catch-up evidence.
-- `pending_uploads` counts distinct files with local changes waiting to be scanned or sent, rather than queued operations.
+- `pending_uploads` counts distinct files with local changes waiting to be scanned or sent, including current dead writes, rather than queued operations. Only a later accepted application of the same effects supersedes dead work. Partial replacements leave unresolved effects held; merge-mode null values do not replace a property. Covered effects stay superseded after clearing answered writes or restarting. Explicitly releasing the dead write restores its original effects under a new attempt key.
 - `pending_downloads` counts known files whose latest completed pull could not materialize them. A failed pull preserves the previous observation. The count does not describe server changes a disconnected copy has not seen.
 - `paused_removals` counts paused removals from disk and from the server separately from conflicts.
 - `first_sync_waiting` says that the person has not confirmed the initial content sync.
 - `problems` contains current counts under a closed set of safe codes. A conflict counts while a local conflicted copy remains tagged `conflicted-copy` and linked through `derived-from`; keeping its bytes after resolving that marker does not keep the count.
+
+An unreadable directory counts once under `unreadable`; known files held beneath that directory are not counted again. Directly unreadable files count separately. A directory that disappears during the inventory is a current `held_file` problem. Intentional package exclusions are not inventory failures. An incomplete inventory prevents a new full-success time, retains prior known upload counts, and can increase them for newly observed pending files. Those retained counts are observations, not a complete current inventory. A complete readable inventory recomputes the counts and clears resolved directory problems.
 
 Reports contain no local paths, file contents, item IDs, hashes, or raw error messages.
 

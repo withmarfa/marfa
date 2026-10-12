@@ -1098,11 +1098,195 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(conn, "", [])
 }
 
-pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
-    read_writes(
+type EditField = (bool, String);
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct DeadEffect {
+    attempt: String,
+    excluded_attempts: HashSet<String>,
+    fields: HashSet<EditField>,
+    whole: bool,
+}
+
+fn effect_key(id: &str) -> String {
+    format!("dead_effect/{id}")
+}
+
+fn dead_effect(conn: &Connection, row: &QueuedWrite) -> Result<DeadEffect, CoreError> {
+    let saved: DeadEffect = meta_get(conn, &effect_key(&row.id))?
+        .map(|json| serde_json::from_str(&json))
+        .transpose()?
+        .unwrap_or_default();
+    Ok(if saved.attempt == row.idempotency_key {
+        saved
+    } else {
+        DeadEffect {
+            attempt: row.idempotency_key.clone(),
+            ..DeadEffect::default()
+        }
+    })
+}
+
+fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField>, CoreError> {
+    let mut fields = HashSet::new();
+    if let Some(body) = row.body.as_object() {
+        for (key, value) in body {
+            if matches!(key.as_str(), "version" | "properties_mode" | "retype") {
+                continue;
+            }
+            if key == "properties"
+                && let Some(properties) = value.as_object()
+            {
+                fields.extend(
+                    properties
+                        .iter()
+                        .filter(|(_, value)| !value.is_null() || replaces_properties(&row.body))
+                        .map(|(key, _)| (true, key.clone())),
+                );
+            } else {
+                fields.insert((false, key.clone()));
+            }
+        }
+    }
+    if replaces_properties(&row.body)
+        && let Some(read) = read_of(conn, &row.id)?
+    {
+        let read: Value = serde_json::from_str(&read)?;
+        if let Some(properties) = read.get("properties").and_then(Value::as_object) {
+            fields.extend(properties.keys().map(|key| (true, key.clone())));
+        }
+    }
+    Ok(fields)
+}
+
+fn supersedes_dead(later: &QueuedWrite, dead: &QueuedWrite) -> bool {
+    match (dead.kind, later.kind) {
+        (WriteKind::AddTag | WriteKind::RemoveTag, WriteKind::AddTag | WriteKind::RemoveTag) => {
+            dead.item_id.is_some()
+                && dead.item_id == later.item_id
+                && dead.tag.is_some()
+                && dead.tag == later.tag
+        }
+        (
+            WriteKind::DeleteItem | WriteKind::RestoreItem | WriteKind::TransitionItem,
+            WriteKind::DeleteItem | WriteKind::RestoreItem | WriteKind::TransitionItem,
+        ) => dead.item_id.is_some() && dead.item_id == later.item_id,
+        (WriteKind::CreateEdge | WriteKind::UpdateEdge, WriteKind::DeleteEdge)
+        | (WriteKind::DeleteEdge, WriteKind::CreateEdge) => {
+            dead.edge_id.is_some() && dead.edge_id == later.edge_id
+        }
+        (WriteKind::UploadBlob, WriteKind::UploadBlob) => {
+            dead.blob.is_some() && dead.blob == later.blob
+        }
+        _ => {
+            dead.kind == later.kind
+                && dead.subject_id().is_some()
+                && dead.subject_id() == later.subject_id()
+                && dead.namespace == later.namespace
+                && dead.body == later.body
+        }
+    }
+}
+
+fn learn_dead_effects(conn: &Connection, accepted: &QueuedWrite) -> Result<(), CoreError> {
+    let older = read_writes(
         conn,
-        "WHERE verdict IS NULL OR verdict IN (?1, ?2)",
-        [Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        "WHERE verdict = 'dead' AND seq < (SELECT seq FROM queue WHERE id = ?1)
+          AND (item_id = ?2 OR edge_id = ?3 OR blob = ?4)",
+        params![
+            accepted.id,
+            accepted.item_id,
+            accepted.edge_id,
+            accepted.blob
+        ],
+    )?;
+    for dead in older {
+        let mut effect = dead_effect(conn, &dead)?;
+        if effect.excluded_attempts.contains(&accepted.idempotency_key) {
+            continue;
+        }
+        if matches!(dead.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge)
+            && dead.kind == accepted.kind
+            && match dead.kind {
+                WriteKind::UpdateItem => dead.item_id.is_some() && dead.item_id == accepted.item_id,
+                _ => dead.edge_id.is_some() && dead.edge_id == accepted.edge_id,
+            }
+        {
+            let original = edit_fields(conn, &dead)?;
+            let covered = edit_fields(conn, accepted)?;
+            effect.fields.extend(
+                original
+                    .iter()
+                    .filter(|field| {
+                        covered.contains(*field) || (field.0 && replaces_properties(&accepted.body))
+                    })
+                    .cloned(),
+            );
+            if original.is_empty() && dead.body == accepted.body {
+                effect.whole = true;
+            }
+        } else if supersedes_dead(accepted, &dead) {
+            effect.whole = true;
+        }
+        if effect.whole || !effect.fields.is_empty() {
+            meta_set(
+                conn,
+                &effect_key(&dead.id),
+                &serde_json::to_string(&effect)?,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn remaining_dead_fields(
+    conn: &Connection,
+    row: &QueuedWrite,
+) -> Result<Option<HashSet<EditField>>, CoreError> {
+    let effect = dead_effect(conn, row)?;
+    if effect.whole {
+        return Ok(Some(HashSet::new()));
+    }
+    if matches!(row.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge) {
+        let mut fields = edit_fields(conn, row)?;
+        // An unrecognised or empty request remains held until an explicit
+        // accepted equivalent settles it.
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        fields.retain(|field| !effect.fields.contains(field));
+        Ok(Some(fields))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Reports and projections use the same current attempt's effects. Queue
+/// bodies and captured reads remain immutable, including after cleanup.
+pub fn current_waiting_writes(
+    conn: &Connection,
+    queue: &[QueuedWrite],
+) -> Result<Vec<QueuedWrite>, CoreError> {
+    let mut waiting = Vec::new();
+    for row in queue {
+        if matches!(row.verdict, None | Some(Verdict::Blocked))
+            || row.verdict == Some(Verdict::Dead)
+                && remaining_dead_fields(conn, row)?.is_none_or(|fields| !fields.is_empty())
+        {
+            waiting.push(row.clone());
+        }
+    }
+    Ok(waiting)
+}
+
+pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
+    current_waiting_writes(
+        conn,
+        &read_writes(
+            conn,
+            "WHERE verdict IS NULL OR verdict IN (?1, ?2)",
+            [Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        )?,
     )
 }
 
@@ -1158,10 +1342,13 @@ pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 /// Through the index rather than the whole queue: this runs once per answer
 /// and once per event.
 pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
-    read_writes(
+    current_waiting_writes(
         conn,
-        "WHERE item_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
-        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        &read_writes(
+            conn,
+            "WHERE item_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+            [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        )?,
     )
 }
 
@@ -1170,10 +1357,13 @@ pub fn edge_write_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> 
 }
 
 fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
-    read_writes(
+    current_waiting_writes(
         conn,
-        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
-        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        &read_writes(
+            conn,
+            "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+            [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+        )?,
     )
 }
 
@@ -2337,6 +2527,16 @@ pub fn record_verdict(
     id: &str,
     answered: &Answered<'_>,
 ) -> Result<(), CoreError> {
+    catalog_scope(conn, |conn| record_verdict_inner(conn, id, answered))
+}
+
+fn record_verdict_inner(
+    conn: &Connection,
+    id: &str,
+    answered: &Answered<'_>,
+) -> Result<(), CoreError> {
+    let already_accepted =
+        queued_write(conn, id)?.is_some_and(|row| row.verdict == Some(Verdict::Accepted));
     let changed = conn.execute(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
@@ -2355,6 +2555,12 @@ pub fn record_verdict(
         return Err(CoreError::Store(format!(
             "no queued write {id} to answer; the row went while the drain was sending it"
         )));
+    }
+    if answered.verdict == Verdict::Accepted {
+        meta_delete(conn, &effect_key(id))?;
+    }
+    if answered.verdict == Verdict::Accepted && !already_accepted {
+        learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
     }
     Ok(())
 }
@@ -2461,6 +2667,40 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             Uuid::now_v7().to_string()
         ],
     )?;
+    let released = queued_write(conn, id)?.expect("released row exists");
+    let original_fields = edit_fields(conn, &released)?;
+    let mut excluded_attempts = HashSet::new();
+    for witness in queued_writes(conn)?
+        .into_iter()
+        .filter(|witness| witness.id != released.id && witness.verdict != Some(Verdict::Accepted))
+    {
+        let same_edit = witness.kind == released.kind
+            && matches!(released.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge)
+            && witness.subject_id().is_some()
+            && witness.subject_id() == released.subject_id();
+        let covered = if same_edit {
+            edit_fields(conn, &witness)?
+        } else {
+            HashSet::new()
+        };
+        if supersedes_dead(&witness, &released)
+            || same_edit
+                && (covered.iter().any(|field| original_fields.contains(field))
+                    || replaces_properties(&witness.body)
+                        && original_fields.iter().any(|field| field.0))
+        {
+            excluded_attempts.insert(witness.idempotency_key);
+        }
+    }
+    meta_set(
+        conn,
+        &effect_key(id),
+        &serde_json::to_string(&DeadEffect {
+            attempt: released.idempotency_key,
+            excluded_attempts,
+            ..DeadEffect::default()
+        })?,
+    )?;
     // The writes refused because this one was go with it: no caller would
     // know to release them.
     for dependant in dependants_refused_with(conn, id)? {
@@ -2529,6 +2769,7 @@ pub fn withdraw(
         record_refusal(conn, dependant, &reason, None, false)?;
     }
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+    meta_delete(conn, &effect_key(&row.id))?;
     put_back(conn, row)
 }
 
@@ -2629,6 +2870,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(false);
     }
     conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
+    meta_delete(conn, &effect_key(id))?;
     Ok(true)
 }
 
@@ -2647,6 +2889,7 @@ pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, C
     )?;
     for row in &rows {
         conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+        meta_delete(conn, &effect_key(&row.id))?;
     }
     for row in &rows {
         put_back(conn, row)?;
@@ -2681,11 +2924,37 @@ pub fn lay_waiting_writes_over(
         return Ok(());
     };
     let mut tags = item.tags.clone();
-    for row in waiting {
-        lay_write(conn, &mut item, &mut tags, &row)?;
+    for mut row in waiting {
+        let mut read = read_of(conn, &row.id)?
+            .map(|read| serde_json::from_str::<Value>(&read))
+            .transpose()?;
+        if row.verdict == Some(Verdict::Dead)
+            && row.kind == WriteKind::UpdateItem
+            && let Some(fields) = remaining_dead_fields(conn, &row)?
+        {
+            retain_edit_fields(&mut row.body, &fields);
+            if let Some(read) = &mut read {
+                retain_edit_fields(read, &fields);
+            }
+        }
+        lay_write(conn, &mut item, &mut tags, &row, read.as_ref())?;
     }
     tags.sort();
     upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
+}
+
+fn retain_edit_fields(body: &mut Value, fields: &HashSet<EditField>) {
+    if let Some(body) = body.as_object_mut() {
+        body.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "version" | "properties_mode" | "retype" | "properties"
+            ) || fields.contains(&(false, key.clone()))
+        });
+        if let Some(properties) = body.get_mut("properties").and_then(Value::as_object_mut) {
+            properties.retain(|key, _| fields.contains(&(true, key.clone())));
+        }
+    }
 }
 
 fn lay_write(
@@ -2693,6 +2962,7 @@ fn lay_write(
     item: &mut Item,
     tags: &mut Vec<String>,
     row: &QueuedWrite,
+    read: Option<&Value>,
 ) -> Result<(), CoreError> {
     let payload = &row.body;
     let named_tags = || -> Vec<String> {
@@ -2728,12 +2998,9 @@ fn lay_write(
             if let Some(Value::Object(properties)) = payload.get("properties") {
                 // Only an edit that read the copy knows which properties it
                 // cleared; one said to be read earlier is laid over.
-                let read = match read_of(conn, &row.id)? {
+                let read = match read {
                     Some(read) if replaces_properties(payload) => {
-                        serde_json::from_str::<Value>(&read)?
-                            .get("properties")
-                            .and_then(Value::as_object)
-                            .cloned()
+                        read.get("properties").and_then(Value::as_object).cloned()
                     }
                     _ => None,
                 };
@@ -2890,7 +3157,13 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
     let Some(mut edge) = edge_by_id(conn, edge_id)? else {
         return Ok(());
     };
-    for row in waiting {
+    for mut row in waiting {
+        if row.verdict == Some(Verdict::Dead)
+            && row.kind == WriteKind::UpdateEdge
+            && let Some(fields) = remaining_dead_fields(conn, &row)?
+        {
+            retain_edit_fields(&mut row.body, &fields);
+        }
         match row.kind {
             WriteKind::CreateEdge => {
                 let (_, draft) =
@@ -2901,7 +3174,7 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
                 edge.properties.extend(draft.properties);
             }
             WriteKind::UpdateEdge => {
-                let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+                let payload = &row.body;
                 if let Some(Value::Object(properties)) = payload.get("properties") {
                     for (key, value) in properties {
                         edge.properties.insert(key.clone(), value.clone());
@@ -4733,5 +5006,321 @@ mod tests {
         }
         let conn = open(&path).unwrap();
         assert!(item_held(&conn, "n1").unwrap());
+    }
+    #[test]
+    fn a_confirmed_replacement_does_not_replay_a_historical_dead_overlay() {
+        let conn = conn();
+        let row = note(
+            "held",
+            "confirmed title",
+            "confirmed body",
+            "2026-01-01T00:00:00Z",
+        );
+        upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('dead','update_item','held','dead',?1,1,'dead','2026-01-01T00:00:00Z')", [r#"{"properties":{"title":"old title","body":"old body"},"properties_mode":"replace"}"#]).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('later','update_item','held','later',?1,1,NULL,'2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"confirmed title","body":"confirmed body"}}"#]).unwrap();
+        record_verdict(
+            &conn,
+            "later",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        let original = queued_write(&conn, "dead").unwrap().unwrap();
+        for _ in 0..2 {
+            lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+            let item = item_by_id(&conn, "held").unwrap().unwrap();
+            assert_eq!(item.properties["body"], "confirmed body");
+            assert_eq!(item.properties["title"], "confirmed title");
+            forget_answered(&conn).unwrap();
+            assert_eq!(queued_write(&conn, "dead").unwrap().unwrap(), original);
+        }
+    }
+    fn effect_fixture() -> Connection {
+        let conn = conn();
+        replace_types(&conn, &[wire_type("core.note", None, Some("title"))]).unwrap();
+        let row = note(
+            "held",
+            "server title",
+            "server body",
+            "2026-01-01T00:00:00Z",
+        );
+        upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,read,sent,verdict,queued_at) VALUES ('dead','update_item','held','old-attempt',?1,?2,1,'dead','2026-01-01T00:00:00Z')", params![r#"{"properties":{"title":"old title","body":"old body"},"properties_mode":"replace"}"#, r#"{"properties":{"title":"before","body":"before","description":"remove me"}}"#]).unwrap();
+        conn
+    }
+
+    fn effect_answer(conn: &Connection, id: &str, payload: &str, verdict: Verdict) {
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES (?1,'update_item','held',?1,?2,1,'2026-01-01T00:00:01Z')", params![id, payload]).unwrap();
+        record_verdict(
+            conn,
+            id,
+            &Answered {
+                verdict,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn dead_partial_effects_mask_both_payload_and_read_and_merge_null_is_noop() {
+        let conn = effect_fixture();
+        let original = queued_write(&conn, "dead").unwrap().unwrap();
+        let original_read = read_of(&conn, "dead").unwrap();
+        effect_answer(
+            &conn,
+            "title",
+            r#"{"properties":{"title":"server title","body":null}}"#,
+            Verdict::Accepted,
+        );
+        lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+        let item = item_by_id(&conn, "held").unwrap().unwrap();
+        assert_eq!(
+            item.properties["title"], "server title",
+            "masked captured read must not delete the confirmed title"
+        );
+        assert_eq!(
+            item.properties["body"], "old body",
+            "merge null did not apply a body replacement"
+        );
+        assert!(!item.properties.contains_key("description"));
+        assert_eq!(waiting_writes_for_item(&conn, "held").unwrap().len(), 1);
+        effect_answer(
+            &conn,
+            "body",
+            r#"{"properties":{"body":"confirmed body"}}"#,
+            Verdict::Accepted,
+        );
+        assert_eq!(
+            waiting_writes_for_item(&conn, "held").unwrap().len(),
+            1,
+            "unconfirmed removal still waits"
+        );
+        effect_answer(
+            &conn,
+            "whole",
+            r#"{"properties":{"title":"confirmed title","body":"confirmed body"},"properties_mode":"replace"}"#,
+            Verdict::Accepted,
+        );
+        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert_eq!(queued_write(&conn, "dead").unwrap().unwrap(), original);
+        assert_eq!(read_of(&conn, "dead").unwrap(), original_read);
+        assert_eq!(forget_answered(&conn).unwrap(), 3);
+        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(release(&conn, "dead").unwrap());
+        let released = queued_write(&conn, "dead").unwrap().unwrap();
+        assert_eq!(released.body, original.body);
+        assert_ne!(released.idempotency_key, original.idempotency_key);
+        lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+        assert_eq!(
+            item_by_id(&conn, "held").unwrap().unwrap().properties["title"],
+            "old title"
+        );
+        record_verdict(
+            &conn,
+            "dead",
+            &Answered {
+                verdict: Verdict::Dead,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(waiting_writes_for_item(&conn, "held").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_accepted_effects_settle_dead_intent_and_receipt_rollback_is_atomic() {
+        for verdict in [
+            Verdict::Merged,
+            Verdict::Conflicted,
+            Verdict::Refused,
+            Verdict::Dead,
+            Verdict::Blocked,
+        ] {
+            let conn = effect_fixture();
+            effect_answer(
+                &conn,
+                "later",
+                r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#,
+                verdict,
+            );
+            assert!(
+                remaining_dead_fields(&conn, &queued_write(&conn, "dead").unwrap().unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .len()
+                    >= 3
+            );
+        }
+        let conn = effect_fixture();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('later','update_item','held','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#]).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_effect BEFORE INSERT ON meta WHEN NEW.key LIKE 'dead_effect/%' BEGIN SELECT RAISE(ABORT, 'effect write failed'); END;").unwrap();
+        assert!(
+            record_verdict(
+                &conn,
+                "later",
+                &Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            queued_write(&conn, "later")
+                .unwrap()
+                .unwrap()
+                .verdict
+                .is_none()
+        );
+        assert!(meta_get(&conn, &effect_key("dead")).unwrap().is_none());
+        assert!(!waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_dead_delete_is_settled_by_an_accepted_restore_but_release_restores_delete() {
+        let conn = effect_fixture();
+        conn.execute(
+            "UPDATE queue SET kind='delete_item', payload='{}', read=NULL WHERE id='dead'",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('restore','restore_item','held','restore','{}',1,'2026-01-01T00:00:01Z')", []).unwrap();
+        record_verdict(
+            &conn,
+            "restore",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        assert!(release(&conn, "dead").unwrap());
+        record_verdict(
+            &conn,
+            "dead",
+            &Answered {
+                verdict: Verdict::Dead,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        // Re-reading the old receipt must not suppress the released attempt.
+        record_verdict(
+            &conn,
+            "restore",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT state FROM items WHERE id='held'", [], |row| row
+                .get::<_, String>(
+                0
+            ))
+            .unwrap(),
+            "trashed"
+        );
+    }
+    #[test]
+    fn delayed_pre_release_receipts_do_not_cover_the_new_attempt() {
+        let conn = effect_fixture();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('inflight','update_item','held','old-inflight',?1,1,'2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#]).unwrap();
+        assert!(release(&conn, "dead").unwrap());
+        record_verdict(
+            &conn,
+            "dead",
+            &Answered {
+                verdict: Verdict::Dead,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        record_verdict(
+            &conn,
+            "inflight",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert!(!waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+        // A released witness has a new attempt key and may cover this work.
+        conn.execute("UPDATE queue SET verdict='dead' WHERE id='inflight'", [])
+            .unwrap();
+        assert!(release(&conn, "inflight").unwrap());
+        record_verdict(
+            &conn,
+            "inflight",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert!(waiting_writes_for_item(&conn, "held").unwrap().is_empty());
+    }
+    #[test]
+    fn partial_dead_edge_projection_keeps_only_unresolved_properties() {
+        let conn = conn();
+        let mut edge = wire_edge("edge", "source", "target", "references");
+        edge.properties =
+            serde_json::from_value(serde_json::json!({"a":"server a","b":"server b"})).unwrap();
+        upsert_edge(&conn, &edge).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('dead','update_edge','edge','dead',?1,1,'dead','2026-01-01T00:00:00Z')", [r#"{"properties":{"a":"old a","b":"old b"}}"#]).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,edge_id,idempotency_key,payload,sent,queued_at) VALUES ('later','update_edge','edge','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"properties":{"a":"server a"}}"#]).unwrap();
+        record_verdict(
+            &conn,
+            "later",
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        lay_waiting_edge_writes_over(&conn, "edge").unwrap();
+        let current = edge_by_id(&conn, "edge").unwrap().unwrap();
+        assert_eq!(current.properties["a"], "server a");
+        assert_eq!(current.properties["b"], "old b");
+        assert_eq!(forget_answered(&conn).unwrap(), 1);
+        lay_waiting_edge_writes_over(&conn, "edge").unwrap();
+        assert_eq!(
+            edge_by_id(&conn, "edge").unwrap().unwrap().properties["a"],
+            "server a"
+        );
+        assert_eq!(
+            queued_write(&conn, "dead").unwrap().unwrap().body["properties"]["a"],
+            "old a"
+        );
     }
 }

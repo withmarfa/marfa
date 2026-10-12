@@ -1,6 +1,14 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { afterEach, expect, it } from "vitest";
 import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
+
+import { scriptFolderWrites } from "./folders.shared.js";
 
 interface Report {
   folder_store_id: string;
@@ -180,4 +188,160 @@ it("refreshes the newest local observation above a restored backup sequence", as
     count: 1,
   });
   expect(JSON.stringify(delivered[1])).not.toContain("private.md");
+});
+
+it("keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release", async () => {
+  const id = "01a00000-0000-7000-8000-00000000000a";
+  harness = await folderHarness("health-dead-effects", {
+    rows: {
+      "core.note": [
+        {
+          item: {
+            id,
+            version: 3,
+            properties: { title: "Held", body: "baseline\n" },
+          },
+        },
+      ],
+    },
+  });
+  let broken = false;
+  scriptFolderWrites(harness, {
+    door: (door) => {
+      const update = door.update.bind(door);
+      door.update = (...args) =>
+        broken
+          ? { kind: "json", status: 200, body: "unreadable answer" }
+          : update(...args);
+    },
+  });
+  expect((await harness.folder.push()).ok).toBe(true);
+  const path = `${harness.dir}/Held.md`;
+  writeFileSync(
+    path,
+    readFileSync(path, "utf8").replace("baseline", "dead bytes"),
+  );
+  expect((await harness.folder.scan()).ok).toBe(true);
+  broken = true;
+  const device = harness.folder.device();
+  for (let attempt = 0; attempt < 5; attempt++)
+    expect((await device.drain()).ok).toBe(true);
+  const queue = await device.queue();
+  expect(queue.ok).toBe(true);
+  if (!queue.ok) return;
+  const dead = queue.value.find((row) => row.verdict === "dead");
+  expect(dead).toBeDefined();
+  if (dead === undefined) return;
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(reports(harness).at(-1)?.pending_uploads).toBe(1);
+  expect(reports(harness).at(-1)?.problems).toContainEqual({
+    code: "held_file",
+    count: 1,
+  });
+  const heldSuccess = reports(harness).at(-1)?.last_success_at;
+  writeFileSync(
+    path,
+    readFileSync(path, "utf8").replace("dead bytes", "accepted bytes"),
+  );
+  broken = false;
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(reports(harness).at(-1)?.pending_uploads).toBe(0);
+  expect(reports(harness).at(-1)?.problems).toEqual([]);
+  expect(reports(harness).at(-1)?.last_success_at).not.toBe(heldSuccess);
+  expect((await device.forget()).ok).toBe(true);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(readFileSync(path, "utf8")).toContain("accepted bytes");
+  expect(reports(harness).at(-1)?.pending_uploads).toBe(0);
+  expect((await device.release({ id: dead.id })).ok).toBe(true);
+  const projected = await device.get(id);
+  expect(projected.ok && projected.value.properties.body).toBe("dead bytes\n");
+  broken = true;
+  for (let attempt = 0; attempt < 5; attempt++)
+    expect((await device.drain()).ok).toBe(true);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(reports(harness).at(-1)?.pending_uploads).toBe(1);
+  expect(reports(harness).at(-1)?.problems).toContainEqual({
+    code: "held_file",
+    count: 1,
+  });
+  const releasedQueue = await device.queue();
+  expect(releasedQueue.ok).toBe(true);
+  if (releasedQueue.ok) {
+    const released = releasedQueue.value.find((row) => row.id === dead.id);
+    expect(released?.body).toEqual(dead.body);
+    expect(released?.idempotency_key).not.toBe(dead.idempotency_key);
+  }
+});
+
+it("reports an unreadable unbound directory as incomplete inventory and clears it after readable recovery", async () => {
+  harness = await folderHarness("health-partial-inventory");
+  scriptWrites(harness.server);
+  expect((await harness.folder.push()).ok).toBe(true);
+  const success = reports(harness).at(-1)?.last_success_at;
+  const child = `${harness.dir}/unreadable`;
+  mkdirSync(child);
+  writeFileSync(`${child}/Unbound.md`, "unbound bytes\n");
+  const witness = await harness.folder.status();
+  expect(
+    witness.ok &&
+      witness.value.files.some((file) => file.path === "unreadable/Unbound.md"),
+  ).toBe(true);
+  chmodSync(child, 0);
+  try {
+    const partial = await harness.folder.status();
+    expect(
+      partial.ok &&
+        partial.value.directories.some((entry) => entry.flag === "unreadable"),
+    ).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(reports(harness).at(-1)?.problems).toContainEqual({
+      code: "unreadable",
+      count: 1,
+    });
+    expect(reports(harness).at(-1)?.last_success_at).toBe(success);
+  } finally {
+    chmodSync(child, 0o700);
+  }
+  rmSync(child, { recursive: true });
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(reports(harness).at(-1)?.problems).toEqual([]);
+  expect(reports(harness).at(-1)?.last_success_at).not.toBe(success);
+});
+
+it("preserves a nonzero known upload count while an unreadable inventory hides unbound files", async () => {
+  harness = await folderHarness("health-retained-inventory", {
+    confirm: false,
+    hydrate: false,
+    files: { "unreadable/Unbound.md": "unbound bytes\n" },
+  });
+  expect((await harness.folder.pushWaiting()).ok).toBe(true);
+  const before = reports(harness).at(-1);
+  expect(before?.pending_uploads).toBe(1);
+  const child = `${harness.dir}/unreadable`;
+  writeFileSync(`${child}/Unseen.md`, "unbound unseen bytes\n");
+  chmodSync(child, 0);
+  try {
+    const partial = await harness.folder.status();
+    expect(
+      partial.ok &&
+        partial.value.files.every((file) => file.status !== "waiting"),
+    ).toBe(true);
+    expect(
+      partial.ok &&
+        partial.value.files.some(
+          (file) => file.path === "unreadable/Unseen.md",
+        ),
+    ).toBe(false);
+    expect((await harness.folder.pushWaiting()).ok).toBe(true);
+    const after = reports(harness).at(-1);
+    expect(after?.pending_uploads).toBe(1);
+    expect(after?.problems).toContainEqual({ code: "unreadable", count: 1 });
+    expect(after?.last_success_at).toBeNull();
+  } finally {
+    chmodSync(child, 0o700);
+  }
+  rmSync(`${child}/Unseen.md`);
+  expect((await harness.folder.pushWaiting()).ok).toBe(true);
+  expect(reports(harness).at(-1)?.pending_uploads).toBe(1);
+  expect(reports(harness).at(-1)?.problems).toEqual([]);
 });
