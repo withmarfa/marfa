@@ -948,7 +948,7 @@ describe("where a file sits", () => {
       "the two Macs lay the folder out differently",
     ).toEqual(layout(harness));
 
-    // Settled: another round writes nothing anywhere.
+    // Settled: another round changes no content.
     const before = harness.server.requests.filter(isContentWrite).length;
     for (const mac of [harness, second]) {
       expect((await mac.folder.push()).ok).toBe(true);
