@@ -399,14 +399,12 @@ mod tests {
         let named = temp.path().join("link/notes");
 
         assert_eq!(Folder::open(&named, None).unwrap().root(), root);
-        let not_a_folder = |status: Result<crate::folder::StatusReport>| match status {
-            Err(CoreError::Invalid(message)) => message.contains("is not a folder"),
-            _ => false,
-        };
-        assert!(!not_a_folder(Folder::status_of(&named)));
-        std::os::unix::fs::symlink(&root, temp.path().join("alias")).unwrap();
-        assert!(Folder::open(temp.path().join("alias"), None).is_err());
-        assert!(not_a_folder(Folder::status_of(temp.path().join("alias"))));
+        // Its copy holds no settings, so the status is refused only after
+        // the folder opened.
+        assert!(!matches!(
+            Folder::status_of(&named),
+            Err(CoreError::Invalid(message)) if message.contains("is not a folder")
+        ));
         Folder::remove_at(&named).unwrap();
         assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
 
@@ -422,6 +420,43 @@ mod tests {
         );
         assert!(!matches!(added, Err(CoreError::Io(_))), "{:?}", added.err());
         assert!(real.join("fresh").join(STATE_DIR).is_dir());
+    }
+
+    #[test]
+    fn a_folder_named_by_a_link_is_refused_naming_the_link_and_its_directory() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = temp.path().join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let names = |error: Option<CoreError>, instead: &str| match error {
+            Some(CoreError::Invalid(message)) => {
+                message.starts_with(&format!("{} is a symbolic link", alias.display()))
+                    && message.ends_with(instead)
+            }
+            _ => false,
+        };
+        let target = format!("points to, {}", root.display());
+
+        assert_eq!(Folder::open(&root, None).unwrap().root(), root);
+        assert!(names(Folder::open(&alias, None).err(), &target));
+        assert!(names(Folder::status_of(&alias).err(), &target));
+        assert!(names(Folder::remove_at(&alias).err(), &target));
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+        let added = Folder::add(&alias, "01a00000-0000-7000-8000-000000000001", server, None);
+        assert!(names(added.err(), &target));
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(names(
+            Folder::status_of(&alias).err(),
+            "the directory itself"
+        ));
     }
 
     #[test]
