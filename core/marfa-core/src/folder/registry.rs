@@ -242,75 +242,89 @@ fn machine_path(home: &Path) -> PathBuf {
     base.join(FILE_NAME)
 }
 
-/// Parent components are removed only after both spellings open the same
-/// directory without following links, so a link before `..` cannot disappear.
-pub fn resolved(dir: &Path) -> PathBuf {
-    let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let absolute = with_ancestors_resolved(&absolute);
-    if !absolute
-        .components()
-        .any(|part| part == Component::ParentDir)
-    {
-        return absolute;
-    }
-    let Ok(admitted) = Directory::open(&absolute) else {
-        return absolute;
-    };
-    let mut normalized = PathBuf::new();
-    for part in absolute.components() {
-        match part {
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::CurDir => {}
-            part => normalized.push(part.as_os_str()),
-        }
-    }
-    if Directory::open(&normalized)
-        .is_ok_and(|directory| admitted.same(&directory).unwrap_or(false))
-    {
-        normalized
-    } else {
-        absolute
-    }
-}
-
 /// The directories above a root are the person's and outside the folder, and
 /// the system links some of them (`/var` and `/tmp` on macOS), so links there
-/// are followed. The root's own entry, and any component a later `..` climbs
-/// back out of, are left for the no-follow open to judge.
-fn with_ancestors_resolved(absolute: &Path) -> PathBuf {
+/// are followed. The root's own entry, and every component a later `..`
+/// climbs back out of, are opened without following links, and a `..` is
+/// removed only after the walk through it returns to the directory it left,
+/// so a link before `..` cannot disappear.
+pub fn resolved(dir: &Path) -> PathBuf {
+    let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
     let parts: Vec<Component> = absolute.components().collect();
-    let mut depth = 0usize;
-    let mut lowest = usize::MAX;
-    for part in &parts {
+    let mut closed_by: Vec<Option<usize>> = vec![None; parts.len()];
+    let mut entered = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
         match part {
-            Component::Normal(_) => depth += 1,
+            Component::Normal(_) => entered.push(index),
             Component::ParentDir => {
-                depth = depth.saturating_sub(1);
-                lowest = lowest.min(depth);
+                if let Some(start) = entered.pop() {
+                    closed_by[start] = Some(index);
+                }
             }
             _ => {}
         }
     }
-    let lead = parts
-        .iter()
-        .take_while(|part| !matches!(part, Component::Normal(_)))
-        .count();
-    let (above, rest) = parts.split_at(lead + lowest.min(depth.saturating_sub(1)));
-    let above: PathBuf = above.iter().collect();
-    for base in above.ancestors() {
+    let own = entered.last().copied();
+    let mut at = PathBuf::new();
+    let mut settled = true;
+    let mut index = 0;
+    while index < parts.len() {
+        let part = parts[index];
+        match (part, closed_by[index]) {
+            (Component::Normal(_), Some(close)) => {
+                if !settled {
+                    at = existing_prefix_resolved(&at);
+                    settled = true;
+                }
+                let climbed: PathBuf = parts[index..=close].iter().collect();
+                if !returns(&at, &climbed) {
+                    at.extend(&parts[index..]);
+                    return at;
+                }
+                index = close;
+            }
+            (Component::Normal(_), None) if Some(index) == own => {
+                if !settled {
+                    at = existing_prefix_resolved(&at);
+                    settled = true;
+                }
+                at.push(part);
+            }
+            (Component::Normal(_), None) => {
+                at.push(part);
+                settled = false;
+            }
+            (Component::ParentDir, _) if at.has_root() => {}
+            (part, _) => at.push(part),
+        }
+        index += 1;
+    }
+    at
+}
+
+/// Whether walking `climbed` from `at` without following links comes back
+/// to the directory `at` names.
+fn returns(at: &Path, climbed: &Path) -> bool {
+    let (Ok(left), Ok(back)) = (Directory::open(at), Directory::open(&at.join(climbed))) else {
+        return false;
+    };
+    left.same(&back).unwrap_or(false)
+}
+
+/// Resolves the longest prefix that exists and keeps the components that do
+/// not exist yet, since a folder being added need not exist.
+fn existing_prefix_resolved(path: &Path) -> PathBuf {
+    for base in path.ancestors() {
         if let Ok(mut found) = std::fs::canonicalize(base) {
-            if let Ok(missing) = above.strip_prefix(base)
+            if let Ok(missing) = path.strip_prefix(base)
                 && !missing.as_os_str().is_empty()
             {
                 found.push(missing);
             }
-            found.extend(rest);
             return found;
         }
     }
-    absolute.to_path_buf()
+    path.to_path_buf()
 }
 
 /// Missing or unreadable roots are kept, since a disconnected volume or a
@@ -383,6 +397,36 @@ mod tests {
         let back = base.join("link/notes/inside/..");
         assert_eq!(resolved(&back), real.join("notes/inside/.."));
         assert!(Directory::open(&resolved(&back)).is_err());
+    }
+
+    #[test]
+    fn a_link_after_the_last_parent_component_is_resolved_and_one_climbed_out_of_is_not() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes")).unwrap();
+        std::fs::create_dir(real.join("child")).unwrap();
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+
+        let after = base.join("elsewhere/../link/notes");
+        assert_eq!(resolved(&after), real.join("notes"));
+        assert!(Directory::open(&resolved(&after)).is_ok());
+        assert_eq!(
+            resolved(&base.join("elsewhere/../link/child/../notes")),
+            real.join("notes")
+        );
+        assert_eq!(
+            resolved(&base.join("elsewhere/../link/fresh")),
+            real.join("fresh")
+        );
+        assert_eq!(
+            resolved(&base.join("real/../real/notes")),
+            real.join("notes")
+        );
+        let climbed = base.join("link/../real/notes");
+        assert_eq!(resolved(&climbed), climbed);
+        assert!(Directory::open(&resolved(&climbed)).is_err());
     }
 
     #[test]

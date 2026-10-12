@@ -4470,13 +4470,13 @@ When a folder directory is admitted, a device MUST retain that opened directory 
 
 ### `folders/directory-components-no-follow`
 
-When opening a folder or any directory below it, a device MUST refuse a symbolic link at the folder's own directory entry and in every path component below it.
+When opening a folder or any directory below it, a device MUST refuse a symbolic link at the folder's own directory entry, in every path component below it, and in every path component that a later `..` climbs back out of.
 
-**Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`, `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
+**Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`, `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
 ### `folders/root-linked-ancestor-resolved`
 
-When a folder is named through a path whose directories above the folder include a symbolic link, a device MUST admit the folder at the path with those links resolved.
+When a folder is named through a path whose directories above the folder include a symbolic link that no later `..` climbs back out of, a device MUST admit the folder at the path with those links resolved.
 
 **Reason:** The directories above a folder are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
 

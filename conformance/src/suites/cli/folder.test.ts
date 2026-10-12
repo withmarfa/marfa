@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
@@ -399,10 +399,13 @@ describe("a folder round trip", () => {
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
+    // Named from the working directory, with a `..` before the link; a
+    // template keeps the spelling that path.join would normalize.
+    const spelled = `${relative(process.cwd(), dir)}/real/../linked/notes`;
     const added = await c.cli.json<{ dir: string }>([
       "folders",
       "add",
-      named,
+      spelled,
       "--folder",
       settings.item.id,
       "--yes",
@@ -446,6 +449,39 @@ describe("a folder round trip", () => {
     await c.cli.json(["folders", "remove", named]);
     expect(existsSync(join(resolved, ".marfa", "core.sqlite"))).toBe(false);
     expect(existsSync(join(resolved, "dropped.md"))).toBe(true);
+  });
+
+  it("refuses a folder named through a link that a later parent component climbs back out of", async () => {
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("climbed-link"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      join(real, "notes"),
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    await c.cli.json(["folders", "hydrate", join(real, "notes")]);
+    // Templates keep the spellings that path.join would normalize. The
+    // witness: the same spelling through a directory opens the folder.
+    await c.cli.json(["folders", "status", `${dir}/real/../real/notes`]);
+    const refused = await c.cli.refused([
+      "folders",
+      "status",
+      `${dir}/linked/../real/notes`,
+    ]);
+    expect(refused.envelope.error.code).toBe("invalid");
   });
 
   it("is in step after the one push that writes its files", async () => {
