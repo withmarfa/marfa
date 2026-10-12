@@ -475,6 +475,20 @@ CREATE TABLE IF NOT EXISTS `extension_blob_references` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_extension_blob_references_item` ON `extension_blob_references` (`item_id`);
+CREATE TABLE IF NOT EXISTS `folder_status` (
+	`folder_id` text NOT NULL,
+	`sign_in_kind` text NOT NULL,
+	`sign_in_id` text NOT NULL,
+	`sign_in_name` text NOT NULL,
+	`folder_store_id` text NOT NULL,
+	`sequence` integer NOT NULL,
+	`report` text NOT NULL,
+	`received_at` text NOT NULL,
+	PRIMARY KEY(`folder_id`, `sign_in_kind`, `sign_in_id`, `folder_store_id`),
+	CONSTRAINT "folder_status_kind" CHECK("folder_status"."sign_in_kind" IN ('browser', 'app', 'key')),
+	CONSTRAINT "folder_status_sequence" CHECK("folder_status"."sequence" BETWEEN 1 AND 9007199254740991)
+);
+
 CREATE TABLE IF NOT EXISTS `housekeeping` (
 	`name` text PRIMARY KEY NOT NULL,
 	`interval_ms` integer NOT NULL,

@@ -7,6 +7,10 @@ import type {
   Metadata,
   Version,
   VersionWriter,
+  FolderStatusSignIn,
+  FolderStatusReport,
+  FolderStatusAck,
+  StoredFolderStatus,
   ApiKey,
   CreateKeyInput,
   UpdateKeyInput,
@@ -3172,7 +3176,18 @@ export type ItemWriteMethod = keyof Pick<
  */
 export type ItemReader = Omit<ItemStore, ItemWriteMethod>;
 
+export interface FolderStatusStore {
+  put(
+    folderId: string,
+    signIn: FolderStatusSignIn,
+    report: FolderStatusReport,
+  ): Promise<FolderStatusAck>;
+  list(folderId: string): Promise<StoredFolderStatus[]>;
+  isCurrent(signIn: FolderStatusSignIn, now: Date): Promise<boolean>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
+  folderStatus: FolderStatusStore;
   items: ItemReader;
   metadata: MetadataStore;
   versions: VersionStore;

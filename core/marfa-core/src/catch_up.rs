@@ -617,6 +617,7 @@ pub(crate) fn follow(
     stop: &AtomicBool,
     told_unreachable: bool,
     on_change: &mut dyn FnMut(&Change),
+    on_live: &mut dyn FnMut(bool),
 ) -> Result<FollowReport> {
     follow_paced(
         core,
@@ -624,6 +625,7 @@ pub(crate) fn follow(
         stop,
         told_unreachable,
         on_change,
+        on_live,
         &PACE,
         &mut |wait| {
             wait_unless_stopped(stop, wait, PACE.stop_poll);
@@ -631,18 +633,21 @@ pub(crate) fn follow(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn follow_paced(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
     told_unreachable: bool,
     on_change: &mut dyn FnMut(&Change),
+    on_live: &mut dyn FnMut(bool),
     pace: &Pace,
     pause: &mut dyn FnMut(Duration),
 ) -> Result<FollowReport> {
     start(core)?;
     let context = Context::capture(&*core.conn()?)?;
     let http = Arc::new(context.http(&http));
+    on_live(false);
     let result = (|| {
         let mut report = FollowReport::default();
         let mut backoff = pace.reconnect_first;
@@ -657,6 +662,7 @@ fn follow_paced(
         // its caller was last told the server could not be reached.
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
         while !stop.load(Ordering::Relaxed) {
+            on_live(false);
             let (slice, cursor) = start(core)?;
             report.cursor = cursor.clone();
             if asked {
@@ -724,7 +730,9 @@ fn follow_paced(
                 &mut report,
                 &mut refreshed,
                 on_change,
+                on_live,
             )?;
+            on_live(false);
             match ended {
                 Ended::Stopped => return Ok(report),
                 Ended::Behind => continue,
@@ -740,6 +748,7 @@ fn follow_paced(
         }
         Ok(report)
     })();
+    on_live(false);
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
 
@@ -765,9 +774,11 @@ fn read_stream(
     report: &mut FollowReport,
     refreshed: &mut HashSet<Unexplained>,
     on_change: &mut dyn FnMut(&Change),
+    on_live: &mut dyn FnMut(bool),
 ) -> Result<Ended> {
     let mut heard = now();
     let mut head = None;
+    let mut live_confirmed = false;
     let mut greatest = read_view::cursor(&report.cursor).unwrap_or(0);
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -821,9 +832,13 @@ fn read_stream(
                 {
                     report.cursor = cursor;
                 }
+                live_confirmed =
+                    read_view::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
+                on_live(live_confirmed);
             }
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
+                on_live(false);
                 let Some(id) = id else {
                     return Err(read_view::invalid());
                 };
@@ -863,6 +878,7 @@ fn read_stream(
                     None => report.skipped += 1,
                 }
                 report.cursor = id;
+                on_live(live_confirmed);
             }
         }
     }
@@ -1192,6 +1208,7 @@ mod tests {
                 &flag,
                 told_unreachable,
                 &mut on_change,
+                &mut |_| {},
                 &pace,
                 &mut pause,
             );
@@ -1575,6 +1592,7 @@ mod tests {
                 &|| reading.now(),
                 &mut FollowReport::default(),
                 &mut HashSet::new(),
+                &mut |_| {},
                 &mut |_| {},
             );
             let _ = ended.send(read);
@@ -2285,5 +2303,48 @@ mod tests {
         }
         let run = follow_on(&core, QUICK, None);
         expired(run.ended(), &core, "read_view_invalid");
+    }
+
+    #[test]
+    fn folder_health_observation_requires_a_live_completed_follow_and_clears_on_loss() {
+        for completed in [false, true] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![
+                        connected(),
+                        stream_cursor("10"),
+                        if completed {
+                            stream_live(Some("10"))
+                        } else {
+                            incomplete()
+                        },
+                    ],
+                    Then::End,
+                )],
+            );
+            let (_dir, core) = hydrated(&server);
+            let stop = AtomicBool::new(false);
+            let mut observed = Vec::new();
+            follow_paced(
+                &core,
+                Arc::clone(core.http.as_ref().unwrap()),
+                &stop,
+                false,
+                &mut |_| {},
+                &mut |live| observed.push(live),
+                &QUICK,
+                &mut |_| stop.store(true, Ordering::SeqCst),
+            )
+            .unwrap();
+            assert_eq!(observed.contains(&true), completed);
+            assert_eq!(
+                observed.last(),
+                Some(&false),
+                "disconnection invalidates a completed marker before the next pass"
+            );
+        }
     }
 }

@@ -30,6 +30,7 @@ pub struct FileStatus {
 pub struct StatusReport {
     pub files: Vec<FileStatus>,
     pub paused: Paused,
+    pub directories: Vec<Flagged>,
     /// Where the first sync waits to be confirmed, what the last read of the
     /// folder said it will do; `plan` is empty until a read has.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,12 +111,8 @@ impl Folder {
         let disk: HashSet<String> = disk.into_iter().collect();
         let pull: HashSet<String> = pull.into_iter().collect();
         let unmatched: HashSet<String> = unmatched.into_iter().collect();
-        let waiting: Vec<QueuedWrite> = self
-            .core
-            .queue()?
-            .into_iter()
-            .filter(|row| matches!(row.verdict, None | Some(Verdict::Blocked)))
-            .collect();
+        let queue = self.core.queue()?;
+        let waiting = crate::store::current_waiting_writes(&*self.core.conn()?, &queue)?;
         let found = walked
             .files
             .iter()
@@ -213,6 +210,7 @@ impl Folder {
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(StatusReport {
             files,
+            directories: walked.directories,
             paused: Paused {
                 disk: disk.len(),
                 pull: pull.len(),
@@ -278,6 +276,12 @@ impl Folder {
                 || row.target_id.as_deref() == Some(bound.item_id.as_str())
         }) {
             named.push(self.wait_of(row));
+            if row.verdict == Some(Verdict::Dead) {
+                entry = entry.because(
+                    "dead",
+                    "its current write reached the refusal limit and remains held",
+                );
+            }
             if let Some(refusal) = &row.refusal {
                 let code = refusal.code.as_deref().unwrap_or(&refusal.reason);
                 let message = refusal.message.as_deref().unwrap_or(code);
@@ -289,6 +293,9 @@ impl Folder {
                 .filter(|other| row.depends_on.contains(&other.id))
             {
                 named.push(self.wait_of(upload));
+                if upload.verdict == Some(Verdict::Dead) {
+                    entry = entry.because("dead", "an upload its current write needs reached the refusal limit and remains held");
+                }
             }
         }
         if !named.is_empty() {
@@ -357,6 +364,15 @@ impl Folder {
             | WriteKind::DeleteExtension => "metadata",
             WriteKind::UploadBlob => "upload",
         }
+    }
+}
+
+impl StatusReport {
+    pub(super) fn inventory_complete(&self) -> bool {
+        !self
+            .directories
+            .iter()
+            .any(|entry| matches!(entry.flag, "unreadable" | "gone"))
     }
 }
 

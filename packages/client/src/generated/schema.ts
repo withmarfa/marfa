@@ -1232,6 +1232,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/folders/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a folder status
+         * @description Returns the latest folder-copy reports grouped by sign-in, with receipt ages and totals from sign-ins that still stand. Historical reports remain visible.
+         */
+        get: operations["getFolderStatus"];
+        /**
+         * Replace a folder status
+         * @description Replaces your sign-in's report for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.
+         */
+        put: operations["reportFolderStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/keys": {
         parameters: {
             query?: never;
@@ -3761,6 +3785,135 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /** @description The latest accepted report's sequence and receipt time. */
+        FolderStatusAck: {
+            /** @description `true` if this report replaced the stored report; false for an equal or older sequence. */
+            accepted: boolean;
+            /** @description The latest stored sequence for this copy and sign-in; a behind client resnapshots and sends a higher sequence. */
+            sequence: number;
+            /**
+             * @description When the latest report was first accepted, in UTC; retries do not refresh it.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            received_at: string;
+        };
+        /** @description A folder copy's last observed sync health, containing no file details. */
+        FolderStatusReport: {
+            /**
+             * @description The opaque ID of this local folder copy; it reveals no path or machine name.
+             * @example 01920000-0000-7000-8000-000000000000
+             */
+            folder_store_id: string;
+            /** @description The increasing sequence for this copy under this sign-in; a retry keeps its sequence. */
+            sequence: number;
+            /**
+             * @description When this copy last finished a fully successful sync, as reported by the client, in UTC; null if none has completed.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            last_success_at: string | null;
+            /** @description The distinct local files last observed waiting to upload. */
+            pending_uploads: number;
+            /** @description The distinct items whose files the last completed pull could not write; retained when a later pull fails. */
+            pending_downloads: number;
+            /** @description The file removals waiting for confirmation on this copy. */
+            paused_removals: number;
+            /** @description `true` if this copy's first sync is waiting for confirmation. */
+            first_sync_waiting: boolean;
+            /** @description The current problem counts, each code once; an empty list means none were observed. */
+            problems: components["schemas"]["FolderStatusProblem"][];
+        };
+        /** @description A safe problem code and its count. */
+        FolderStatusProblem: {
+            /**
+             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.
+             * @enum {string}
+             */
+            code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid";
+            /** @description The number of current observations with this problem. */
+            count: number;
+        };
+        /** @description A folder's sync reports grouped by existing sign-in. */
+        FolderStatus: {
+            /**
+             * @description The ID of the folder.
+             * @example 01920000-0000-7000-8000-000000000002
+             */
+            folder_id: string;
+            /** @description Current and historical reports, grouped by sign-in; age is no claim of being online. */
+            sign_ins: components["schemas"]["FolderStatusGroup"][];
+            /** @description Totals from current sign-ins alone; copies may contain overlapping files. */
+            totals: {
+                /** @description `true` if any total exceeded the safe integer bound; capped totals then mean at least that bound. */
+                saturated: boolean;
+                /** @description The sum of pending upload files across current sign-ins' copies. */
+                pending_uploads: number;
+                /** @description The sum of observed pending download files across current sign-ins' copies. */
+                pending_downloads: number;
+                /** @description The sum of paused file removals across current sign-ins' copies. */
+                paused_removals: number;
+                /** @description The number of current sign-ins' copies waiting on their first sync. */
+                first_sync_waiting: number;
+                /** @description The summed current problem counts across current sign-ins' copies. */
+                problems: components["schemas"]["FolderStatusProblem"][];
+            };
+        };
+        /** @description The folder-copy reports grouped under one sign-in. */
+        FolderStatusGroup: {
+            /** @description The sign-in that owns these reports. */
+            sign_in: {
+                /**
+                 * @description browser: owner browser session; app: signed-in app grant; key: API key.
+                 * @enum {string}
+                 */
+                kind: "browser" | "app" | "key";
+                /**
+                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 */
+                id: string;
+                /**
+                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @example Safari on macOS
+                 */
+                name: string;
+            };
+            /** @description `true` while the sign-in still stands; false for retained historical reports. This is no claim of current folder access, freshness, or being online. */
+            current: boolean;
+            /** @description The latest report for each copy under this sign-in. */
+            copies: components["schemas"]["FolderStatusCopy"][];
+        };
+        /** @description One copy's latest report and its server-measured age. */
+        FolderStatusCopy: {
+            /**
+             * @description The opaque ID of this local folder copy; it reveals no path or machine name.
+             * @example 01920000-0000-7000-8000-000000000000
+             */
+            folder_store_id: string;
+            /** @description The increasing sequence for this copy under this sign-in; a retry keeps its sequence. */
+            sequence: number;
+            /**
+             * @description When this copy last finished a fully successful sync, as reported by the client, in UTC; null if none has completed.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            last_success_at: string | null;
+            /** @description The distinct local files last observed waiting to upload. */
+            pending_uploads: number;
+            /** @description The distinct items whose files the last completed pull could not write; retained when a later pull fails. */
+            pending_downloads: number;
+            /** @description The file removals waiting for confirmation on this copy. */
+            paused_removals: number;
+            /** @description `true` if this copy's first sync is waiting for confirmation. */
+            first_sync_waiting: boolean;
+            /** @description The current problem counts, each code once; an empty list means none were observed. */
+            problems: components["schemas"]["FolderStatusProblem"][];
+            /**
+             * @description When the server accepted this report, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            received_at: string;
+            /** @description The whole seconds since receipt, measured by the server; it does not show whether the copy is online. */
+            age_seconds: number;
         };
         /** @description A new API key, with its plaintext `key`. */
         KeyResponse: {
@@ -18437,6 +18590,374 @@ export interface operations {
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getFolderStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the folder. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns current and historical reports and the current totals. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "folder_id": "01920000-0000-7000-8000-000000000002",
+                     *       "sign_ins": [
+                     *         {
+                     *           "sign_in": {
+                     *             "kind": "key",
+                     *             "id": "01920000-0000-7000-8000-000000000001",
+                     *             "name": "Folder sync"
+                     *           },
+                     *           "current": true,
+                     *           "copies": [
+                     *             {
+                     *               "folder_store_id": "01920000-0000-7000-8000-000000000000",
+                     *               "sequence": 1,
+                     *               "last_success_at": null,
+                     *               "pending_uploads": 2,
+                     *               "pending_downloads": 0,
+                     *               "paused_removals": 0,
+                     *               "first_sync_waiting": false,
+                     *               "problems": [],
+                     *               "received_at": "2026-10-03T09:30:00.000Z",
+                     *               "age_seconds": 60
+                     *             }
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "totals": {
+                     *         "saturated": false,
+                     *         "pending_uploads": 2,
+                     *         "pending_downloads": 0,
+                     *         "paused_removals": 0,
+                     *         "first_sync_waiting": 0,
+                     *         "problems": []
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FolderStatus"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the folder ID is malformed.
+             *     - `validation_error`: the query names an undeclared field, or the request asks for an unsupported conditional copy read.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reads no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description - `item_not_found`: the folder does not exist or you cannot read it. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    reportFolderStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the folder. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderStatusReport"];
+            };
+        };
+        responses: {
+            /** @description Returns the latest accepted sequence and receipt time for your copy. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "accepted": true,
+                     *       "sequence": 1,
+                     *       "received_at": "2026-10-03T09:30:00.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FolderStatusAck"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the folder ID is malformed.
+             *     - `validation_error`: a field, count, time, code, or undeclared field is invalid.
+             *     - `missing_required_field`: a required report field is missing.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `type_not_permitted`: your credential reads no type.
+             *     - `forbidden`: a local command has no sign-in to report under.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description - `item_not_found`: the folder does not exist or you cannot read it. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
                 content: {

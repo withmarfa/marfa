@@ -257,7 +257,7 @@ pub(crate) fn lay_queue_over(
     catalog: &Catalog,
     whole: &[String],
 ) -> Result<()> {
-    let waiting = store::waiting_writes(conn)?;
+    let waiting = store::current_waiting_writes(conn, &store::waiting_writes(conn)?)?;
     let mut items: Vec<&str> = Vec::new();
     let mut edges: Vec<&str> = Vec::new();
     for row in &waiting {

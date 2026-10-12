@@ -961,6 +961,8 @@ export interface ScanReport {
 
 /** Where every file stands (`folders/status-files`). */
 export interface StatusReport {
+  /** Directory holds or intentional package exclusions observed by the inventory. */
+  directories: FlaggedFile[];
   files: Array<{
     path: string;
     item_id?: string;
