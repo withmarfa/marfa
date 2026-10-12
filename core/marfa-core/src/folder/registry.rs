@@ -194,8 +194,9 @@ impl Registry {
             Err(error) => return Err(self.failed("read", &error)),
         };
         let mut tidied: Vec<Registered> = Vec::new();
-        for mut entry in std::mem::take(&mut listing.folders) {
-            entry.dir = resolved(&entry.dir);
+        // Entries are listed resolved; resolving one again would follow a
+        // link that replaced its directory since.
+        for entry in std::mem::take(&mut listing.folders) {
             if gone(&entry) {
                 continue;
             }
@@ -520,6 +521,37 @@ mod tests {
             Folder::status_of(&alias).err(),
             "the directory itself"
         ));
+    }
+
+    #[test]
+    fn a_listed_folder_whose_directory_became_a_link_is_judged_where_it_was_listed() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let first = folder_at(&base.join("a"), "notes");
+        registry.register(&first, "f1", Some("s1")).unwrap();
+        let listed = |dir: &Path, folder: &str, store: &str| Registered {
+            dir: dir.to_path_buf(),
+            folder: folder.into(),
+            store: Some(store.into()),
+        };
+
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::fs::create_dir_all(base.join("plain/notes")).unwrap();
+        std::os::unix::fs::symlink(base.join("plain"), base.join("a")).unwrap();
+        assert_eq!(
+            registry.folders().unwrap(),
+            vec![listed(&first, "f1", "s1")]
+        );
+
+        let second = folder_at(&base.join("b"), "notes");
+        registry.register(&second, "f2", Some("s2")).unwrap();
+        std::fs::remove_file(base.join("a")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        assert_eq!(
+            registry.folders().unwrap(),
+            vec![listed(&first, "f1", "s1"), listed(&second, "f2", "s2")]
+        );
     }
 
     #[test]
