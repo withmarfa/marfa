@@ -410,11 +410,13 @@ export interface Placement {
   country?: string;
 }
 
+/**
+ * Present only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, which is what turns
+ * telemetry on. Absent, nothing is exported and the SDK never loads.
+ */
 export interface OtelSettings {
-  /** Nothing is exported, and the SDK never loads, unless this is on. */
-  enabled: boolean;
   serviceName: string;
-  /** Each signal's resolved URL, empty when that signal is not exported. */
+  /** Each signal's resolved URL. */
   tracesEndpoint: string;
   logsEndpoint: string;
   /** Each signal's headers: the general ones, overridden by its own. */
@@ -423,7 +425,8 @@ export interface OtelSettings {
   /** Baseline trace sample ratio; errors export whatever it says, see
    *  `otel/error-aware-sampler.ts`. */
   sampleRatio: number;
-  /** Exception reporting to PostHog, on when both are set. */
+  /** Exception reporting to PostHog, on when both are set. OTLP carries no
+   *  exceptions into PostHog's error tracking, so this stays separate. */
   posthogHost: string;
   posthogToken: string;
 }
@@ -1315,10 +1318,6 @@ const settingsShape = {
     "Free text naming the country the server runs in, reported at `/health` as `placement.country`.",
   ),
 
-  MARFA_OTEL_ENABLED: on(
-    false,
-    "Whether the server exports telemetry. Nothing is exported, and the telemetry SDK is not loaded, unless this is on.",
-  ),
   MARFA_OTEL_SAMPLE_RATIO: setting(
     decimal(0, 1),
     () => 0.05,
@@ -1330,13 +1329,13 @@ const settingsShape = {
     "The service name on exported telemetry.",
   ),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
-    "The base URL of the OTLP receiver. Traces post to `v1/traces` and logs to `v1/logs` under it.",
+    "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and no telemetry code is loaded.",
   ),
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl(
-    "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`.",
+    "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
   ),
   OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalUrl(
-    "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`.",
+    "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
   ),
   OTEL_EXPORTER_OTLP_HEADERS: setting(
     otlpHeaders,
@@ -1357,10 +1356,10 @@ const settingsShape = {
     { secret: true },
   ),
   MARFA_POSTHOG_HOST: optionalUrl(
-    "The PostHog host that receives exception reports. When telemetry is on, it must be set together with `MARFA_POSTHOG_PROJECT_TOKEN`.",
+    "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_PROJECT_TOKEN` set too.",
   ),
   MARFA_POSTHOG_PROJECT_TOKEN: secretSetting(
-    "The PostHog project token for exception reports. When telemetry is on, it must be set together with `MARFA_POSTHOG_HOST`.",
+    "The PostHog project token for exception reports. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_HOST` set too.",
   ),
 };
 
@@ -1473,20 +1472,25 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       "must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS",
     );
   }
-  // With one alone no exception could be reported; only telemetry reports.
-  const reports = s.MARFA_OTEL_ENABLED;
-  if (
-    reports &&
-    s.MARFA_POSTHOG_HOST !== undefined &&
-    !s.MARFA_POSTHOG_PROJECT_TOKEN
-  ) {
+  // Telemetry is on when the general endpoint is set, so a setting that only
+  // refines or extends it has nothing to act on without it.
+  if (s.OTEL_EXPORTER_OTLP_ENDPOINT === undefined) {
+    for (const name of [
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+      "MARFA_POSTHOG_HOST",
+      "MARFA_POSTHOG_PROJECT_TOKEN",
+    ] as const) {
+      if (s[name] !== undefined) {
+        refuse(name, "needs OTEL_EXPORTER_OTLP_ENDPOINT set too");
+      }
+    }
+  }
+  // With one alone no exception could be reported.
+  if (s.MARFA_POSTHOG_HOST !== undefined && !s.MARFA_POSTHOG_PROJECT_TOKEN) {
     refuse("MARFA_POSTHOG_HOST", "needs MARFA_POSTHOG_PROJECT_TOKEN set too");
   }
-  if (
-    reports &&
-    s.MARFA_POSTHOG_PROJECT_TOKEN !== undefined &&
-    !s.MARFA_POSTHOG_HOST
-  ) {
+  if (s.MARFA_POSTHOG_PROJECT_TOKEN !== undefined && !s.MARFA_POSTHOG_HOST) {
     refuse("MARFA_POSTHOG_PROJECT_TOKEN", "needs MARFA_POSTHOG_HOST set too");
   }
 });
@@ -1547,12 +1551,43 @@ export class SettingsError extends Error {
  */
 function otlpSignalUrl(
   specific: string | undefined,
-  general: string | undefined,
+  general: string,
   path: "v1/traces" | "v1/logs",
 ): string {
   if (specific !== undefined) return specific;
-  if (general === undefined) return "";
   return `${general.endsWith("/") ? general : `${general}/`}${path}`;
+}
+
+/** Telemetry is on exactly when the general endpoint is set. */
+function otelSettings(
+  s: z.output<typeof settingsSchema>,
+): OtelSettings | undefined {
+  const general = s.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (general === undefined) return undefined;
+  return {
+    serviceName: s.OTEL_SERVICE_NAME,
+    tracesEndpoint: otlpSignalUrl(
+      s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+      general,
+      "v1/traces",
+    ),
+    logsEndpoint: otlpSignalUrl(
+      s.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+      general,
+      "v1/logs",
+    ),
+    tracesHeaders: {
+      ...s.OTEL_EXPORTER_OTLP_HEADERS,
+      ...s.OTEL_EXPORTER_OTLP_TRACES_HEADERS,
+    },
+    logsHeaders: {
+      ...s.OTEL_EXPORTER_OTLP_HEADERS,
+      ...s.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
+    },
+    sampleRatio: s.MARFA_OTEL_SAMPLE_RATIO,
+    posthogHost: s.MARFA_POSTHOG_HOST ?? "",
+    posthogToken: s.MARFA_POSTHOG_PROJECT_TOKEN ?? "",
+  };
 }
 
 /**
@@ -1710,31 +1745,7 @@ export function loadConfig(
     versionSha: typeof sha === "string" && sha !== "" ? sha : undefined,
     versionFile,
     placement: Object.keys(placement).length > 0 ? placement : undefined,
-    otel: {
-      enabled: s.MARFA_OTEL_ENABLED,
-      serviceName: s.OTEL_SERVICE_NAME,
-      tracesEndpoint: otlpSignalUrl(
-        s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
-        s.OTEL_EXPORTER_OTLP_ENDPOINT,
-        "v1/traces",
-      ),
-      logsEndpoint: otlpSignalUrl(
-        s.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
-        s.OTEL_EXPORTER_OTLP_ENDPOINT,
-        "v1/logs",
-      ),
-      tracesHeaders: {
-        ...s.OTEL_EXPORTER_OTLP_HEADERS,
-        ...s.OTEL_EXPORTER_OTLP_TRACES_HEADERS,
-      },
-      logsHeaders: {
-        ...s.OTEL_EXPORTER_OTLP_HEADERS,
-        ...s.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
-      },
-      sampleRatio: s.MARFA_OTEL_SAMPLE_RATIO,
-      posthogHost: s.MARFA_POSTHOG_HOST ?? "",
-      posthogToken: s.MARFA_POSTHOG_PROJECT_TOKEN ?? "",
-    },
+    otel: otelSettings(s),
     heartbeatUrl: s.MARFA_HEARTBEAT_URL,
     heartbeatIntervalMs: s.MARFA_HEARTBEAT_INTERVAL_MS,
     housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,

@@ -14,18 +14,19 @@
  * after this preload finishes, so a bad value stops the process here,
  * before anything else has started.
  *
- * Full no-op while `MARFA_OTEL_ENABLED` is off: the heavy SDK modules are
- * dynamically imported only inside the enabled branch, so a disabled boot
- * never loads them. Traces and logs are independently gated on their
- * endpoint being set — a deployment exporting to PostHog sets only the
- * logs endpoint, because there is no general-trace store to point at, so
- * traces are built but unexported.
+ * One setting turns it on: `OTEL_EXPORTER_OTLP_ENDPOINT`. Set, the server
+ * exports traces and logs to it (each to its path under it, or to its own
+ * `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`
+ * as written), and the traces carry a span for each storage call below the
+ * HTTP span. Unset, nothing is exported and none of the heavy SDK modules is
+ * loaded: they are dynamically imported only past that check. A request's
+ * trace and its log lines share the request id and the trace id.
  *
  * Exceptions are a third, separate pipeline, gated on `MARFA_POSTHOG_HOST`
- * and `MARFA_POSTHOG_PROJECT_TOKEN`. PostHog's error tracking groups
- * `$exception` events, and an OTLP log record lands in its logs product
- * whatever exception attributes it carries, so the logs pipeline alone
- * leaves error tracking empty. `posthog-node` builds those events from a
+ * and `MARFA_POSTHOG_PROJECT_TOKEN`, and on the endpoint being set. PostHog's
+ * error tracking groups `$exception` events, and its documentation describes
+ * no way for OTLP logs or traces to become them, so the two OTLP pipelines
+ * leave error tracking empty. `posthog-node` builds those events from a
  * thrown value, stack frames included.
  */
 import { bootConfig, SettingsError } from "./config.js";
@@ -35,12 +36,12 @@ import { reportableError } from "./error-text.js";
 
 declare global {
   /**
-   * Flush + shut down the OpenTelemetry pipelines. Set here when OTel is
-   * enabled so `index.ts`'s graceful-shutdown handler can await a final
+   * Flush + shut down the OpenTelemetry pipelines. Set here when
+   * telemetry is on so `index.ts`'s graceful-shutdown handler can await a final
    * flush before `process.exit` — critical on an ephemeral container,
    * where scale-to-zero SIGTERMs the process and the last batch
-   * of error logs/traces would otherwise be lost. Undefined when OTel is
-   * off; the caller no-ops.
+   * of error logs/traces would otherwise be lost. Undefined when
+   * telemetry is off; the caller no-ops.
    */
   var __marfaOtelShutdown: (() => Promise<void>) | undefined;
   /**
@@ -76,7 +77,7 @@ function readConfig(): AppConfig {
 async function start(): Promise<void> {
   const config = readConfig();
   const otel = config.otel;
-  if (!otel?.enabled) return;
+  if (!otel) return;
 
   const {
     tracesEndpoint,
@@ -88,13 +89,6 @@ async function start(): Promise<void> {
   } = otel;
   const reportExceptions = Boolean(posthogHost);
 
-  if (!tracesEndpoint && !logsEndpoint && !reportExceptions) {
-    bootLog(
-      "warn",
-      "MARFA_OTEL_ENABLED is on but no OTLP endpoint or PostHog host is set; OpenTelemetry is inert.",
-    );
-    return;
-  }
   // Resource attribute key for the deployment environment. The literal
   // string is used deliberately rather than a `@opentelemetry/semantic-conventions`
   // constant — the deployment-environment attribute moved namespaces across
@@ -114,89 +108,82 @@ async function start(): Promise<void> {
   interface Shutdownable {
     shutdown: () => Promise<void>;
   }
-  let tracerProvider: Shutdownable | undefined;
-  let loggerProvider: Shutdownable | undefined;
   let exceptionClient: Shutdownable | undefined;
 
   // ---- Traces ----
-  if (tracesEndpoint) {
-    const [
-      { NodeTracerProvider },
-      { AlwaysOnSampler, BatchSpanProcessor },
-      { OTLPTraceExporter },
-      { registerInstrumentations },
-      { HttpInstrumentation },
-      { PiiRedactionSpanProcessor },
-      { ErrorBucketFilterSpanProcessor },
-    ] = await Promise.all([
-      import("@opentelemetry/sdk-trace-node"),
-      import("@opentelemetry/sdk-trace-base"),
-      import("@opentelemetry/exporter-trace-otlp-http"),
-      import("@opentelemetry/instrumentation"),
-      import("@opentelemetry/instrumentation-http"),
-      import("./otel/redaction.js"),
-      import("./otel/error-aware-sampler.js"),
-    ]);
+  const [
+    { NodeTracerProvider },
+    { AlwaysOnSampler, BatchSpanProcessor },
+    { OTLPTraceExporter },
+    { registerInstrumentations },
+    { HttpInstrumentation },
+    { PiiRedactionSpanProcessor, PiiRedactionLogRecordProcessor },
+    { ErrorBucketFilterSpanProcessor },
+  ] = await Promise.all([
+    import("@opentelemetry/sdk-trace-node"),
+    import("@opentelemetry/sdk-trace-base"),
+    import("@opentelemetry/exporter-trace-otlp-http"),
+    import("@opentelemetry/instrumentation"),
+    import("@opentelemetry/instrumentation-http"),
+    import("./otel/redaction.js"),
+    import("./otel/error-aware-sampler.js"),
+  ]);
 
-    const traceExporter = new OTLPTraceExporter({
-      url: tracesEndpoint,
-      headers: otel.tracesHeaders,
-    });
-    const provider = new NodeTracerProvider({
-      resource,
-      sampler: new AlwaysOnSampler(),
-      spanProcessors: [
-        // Order matters: redact in place first, then the export gate.
-        new PiiRedactionSpanProcessor(),
-        new ErrorBucketFilterSpanProcessor(
-          new BatchSpanProcessor(traceExporter),
-          sampleRatio,
+  const tracerProvider = new NodeTracerProvider({
+    resource,
+    sampler: new AlwaysOnSampler(),
+    spanProcessors: [
+      // Order matters: redact in place first, then the export gate. Every
+      // span passes through both, the storage spans among them.
+      new PiiRedactionSpanProcessor(),
+      new ErrorBucketFilterSpanProcessor(
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({
+            url: tracesEndpoint,
+            headers: otel.tracesHeaders,
+          }),
         ),
-      ],
-    });
-    provider.register();
-    tracerProvider = provider;
-    registerInstrumentations({
-      instrumentations: [
-        // PII discipline: never lift request/response headers onto span
-        // attributes by default — auth/cookie headers would leak.
-        new HttpInstrumentation({ headersToSpanAttributes: {} }),
-      ],
-    });
-  }
+        sampleRatio,
+      ),
+    ],
+  });
+  tracerProvider.register();
+  registerInstrumentations({
+    instrumentations: [
+      // PII discipline: never lift request/response headers onto span
+      // attributes by default — auth/cookie headers would leak.
+      new HttpInstrumentation({ headersToSpanAttributes: {} }),
+    ],
+  });
 
   // ---- Logs ----
-  if (logsEndpoint) {
-    const [
-      { LoggerProvider, BatchLogRecordProcessor },
-      { OTLPLogExporter },
-      { logs },
-      { PiiRedactionLogRecordProcessor },
-    ] = await Promise.all([
-      import("@opentelemetry/sdk-logs"),
-      import("@opentelemetry/exporter-logs-otlp-http"),
-      import("@opentelemetry/api-logs"),
-      import("./otel/redaction.js"),
-    ]);
+  const [
+    { LoggerProvider, BatchLogRecordProcessor },
+    { OTLPLogExporter },
+    { logs },
+  ] = await Promise.all([
+    import("@opentelemetry/sdk-logs"),
+    import("@opentelemetry/exporter-logs-otlp-http"),
+    import("@opentelemetry/api-logs"),
+  ]);
 
-    const logExporter = new OTLPLogExporter({
-      url: logsEndpoint,
-      headers: otel.logsHeaders,
-    });
-    const provider = new LoggerProvider({
-      resource,
-      processors: [
-        new PiiRedactionLogRecordProcessor(),
-        // The processor takes its exporter on an options object rather than
-        // positionally. Passing it positionally still type-checks against a
-        // loose signature and yields a processor with no exporter, so logs
-        // batch and are then dropped without a word.
-        new BatchLogRecordProcessor({ exporter: logExporter }),
-      ],
-    });
-    logs.setGlobalLoggerProvider(provider);
-    loggerProvider = provider;
-  }
+  const loggerProvider = new LoggerProvider({
+    resource,
+    processors: [
+      new PiiRedactionLogRecordProcessor(),
+      // The processor takes its exporter on an options object rather than
+      // positionally. Passing it positionally still type-checks against a
+      // loose signature and yields a processor with no exporter, so logs
+      // batch and are then dropped without a word.
+      new BatchLogRecordProcessor({
+        exporter: new OTLPLogExporter({
+          url: logsEndpoint,
+          headers: otel.logsHeaders,
+        }),
+      }),
+    ],
+  });
+  logs.setGlobalLoggerProvider(loggerProvider);
 
   // ---- Exceptions ----
   if (reportExceptions) {
@@ -220,16 +207,14 @@ async function start(): Promise<void> {
 
   globalThis.__marfaOtelShutdown = async () => {
     await Promise.allSettled([
-      tracerProvider?.shutdown(),
-      loggerProvider?.shutdown(),
+      tracerProvider.shutdown(),
+      loggerProvider.shutdown(),
       exceptionClient?.shutdown(),
     ]);
   };
 
   bootLog("info", "OpenTelemetry initialized", {
     service_name: serviceName,
-    traces: Boolean(tracesEndpoint),
-    logs: Boolean(logsEndpoint),
     exceptions: reportExceptions,
     sample_ratio: sampleRatio,
   });

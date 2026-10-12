@@ -121,7 +121,6 @@ async function allowInserts(ctx: TestContext): Promise<void> {
 
 /** Turns telemetry on, pointed at the collector for traces, logs and exceptions. */
 async function bootTelemetry(collectorUrl: string): Promise<void> {
-  vi.stubEnv("MARFA_OTEL_ENABLED", "true");
   vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", collectorUrl);
   vi.stubEnv("MARFA_OTEL_SAMPLE_RATIO", "1");
   vi.stubEnv("MARFA_POSTHOG_HOST", collectorUrl);

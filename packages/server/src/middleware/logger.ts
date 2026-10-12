@@ -78,8 +78,9 @@ const LEVEL_TO_SEVERITY: Record<LogLevel, SeverityNumber> = {
 /**
  * Mirror a log line to the OpenTelemetry logs pipeline. A pure no-op
  * unless a global `LoggerProvider` is registered by `instrumentation.ts`
- * (i.e. only when `MARFA_OTEL_ENABLED=true` with a logs endpoint). PII
- * redaction runs in the `PiiRedactionLogRecordProcessor` before export.
+ * (i.e. only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set). Inside a request the
+ * record carries the active span's trace and span ids. PII redaction runs in
+ * the `PiiRedactionLogRecordProcessor` before export.
  */
 function emitOtelLog(
   level: LogLevel,
