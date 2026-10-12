@@ -832,6 +832,14 @@ When the server writes a conflicted copy, the server MUST NOT give it an edge wh
 
 **Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to a row in the bin`, `› gives the conflicted copy only the edges the original's own file writes, none that cascade or block`.
 
+### `versions/copy-edges-properties`
+
+When the server writes a conflicted copy, the server MUST NOT give it an edge whose properties break the `property_schema` of its edge type.
+
+**Reason:** the copy's edge is a new edge, which `edges/properties-wrong-type` and `edges/properties-required` hold to the schema.
+
+**Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge whose properties break the property_schema its type now declares`.
+
 ### `versions/copy-edges-no-cascade`
 
 When the server writes a conflicted copy, the server MUST NOT give it an outbound edge of a type that cascades on delete.
