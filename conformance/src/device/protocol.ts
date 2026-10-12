@@ -67,6 +67,9 @@ export interface CatchUpReport {
   skipped: number;
   cursor: string;
   reached_head: boolean;
+  /** Whether the catch-up changed the catalog the copy holds
+   *  (`device/catch-up-catalog-told`). */
+  catalog_changed: boolean;
 }
 
 /** One event a held stream applied (`device/follow-applies`). */

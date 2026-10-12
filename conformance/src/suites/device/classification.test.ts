@@ -1370,6 +1370,54 @@ describe("the ceiling, and releasing what it stopped", () => {
     );
   });
 
+  it("releases no write held behind another, by the reason it waits under or by its id", async () => {
+    harness = await hydratedHarness("class-release-held", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "parent", body: "parent" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const edit = await device.update(created.value.item_id ?? "a", {
+      properties: { title: "child" },
+      version: 0,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) return;
+    scriptWrites(server, { create: [{ kind: "drop" }] });
+    expect((await device.drain()).ok).toBe(true);
+    const before = await queueOf(harness);
+    const waiting = before.find((row) => row.id === edit.value.id);
+    // The witness: the queue holds a write under that reason, so a release
+    // that took it would have something to release.
+    expect([waiting?.verdict, waiting?.reason]).toEqual([
+      "blocked",
+      "awaiting_dependency",
+    ]);
+
+    const released = await device.release({ reason: "awaiting_dependency" });
+    expect(
+      released.ok,
+      "a release by the reason a held write waits under was taken, though only the write it waits for being answered releases it",
+    ).toBe(false);
+    expect(
+      await queueOf(harness),
+      "a refused release changed the queue",
+    ).toEqual(before);
+
+    const byId = await device.release({ id: edit.value.id });
+    expect(byId.ok, JSON.stringify(byId)).toBe(true);
+    expect(
+      byId.ok && byId.value,
+      "a release by id took a write held behind another, though only the write it waits for being answered releases it",
+    ).toBe(0);
+    expect(
+      await queueOf(harness),
+      "a release that released nothing changed the queue",
+    ).toEqual(before);
+  });
+
   it("keeps a create blocked for its source, and the writes queued on it before the drain", async () => {
     harness = await hydratedHarness("class-unclaimed-kept", { rows: held() });
     const { device, server } = harness;

@@ -1,6 +1,6 @@
 use std::io;
 
-use marfa_core::{CoreError, ERROR_CODES};
+use marfa_core::{CatchUpFailed, CoreError, ERROR_CODES};
 
 /// Agents read the exit code and the code string. The help and the command
 /// reference list the codes from the lists they are made from, and each exit
@@ -9,6 +9,16 @@ use marfa_core::{CoreError, ERROR_CODES};
 pub enum CliError {
     #[error(transparent)]
     Core(CoreError),
+    /// Named by its cause; the envelope adds whether the catch-up changed the
+    /// catalog the copy holds before it failed, which the copy keeps.
+    #[error(
+        "{error}{}",
+        if *catalog_changed { "; the catalog this copy holds changed before the catch-up failed" } else { "" }
+    )]
+    CatchUp {
+        error: Box<CliError>,
+        catalog_changed: bool,
+    },
     #[error("{0}")]
     Io(io::Error),
     #[error("{0} is not in the local copy")]
@@ -212,6 +222,7 @@ macro_rules! own_codes {
             pub fn code(&self) -> &'static str {
                 match self {
                     CliError::Core(core) => core.code(),
+                    CliError::CatchUp { error, .. } => error.code(),
                     CliError::Refused { status, .. } => refused_code(*status),
                     $($pattern => $code,)*
                 }
@@ -285,6 +296,7 @@ pub fn codes() -> Vec<&'static str> {
 impl CliError {
     pub fn exit(&self) -> Exit {
         match self {
+            CliError::CatchUp { error, .. } => error.exit(),
             CliError::Core(core) => match core {
                 CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).exit(),
                 CoreError::Redirected { .. }
@@ -343,6 +355,7 @@ impl CliError {
 
     fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
+            CliError::CatchUp { error, .. } => error.server(),
             CliError::Core(core) => match core {
                 CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
                 CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
@@ -378,6 +391,7 @@ impl CliError {
 
     fn retry_after_seconds(&self) -> Option<u64> {
         match self {
+            CliError::CatchUp { error, .. } => error.retry_after_seconds(),
             CliError::Core(CoreError::RateLimited {
                 retry_after_seconds,
                 ..
@@ -394,7 +408,7 @@ impl CliError {
         let server = self
             .server()
             .map(|(status, code, details)| serde_json::json!({ "status": status, "code": code, "details": details }));
-        serde_json::json!({
+        let mut envelope = serde_json::json!({
             "error": {
                 "code": self.code(),
                 "message": self.to_string(),
@@ -402,7 +416,14 @@ impl CliError {
                 "retry_after_seconds": self.retry_after_seconds(),
             },
             "exit": self.exit() as u8,
-        })
+        });
+        if let CliError::CatchUp {
+            catalog_changed, ..
+        } = self
+        {
+            envelope["catalog_changed"] = (*catalog_changed).into();
+        }
+        envelope
     }
 }
 
@@ -420,6 +441,15 @@ fn details_suffix(details: &Option<Box<serde_json::Value>>) -> String {
     match details {
         Some(details) => format!(" {details}"),
         None => String::new(),
+    }
+}
+
+impl From<CatchUpFailed> for CliError {
+    fn from(failed: CatchUpFailed) -> Self {
+        CliError::CatchUp {
+            error: Box::new(failed.error.into()),
+            catalog_changed: failed.catalog_changed,
+        }
     }
 }
 
@@ -442,8 +472,11 @@ impl From<serde_json::Error> for CliError {
 /// How a drain's report sets the exit code, said after the exit codes.
 pub const DRAIN_EXITS: &str = "A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.";
 
-/// The refusal `--json` prints, said after the drain: what it is, its shape,
-/// and the words before the codes its `error.code` can be.
+/// What a failed catch-up adds to its refusal, said after the drain.
+pub const CATCH_UP_FAILED: &str = "A device catch-up that fails says whether it had changed the catalog the copy holds, which the copy keeps; with --json, as \"catalog_changed\" beside \"exit\".";
+
+/// The refusal `--json` prints, said after the drain and the catch-up: what
+/// it is, its shape, and the words before the codes its `error.code` can be.
 pub const JSON_REFUSAL: &str = "With --json a refusal is one JSON object on stderr:";
 pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
 pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
@@ -476,7 +509,7 @@ pub fn exit_codes_help() -> &'static str {
         }
         let codes = codes().join(", ");
         help.push_str(&format!(
-            "\n{DRAIN_EXITS}\n\n{JSON_REFUSAL}\n  {JSON_REFUSAL_SHAPE}\n{JSON_REFUSAL_CODES} {codes}."
+            "\n{DRAIN_EXITS}\n\n{CATCH_UP_FAILED}\n\n{JSON_REFUSAL}\n  {JSON_REFUSAL_SHAPE}\n{JSON_REFUSAL_CODES} {codes}."
         ));
         help
     })
@@ -681,6 +714,35 @@ mod tests {
         ] {
             assert_eq!(refused(status).code(), code, "{status}");
         }
+    }
+
+    #[test]
+    fn a_failed_catch_up_says_in_its_envelope_whether_it_changed_the_catalog() {
+        let failed = |catalog_changed| {
+            CliError::from(CatchUpFailed {
+                error: CoreError::Network("refused".into()),
+                catalog_changed,
+            })
+        };
+        let changed = failed(true);
+        let envelope = changed.envelope();
+        assert_eq!(envelope["catalog_changed"], true);
+        assert_eq!(
+            (
+                envelope["error"]["code"].as_str(),
+                envelope["exit"].as_u64()
+            ),
+            (Some("network"), Some(3)),
+            "the catch-up's failure was not named by its cause"
+        );
+        assert!(changed.to_string().contains("catalog"));
+        assert_eq!(failed(false).envelope()["catalog_changed"], false);
+        assert!(!failed(false).to_string().contains("catalog"));
+        // The witness: no other refusal carries it.
+        assert!(
+            CliError::Core(CoreError::Network("refused".into())).envelope()["catalog_changed"]
+                .is_null()
+        );
     }
 
     #[test]

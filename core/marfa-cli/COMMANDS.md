@@ -35,6 +35,8 @@ Every command accepts these.
 
 A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
 
+A device catch-up that fails says whether it had changed the catalog the copy holds, which the copy keeps; with --json, as "catalog_changed" beside "exit".
+
 With --json a refusal is one JSON object on stderr:
 
 ```text
@@ -2095,6 +2097,8 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Hold the event stream open and apply each event as it arrives, printing a line for each that changed the copy.
 
+On a copy never hydrated, or whose hydration was interrupted, it waits for a hydration and asks the server nothing, as an app's follow does. This process holds the store until it ends, so no other can hydrate it meanwhile: hydrate first. An expired copy is refused.
+
 ```text
 marfa device follow [OPTIONS]
 ```
@@ -2559,7 +2563,9 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device release
 
-Send a blocked or dead write again, under a fresh key.
+Send a blocked, dead or unsent refused write again, under a fresh key.
+
+A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command.
 
 ```text
 marfa device release [OPTIONS] [ID]
@@ -2571,7 +2577,7 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

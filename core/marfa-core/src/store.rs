@@ -1490,7 +1490,9 @@ fn read_writes(
             .as_deref()
             .map(str::parse::<Verdict>)
             .transpose()?;
-        if verdict == Some(Verdict::Blocked) {
+        if verdict == Some(Verdict::Blocked)
+            && raw.reason.as_deref() != Some(crate::model::AWAITING_DEPENDENCY)
+        {
             raw.reason
                 .as_deref()
                 .unwrap_or_default()
@@ -2665,35 +2667,34 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
     )?)
 }
 
+/// A drain returns these rows to unanswered before it starts, so the block
+/// is the last drain's finding rather than a state that sticks.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
-    let clearing: Vec<&str> = BlockedReason::ALL
-        .into_iter()
-        .filter(|reason| reason.clears_itself())
-        .map(BlockedReason::as_str)
-        .collect();
-    let places = vec!["?"; clearing.len()].join(", ");
     Ok(conn.execute(
-        &format!(
-            "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
-              WHERE verdict = ? AND reason IN ({places})"
-        ),
-        params_from_iter(std::iter::once(Verdict::Blocked.as_str()).chain(clearing)),
+        "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
+          WHERE verdict = ?1 AND reason IN (?2, ?3)",
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::CredentialRefused.as_str(),
+            crate::model::AWAITING_DEPENDENCY
+        ],
     )?)
 }
 
 /// The released row goes out under a fresh key; the spent one is kept so a
 /// late answer under it is not taken for an answer to the new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some((verdict, key, spent, sent)) = conn
+    let Some((verdict, reason, key, spent, sent)) = conn
         .query_row(
-            "SELECT verdict, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
+            "SELECT verdict, reason, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
             [id],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, i64>(3)? != 0,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)? != 0,
                 ))
             },
         )
@@ -2710,6 +2711,13 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let verdict = verdict.as_deref().map(str::parse::<Verdict>).transpose()?;
     let refused_by_dependency = verdict == Some(Verdict::Refused) && !sent;
     if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
+        return Ok(false);
+    }
+    // Only the answer to the write it waits for releases a held write; a
+    // fresh key would let one already sent go out a second time.
+    if verdict == Some(Verdict::Blocked)
+        && reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+    {
         return Ok(false);
     }
     // Released, a row whose dependency was withdrawn would wait for a write
@@ -4501,11 +4509,15 @@ mod tests {
     #[test]
     fn a_drain_unblocks_the_reasons_that_clear_and_no_other() {
         let conn = conn();
-        for reason in BlockedReason::ALL {
+        for reason in BlockedReason::ALL
+            .map(BlockedReason::as_str)
+            .into_iter()
+            .chain([crate::model::AWAITING_DEPENDENCY])
+        {
             conn.execute(
                 "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, queued_at)
                  VALUES (?1, 'update_item', ?1, '{}', 'blocked', ?1, '2026-01-01T00:00:00Z')",
-                [reason.as_str()],
+                [reason],
             )
             .unwrap();
         }

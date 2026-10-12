@@ -398,6 +398,29 @@ pub struct CatchUpReport {
     pub skipped: u64,
     pub cursor: String,
     pub reached_head: bool,
+    /// The catch-up replaced the catalog the copy holds with one that
+    /// differs from it.
+    pub catalog_changed: bool,
+}
+
+/// A catch-up that failed. A catch-up commits the catalog it reads before it
+/// applies an event, and keeps it when it then fails.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("{error}")]
+pub struct CatchUpFailed {
+    pub error: CoreError,
+    /// The catch-up had replaced the catalog the copy holds with one that
+    /// differs from it before it failed.
+    pub catalog_changed: bool,
+}
+
+impl From<CoreError> for CatchUpFailed {
+    fn from(error: CoreError) -> Self {
+        CatchUpFailed {
+            error,
+            catalog_changed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -780,14 +803,15 @@ pub enum Outcome {
         refusal: Option<Refusal>,
     },
     /// Held behind a write that has no answer yet. The queue stores it as
-    /// `blocked` `awaiting_dependency`; nothing outside the queue has to
+    /// `blocked` `AWAITING_DEPENDENCY`; nothing outside the queue has to
     /// change for it to go, so it is not presented as a stop.
     Waiting,
     Dead,
 }
 
 impl Outcome {
-    /// A blocked row whose reason is not one of the five is an error.
+    /// A blocked row whose reason is neither a `BlockedReason` nor
+    /// `AWAITING_DEPENDENCY` is an error.
     pub fn of(
         verdict: Option<Verdict>,
         reason: Option<&str>,
@@ -808,12 +832,10 @@ impl Outcome {
                     .cloned()
                     .unwrap_or_else(|| Refusal::read(reason.unwrap_or_default(), None)),
             ),
-            Some(Verdict::Blocked) => match reason.unwrap_or_default().parse()? {
-                BlockedReason::AwaitingDependency => Outcome::Waiting,
-                reason => Outcome::Blocked {
-                    reason,
-                    refusal: refusal.cloned(),
-                },
+            Some(Verdict::Blocked) if reason == Some(AWAITING_DEPENDENCY) => Outcome::Waiting,
+            Some(Verdict::Blocked) => Outcome::Blocked {
+                reason: reason.unwrap_or_default().parse()?,
+                refusal: refusal.cloned(),
             },
             Some(Verdict::Dead) => Outcome::Dead,
         }))
@@ -928,6 +950,8 @@ impl Refusal {
     }
 }
 
+/// Why a write has stopped until something outside the queue changes: what
+/// a `blocked` verdict carries and what a release by reason names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockedReason {
@@ -935,16 +959,21 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
-    AwaitingDependency,
 }
 
+/// The reason the queue stores under `blocked` for a write held behind
+/// another that has no answer yet (`queue-and-verdicts/held-reason`). It is
+/// no `BlockedReason`: only the answer to the write it waits for releases it
+/// (`queue-and-verdicts/held-released-same-pass`), and a binding shows it as
+/// waiting (`queue-and-verdicts/binding-shows-waiting`).
+pub(crate) const AWAITING_DEPENDENCY: &str = "awaiting_dependency";
+
 impl BlockedReason {
-    pub const ALL: [BlockedReason; 5] = [
+    pub const ALL: [BlockedReason; 4] = [
         BlockedReason::CredentialRefused,
         BlockedReason::KeySpent,
         BlockedReason::AncestorUnavailable,
         BlockedReason::ConflictUnresolved,
-        BlockedReason::AwaitingDependency,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -953,17 +982,7 @@ impl BlockedReason {
             BlockedReason::KeySpent => "key_spent",
             BlockedReason::AncestorUnavailable => "ancestor_unavailable",
             BlockedReason::ConflictUnresolved => "conflict_unresolved",
-            BlockedReason::AwaitingDependency => "awaiting_dependency",
         }
-    }
-
-    /// A drain returns these rows to unanswered before it starts, so the
-    /// block is the last drain's finding rather than a state that sticks.
-    pub fn clears_itself(self) -> bool {
-        matches!(
-            self,
-            BlockedReason::AwaitingDependency | BlockedReason::CredentialRefused
-        )
     }
 }
 
@@ -976,7 +995,7 @@ impl FromStr for BlockedReason {
             .find(|reason| reason.as_str() == text)
             .ok_or_else(|| {
                 CoreError::Invalid(format!(
-                    "{text:?} is not one of the five reasons a write is blocked: {}",
+                    "{text:?} is not one of the four blocked reasons a caller can release by: {}",
                     BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
                 ))
             })
@@ -1464,6 +1483,23 @@ mod tests {
         let held = Draft::from_payload(&keyed.payload("minted").unwrap()).unwrap();
         assert_eq!(held.source_id.as_deref(), Some("note.md"));
         assert_eq!(held.r#type, "core.note");
+    }
+
+    #[test]
+    fn a_write_held_behind_another_is_no_blocked_reason_a_caller_can_name() {
+        assert!(
+            AWAITING_DEPENDENCY.parse::<BlockedReason>().is_err(),
+            "the reason a held write waits under reads as one a release can name"
+        );
+        assert!(
+            !BlockedReason::ALL
+                .map(BlockedReason::as_str)
+                .contains(&AWAITING_DEPENDENCY)
+        );
+        // The witness: each reason that stops a write is one a caller names.
+        for reason in BlockedReason::ALL {
+            assert_eq!(reason.as_str().parse::<BlockedReason>().unwrap(), reason);
+        }
     }
 
     #[test]

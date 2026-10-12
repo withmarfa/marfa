@@ -600,10 +600,16 @@ fn relocation_wrong_server_preserves_self_clearing_queue_verdicts() {
     let (_dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
     current_copy(&core);
     for reason in [
-        crate::BlockedReason::CredentialRefused,
-        crate::BlockedReason::AwaitingDependency,
+        crate::BlockedReason::CredentialRefused.as_str(),
+        crate::model::AWAITING_DEPENDENCY,
     ] {
-        store::block_unanswered(&core.conn().unwrap(), reason).unwrap();
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'blocked', reason = ?1 WHERE verdict IS NULL",
+                [reason],
+            )
+            .unwrap();
         let before = core.queue().unwrap();
         assert!(matches!(core.drain(), Err(CoreError::WrongServer { .. })));
         assert_eq!(core.queue().unwrap(), before);

@@ -350,6 +350,88 @@ describe("The type catalog a working copy holds", () => {
     ).toBe("Family recipe");
   });
 
+  it("says in a catch-up's report whether it changed the catalog", async () => {
+    harness = await startHarness("catalog-report");
+    const { server, device } = harness;
+    let registered = false;
+    scriptHydration(server, {
+      head: "1",
+      catalog: typeCatalog(),
+      edgeTypes: () => edgeTypeCatalog(registered ? [MENTOR] : []),
+    });
+    server.copyAnswer("GET", "/types", () =>
+      typeCatalog(registered ? [RECIPE] : []),
+    );
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+
+    const unchanged = value(
+      await device.catchUp(),
+      "a catch-up against the same catalog",
+    );
+    expect(
+      unchanged.catalog_changed,
+      "a catch-up that read the catalog the copy holds said it changed",
+    ).toBe(false);
+
+    registered = true;
+    const changed = value(
+      await device.catchUp(),
+      "a catch-up against a changed catalog",
+    );
+    expect(
+      changed.catalog_changed,
+      "a catch-up that changed the catalog did not say so",
+    ).toBe(true);
+  });
+
+  it("says a failed catch-up changed the catalog before it failed", async () => {
+    harness = await startHarness("catalog-failed-catch-up");
+    const { server, device } = harness;
+    let registered = false;
+    scriptHydration(server, {
+      head: "1",
+      catalog: typeCatalog(),
+      edgeTypes: () => edgeTypeCatalog(registered ? [MENTOR] : []),
+    });
+    server.copyAnswer("GET", "/types", () =>
+      typeCatalog(registered ? [RECIPE] : []),
+    );
+    // The stream fails after the catalog is read, so the catch-up fails
+    // with the catalog already taken.
+    server.copyAnswer(
+      "GET",
+      "/events",
+      refusal(500, "internal_error", "The event stream could not be opened"),
+    );
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+    const held = value(await device.status(), "the state report");
+    const told = async (what: string) => {
+      const failed = await device.catchUp();
+      expect(failed.ok, `${what}: ${JSON.stringify(failed)}`).toBe(false);
+      if (failed.ok) throw new Error(what);
+      expect(failed.refusal.code).toBe("server");
+      return (JSON.parse(failed.refusal.raw) as { catalog_changed?: unknown })
+        .catalog_changed;
+    };
+
+    // The witness: the same failure against the catalog the copy holds.
+    expect(
+      await told("a failed catch-up against the same catalog"),
+      "a failed catch-up that read the catalog the copy holds said it changed",
+    ).toBe(false);
+
+    registered = true;
+    expect(
+      await told("a failed catch-up against a changed catalog"),
+      "a catch-up that changed the catalog and then failed did not say the catalog changed",
+    ).toBe(true);
+    expect(
+      value(await device.status(), "the state report").catalog_version,
+      "the catch-up that failed did not keep the catalog it changed",
+    ).not.toBe(held.catalog_version);
+  });
+
   it("tells a held stream's caller when it reads a changed catalog", async () => {
     harness = await startHarness("catalog-follow");
     const { server, device } = harness;

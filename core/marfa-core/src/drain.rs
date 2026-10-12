@@ -679,7 +679,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                     &row.id,
                     &store::Answered {
                         verdict: Verdict::Blocked,
-                        reason: Some(BlockedReason::AwaitingDependency.as_str()),
+                        reason: Some(crate::model::AWAITING_DEPENDENCY),
                         answer: None,
                         conflicted_copy_id: None,
                     },
@@ -2431,7 +2431,7 @@ mod tests {
                 &store::Answered {
                     verdict,
                     reason: (verdict == Verdict::Blocked)
-                        .then_some(BlockedReason::AwaitingDependency.as_str()),
+                        .then_some(crate::model::AWAITING_DEPENDENCY),
                     answer: None,
                     conflicted_copy_id: None,
                 },
@@ -2693,7 +2693,8 @@ mod tests {
                         &row.id,
                         &store::Answered {
                             verdict,
-                            reason: (verdict == Verdict::Blocked).then_some("awaiting_dependency"),
+                            reason: (verdict == Verdict::Blocked)
+                                .then_some(crate::model::AWAITING_DEPENDENCY),
                             answer: None,
                             conflicted_copy_id: None,
                         },

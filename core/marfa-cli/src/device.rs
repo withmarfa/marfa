@@ -63,6 +63,11 @@ pub enum DeviceCommand {
     CatchUp,
     /// Hold the event stream open and apply each event as it arrives,
     /// printing a line for each that changed the copy.
+    ///
+    /// On a copy never hydrated, or whose hydration was interrupted, it
+    /// waits for a hydration and asks the server nothing, as an app's follow
+    /// does. This process holds the store until it ends, so no other can
+    /// hydrate it meanwhile: hydrate first. An expired copy is refused.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -145,7 +150,10 @@ pub enum DeviceCommand {
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Send a blocked or dead write again, under a fresh key.
+    /// Send a blocked, dead or unsent refused write again, under a fresh key.
+    ///
+    /// A write blocked `awaiting_dependency` is released only by the answer
+    /// to the write it waits behind, never by this command.
     Release {
         /// The queued write to release.
         #[arg(
@@ -757,6 +765,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             stop_on_interrupt();
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
+            if !json
+                && matches!(
+                    core.status()?.hydration,
+                    marfa_core::Hydration::Never | marfa_core::Hydration::InProgress
+                )
+            {
+                eprintln!(
+                    "this copy is not hydrated, so the follow waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
+                );
+            }
             let mut unwritten: Option<CliError> = None;
             let report = core.follow(stop, false, |change| {
                 if unwritten.is_some() {
@@ -772,11 +790,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             .or(change.edge_id.as_deref())
                             .unwrap_or("-"),
                         change.cursor,
-                        change
-                            .reason
-                            .as_ref()
-                            .map(|reason| format!(": {reason}"))
-                            .unwrap_or_default()
+                        match &change.event {
+                            marfa_core::ChangeEvent::ServerUnreachable(reason) => {
+                                format!(": {reason}")
+                            }
+                            _ => String::new(),
+                        }
                     )
                 });
                 if let Err(error) = written {
@@ -794,9 +813,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                     (None, _) => String::new(),
                 };
+                let cursor = if report.cursor.is_empty() {
+                    "no cursor, as it stopped before reading one".to_string()
+                } else {
+                    format!("cursor {}", report.cursor)
+                };
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}; {} reconnect(s){failed}",
-                    report.applied, report.skipped, report.cursor, report.reconnects
+                    "applied {} event(s), skipped {}; {cursor}; {} reconnect(s){failed}",
+                    report.applied, report.skipped, report.reconnects
                 )
             })
         }
@@ -839,8 +863,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}",
-                    report.applied, report.skipped, report.cursor,
+                    "applied {} event(s), skipped {}; cursor {}{}",
+                    report.applied,
+                    report.skipped,
+                    report.cursor,
+                    if report.catalog_changed {
+                        "; the catalog changed"
+                    } else {
+                        ""
+                    },
                 )
             })
         }
@@ -1214,7 +1245,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             };
             output::report(&released, json, || {
                 if released == 0 {
-                    "nothing to release: a write is released only where it is blocked or dead"
+                    "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
                         .into()
                 } else {
                     format!("released {released} write(s), each under a fresh key")

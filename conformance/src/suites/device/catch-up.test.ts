@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
@@ -1265,6 +1266,109 @@ describe("catch-up replays from the cursor", () => {
       "the follow waited out a request nobody answered after it was told to stop, holding the store the whole time",
     ).toBeLessThan(5_000);
     if (followed.ok) expect(followed.value.report.cursor).toBe("10");
+  });
+
+  const followsAfterWaiting = async (harnessUnderTest: Harness) => {
+    const { server, device } = harnessUnderTest;
+    const asked = server.requests.length;
+    const waited = await device.follow(1);
+    expect(
+      waited.ok,
+      `a follow on a copy with no completed hydration was refused: ${JSON.stringify(waited)}`,
+    ).toBe(true);
+    if (!waited.ok) return;
+    expect(waited.value.changes).toEqual([]);
+    expect(waited.value.report).toMatchObject({
+      applied: 0,
+      skipped: 0,
+      reconnects: 0,
+      failed_opens: 0,
+    });
+    expect(
+      server.requests.slice(asked),
+      "a follow waiting for a hydration asked the server",
+    ).toEqual([]);
+
+    // The witness: hydrated, the same follow asks for its stream.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const hydrated = server.requests.length;
+    expect((await device.follow(1)).ok).toBe(true);
+    expect(
+      server.requests
+        .slice(hydrated)
+        .filter((request) => request.pathname === "/events").length,
+    ).toBeGreaterThan(0);
+  };
+
+  it("waits for a first hydration rather than refusing a follow on a copy that has never had one, sending nothing", async () => {
+    harness = await startHarness("follow-never-hydrated");
+    scriptHydration(harness.server, { head: "10" });
+    expect((await harness.device.status()).ok).toBe(true);
+    await followsAfterWaiting(harness);
+  });
+
+  it("waits for a hydration rather than refusing a follow on a copy whose hydration was interrupted, sending nothing", async () => {
+    harness = await startHarness("follow-hydration-interrupted");
+    const { server, device } = harness;
+    // Ahead of the snapshot's own answer, so the first hydration dies part way.
+    server.copyAnswer("GET", "/items", { kind: "drop" });
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+    await followsAfterWaiting(harness);
+  });
+
+  it("ends a follow at once on a copy whose first hydration expired, leaving the copy as it was", async () => {
+    harness = await startHarness("follow-first-hydration-expired");
+    const { server, device } = harness;
+    // Ahead of the hydration's own answers, so its replay finds the log aged
+    // past the head it read.
+    server.copyAnswer("GET", "/events", copyHeadRead("10"), {
+      kind: "sse",
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
+    });
+    scriptHydration(server, { head: "10" });
+    expect((await device.status()).ok).toBe(true);
+    const generation = (): unknown => {
+      const db = new DatabaseSync(device.store, { readOnly: true });
+      try {
+        return (
+          db
+            .prepare("SELECT value FROM meta WHERE key = 'copy_generation'")
+            .get() as { value?: unknown } | undefined
+        )?.value;
+      } finally {
+        db.close();
+      }
+    };
+    const fresh = generation();
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok ? "complete" : hydrated.refusal.code).toBe(
+      "copy_expired",
+    );
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("expired");
+    const expired = generation();
+    // The witness: expiring the copy moves its generation.
+    expect(expired).not.toBe(fresh);
+
+    const asked = server.requests.length;
+    const started = Date.now();
+    const followed = await device.follow(5);
+    expect(
+      followed.ok ? "waited" : followed.refusal.code,
+      "a follow on an expired copy waited for a hydration nobody asked for",
+    ).toBe("copy_expired");
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(
+      server.requests.slice(asked),
+      "a follow on an expired copy asked the server",
+    ).toEqual([]);
+    expect(
+      generation(),
+      "a follow on a copy already expired expired it again",
+    ).toBe(expired);
   });
 
   it("holds an item whose type was registered after the stream opened, in the slice through its parent", async () => {

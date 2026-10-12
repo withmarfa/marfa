@@ -200,6 +200,16 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, FENCE)
 }
 
+/// Holds nothing `expire` would drop.
+pub(crate) fn expired(conn: &Connection) -> Result<bool> {
+    for key in [store::META_EVENT_CURSOR, store::META_HYDRATE_STATE, FENCE] {
+        if store::meta_get(conn, key)?.is_some() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn listed(conn: &Connection, id: &str) -> Result<bool> {
     Ok(store::meta_get(conn, &format!("item_listed/{id}"))?.as_deref() == Some("true"))
 }
@@ -385,7 +395,7 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let mut changed = 0;
         let result = core.follow(&stop, false, |change| {
-            if change.event != "item.updated" {
+            if change.event != crate::ChangeEvent::Applied("item.updated".into()) {
                 return;
             }
             changed += 1;
@@ -783,7 +793,8 @@ mod tests {
         );
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
-            let catching = scope.spawn(|| core.catch_up_until(&stop));
+            let catching =
+                scope.spawn(|| core.catch_up_until(&stop).map_err(|failed| failed.error));
             server.wait_for("/events", 1, std::time::Duration::from_secs(5));
             std::thread::sleep(std::time::Duration::from_millis(300));
             let raised = std::time::Instant::now();

@@ -235,6 +235,35 @@ pub struct CatchUpReport {
     pub skipped: u64,
     pub cursor: String,
     pub reached_head: bool,
+    /// The catch-up changed the catalog the copy holds.
+    pub catalog_changed: bool,
+}
+
+/// A catch-up that failed. The copy keeps the catalog a catch-up took
+/// whatever ends it, so `catalog_changed` says whether the types changed
+/// though the catch-up did not finish.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+pub enum CatchUpError {
+    Failed {
+        error: MarfaError,
+        catalog_changed: bool,
+    },
+}
+
+impl std::fmt::Display for CatchUpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let CatchUpError::Failed { error, .. } = self;
+        error.fmt(f)
+    }
+}
+
+impl From<marfa_core::CatchUpFailed> for CatchUpError {
+    fn from(failed: marfa_core::CatchUpFailed) -> Self {
+        CatchUpError::Failed {
+            error: failed.error.into(),
+            catalog_changed: failed.catalog_changed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -406,7 +435,6 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
-    AwaitingDependency,
 }
 
 /// Which handle this process holds on the store.
@@ -1249,7 +1277,6 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::KeySpent => BlockedReason::KeySpent,
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
-            R::AwaitingDependency => BlockedReason::AwaitingDependency,
         }
     }
 }
@@ -1262,7 +1289,6 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::KeySpent => R::KeySpent,
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
-            BlockedReason::AwaitingDependency => R::AwaitingDependency,
         }
     }
 }
@@ -1407,33 +1433,44 @@ pub struct Thumbnail {
     pub bytes: Vec<u8>,
 }
 
-/// What a held stream changed in the copy: an event it applied, named by the
-/// event's type with the item or edge it was about, or `catalog.changed`,
-/// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. Or what became of the server: `server.unreachable`, with
-/// `reason`, once when a stream cannot be had, and `server.reachable` once
-/// when one is had again, which is when to drain what waited. `cursor` is
-/// the cursor held after it.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct Change {
-    pub event: String,
-    pub item_id: Option<String>,
-    pub edge_id: Option<String>,
-    pub cursor: String,
-    /// The failure the stream could not be had for, on `server.unreachable`
-    /// alone, such as the network failing, a rate limit, a failing server or
-    /// a refusal naming no contract.
-    pub reason: Option<MarfaError>,
+/// What a held stream changed in the copy, or what became of the server.
+/// `cursor` is the cursor held after it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum Change {
+    /// An event the stream applied, by the event's type, with the item or
+    /// edge it was about.
+    Applied {
+        event: String,
+        item_id: Option<String>,
+        edge_id: Option<String>,
+        cursor: String,
+    },
+    /// A stream it opened read a catalog that differs from the one held.
+    CatalogChanged { cursor: String },
+    /// No stream can be had, told once until one is had again. `reason` is
+    /// the failure, such as the network failing, a rate limit, a failing
+    /// server or a refusal naming no contract.
+    ServerUnreachable { reason: MarfaError, cursor: String },
+    /// A stream is had again, which is when to drain what waited.
+    ServerReachable { cursor: String },
 }
 
 impl From<&marfa_core::Change> for Change {
     fn from(change: &marfa_core::Change) -> Self {
-        Change {
-            event: change.event.clone(),
-            item_id: change.item_id.clone(),
-            edge_id: change.edge_id.clone(),
-            cursor: change.cursor.clone(),
-            reason: change.reason.clone().map(Into::into),
+        let cursor = change.cursor.clone();
+        match &change.event {
+            marfa_core::ChangeEvent::Applied(event) => Change::Applied {
+                event: event.clone(),
+                item_id: change.item_id.clone(),
+                edge_id: change.edge_id.clone(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::CatalogChanged => Change::CatalogChanged { cursor },
+            marfa_core::ChangeEvent::ServerUnreachable(reason) => Change::ServerUnreachable {
+                reason: reason.clone().into(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
         }
     }
 }
@@ -1487,10 +1524,12 @@ impl Core {
     }
 
     /// Holds the event stream open on a thread of its own and applies each
-    /// event as it arrives, telling `listener` of each change.
-    /// `told_unreachable` says the app was last told `server.unreachable` by
-    /// a follow before this one, so this one tells `server.reachable` when it
-    /// has its first stream.
+    /// event as it arrives, telling `listener` of each change. On a copy
+    /// never hydrated, or whose hydration was interrupted, it waits, asking
+    /// the server nothing, until a hydration completes; an expired copy is
+    /// refused. `told_unreachable` says the app was last told
+    /// `ServerUnreachable` by a follow before this one, so this one tells
+    /// `ServerReachable` when it has its first stream.
     pub fn follow(
         self: Arc<Self>,
         told_unreachable: bool,
@@ -1605,13 +1644,14 @@ impl Core {
         })
     }
 
-    pub fn catch_up(&self, stop: Option<Arc<Stop>>) -> Result<CatchUpReport, MarfaError> {
+    pub fn catch_up(&self, stop: Option<Arc<Stop>>) -> Result<CatchUpReport, CatchUpError> {
         let report = self.inner.catch_up_until(&flag_of(stop))?;
         Ok(CatchUpReport {
             applied: report.applied,
             skipped: report.skipped,
             cursor: report.cursor,
             reached_head: report.reached_head,
+            catalog_changed: report.catalog_changed,
         })
     }
 
@@ -2180,6 +2220,72 @@ mod tests {
             message: text(),
         }));
         assert_eq!(MarfaError::from(wrapped.clone()).code(), wrapped.code());
+    }
+
+    #[test]
+    fn a_change_crosses_as_its_own_kind() {
+        let change = |event, item: Option<&str>| {
+            Change::from(&marfa_core::Change {
+                event,
+                item_id: item.map(str::to_string),
+                edge_id: None,
+                cursor: "11".into(),
+            })
+        };
+        use marfa_core::ChangeEvent as E;
+        assert_eq!(
+            change(E::CatalogChanged, None),
+            Change::CatalogChanged {
+                cursor: "11".into()
+            }
+        );
+        assert_eq!(
+            change(E::ServerReachable, None),
+            Change::ServerReachable {
+                cursor: "11".into()
+            }
+        );
+        assert_eq!(
+            change(
+                E::ServerUnreachable(marfa_core::CoreError::Network("refused".into())),
+                None
+            ),
+            Change::ServerUnreachable {
+                reason: MarfaError::Network {
+                    message: "network: refused".into()
+                },
+                cursor: "11".into()
+            }
+        );
+        // The witness: an event of the same name is an applied event.
+        assert_eq!(
+            change(E::Applied("catalog.changed".into()), Some("n1")),
+            Change::Applied {
+                event: "catalog.changed".into(),
+                item_id: Some("n1".into()),
+                edge_id: None,
+                cursor: "11".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_catch_up_crosses_with_whether_it_changed_the_catalog() {
+        for catalog_changed in [false, true] {
+            let crossed = CatchUpError::from(marfa_core::CatchUpFailed {
+                error: marfa_core::CoreError::Canceled,
+                catalog_changed,
+            });
+            let CatchUpError::Failed {
+                error,
+                catalog_changed: told,
+            } = &crossed;
+            assert_eq!(
+                (error.code().as_str(), *told),
+                ("canceled", catalog_changed)
+            );
+            assert_eq!(crossed.to_string(), error.to_string());
+        }
     }
 
     #[test]
@@ -2830,9 +2936,62 @@ mod tests {
             Some(Stop::new()),
         )
         .unwrap();
-        assert!(canceled(core.catch_up(raised()).unwrap_err()));
+        let CatchUpError::Failed { error, .. } = core.catch_up(raised()).unwrap_err();
+        assert!(canceled(error));
         core.catch_up(None).unwrap();
         core.drain(None).unwrap();
+    }
+
+    struct Heard {
+        changes: std::sync::mpsc::Sender<Change>,
+        ended: std::sync::mpsc::Sender<Option<MarfaError>>,
+    }
+
+    impl ChangeListener for Heard {
+        fn changed(&self, change: Change) {
+            let _ = self.changes.send(change);
+        }
+        fn ended(&self, error: Option<MarfaError>) {
+            let _ = self.ended.send(error);
+        }
+    }
+
+    #[test]
+    fn a_follow_waits_for_a_first_hydration_then_follows() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let (changes, _heard) = std::sync::mpsc::channel();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(
+            false,
+            Arc::new(Heard {
+                changes,
+                ended: told,
+            }),
+        );
+        assert!(
+            ended
+                .recv_timeout(std::time::Duration::from_millis(400))
+                .is_err(),
+            "a follow on a copy never hydrated ended rather than waiting"
+        );
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the follow never held a stream once the copy was hydrated"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(subscription);
+        assert_eq!(
+            ended.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(None)
+        );
     }
 
     fn draft(r#type: &str, properties_json: &str) -> Draft {
