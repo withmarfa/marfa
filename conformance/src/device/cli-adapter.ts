@@ -620,7 +620,7 @@ export class CliDevice implements DeviceUnderTest {
       source_id?: string;
       target_id?: string;
     },
-  ): Promise<Outcome<QueuedWrite>> {
+  ): Promise<Outcome<QueuedWrite | null>> {
     const args = [
       "edges",
       "update",
@@ -632,7 +632,7 @@ export class CliDevice implements DeviceUnderTest {
       args.push("--version", String(edit.version));
     if (edit.source_id !== undefined) args.push("--source", edit.source_id);
     if (edit.target_id !== undefined) args.push("--target", edit.target_id);
-    return this.json<QueuedWrite>(args);
+    return this.json<QueuedWrite | null>(args);
   }
 
   async deleteEdge(id: string): Promise<Outcome<QueuedWrite>> {

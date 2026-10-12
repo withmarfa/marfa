@@ -483,7 +483,10 @@ export interface DeviceUnderTest {
   transitionItem(id: string, state: string): Promise<Outcome<QueuedWrite>>;
   /** Link two items. An edge is its own write. */
   createEdge(edge: EdgeDraft): Promise<Outcome<QueuedWrite>>;
-  /** Change an edge's properties, or move one of its ends, in one write. */
+  /**
+   * Change an edge's properties, or move one of its ends, in one write. An
+   * edit that changes nothing queues no write and answers `null`.
+   */
   updateEdge(
     id: string,
     edit: {
@@ -492,7 +495,7 @@ export interface DeviceUnderTest {
       source_id?: string;
       target_id?: string;
     },
-  ): Promise<Outcome<QueuedWrite>>;
+  ): Promise<Outcome<QueuedWrite | null>>;
   deleteEdge(id: string): Promise<Outcome<QueuedWrite>>;
   /** The edges the copy holds from one item. */
   edgesFrom(item: string): Promise<Outcome<Edge[]>>;

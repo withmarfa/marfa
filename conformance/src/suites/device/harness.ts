@@ -19,6 +19,7 @@ import {
   type AddedFolder,
   type FolderSettings,
 } from "../../device/cli-adapter.js";
+import type { Outcome, QueuedWrite } from "../../device/protocol.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
@@ -47,6 +48,20 @@ import {
  */
 
 export const KEY = "device-fixture-key";
+
+/**
+ * The write an edge edit queued, for a fixture whose edit changes something.
+ * An edit that changes nothing queues none, and fails the fixture here.
+ */
+export function queuedEdit(
+  outcome: Outcome<QueuedWrite | null>,
+): Outcome<QueuedWrite> {
+  if (!outcome.ok) return outcome;
+  if (outcome.value === null) {
+    throw new Error("the edge edit queued no write, though it was meant to");
+  }
+  return { ok: true, value: outcome.value };
+}
 
 export function requireBinary(): string {
   const binary = process.env.MARFA_DEVICE_BIN;

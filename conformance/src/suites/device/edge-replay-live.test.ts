@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
 import { createTestContext, cleanup, trackItem } from "../../utils/setup.js";
-import { requireBinary } from "./harness.js";
+import { queuedEdit, requireBinary } from "./harness.js";
 
 function value<T>(result: Outcome<T>): T {
   expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -110,10 +110,12 @@ it("sends an edge edit after catching up an earlier write whose real answer was 
     });
     value(await device.hydrate(["core.note"], "library"));
     const first = value(
-      await device.updateEdge(edgeId, {
-        properties: { weight: 2 },
-        version: made.data.edge.version,
-      }),
+      queuedEdit(
+        await device.updateEdge(edgeId, {
+          properties: { weight: 2 },
+          version: made.data.edge.version,
+        }),
+      ),
     );
     expect(value(await device.drain()).answered).toBe(0);
     const landed = await client.getEdge(edgeId);
@@ -121,10 +123,12 @@ it("sends an edge edit after catching up an earlier write whose real answer was 
     expect(landed.data.edge.properties.weight).toBe(2);
     value(await device.catchUp());
     const second = value(
-      await device.updateEdge(edgeId, {
-        properties: { weight: 3 },
-        version: landed.data.edge.version,
-      }),
+      queuedEdit(
+        await device.updateEdge(edgeId, {
+          properties: { weight: 3 },
+          version: landed.data.edge.version,
+        }),
+      ),
     );
     expect(
       value(await device.drain()).verdicts.map((row) => row.verdict),

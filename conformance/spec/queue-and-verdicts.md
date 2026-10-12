@@ -1878,7 +1878,15 @@ When a caller edits an edge naming an end as the copy holds it, a device MUST le
 
 **Reason:** the server judges a named end against the edge it holds, which a move still waiting ahead may not leave where the copy shows it: sent, it would ask again for a move the server may refuse, or read as a move of both ends.
 
-**Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`.
+**Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`, `› queues nothing for an edge edit that changes nothing, and sends only the property of one that names the end the edge holds`.
+
+### `queue-and-verdicts/edge-edit-no-change`
+
+When a caller edits an edge naming no property and no end other than the ends the copy holds, a device MUST queue no write.
+
+**Reason:** the server writes an edge whose update names `properties` or moves an end, however little it changes (`edges/update-version` and `edges/update-announced`): the edge's version goes up and `edge.updated` is announced, so another device would see a change that never happened.
+
+**Tests:** `device/edge-move.test.ts › queues nothing for an edge edit that changes nothing, and sends only the property of one that names the end the edge holds`.
 
 ### `queue-and-verdicts/edge-move-shown`
 

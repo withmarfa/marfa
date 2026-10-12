@@ -8,7 +8,7 @@ import {
   wireEdge,
 } from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
-import { hydratedHarness, scriptWrites } from "./harness.js";
+import { hydratedHarness, queuedEdit, scriptWrites } from "./harness.js";
 import type { Harness, ScriptedWrites } from "./harness.js";
 
 let harness: Harness | undefined;
@@ -1778,10 +1778,12 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toEqual(["POST /items"]);
     // The edge's create is held behind the row's now, and an edit of the edge
     // waits for it in turn rather than going to an edge the server lacks.
-    const reworded = await device.updateEdge(linked.value.edge_id ?? "", {
-      properties: { note: "reworded" },
-      version: 0,
-    });
+    const reworded = queuedEdit(
+      await device.updateEdge(linked.value.edge_id ?? "", {
+        properties: { note: "reworded" },
+        version: 0,
+      }),
+    );
     expect(reworded.ok, JSON.stringify(reworded)).toBe(true);
     if (!reworded.ok) return;
     expect(

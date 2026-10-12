@@ -13,7 +13,12 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import type { Responder } from "../../device/scripted-server.js";
-import { scriptHydration, startHarness, type Harness } from "./harness.js";
+import {
+  queuedEdit,
+  scriptHydration,
+  startHarness,
+  type Harness,
+} from "./harness.js";
 
 let harness: Harness | undefined;
 
@@ -142,11 +147,13 @@ describe("an edit that moves an edge's end", () => {
     );
 
     const queued = value(
-      await device.updateEdge(SUCCESSION, {
-        properties: {},
-        version: 1,
-        target_id: OLDEST,
-      }),
+      queuedEdit(
+        await device.updateEdge(SUCCESSION, {
+          properties: {},
+          version: 1,
+          target_id: OLDEST,
+        }),
+      ),
     );
     expect(
       [queued.kind, queued.item_id, queued.target_id],
@@ -231,11 +238,13 @@ describe("an edit that moves an edge's end", () => {
     );
     expect(value(await device.drain()).verdicts[0]?.verdict).toBe("refused");
     const moved = value(
-      await device.updateEdge(SUCCESSION, {
-        properties: {},
-        version: 1,
-        target_id: local,
-      }),
+      queuedEdit(
+        await device.updateEdge(SUCCESSION, {
+          properties: {},
+          version: 1,
+          target_id: local,
+        }),
+      ),
     );
     expect(
       moved.depends_on,
@@ -258,6 +267,70 @@ describe("an edit that moves an edge's end", () => {
       patches().map((request) => JSON.parse(request.body).target_id),
       "once the row was found, the move did not go naming it",
     ).toEqual([THEIRS]);
+  });
+
+  it("queues nothing for an edge edit that changes nothing, and sends only the property of one that names the end the edge holds", async () => {
+    harness = await hydrated("edge-edit-no-change");
+    const { server, device } = harness;
+    let stands: WireEdgeOptions = { ...succession, version: 1 };
+    scriptSuccession(
+      harness,
+      () => stands,
+      () => {
+        stands = { ...succession, properties: { rank: 2 }, version: 2 };
+        return writeAnswers.edge(stands, 200);
+      },
+    );
+    const before = value(await device.queue());
+    const patches = () =>
+      server.requests.filter(
+        (request) =>
+          request.pathname === `/edges/${SUCCESSION}` &&
+          request.method === "PATCH",
+      );
+
+    for (const [what, edit] of [
+      [
+        "a move to the target the edge holds",
+        { properties: {}, version: 1, target_id: OLDER },
+      ],
+      [
+        "a move to the source the edge holds",
+        { properties: {}, version: 1, source_id: NEWER },
+      ],
+      ["an edit naming nothing", { properties: {}, version: 1 }],
+    ] as const) {
+      expect(
+        value(await device.updateEdge(SUCCESSION, edit)),
+        `${what} was queued as a write`,
+      ).toBeNull();
+    }
+    expect(
+      value(await device.queue()),
+      "an edit that changes nothing is in the queue",
+    ).toEqual(before);
+    value(await device.drain());
+    expect(
+      patches(),
+      "an edit that changes nothing went to the server, which would bump the edge's version and announce it",
+    ).toEqual([]);
+
+    // The witness: the same edit with a property is queued, and its body
+    // carries the property and the version alone.
+    const edited = value(
+      await device.updateEdge(SUCCESSION, {
+        properties: { rank: 2 },
+        version: 1,
+        target_id: OLDER,
+      }),
+    );
+    expect(edited?.kind).toBe("update_edge");
+    expect(
+      value(await device.drain()).verdicts.map((row) => row.verdict),
+    ).toEqual(["accepted"]);
+    expect(patches().map((request) => JSON.parse(request.body))).toEqual([
+      { properties: { rank: 2 }, version: 1 },
+    ]);
   });
 
   it("shows a waiting move at its new end from both ends, over the answer to the edit ahead of it", async () => {
@@ -356,12 +429,14 @@ describe("an edit that moves an edge's end", () => {
     // The witness: an end named as the edge has it moves nothing, so the
     // same edge moves its other end.
     const moved = value(
-      await device.updateEdge(SUCCESSION, {
-        properties: {},
-        version: 1,
-        source_id: NEWER,
-        target_id: OLDEST,
-      }),
+      queuedEdit(
+        await device.updateEdge(SUCCESSION, {
+          properties: {},
+          version: 1,
+          source_id: NEWER,
+          target_id: OLDEST,
+        }),
+      ),
     );
     expect(moved.kind).toBe("update_edge");
     expect(
