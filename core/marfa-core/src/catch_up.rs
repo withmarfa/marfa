@@ -2095,7 +2095,26 @@ mod tests {
     /// that hydrates it to the cursor `10` and then holds a stream carrying
     /// `n1` at `11`.
     fn never_hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
-        use crate::scripted::{certified, copy_marker, edge_types, json};
+        use crate::scripted::copy_marker;
+        unhydrated(
+            server,
+            vec![
+                stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+                stream(
+                    vec![
+                        copy_marker("stream_cursor", "10"),
+                        copy_marker("stream_live", "10"),
+                    ],
+                    Then::End,
+                ),
+                stream(vec![connected(), created("n1", "11")], held()),
+            ],
+        )
+    }
+
+    /// The same store, with `events` answering every stream asked for.
+    fn unhydrated(server: &Scripted, events: Vec<Answer>) -> (tempfile::TempDir, Arc<Core>) {
+        use crate::scripted::{certified, edge_types, json};
         server.on(
             "/types",
             vec![certified(crate::scripted::types(&[(NOTE, None)]))],
@@ -2112,20 +2131,7 @@ mod tests {
             "/items",
             vec![certified(json(200, r#"{"data":[],"next_cursor":null}"#))],
         );
-        server.on(
-            "/events",
-            vec![
-                stream(vec![copy_marker("stream_cursor", "10")], Then::End),
-                stream(
-                    vec![
-                        copy_marker("stream_cursor", "10"),
-                        copy_marker("stream_live", "10"),
-                    ],
-                    Then::End,
-                ),
-                stream(vec![connected(), created("n1", "11")], held()),
-            ],
-        );
+        server.on("/events", events);
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(
             dir.path().join("core.sqlite"),
@@ -2136,6 +2142,66 @@ mod tests {
         )
         .unwrap();
         (dir, Arc::new(core))
+    }
+
+    /// The generation a store is left at, and the `/events` asked for, when
+    /// its first hydration's replay finds the log aged past its head; with a
+    /// follow opened before the hydration where `following`, and how it ended.
+    fn first_hydration_expired(
+        following: bool,
+    ) -> (
+        u64,
+        usize,
+        Option<std::result::Result<Result<FollowReport>, RecvTimeoutError>>,
+    ) {
+        use crate::scripted::copy_marker;
+        let server = Scripted::start();
+        let (_dir, core) = unhydrated(
+            &server,
+            vec![
+                stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+                stream(
+                    vec![
+                        copy_marker("stream_cursor", "10"),
+                        "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\"}\n\n".into(),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        let follow = following.then(|| follow_for_real(&core));
+        if following {
+            thread::sleep(MS(300));
+        }
+        assert!(matches!(
+            core.hydrate(&[NOTE.into()], SliceTier::Library),
+            Err(CoreError::CopyExpired { .. })
+        ));
+        let ended = follow.map(|(stop, done)| {
+            let ended = done.recv_timeout(Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            ended
+        });
+        assert_eq!(core.status().unwrap().hydration, crate::Hydration::Expired);
+        let generation = read_view::generation(&core.conn().unwrap()).unwrap();
+        (generation, server.seen("/events").len(), ended)
+    }
+
+    #[test]
+    fn a_follow_waiting_when_its_hydration_expires_the_copy_ends_copy_expired_leaving_it() {
+        let (alone, asked_alone, _) = first_hydration_expired(false);
+        let (followed, asked, ended) = first_hydration_expired(true);
+        assert!(
+            matches!(ended, Some(Ok(Err(CoreError::CopyExpired { .. })))),
+            "a follow waiting when its hydration expired the copy did not end copy_expired: {ended:?}"
+        );
+        // The witness: the hydration's own expiry moves the generation.
+        assert!(alone > 0);
+        assert_eq!(
+            followed, alone,
+            "the waiting follow expired the copy its hydration had expired"
+        );
+        assert_eq!(asked, asked_alone, "the waiting follow asked for a stream");
     }
 
     #[test]
