@@ -43,8 +43,6 @@ const FREE_TEXT = [
   "MARFA_PLACEMENT_LOCATION",
   "MARFA_PLACEMENT_COUNTRY",
   "OTEL_SERVICE_NAME",
-  // Its pair is checked only while telemetry is on.
-  "MARFA_POSTHOG_PROJECT_TOKEN",
 ];
 
 describe("the settings schema", () => {
@@ -358,11 +356,38 @@ describe("production boot", () => {
 });
 
 describe("OpenTelemetry settings", () => {
-  const exporting = (extra: Record<string, string>) =>
-    loadConfig({
-      MARFA_OTEL_ENABLED: "true",
-      ...extra,
-    }).otel;
+  const exporting = (extra: Record<string, string>) => loadConfig(extra).otel;
+
+  it("is off with no endpoint, and has no second switch", () => {
+    expect(exporting({})).toBeUndefined();
+    expect(
+      exporting({ OTEL_EXPORTER_OTLP_HEADERS: "X-Shared=1" }),
+    ).toBeUndefined();
+    // The toggle is gone, so a leftover value is read as no setting at all.
+    expect(SETTING_NAMES).not.toContain("MARFA_OTEL_ENABLED");
+    expect(exporting({ MARFA_OTEL_ENABLED: "true" })).toBeUndefined();
+    expect(
+      exporting({
+        MARFA_OTEL_ENABLED: "false",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+      })?.tracesEndpoint,
+    ).toBe("http://collector:4318/v1/traces");
+  });
+
+  it("refuses a setting that refines the endpoint when the endpoint is unset", () => {
+    expect(
+      refusal({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://collector:4318/l" }),
+    ).toContain(
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT needs OTEL_EXPORTER_OTLP_ENDPOINT set too",
+    );
+    expect(
+      refusal({
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector:4318/t",
+      }),
+    ).toContain(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT needs OTEL_EXPORTER_OTLP_ENDPOINT set too",
+    );
+  });
 
   it("posts each signal to its own path under the general endpoint", () => {
     for (const base of ["http://collector:4318", "http://collector:4318/"]) {
@@ -398,16 +423,32 @@ describe("OpenTelemetry settings", () => {
     });
   });
 
-  it("checks the PostHog pair only while telemetry is on", () => {
-    expect(refusal({ MARFA_POSTHOG_HOST: "https://eu.i.posthog.com" })).toBe(
-      "",
-    );
+  it("needs the endpoint and both PostHog settings together", () => {
     expect(
       refusal({
-        MARFA_OTEL_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
         MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
       }),
     ).toContain("MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too");
+    expect(
+      refusal({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      }),
+    ).toContain("MARFA_POSTHOG_PROJECT_TOKEN needs MARFA_POSTHOG_HOST set too");
+    expect(
+      refusal({
+        MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      }),
+    ).toContain("MARFA_POSTHOG_HOST needs OTEL_EXPORTER_OTLP_ENDPOINT set too");
+    expect(
+      refusal({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+        MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      }),
+    ).toBe("");
   });
 
   it("loads an exporting endpoint with no environment name, and has no setting for one", () => {
@@ -419,7 +460,6 @@ describe("OpenTelemetry settings", () => {
     expect(SETTING_NAMES).not.toContain("MARFA_OTEL_ENVIRONMENT");
     // A leftover value is not read: it names nothing the server holds.
     const left = loadConfig({
-      MARFA_OTEL_ENABLED: "true",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
       MARFA_OTEL_ENVIRONMENT: "staging",
     }).otel;

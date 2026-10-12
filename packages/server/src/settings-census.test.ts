@@ -41,6 +41,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "starts the server as a child process, which needs the test's own environment to run",
   "shutdown-stream.test.ts":
     "starts the server as a child process, which needs the test's own environment to run",
+  "telemetry-export.test.ts":
+    "starts the server as a child process, which needs the test's own environment to run",
 };
 
 /** Names in the docs that look like settings and are not the server's. */

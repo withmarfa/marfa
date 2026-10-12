@@ -75,7 +75,6 @@ beforeAll(async () => {
   }
   server = await bootFreshServer("fault-reports", {
     ERROR_WEBHOOK_URL: `http://127.0.0.1:${String(address.port)}/errors`,
-    MARFA_OTEL_ENABLED: "true",
     OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${String(address.port)}`,
     MARFA_POSTHOG_HOST: `http://127.0.0.1:${String(address.port)}`,
     MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
