@@ -345,6 +345,25 @@ describe("what is exported at each sample ratio", () => {
     ).toBe(true);
   });
 
+  it("exports nothing for a request whose route rolled a transaction back with its own signal, at ratio 0", async () => {
+    await startTelemetry(collector.url, "0");
+    class RolledBack extends Error {}
+    const { traceId } = await inTrace(
+      "POST /signal",
+      "ratio-zero-rollback",
+      async () => {
+        await ctx.storage
+          .runInTransaction(() => {
+            throw new RolledBack("a signal the route chose");
+          })
+          .catch(() => undefined);
+        return new Response(null, { status: 200 });
+      },
+    );
+    await globalThis.__marfaOtelShutdown?.();
+    expect(collector.spans().filter((s) => s.traceId === traceId)).toEqual([]);
+  });
+
   it("exports the whole trace of a request that failed, whatever the ratio", async () => {
     await startTelemetry(collector.url, "0");
     const { traceId, status } = await inTrace(

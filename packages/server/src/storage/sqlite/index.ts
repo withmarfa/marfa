@@ -236,23 +236,30 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     },
     assertInWriteTransaction,
     runInReadSnapshot: ((fn, options) =>
-      inStorageSpan("storage", "runInReadSnapshot", () =>
-        runInReadSnapshot(fn, options),
+      inStorageSpan(
+        "storage",
+        "runInReadSnapshot",
+        () => runInReadSnapshot(fn, options),
+        { callsRouteCode: true },
       )) as ReturnType<typeof readSnapshotRunner>,
     async runInTransaction<T>(
       fn: () => T | Promise<T>,
       options?: { retainCommitHooksOnUncertain?: boolean },
     ): Promise<T> {
-      return await inStorageSpan("storage", "runInTransaction", () =>
-        withCommitHooks(
-          (body) =>
-            db.transaction(async () => {
-              await validateRequestAuthority();
-              return await body();
-            }),
-          fn,
-          options?.retainCommitHooksOnUncertain,
-        ),
+      return await inStorageSpan(
+        "storage",
+        "runInTransaction",
+        () =>
+          withCommitHooks(
+            (body) =>
+              db.transaction(async () => {
+                await validateRequestAuthority();
+                return await body();
+              }),
+            fn,
+            options?.retainCommitHooksOnUncertain,
+          ),
+        { callsRouteCode: true },
       );
     },
     betterAuthDb: db,

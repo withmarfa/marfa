@@ -1,6 +1,7 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 import { MarfaError } from "@withmarfa/shared";
+import { refusalInCauses } from "../refusal.js";
 
 /**
  * Runs one storage call inside a span, so a request's trace shows where its
@@ -22,6 +23,12 @@ import { MarfaError } from "@withmarfa/shared";
  * is the call working, so it carries its code and leaves the status alone and
  * does not make its trace an error trace.
  *
+ * **A call that runs the route's own code** (`callsRouteCode`: a transaction
+ * or a read snapshot) says nothing of what that code throws. A route may roll
+ * a transaction back with an error of its own as a signal, which is not a
+ * storage failure, and a real one is already on the span of the store call
+ * that failed and on the request's.
+ *
  * The span ends when the call settles. A call that returns a value other than
  * a promise ends it at once.
  */
@@ -29,6 +36,7 @@ export function inStorageSpan<T>(
   store: string,
   operation: string,
   call: () => T,
+  { callsRouteCode = false }: { callsRouteCode?: boolean } = {},
 ): T {
   if (trace.getActiveSpan() === undefined) return call();
   return trace.getTracer("marfa-server").startActiveSpan(
@@ -45,7 +53,7 @@ export function inStorageSpan<T>(
       try {
         result = call();
       } catch (error) {
-        finish(span, error);
+        finish(span, error, callsRouteCode);
         throw error;
       }
       if (!(result instanceof Promise)) {
@@ -58,7 +66,7 @@ export function inStorageSpan<T>(
           return value;
         },
         (error: unknown) => {
-          finish(span, error);
+          finish(span, error, callsRouteCode);
           throw error;
         },
       ) as T;
@@ -66,19 +74,12 @@ export function inStorageSpan<T>(
   );
 }
 
-/** The refusal the code chose, which a library between may have wrapped. */
-function refusal(error: unknown): MarfaError | undefined {
-  let step = error;
-  for (let depth = 0; depth < 8; depth++) {
-    if (step instanceof MarfaError) return step;
-    if (step === null || typeof step !== "object") return undefined;
-    step = (step as { cause?: unknown }).cause;
+function finish(span: Span, error: unknown, callsRouteCode: boolean): void {
+  if (callsRouteCode) {
+    span.end();
+    return;
   }
-  return undefined;
-}
-
-function finish(span: Span, error: unknown): void {
-  const refused = refusal(error);
+  const refused = error instanceof MarfaError ? error : refusalInCauses(error);
   if (refused) {
     span.setAttribute("error.code", refused.code);
   } else {

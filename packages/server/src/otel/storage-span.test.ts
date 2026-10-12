@@ -185,4 +185,76 @@ describe("the SQLite storage", () => {
     );
     expect(text).not.toContain(CANARY);
   });
+
+  it("does not mark a transaction or a read snapshot as an error for what the route's callback throws", async () => {
+    class RolledBack extends Error {}
+    await inRequest(async () => {
+      await ctx.storage
+        .runInTransaction(() => {
+          throw new RolledBack("a signal the route chose");
+        })
+        .catch(() => undefined);
+      await ctx.storage
+        .runInReadSnapshot(() => {
+          throw new RolledBack("a signal the route chose");
+        })
+        .catch(() => undefined);
+    });
+    const spans = storageSpans().filter((span) =>
+      span.name.startsWith("storage."),
+    );
+    expect(spans.map((span) => span.name).sort()).toEqual([
+      "storage.runInReadSnapshot",
+      "storage.runInTransaction",
+    ]);
+    for (const span of spans) {
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+    }
+  });
+
+  it("still marks a store call that fails inside a transaction as the error, and not the transaction", async () => {
+    await refuseInserts(ctx);
+    try {
+      await inRequest(async () => {
+        await request(ctx.app, "POST", "/items", {
+          key: ctx.workingKey,
+          body: { type: "core.note", properties: { body: "plain" } },
+        });
+      });
+    } finally {
+      await allowInserts(ctx);
+    }
+    const spans = storageSpans();
+    expect(
+      spans.some(
+        (span) =>
+          span.name.startsWith("items.") &&
+          span.status.code === SpanStatusCode.ERROR,
+      ),
+    ).toBe(true);
+    expect(
+      spans
+        .filter((span) => span.name === "storage.runInTransaction")
+        .every((span) => span.status.code === SpanStatusCode.UNSET),
+    ).toBe(true);
+  });
 });
+
+async function refuseInserts(ctx: TestContext): Promise<void> {
+  await (
+    ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    }
+  ).__sqliteRun(
+    "CREATE TRIGGER refuse_inserts BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'refused by the fixture'); END",
+    [],
+  );
+}
+
+async function allowInserts(ctx: TestContext): Promise<void> {
+  await (
+    ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    }
+  ).__sqliteRun("DROP TRIGGER refuse_inserts", []);
+}
