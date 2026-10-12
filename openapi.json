@@ -15334,7 +15334,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the items you can read, and `metadata` if you asked for it.",
+            "description": "Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Read-View`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15353,6 +15353,13 @@
                         "$ref": "#/components/schemas/Metadata"
                       },
                       "description": "The metadata of each item returned, in the same order. Present only when `include` has `metadata`."
+                    },
+                    "listed": {
+                      "type": "array",
+                      "items": {
+                        "type": "boolean"
+                      },
+                      "description": "For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Read-View`."
                     }
                   },
                   "required": [
@@ -15376,6 +15383,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -15445,6 +15455,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "`read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -15613,7 +15656,21 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
+          }
+        ]
       }
     },
     "/items/lookup": {

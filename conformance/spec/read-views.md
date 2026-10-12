@@ -300,31 +300,31 @@ If `PATCH /items/{id}` moving an item to another type is refused `409 link_taken
 
 ## Conditional reads
 
-A conditional read is one of `GET /items`, `GET /items/{id}`, `GET /items/{id}/edges`, `GET /edges`, `GET /edges/{id}`, `GET /types`, `GET /edge-types` and `GET /keys/current` that carries one `X-Marfa-Read-View` header. A path is one of those of the conditional reads when it has the shape of one with any value in place of `{id}`, so `GET /items/stats` has the path of `GET /items/{id}` and is not a conditional read.
+A conditional read is one of `GET /items`, `GET /items/{id}`, `GET /items/{id}/edges`, `GET /edges`, `GET /edges/{id}`, `GET /types`, `GET /edge-types`, `GET /keys/current` and `POST /items/bulk-get` that carries one `X-Marfa-Read-View` header. A path is one of those of the conditional reads when it has the shape of one with any value in place of `{id}`, so `GET /items/stats` has the path of `GET /items/{id}` and is not a conditional read.
 
 ### `read-views/conditional-certified`
 
 When a credential sends a conditional read whose header equals its current read view and the read answers `2xx`, the server MUST carry `X-Marfa-Read-View` on the answer with that value.
 
-**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`.
+**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ### `read-views/conditional-no-store`
 
 When a conditional read carries `X-Marfa-Read-View` on its answer, the server MUST carry `Cache-Control: no-store` with it.
 
-**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`.
+**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ### `read-views/conditional-no-body-view`
 
 When a conditional read answers, the server MUST NOT carry a read view in the body.
 
-**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`.
+**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ### `read-views/conditional-ordinary`
 
-When a credential sends `GET /items?include=metadata` or `GET /items/{id}` without `X-Marfa-Read-View`, the server MUST answer it as an ordinary read, without `X-Marfa-Read-View`.
+When a credential sends `GET /items?include=metadata`, `GET /items/{id}` or `POST /items/bulk-get` without `X-Marfa-Read-View`, the server MUST answer it as an ordinary read, without `X-Marfa-Read-View`.
 
-**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`.
+**Tests:** `compliance/read-views.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system row to a bulk read under a read view only when include names system`.
 
 ### `read-views/conditional-item-page`
 
@@ -334,7 +334,7 @@ If `GET /items` names `X-Marfa-Read-View` and no `include` that holds `metadata`
 
 ### `read-views/conditional-door-refused`
 
-If a `GET` other than `GET /events` names `X-Marfa-Read-View` on an operation that is not one of the eight conditional reads, then the server MUST answer `400 validation_error`.
+If a `GET` other than `GET /events` names `X-Marfa-Read-View` on an operation that is not a conditional read, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/read-views.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `compliance/version-reach.test.ts › answers 400 validation_error to the X-Marfa-Read-View header on a history`.
 
@@ -352,17 +352,11 @@ When a write repeats an `Idempotency-Key` and its body under another `X-Marfa-Re
 
 **Tests:** `compliance/read-view-order.test.ts › replays a write under one Idempotency-Key whatever read view header it carries, and still refuses the key for another body`.
 
-### `read-views/bulk-get-unconditional`
-
-When `POST /items/bulk-get` names `X-Marfa-Read-View`, the server MUST answer it as it answers the same request without the header.
-
-**Tests:** `compliance/read-view-order.test.ts › answers POST /items/bulk-get as it does without the header, since it is not a conditional read`.
-
 ### `read-views/conditional-view-refused`
 
 If a conditional read names an `X-Marfa-Read-View` that is empty, repeated, or not exactly 64 lowercase hexadecimal characters, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/read-views.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`.
+**Tests:** `compliance/read-views.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `compliance/read-view-order.test.ts › answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ### `read-views/conditional-query-ordinary`
 
@@ -372,11 +366,11 @@ If a conditional read whose header equals the credential's current read view nam
 
 ### `read-views/conditional-order`
 
-When a `GET` other than `GET /events` that names `X-Marfa-Read-View` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a path outside those of the conditional reads, `400`; no valid credential, `401`; an operation that is not a conditional read, `400`; a header that is not one 64-character lowercase hexadecimal value, `400`; an item page without `metadata`, `400`; a read view that differs from the credential's current one, `409`; then the answers of the ordinary read.
+When a `GET` other than `GET /events`, or a `POST /items/bulk-get` whose body is within its operation's cap and nested at most 64 levels, names `X-Marfa-Read-View` and meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a path outside those of the conditional reads, `400`; no valid credential, `401`; an operation that is not a conditional read, `400`; a header that is not one 64-character lowercase hexadecimal value, `400`; an item page without `metadata`, `400`; a read view that differs from the credential's current one, `409`; then the answers of the ordinary read.
 
 **Reason:** a stale read view is refused before the query, the credential's reach or the resource is judged, so that the refusal says nothing about them.
 
-**Tests:** `compliance/read-views.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `compliance/read-view-order.test.ts › answers 400 to a malformed copy of a stale read view, and 409 to the stale read view itself`, `› answers 400 to an item page that asks for no metadata, though its read view is stale`.
+**Tests:** `compliance/read-views.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `compliance/read-view-order.test.ts › answers 400 to a malformed copy of a stale read view, and 409 to the stale read view itself`, `› answers 400 to an item page that asks for no metadata, though its read view is stale`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ### `read-views/conditional-coherent`
 
@@ -416,7 +410,7 @@ When an app's access token sends `GET /keys/current` with a header that equals i
 
 When the server answers a request that names `X-Marfa-Read-View` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `403 type_not_permitted`, `403 edge_permission_denied`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Read-View` on the answer.
 
-**Tests:** `compliance/read-views.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `compliance/read-view-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`.
+**Tests:** `compliance/read-views.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `compliance/read-view-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ## Which items a read view lists
 
@@ -458,7 +452,7 @@ When the server answers `listed`, the server MUST answer `false` for an item who
 
 **Reason:** `listed` says whether the item belongs to the working copy's inventory, before the device slices it by type or tier.
 
-**Tests:** `compliance/read-views.test.ts › classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› changes the read view when a key's own source filter narrows, widens or clears`.
+**Tests:** `compliance/read-views.test.ts › classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› changes the read view when a key's own source filter narrows, widens or clears`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ### `read-views/listed-by-id`
 
@@ -467,6 +461,14 @@ When a credential sends `GET /items/{id}` with a matching `X-Marfa-Read-View` fo
 **Reason:** a read by id is not narrowed by the source filter (`types/source-filter-by-id`), so a device that holds the item can still refresh it.
 
 **Tests:** `compliance/read-views.test.ts › classifies source-excluded direct items and neighbors without admitting them to a listed page`.
+
+### `read-views/listed-bulk-get`
+
+When a credential sends `POST /items/bulk-get` with a matching `X-Marfa-Read-View`, the server MUST answer a `listed` list holding a boolean for each answered item, in the order of `items`.
+
+**Reason:** the source filter does not narrow a read by id (`types/source-filter-by-id`), so `listed` is how a device that reads many items by id at once learns which of them belong to its inventory.
+
+**Tests:** `compliance/read-views.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system row to a bulk read under a read view only when include names system`.
 
 ### `read-views/listed-not-on-edges`
 
@@ -490,7 +492,7 @@ When `POST /items`, `POST /edges` or `POST /folders` creates a row, the server M
 
 If a conditional read names an `X-Marfa-Read-View` of the right form that differs from the credential's current read view, then the server MUST answer `409 read_view_changed`.
 
-**Tests:** `compliance/read-views.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a read view minted for another credential, on every door and on resume`.
+**Tests:** `compliance/read-views.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a read view minted for another credential, on every door and on resume`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
 
 ### `read-views/changed-resume`
 

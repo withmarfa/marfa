@@ -115,6 +115,28 @@ function request(path: string, proof?: string, key = server.workingKey) {
   });
 }
 
+interface BulkRead {
+  items: Array<{ id: string }>;
+  metadata?: Array<{ item_id: string }>;
+  listed?: boolean[];
+}
+
+function bulkGet(
+  body: { ids: string[]; include?: string[] },
+  proof?: string,
+  key = server.workingKey,
+) {
+  return fetch(`${server.apiUrl}/items/bulk-get`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...(proof === undefined ? {} : { "X-Marfa-Read-View": proof }),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 function certified(response: Response, proof: string, status = 200) {
   expect(response.status, response.url).toBe(status);
   expect(response.headers.get("X-Marfa-Read-View")).toBe(proof);
@@ -461,6 +483,26 @@ describe("conditional working-copy read views", () => {
           expect(edge).not.toHaveProperty("listed");
       }
     }
+    const ids = rows.map((row) => row.id);
+    const bulk = await bulkGet(
+      { ids, include: ["metadata", "edges"] },
+      proof.read_view,
+    );
+    certified(bulk, proof.read_view);
+    const bulkBody = (await bulk.json()) as Omit<BulkRead, "items"> & {
+      items: Array<{
+        id: string;
+        edges?: Record<string, { data: unknown[] }>;
+      }>;
+    };
+    expect(bulkBody).not.toHaveProperty("read_view");
+    expect(bulkBody.items.map((item) => item.id)).toEqual(ids);
+    expect(bulkBody.listed).toEqual([true, true, true]);
+    const bulkEdges = bulkBody.items.flatMap((item) =>
+      Object.values(item.edges ?? {}).flatMap((block) => block.data),
+    );
+    expect(bulkEdges).toHaveLength(1);
+    for (const edge of bulkEdges) expect(edge).not.toHaveProperty("listed");
     const empty = await request(
       `/items?source=${ctx.source}-empty&include=metadata`,
       proof.read_view,
@@ -472,6 +514,10 @@ describe("conditional working-copy read views", () => {
       expect(ordinary.status).toBe(200);
       expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
     }
+    const ordinaryBulk = await bulkGet({ ids });
+    expect(ordinaryBulk.status).toBe(200);
+    expect(ordinaryBulk.headers.get("X-Marfa-Read-View")).toBeNull();
+    expect(await ordinaryBulk.json()).not.toHaveProperty("listed");
   });
 
   it("rejects unsupported conditional doors, malformed proofs and metadata-free item pages", async () => {
@@ -568,6 +614,131 @@ describe("conditional working-copy read views", () => {
     ).toBe(true);
     expect(listed.data.some((row) => row.item.id === excluded.id)).toBe(false);
     expect((await client.updateConfig({})).ok).toBe(true);
+  });
+
+  it("certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one", async () => {
+    const other = await mint("bulk-excluded");
+    const excluded = await seed(
+      "bulk read of an excluded source",
+      new MarfaClient({ baseUrl: server.apiUrl, apiKey: other.key }),
+    );
+    const included = await seed("bulk read of a listed source");
+    const ids = [excluded.id, UNKNOWN_ID, included.id, excluded.id];
+    const read = (proof?: string) =>
+      bulkGet({ ids, include: ["metadata"] }, proof);
+
+    // The witness: before the filter, both items are listed.
+    const before = await bootstrap();
+    const unfiltered = await read(before.read_view);
+    certified(unfiltered, before.read_view);
+    expect(((await unfiltered.json()) as BulkRead).listed).toEqual([
+      true,
+      true,
+    ]);
+
+    const configured = await client.updateConfig({
+      enforcement: {
+        source_filter: { types: ["core.note"], sources: [ctx.source] },
+      },
+    });
+    expect(configured.ok, JSON.stringify(configured.error)).toBe(true);
+    try {
+      await changed(await read(before.read_view));
+      const proof = await bootstrap();
+
+      const filtered = await read(proof.read_view);
+      certified(filtered, proof.read_view);
+      const body = (await filtered.json()) as BulkRead;
+      expect(Object.keys(body).sort()).toEqual(["items", "listed", "metadata"]);
+      expect(body.items.map((item) => item.id)).toEqual([
+        excluded.id,
+        included.id,
+      ]);
+      expect(body.listed).toEqual([false, true]);
+      expect(body.metadata?.map((entry) => entry.item_id)).toEqual([
+        excluded.id,
+        included.id,
+      ]);
+
+      const lean = await bulkGet({ ids }, proof.read_view);
+      certified(lean, proof.read_view);
+      const leanBody = (await lean.json()) as BulkRead;
+      expect(Object.keys(leanBody).sort()).toEqual(["items", "listed"]);
+      expect(leanBody.listed).toEqual([false, true]);
+
+      // The same item, read alone under the same view, is listed the same.
+      const direct = await request(`/items/${excluded.id}`, proof.read_view);
+      certified(direct, proof.read_view);
+      expect(((await direct.json()) as CopyItem).listed).toBe(false);
+
+      const ordinary = await read();
+      expect(ordinary.status).toBe(200);
+      expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
+      const ordinaryBody = (await ordinary.json()) as BulkRead;
+      expect(ordinaryBody).not.toHaveProperty("listed");
+      expect(ordinaryBody.items.map((item) => item.id)).toEqual([
+        excluded.id,
+        included.id,
+      ]);
+    } finally {
+      expect((await client.updateConfig({})).ok).toBe(true);
+    }
+  });
+
+  it("answers a system row to a bulk read under a read view only when include names system", async () => {
+    const folder = await fetch(`${server.apiUrl}/folders`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${server.workingKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ title: "Bulk read of a folder" }),
+    });
+    expect(folder.status).toBe(201);
+    const made = (await folder.json()) as {
+      item: { id: string; type: string };
+    };
+    trackFolder(ctx, made.item.id);
+    expect(made.item.type).toBe("system.folder");
+    const proof = await bootstrap();
+
+    const hidden = await bulkGet(
+      { ids: [made.item.id], include: ["metadata"] },
+      proof.read_view,
+    );
+    certified(hidden, proof.read_view);
+    expect(await hidden.json()).toEqual({
+      items: [],
+      metadata: [],
+      listed: [],
+    });
+
+    const shown = await bulkGet(
+      { ids: [made.item.id], include: ["metadata", "system"] },
+      proof.read_view,
+    );
+    certified(shown, proof.read_view);
+    const body = (await shown.json()) as BulkRead;
+    expect(body.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(body.listed).toEqual([true]);
+    expect(body.metadata?.map((entry) => entry.item_id)).toEqual([
+      made.item.id,
+    ]);
+
+    for (const [include, expected] of [
+      [[], []],
+      [["system"], [made.item.id]],
+    ] as const) {
+      const ordinary = await bulkGet({
+        ids: [made.item.id],
+        include: [...include],
+      });
+      expect(ordinary.status).toBe(200);
+      expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
+      expect(
+        ((await ordinary.json()) as BulkRead).items.map((item) => item.id),
+      ).toEqual(expected);
+    }
   });
 
   it("keeps the read view across content, metadata and write-only authority changes", async () => {
@@ -695,6 +866,10 @@ describe("conditional working-copy read views", () => {
       certified(response, proof.read_view);
       await response.json();
     }
+    const bulk = { ids: [row.id], include: ["metadata"] };
+    const bulkBefore = await bulkGet(bulk, proof.read_view);
+    certified(bulkBefore, proof.read_view);
+    await bulkBefore.json();
     const retyped = await client.updateItem(row.id, {
       version: row.version,
       type: "core.bookmark",
@@ -705,6 +880,7 @@ describe("conditional working-copy read views", () => {
     for (const path of paths) {
       await changed(await request(path, proof.read_view));
     }
+    await changed(await bulkGet(bulk, proof.read_view));
     await changed(await request(`/items/${UNKNOWN_ID}`, proof.read_view));
     await withStream(
       server.apiUrl,
@@ -743,6 +919,7 @@ describe("conditional working-copy read views", () => {
     await changed(
       await request(`/items/${note.id}`, before.read_view, key.key),
     );
+    await changed(await bulkGet({ ids: [note.id] }, before.read_view, key.key));
     await withStream(
       server.apiUrl,
       key.key,
@@ -942,6 +1119,14 @@ describe("what a read view is bound to", () => {
       await changed(await request(path, own.read_view, second.key));
       await changed(await request(path, other.read_view, first.key));
     }
+    const bulk = { ids: [row.id] };
+    certified(await bulkGet(bulk, own.read_view, first.key), own.read_view);
+    certified(
+      await bulkGet(bulk, other.read_view, second.key),
+      other.read_view,
+    );
+    await changed(await bulkGet(bulk, own.read_view, second.key));
+    await changed(await bulkGet(bulk, other.read_view, first.key));
     await withStream(
       server.apiUrl,
       second.key,

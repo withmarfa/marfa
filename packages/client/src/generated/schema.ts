@@ -8413,7 +8413,10 @@ export interface operations {
     bulkGetItems: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -8428,7 +8431,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the items you can read, and `metadata` if you asked for it. */
+            /** @description Returns the items you can read, `metadata` if you asked for it, and `listed` if you sent `X-Marfa-Read-View`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8436,6 +8439,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8444,6 +8448,8 @@ export interface operations {
                         items: components["schemas"]["Item"][];
                         /** @description The metadata of each item returned, in the same order. Present only when `include` has `metadata`. */
                         metadata?: components["schemas"]["Metadata"][];
+                        /** @description For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Read-View`. */
+                        listed?: boolean[];
                     };
                 };
             };
@@ -8490,10 +8496,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
