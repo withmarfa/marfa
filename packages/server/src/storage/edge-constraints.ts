@@ -3,6 +3,7 @@ import {
   MarfaError,
   getEdgeTypeSchema,
   satisfiesEdgeConstraint,
+  validateDeclaredProperties,
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
@@ -55,14 +56,56 @@ function propertyRefusal(key: string, message: string): MarfaError {
 
 /**
  * Holds an edge's properties, as they would stand after the write, to what
- * its type requires. Only `in-folder` requires anything: a `path` naming a
- * file inside the folder, and nothing else.
+ * its type requires. `in-folder` takes a `path` naming a file inside the
+ * folder and nothing else. Any other type takes the properties its
+ * `property_schema` declares, judged as an item type's fields are: a value
+ * of the wrong type, a missing `required` property and a value outside an
+ * enum are refused `invalid_properties` naming the property, and a key the
+ * schema does not declare passes.
+ *
+ * A type that resolves to nothing declares nothing, and the doors refuse it
+ * before they get here.
  */
 export function assertEdgeProperties(
   edgeType: string,
   properties: Record<string, unknown> | undefined,
 ): void {
-  if (edgeType !== FOLDER_EDGE_TYPE) return;
+  if (edgeType === FOLDER_EDGE_TYPE) {
+    assertFolderEdgeProperties(properties);
+    return;
+  }
+  const declared = getEdgeTypeSchema(edgeType)?.property_schema;
+  if (declared === undefined) return;
+  const judged = validateDeclaredProperties(declared, properties ?? {});
+  if (judged.success) return;
+  const detail = judged.errors
+    .map((e) => `${e.field}: ${e.message}`)
+    .join("; ");
+  throw new MarfaError(
+    ErrorCode.INVALID_PROPERTIES,
+    `Invalid properties for edge "${edgeType}": ${detail}`,
+    { errors: judged.errors, edge_type: edgeType },
+  );
+}
+
+/** Whether the edge door would take these properties on a new edge. */
+export function edgePropertiesHold(
+  edgeType: string,
+  properties: Record<string, unknown>,
+): boolean {
+  try {
+    assertEdgeProperties(edgeType, properties);
+    return true;
+  } catch (err) {
+    if (err instanceof MarfaError) return false;
+    throw err;
+  }
+}
+
+function assertFolderEdgeProperties(
+  properties: Record<string, unknown> | undefined,
+): void {
+  const edgeType = FOLDER_EDGE_TYPE;
   const { path, ...rest } = properties ?? {};
   const [undeclared] = Object.keys(rest);
   if (undeclared !== undefined) {

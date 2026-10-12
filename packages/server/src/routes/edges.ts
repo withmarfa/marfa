@@ -351,6 +351,7 @@ const createEdgeRoute = createRoute({
         "application/json": {
           schema: makeErrorResponseSchema([
             "validation_error",
+            "invalid_properties",
             "missing_required_field",
             "invalid_id",
             "edge_constraint_violation",
@@ -359,7 +360,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.\n- `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.\n- `edge_cycle`: the edge would close a cycle.",
+        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
     },
     401: {
       content: {
@@ -511,6 +512,7 @@ const updateEdgeRoute = createRoute({
         "application/json": {
           schema: makeErrorResponseSchema([
             "validation_error",
+            "invalid_properties",
             "missing_required_field",
             "invalid_id",
             "edge_constraint_violation",
@@ -519,7 +521,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`: the body moves both ends, the edge type can't move an end this way, or a property is invalid.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge would break its edge type's rules.",
+        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
     },
     403: {
       content: {

@@ -89,7 +89,7 @@ import {
   propertySortBound,
   propertySortValue,
 } from "../property-sort.js";
-import { closedToNewEdge } from "../edge-constraints.js";
+import { closedToNewEdge, edgePropertiesHold } from "../edge-constraints.js";
 import {
   ancestorUnavailable,
   attachResolution,
@@ -426,6 +426,15 @@ async function insertConflictedSibling(
       : schema.cardinality === "one-to-many" ||
         schema.cardinality === "many-to-many";
     if (!allowed) continue;
+    const copiedProperties = safeJsonParse<Record<string, unknown>>(
+      edge.properties,
+      {},
+      "conflicted copy edge properties",
+    );
+    // An edge stored before its type declared a property it now requires
+    // stands until it is written; its copy is a new edge, which the edge door
+    // would refuse.
+    if (!edgePropertiesHold(edge.edge_type, copiedProperties)) continue;
     const copy = {
       id: generateId(),
       source_id: outbound ? siblingId : edge.source_id,
@@ -437,11 +446,6 @@ async function insertConflictedSibling(
       version: 1,
     };
     await tx.insert(edges).values(copy).run();
-    const copiedProperties = safeJsonParse<Record<string, unknown>>(
-      copy.properties,
-      {},
-      "conflicted copy edge properties",
-    );
     // A digest the copy carries lends as it lent on the edge it was copied
     // from.
     await syncEdgeBlobReferences(

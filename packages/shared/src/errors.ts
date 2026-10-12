@@ -503,7 +503,8 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   },
   [ErrorCode.INVALID_PROPERTIES]: {
     status: 400,
-    summary: "An item's properties break the schema of its type.",
+    summary:
+      "An item's properties break the schema of its type, or an edge's break the property schema of its edge type.",
   },
   [ErrorCode.INVALID_SCHEMA]: {
     status: 400,

@@ -89,7 +89,7 @@ export const EdgePropertyDefinitionSchema = z
     required: z
       .boolean()
       .optional()
-      .describe("`true` if every edge of the type should have the property."),
+      .describe("`true` if every edge of the type must have the property."),
     enum_values: z
       .array(z.string())
       .optional()
@@ -118,7 +118,7 @@ const TARGET_CONSTRAINTS =
 const CASCADE =
   "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.";
 const PROPERTY_SCHEMA =
-  "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it.";
+  "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list.";
 const REVERSE_NAME =
   "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.";
 const WRITTEN_AT =

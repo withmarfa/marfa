@@ -2634,14 +2634,14 @@ export interface components {
             edge: components["schemas"]["Edge"] & unknown;
         };
         /** @description An error response. */
-        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "missing_required_field" | "validation_error";
+                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2728,7 +2728,7 @@ export interface components {
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. */
+            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -2748,7 +2748,7 @@ export interface components {
             type: string;
             /** @description What the property holds. */
             description?: string;
-            /** @description `true` if every edge of the type should have the property. */
+            /** @description `true` if every edge of the type must have the property. */
             required?: boolean;
             /** @description The values an `enum` property takes. */
             enum_values?: string[];
@@ -2830,7 +2830,7 @@ export interface components {
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. Leave it out for none. */
+            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. Leave it out for none. */
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -9981,9 +9981,8 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.
              *     - `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.
-             *     - `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.
-             *     - `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.
-             *     - `edge_cycle`: the edge would close a cycle.
+             *     - `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.
+             *     - `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.
              */
             400: {
                 headers: {
@@ -9997,7 +9996,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -10592,9 +10591,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.
-             *     - `validation_error`: the body moves both ends, the edge type can't move an end this way, or a property is invalid.
+             *     - `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.
              *     - `invalid_id`: `source_id` or `target_id` isn't a valid ID.
-             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge would break its edge type's rules.
+             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.
              */
             400: {
                 headers: {
@@ -10608,7 +10607,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
