@@ -64,9 +64,10 @@ pub enum DeviceCommand {
     /// Hold the event stream open and apply each event as it arrives,
     /// printing a line for each that changed the copy.
     ///
-    /// On a copy no hydration has completed, it waits for one and asks the
-    /// server nothing, as an app's follow does. This process holds the store
-    /// until it ends, so no other can hydrate it meanwhile: hydrate first.
+    /// On a copy never hydrated, or whose hydration was interrupted, it
+    /// waits for a hydration and asks the server nothing, as an app's follow
+    /// does. This process holds the store until it ends, so no other can
+    /// hydrate it meanwhile: hydrate first. An expired copy is refused.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -768,7 +769,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 )
             {
                 eprintln!(
-                    "no hydration of this copy has completed, so the follow waits for one; this process holds the store until it ends, so run `device hydrate` first"
+                    "this copy is not hydrated, so the follow waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
                 );
             }
             let mut unwritten: Option<CliError> = None;

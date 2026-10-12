@@ -1531,9 +1531,10 @@ impl Core {
     }
 
     /// Holds the event stream open on a thread of its own and applies each
-    /// event as it arrives, telling `listener` of each change. On a copy no
-    /// hydration has completed it waits, asking the server nothing, until one
-    /// does. `told_unreachable` says the app was last told
+    /// event as it arrives, telling `listener` of each change. On a copy
+    /// never hydrated, or whose hydration was interrupted, it waits, asking
+    /// the server nothing, until a hydration completes; an expired copy is
+    /// refused. `told_unreachable` says the app was last told
     /// `ServerUnreachable` by a follow before this one, so this one tells
     /// `ServerReachable` when it has its first stream.
     pub fn follow(

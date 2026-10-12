@@ -205,16 +205,20 @@ fn start(core: &Core) -> Result<(Slice, String)> {
 /// A copy talks to its server only under the read view a completed hydration
 /// gave it: refused `HydrationIncomplete` part way through one, `NoCursor`
 /// where none has completed, and expired where its cursor has gone. Asked
-/// before anything is sent, so the refusal is the same offline.
+/// before anything is sent, so the refusal is the same offline. A copy
+/// expired already is refused as it stands: expiring it again would move its
+/// generation, and with it every call begun on the copy, for nothing.
 pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<()> {
     if !store::hydration_complete(conn)? {
         return Err(CoreError::HydrationIncomplete);
     }
     if !store::hydrated(conn)? {
         if store::holds_slice(conn)? {
-            let tx = conn.transaction()?;
-            read_view::expire(&tx)?;
-            tx.commit()?;
+            if !read_view::expired(conn)? {
+                let tx = conn.transaction()?;
+                read_view::expire(&tx)?;
+                tx.commit()?;
+            }
             return Err(read_view::invalid());
         }
         return Err(CoreError::NoCursor);

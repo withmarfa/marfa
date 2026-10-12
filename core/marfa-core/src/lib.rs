@@ -551,8 +551,8 @@ impl Core {
     }
 
     /// A folder's watch hydrates its copy on the thread that follows it, so
-    /// this refuses a copy with no completed hydration rather than wait for
-    /// one that thread would never run.
+    /// this refuses a copy that is not hydrated rather than wait for a
+    /// hydration that thread would never run.
     pub(crate) fn follow_observed(
         &self,
         stop: &AtomicBool,

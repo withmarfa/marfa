@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
@@ -1316,6 +1317,58 @@ describe("catch-up replays from the cursor", () => {
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("in_progress");
     await followsAfterWaiting(harness);
+  });
+
+  it("ends a follow at once on a copy whose first hydration expired, leaving the copy as it was", async () => {
+    harness = await startHarness("follow-first-hydration-expired");
+    const { server, device } = harness;
+    // Ahead of the hydration's own answers, so its replay finds the log aged
+    // past the head it read.
+    server.copyAnswer("GET", "/events", copyHeadRead("10"), {
+      kind: "sse",
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
+    });
+    scriptHydration(server, { head: "10" });
+    expect((await device.status()).ok).toBe(true);
+    const generation = (): unknown => {
+      const db = new DatabaseSync(device.store, { readOnly: true });
+      try {
+        return (
+          db
+            .prepare("SELECT value FROM meta WHERE key = 'copy_generation'")
+            .get() as { value?: unknown } | undefined
+        )?.value;
+      } finally {
+        db.close();
+      }
+    };
+    const fresh = generation();
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok ? "complete" : hydrated.refusal.code).toBe(
+      "copy_expired",
+    );
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("expired");
+    const expired = generation();
+    // The witness: expiring the copy moves its generation.
+    expect(expired).not.toBe(fresh);
+
+    const asked = server.requests.length;
+    const started = Date.now();
+    const followed = await device.follow(5);
+    expect(
+      followed.ok ? "waited" : followed.refusal.code,
+      "a follow on an expired copy waited for a hydration nobody asked for",
+    ).toBe("copy_expired");
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(
+      server.requests.slice(asked),
+      "a follow on an expired copy asked the server",
+    ).toEqual([]);
+    expect(
+      generation(),
+      "a follow on a copy already expired expired it again",
+    ).toBe(expired);
   });
 
   it("holds an item whose type was registered after the stream opened, in the slice through its parent", async () => {

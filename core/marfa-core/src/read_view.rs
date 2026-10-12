@@ -200,6 +200,16 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, FENCE)
 }
 
+/// Holds nothing `expire` would drop.
+pub(crate) fn expired(conn: &Connection) -> Result<bool> {
+    for key in [store::META_EVENT_CURSOR, store::META_HYDRATE_STATE, FENCE] {
+        if store::meta_get(conn, key)?.is_some() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn listed(conn: &Connection, id: &str) -> Result<bool> {
     Ok(store::meta_get(conn, &format!("item_listed/{id}"))?.as_deref() == Some("true"))
 }

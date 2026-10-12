@@ -1956,11 +1956,19 @@ Where an app follows through a binding, a device MUST tell it `catalog.changed`,
 
 ### `device/follow-waits-hydration`
 
-If a caller follows a working copy that has never completed a hydration, or whose hydration is in progress or was interrupted, then a device MUST wait, sending nothing, until a hydration completes or the caller stops the follow.
+If a caller follows a working copy that reports its hydration `never` (`device/report-never`) or `in_progress` (`device/report-in-progress`), then a device MUST wait, sending nothing, until a hydration completes or the caller stops the follow.
 
 **Reason:** an app opens its follow when it starts, before it knows whether its copy was ever hydrated, and a refusal would have it catch an error for a normal state and start the follow again after the hydration.
 
 **Tests:** `device/catch-up.test.ts › waits for a first hydration rather than refusing a follow on a copy that has never had one, sending nothing`, `› waits for a hydration rather than refusing a follow on a copy whose hydration was interrupted, sending nothing`.
+
+### `device/follow-expired-refused`
+
+If a caller follows a working copy that reports its hydration `expired` (`device/report-expired`), then a device MUST end the follow `copy_expired` at once, sending nothing and leaving the copy as it was.
+
+**Reason:** an expired copy is current again only after a hydration its caller asks for (`device/expire-aged-cursor`), which a follow waiting without a word would never prompt.
+
+**Tests:** `device/catch-up.test.ts › ends a follow at once on a copy whose first hydration expired, leaving the copy as it was`.
 
 ### `device/follow-after-hydration`
 
