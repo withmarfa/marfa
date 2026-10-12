@@ -4484,7 +4484,7 @@ When opening a folder or any directory below it, a device MUST refuse a symbolic
 
 ### `folders/root-linked-ancestor-resolved`
 
-When a folder is named through a path in which every symbolic link is a directory above the folder that no later `..` climbs back out of, a device MUST admit the folder at the path with those links resolved.
+When a folder is named through a path in which every symbolic link is a directory above the folder that no later `..` climbs back out of, and every directory that a `..` climbs back out of exists, a device MUST admit the folder at the path with those links resolved.
 
 **Reason:** The directories above a folder are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
 
@@ -4498,7 +4498,7 @@ If a folder is named through a path with a symbolic link at the folder's own dir
 
 ### `folders/root-link-refusal-named`
 
-If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, then a device MUST name the first such link in the refusal's message.
+If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, and no earlier `..` climbs back out of a directory that does not exist, then a device MUST name the first such link in the refusal's message.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
