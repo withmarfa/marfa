@@ -244,8 +244,7 @@ impl Folder {
             if !gate.due(Instant::now()) {
                 continue;
             }
-            let full = full_due(last_full, Instant::now())
-                || health.lock().expect("follow health lock").available();
+            let full = full_due(last_full, Instant::now());
             if full {
                 last_full = Some(Instant::now());
             }
