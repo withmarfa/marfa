@@ -1396,7 +1396,7 @@ If an answer names a contract other than the one the CLI was built for, then the
 
 **Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`.
 
 ### `device/command-mismatch-prints-nothing`
 
@@ -1676,7 +1676,7 @@ If an answer that a hydration, a catch-up, a held stream, a drain or a blob's li
 
 **Reason:** a copy that read a body shaped for another contract would hold rows it misread with nothing to say so.
 
-**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› ends a held stream on another contract rather than asking again`, `› ends a drain on an answer from another contract, and sends the write again under its key`, `› refuses a blob's link from a server on another contract`, `› refuses a catch-up whose catalog is on another contract, before opening its stream`.
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› ends a held stream on another contract rather than asking again`, `› ends a drain on an answer from another contract, and sends the write again under its key`, `› refuses a blob's link from a server on another contract`, `› refuses a catch-up whose catalog is on another contract, before opening its stream`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`.
 
 ### `device/contract-unnamed-success`
 
@@ -1694,7 +1694,7 @@ If a refusal a device reads names another contract, then a device MUST refuse it
 
 When a device refuses an answer `contract_mismatch`, a device MUST apply nothing the answer carried.
 
-**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› applies nothing from a page on another contract, after a head read and a catalog on its own`.
+**Tests:** `device/contract.test.ts › refuses a hydration from a server on another contract, holding nothing`, `› refuses a catch-up from a server on another contract`, `› applies nothing from a page on another contract, after a head read and a catalog on its own`, `device/contract.test.ts › rejects a health receipt on another contract without stopping content or learning its sequence floor`.
 
 ### `device/contract-catalog-first`
 

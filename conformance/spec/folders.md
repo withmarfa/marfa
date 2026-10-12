@@ -4560,7 +4560,7 @@ While no fully successful folder sync has completed, a device MUST report `last_
 
 If delivery of a folder-health report fails, then a device MUST preserve the successful outcome of the content sync independently of that failure.
 
-**Tests:** `device/folder-health.test.ts › preserves successful content sync when reporting fails and coalesces across CLI restarts`.
+**Tests:** `device/folder-health.test.ts › preserves successful content sync when reporting fails and coalesces across CLI restarts`, `device/contract.test.ts › rejects a health receipt on another contract without stopping content or learning its sequence floor`.
 
 ### `folders/report-coalesces`
 
