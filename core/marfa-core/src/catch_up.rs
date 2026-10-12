@@ -118,27 +118,47 @@ fn unexplained(
 /// naming neither. Or what became of the server: unreachable, with why, once
 /// when a stream cannot be had, and reachable once when one is had again.
 /// `cursor` is the cursor held after it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Change {
     pub event: ChangeEvent,
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
-    /// Why the server cannot be reached, on `ServerUnreachable` alone: the
-    /// failure a stream could not be had for, written out as its sentence.
-    #[serde(serialize_with = "sentence")]
-    pub reason: Option<CoreError>,
+}
+
+/// Written as text with the event's name and, for an unreachable server,
+/// why as its sentence.
+impl Serialize for Change {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut change = serializer.serialize_struct("Change", 5)?;
+        change.serialize_field("event", self.event.as_str())?;
+        change.serialize_field("item_id", &self.item_id)?;
+        change.serialize_field("edge_id", &self.edge_id)?;
+        change.serialize_field("cursor", &self.cursor)?;
+        let reason = match &self.event {
+            ChangeEvent::ServerUnreachable(reason) => Some(reason.to_string()),
+            _ => None,
+        };
+        change.serialize_field("reason", &reason)?;
+        change.end()
+    }
 }
 
 /// What a `Change` tells. Written as text by its name: the applied event's
 /// type, or `catalog.changed`, `server.unreachable` or `server.reachable`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type.
     Applied(String),
     /// A stream it opened read a catalog that differs from the one held.
     CatalogChanged,
-    ServerUnreachable,
+    /// No stream can be had, for this failure: the network failing, a rate
+    /// limit, a failing server or a refusal naming no contract.
+    ServerUnreachable(CoreError),
     ServerReachable,
 }
 
@@ -146,9 +166,9 @@ impl ChangeEvent {
     pub fn as_str(&self) -> &str {
         match self {
             ChangeEvent::Applied(event) => event,
-            ChangeEvent::CatalogChanged => CATALOG_CHANGED,
-            ChangeEvent::ServerUnreachable => SERVER_UNREACHABLE,
-            ChangeEvent::ServerReachable => SERVER_REACHABLE,
+            ChangeEvent::CatalogChanged => "catalog.changed",
+            ChangeEvent::ServerUnreachable(_) => "server.unreachable",
+            ChangeEvent::ServerReachable => "server.reachable",
         }
     }
 }
@@ -158,29 +178,6 @@ impl fmt::Display for ChangeEvent {
         f.write_str(self.as_str())
     }
 }
-
-impl Serialize for ChangeEvent {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-fn sentence<S: serde::Serializer>(
-    reason: &Option<CoreError>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    match reason {
-        Some(error) => serializer.collect_str(error),
-        None => serializer.serialize_none(),
-    }
-}
-
-const CATALOG_CHANGED: &str = "catalog.changed";
-pub const SERVER_UNREACHABLE: &str = "server.unreachable";
-pub const SERVER_REACHABLE: &str = "server.reachable";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct FollowReport {
@@ -332,7 +329,6 @@ fn take(
         item_id: payload.item.as_ref().map(|item| item.id.clone()),
         edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
         cursor: id.to_string(),
-        reason: None,
     }))
 }
 
@@ -737,11 +733,10 @@ fn follow_paced(
                     if reachable != Some(false) {
                         reachable = Some(false);
                         on_change(&Change {
-                            event: ChangeEvent::ServerUnreachable,
+                            event: ChangeEvent::ServerUnreachable(error.clone()),
                             item_id: None,
                             edge_id: None,
                             cursor: report.cursor.clone(),
-                            reason: Some(error.clone()),
                         });
                     }
                     pause(wait);
@@ -757,7 +752,6 @@ fn follow_paced(
                     item_id: None,
                     edge_id: None,
                     cursor: report.cursor.clone(),
-                    reason: None,
                 });
             }
             reachable = Some(true);
@@ -769,7 +763,6 @@ fn follow_paced(
                     item_id: None,
                     edge_id: None,
                     cursor: report.cursor.clone(),
-                    reason: None,
                 });
             }
             let catalog = catalog?;

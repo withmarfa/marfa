@@ -787,11 +787,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             .or(change.edge_id.as_deref())
                             .unwrap_or("-"),
                         change.cursor,
-                        change
-                            .reason
-                            .as_ref()
-                            .map(|reason| format!(": {reason}"))
-                            .unwrap_or_default()
+                        match &change.event {
+                            marfa_core::ChangeEvent::ServerUnreachable(reason) => {
+                                format!(": {reason}")
+                            }
+                            _ => String::new(),
+                        }
                     )
                 });
                 if let Err(error) = written {

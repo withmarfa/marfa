@@ -1143,12 +1143,8 @@ impl From<&marfa_core::Change> for Change {
                 cursor,
             },
             marfa_core::ChangeEvent::CatalogChanged => Change::CatalogChanged { cursor },
-            // The core gives every `ServerUnreachable` its reason.
-            marfa_core::ChangeEvent::ServerUnreachable => Change::ServerUnreachable {
-                reason: change
-                    .reason
-                    .as_ref()
-                    .map_or_else(String::new, ToString::to_string),
+            marfa_core::ChangeEvent::ServerUnreachable(reason) => Change::ServerUnreachable {
+                reason: reason.to_string(),
                 cursor,
             },
             marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },

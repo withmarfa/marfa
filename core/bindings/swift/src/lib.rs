@@ -1466,15 +1466,8 @@ impl From<&marfa_core::Change> for Change {
                 cursor,
             },
             marfa_core::ChangeEvent::CatalogChanged => Change::CatalogChanged { cursor },
-            // The core gives every `ServerUnreachable` its reason.
-            marfa_core::ChangeEvent::ServerUnreachable => Change::ServerUnreachable {
-                reason: change
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| {
-                        marfa_core::CoreError::Network("the event stream could not be had".into())
-                    })
-                    .into(),
+            marfa_core::ChangeEvent::ServerUnreachable(reason) => Change::ServerUnreachable {
+                reason: reason.clone().into(),
                 cursor,
             },
             marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
@@ -2231,33 +2224,31 @@ mod tests {
 
     #[test]
     fn a_change_crosses_as_its_own_kind() {
-        let change = |event, item: Option<&str>, reason: Option<marfa_core::CoreError>| {
+        let change = |event, item: Option<&str>| {
             Change::from(&marfa_core::Change {
                 event,
                 item_id: item.map(str::to_string),
                 edge_id: None,
                 cursor: "11".into(),
-                reason,
             })
         };
         use marfa_core::ChangeEvent as E;
         assert_eq!(
-            change(E::CatalogChanged, None, None),
+            change(E::CatalogChanged, None),
             Change::CatalogChanged {
                 cursor: "11".into()
             }
         );
         assert_eq!(
-            change(E::ServerReachable, None, None),
+            change(E::ServerReachable, None),
             Change::ServerReachable {
                 cursor: "11".into()
             }
         );
         assert_eq!(
             change(
-                E::ServerUnreachable,
-                None,
-                Some(marfa_core::CoreError::Network("refused".into()))
+                E::ServerUnreachable(marfa_core::CoreError::Network("refused".into())),
+                None
             ),
             Change::ServerUnreachable {
                 reason: MarfaError::Network {
@@ -2268,7 +2259,7 @@ mod tests {
         );
         // The witness: an event of the same name is an applied event.
         assert_eq!(
-            change(E::Applied("catalog.changed".into()), Some("n1"), None),
+            change(E::Applied("catalog.changed".into()), Some("n1")),
             Change::Applied {
                 event: "catalog.changed".into(),
                 item_id: Some("n1".into()),
