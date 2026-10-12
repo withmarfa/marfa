@@ -716,6 +716,64 @@ describe("what a restore answers", () => {
     await expectMatchesSchema("POST", "/restore", 200, again.data);
   });
 
+  it("skips an archived edge whose properties break its edge type's property_schema, counted as invalid_properties, and restores the one that fits", async () => {
+    const edgeTypeId = `restoreschema.${ctx.runId}`;
+    trackEdgeType(ctx, edgeTypeId);
+    const [a, b, c] = [uuidv7(), uuidv7(), uuidv7()];
+    const [fits, wrongType, noLabel] = [uuidv7(), uuidv7(), uuidv7()];
+    const base = itemsArchive(
+      [a, b, c].map((id) => ({
+        id,
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `schema ${id}` },
+      })),
+    );
+    const edge = (id: string, target: string, properties: object) => ({
+      id,
+      source_id: a,
+      target_id: target,
+      edge_type: edgeTypeId,
+      properties,
+    });
+    const archive = withEntry(
+      withEntry(
+        base,
+        "edges.ndjson",
+        [
+          edge(fits, b, { label: "fits" }),
+          edge(wrongType, c, { label: "x", weight: "heavy" }),
+          edge(noLabel, uuidv7(), {}),
+        ]
+          .map((line) => `${JSON.stringify({ edge: line })}\n`)
+          .join(""),
+      ),
+      "types.ndjson",
+      `${JSON.stringify({
+        edge_type: {
+          ...edgeType(edgeTypeId),
+          property_schema: {
+            label: { type: "string", required: true },
+            weight: { type: "number" },
+          },
+        },
+      })}\n`,
+    );
+    trackItem(ctx, a);
+    trackItem(ctx, b);
+    trackItem(ctx, c);
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data).toMatchObject({
+      imported: 3,
+      edges_imported: 1,
+      edges_skipped: 2,
+      edges_skipped_reasons: { invalid_properties: 1, endpoint_missing: 1 },
+    });
+    expect((await client.getEdge(fits)).status).toBe(200);
+    expect((await client.getEdge(wrongType)).status).toBe(404);
+  });
+
   it("refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing", async () => {
     const ids = {
       type: `user.restoreconflict${ctx.runId}`,
