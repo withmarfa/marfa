@@ -4501,3 +4501,73 @@ When a folder root has no usable nonzero birth timestamp, a device MUST refuse a
 **Reason:** Reopening an entry by device and inode alone cannot exclude inode reuse after the original descriptor closes.
 
 **Tests:** `device/folders-contract-a.test.ts › refuses a root with %s birth identity before creating administrative state`.
+
+## Remote sync reports
+
+### `folders/report-copy`
+
+When a device reports a folder's sync health to `PUT /folders/{id}/status`, a device MUST name the existing opaque folder-store identity of that local copy as `folder_store_id`.
+
+**Tests:** `device/folder-health.test.ts › reports a confirmed complete sync using the registry's opaque copy identity`.
+
+### `folders/report-fields`
+
+When a device reports a folder's sync health, a device MUST send only `folder_store_id`, `sequence`, `last_success_at`, `pending_uploads`, `pending_downloads`, `paused_removals`, `first_sync_waiting`, and the safe problem counts accepted by `folder-status/problem-codes`.
+
+**Tests:** `device/folder-health.test.ts › reports a confirmed complete sync using the registry's opaque copy identity`.
+
+### `folders/report-full-success`
+
+When a confirmed folder sync completes without pending uploads, pending downloads, paused removals, first-sync waiting, or current problems, a device MUST report its completion time in `last_success_at`.
+
+**Tests:** `device/folder-health.test.ts › reports a confirmed complete sync using the registry's opaque copy identity`.
+
+### `folders/report-first-waiting`
+
+While a folder's first sync awaits confirmation, a device MUST report `first_sync_waiting: true`.
+
+**Tests:** `device/folder-health.test.ts › reports first-sync waiting without claiming a successful content pass`.
+
+### `folders/report-success-none`
+
+While no fully successful folder sync has completed, a device MUST report `last_success_at: null`.
+
+**Tests:** `device/folder-health.test.ts › reports first-sync waiting without claiming a successful content pass`.
+
+### `folders/report-independent`
+
+If delivery of a folder-health report fails, then a device MUST preserve the successful outcome of the content sync independently of that failure.
+
+**Tests:** `device/folder-health.test.ts › preserves successful content sync when reporting fails and coalesces across CLI restarts`.
+
+### `folders/report-coalesces`
+
+When a device produces newer folder-health observations while reporting is unavailable, a device MUST retain its latest unsent observations across process restarts for a later reporting attempt.
+
+**Tests:** `device/folder-health.test.ts › preserves successful content sync when reporting fails and coalesces across CLI restarts`.
+
+### `folders/report-sequence`
+
+When a device produces a newer report for the same folder copy and sign-in, a device MUST send a sequence greater than the previous report's sequence.
+
+**Tests:** `device/folder-health.test.ts › preserves successful content sync when reporting fails and coalesces across CLI restarts`.
+
+### `folders/report-distinct-copies`
+
+When two local directories follow the same folder under the same sign-in, a device MUST report them under distinct existing folder-store identities.
+
+**Tests:** `device/folder-health.test.ts › distinguishes two directories following the same folder and sign-in`.
+
+### `folders/report-offline-success`
+
+When a folder content pass cannot contact the server, a device MUST preserve its last fully successful sync time independently of whether the local write queue is empty.
+
+**Tests:** `device/folder-health.test.ts › does not advance last full success after an offline push with an empty queue`.
+
+### `folders/report-sequence-recovery`
+
+When a folder-health receipt reports a stored sequence at least as high as the device's rejected report, a device MUST publish its newest local observations under a greater sequence.
+
+**Reason:** a restored local backup can be behind the report already held by the server.
+
+**Tests:** `device/folder-health.test.ts › refreshes the newest local observation above a restored backup sequence`.

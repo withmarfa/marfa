@@ -51,6 +51,7 @@ import { housekeepingRoutes } from "./routes/housekeeping.js";
 import { connectorRoutes } from "./routes/connectors.js";
 import { connectorStateRoutes } from "./routes/connector-state.js";
 import { inboundRoutes } from "./routes/inbound.js";
+import { folderStatusRoutes } from "./routes/folder-status.js";
 import { folderRoutes } from "./routes/folders.js";
 import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
@@ -740,6 +741,7 @@ export function createApp(
   app.route("/connectors", connectorRoutes(storage));
   app.route("/connectors", connectorStateRoutes(storage, config));
   app.route("/folders", folderRoutes(storage));
+  app.route("/folders", folderStatusRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
   app.route(

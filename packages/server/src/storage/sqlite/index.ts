@@ -35,6 +35,7 @@ import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
 import { SqliteHousekeepingStore } from "./housekeeping-store.js";
+import { SqliteFolderStatusStore } from "./folder-status-store.js";
 import { SqliteConnectorStore } from "./connector-store.js";
 import { SqliteConnectorStateStore } from "./connector-state-store.js";
 import { SqliteInboundStore } from "./inbound-store.js";
@@ -163,6 +164,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   reportEdgeNameCollisions(edgeNameCollisions());
 
   const storage = {
+    folderStatus: guardStoreWithReadContext(new SqliteFolderStatusStore(db)),
     items: guardStoreWithReadContext(itemStore),
     metadata: guardStoreWithReadContext(metadataStore),
     versions: guardStoreWithReadContext(versionStore),

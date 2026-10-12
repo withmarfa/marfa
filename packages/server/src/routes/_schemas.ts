@@ -561,7 +561,7 @@ export const AT_THIS_VERSION = {
     "The item's `source_id` at this version, or `null` if it had none.",
 } as const;
 
-const VersionWriterSchema = z.object({
+export const VersionWriterSchema = z.object({
   kind: z
     .enum(VERSION_WRITER_KINDS)
     .describe(
