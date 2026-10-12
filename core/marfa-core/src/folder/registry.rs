@@ -1,5 +1,5 @@
 use crate::directory::Directory;
-use crate::directory::{Mode, OFlags};
+use crate::directory::{FileType, Mode, OFlags};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
@@ -249,8 +249,23 @@ fn machine_path(home: &Path) -> PathBuf {
 /// are followed. The root's own entry, and every component a later `..`
 /// climbs back out of, are opened without following links, and a `..` is
 /// removed only after the walk through it returns to the directory it left,
-/// so a link before `..` cannot disappear.
+/// so a link before `..` cannot disappear. A path refused by [`named`] is
+/// kept as spelled.
 pub fn resolved(dir: &Path) -> PathBuf {
+    walk(dir).0
+}
+
+/// [`resolved`], or why a folder cannot be named by this path: a symbolic
+/// link it would be opened through, or a `..` that climbs back out of a
+/// directory that does not exist, which creating the folder would make.
+pub(crate) fn named(dir: &Path) -> Result<PathBuf> {
+    match walk(dir) {
+        (path, None) => Ok(path),
+        (_, Some(refused)) => Err(refused),
+    }
+}
+
+fn walk(dir: &Path) -> (PathBuf, Option<CoreError>) {
     let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
     let parts: Vec<Component> = absolute.components().collect();
     let mut closed_by: Vec<Option<usize>> = vec![None; parts.len()];
@@ -280,8 +295,9 @@ pub fn resolved(dir: &Path) -> PathBuf {
                 }
                 let climbed: PathBuf = parts[index..=close].iter().collect();
                 if !returns(&at, &climbed) {
+                    let refused = climb_refused(&at, &parts[index..=close], &absolute);
                     at.extend(&parts[index..]);
-                    return at;
+                    return (at, refused);
                 }
                 index = close;
             }
@@ -291,6 +307,12 @@ pub fn resolved(dir: &Path) -> PathBuf {
                     settled = true;
                 }
                 at.push(part);
+                if std::fs::symlink_metadata(&at).is_ok_and(|entry| entry.file_type().is_symlink())
+                {
+                    let refused = through_link(&at, std::fs::canonicalize(&at), true);
+                    at.extend(&parts[index + 1..]);
+                    return (at, Some(refused));
+                }
             }
             (Component::Normal(_), None) => {
                 at.push(part);
@@ -301,7 +323,53 @@ pub fn resolved(dir: &Path) -> PathBuf {
         }
         index += 1;
     }
-    at
+    (at, None)
+}
+
+/// Why a walk through `segment` from `at` did not come back: the first link
+/// on it, or the first directory on it that does not exist. Anything else is
+/// left for the open to report.
+fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<CoreError> {
+    let mut prefix = at.to_path_buf();
+    for part in segment {
+        if let Component::Normal(name) = part {
+            let entry = prefix.join(name);
+            let kind = Directory::open(&prefix)
+                .and_then(|directory| directory.entry_kind(Path::new(name)));
+            match kind {
+                Ok(FileType::Symlink) => {
+                    return Some(through_link(&entry, std::fs::canonicalize(absolute), false));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Some(CoreError::Invalid(format!(
+                        "{} climbs back out of {}, which does not exist, so nothing was created or followed; name the folder without that `..`",
+                        absolute.display(),
+                        entry.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        prefix.push(part);
+    }
+    None
+}
+
+/// The no-follow open refuses a link with the system's own error, such as
+/// `Not a directory` on macOS, which names neither the link nor the
+/// directory to name instead.
+fn through_link(link: &Path, reached: std::io::Result<PathBuf>, own: bool) -> CoreError {
+    let instead = match (reached, own) {
+        (Ok(target), true) => format!("the directory it points to, {}", target.display()),
+        (Ok(target), false) => format!("the directory the path reaches, {}", target.display()),
+        (Err(_), true) => "the directory itself".into(),
+        (Err(_), false) => "the folder by a path without it".into(),
+    };
+    CoreError::Invalid(format!(
+        "{} is a symbolic link, and a folder is never opened through one; name {instead}",
+        link.display()
+    ))
 }
 
 /// Whether walking `climbed` from `at` without following links comes back
@@ -552,6 +620,100 @@ mod tests {
             registry.folders().unwrap(),
             vec![listed(&first, "f1", "s1"), listed(&second, "f2", "s2")]
         );
+    }
+
+    #[test]
+    fn a_path_climbing_out_of_a_missing_directory_is_refused_before_anything_is_made() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("notes")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        let named = base.join("missing/../link/notes");
+        let missing = format!(
+            "climbs back out of {}, which does not exist",
+            base.join("missing").display()
+        );
+        let refused = |error: Option<CoreError>| matches!(error, Some(CoreError::Invalid(message)) if message.contains(&missing));
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+
+        assert!(refused(
+            Folder::add(&named, "01a00000-0000-7000-8000-000000000001", server, None).err()
+        ));
+        assert!(!base.join("missing").exists());
+        assert!(refused(Folder::open(&named, None).err()));
+        assert!(refused(Folder::status_of(&named).err()));
+        assert!(refused(Folder::remove_at(&named).err()));
+        assert!(!base.join("missing").exists());
+        assert_eq!(resolved(&named), named);
+    }
+
+    #[test]
+    fn a_refused_link_on_the_named_path_is_named_in_the_refusal() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let real = base.join("real");
+        let root = real.join("notes");
+        std::fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let core = crate::Core::open(root.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+        super::super::settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        std::fs::create_dir(base.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        std::os::unix::fs::symlink(base.join("elsewhere"), root.join("inside")).unwrap();
+        let server = || {
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            })
+        };
+
+        for (named, link, reaches) in [
+            (
+                base.join("link/../real/notes"),
+                base.join("link"),
+                root.clone(),
+            ),
+            (
+                root.join("inside/.."),
+                root.join("inside"),
+                base.to_path_buf(),
+            ),
+        ] {
+            let names = |error: Option<CoreError>| match error {
+                Some(CoreError::Invalid(message)) => {
+                    message.starts_with(&format!("{} is a symbolic link", link.display()))
+                        && message.ends_with(&format!(
+                            "the directory the path reaches, {}",
+                            reaches.display()
+                        ))
+                }
+                _ => false,
+            };
+            assert!(
+                names(Folder::open(&named, None).err()),
+                "{}",
+                named.display()
+            );
+            assert!(names(Folder::status_of(&named).err()));
+            assert!(names(Folder::remove_at(&named).err()));
+            assert!(names(
+                Folder::add(
+                    &named,
+                    "01a00000-0000-7000-8000-000000000001",
+                    server(),
+                    None
+                )
+                .err()
+            ));
+        }
+        assert!(root.join(STATE_DIR).join("core.sqlite").exists());
+        assert!(Folder::open(&root, None).is_ok());
     }
 
     #[test]

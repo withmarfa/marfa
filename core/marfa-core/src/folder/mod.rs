@@ -224,9 +224,12 @@ impl Folder {
         renew: Option<crate::http::Renew>,
     ) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
-        let root = registry::resolved(root.as_ref());
-        let root_dir = Directory::create(&root)
-            .map_err(|error| linked_root(&root).unwrap_or_else(|| io_error(error)))?;
+        let root = registry::named(root.as_ref())?;
+        let root_dir = Directory::create(&root).map_err(|error| {
+            registry::named(&root)
+                .err()
+                .unwrap_or_else(|| io_error(error))
+        })?;
         admitted_root(&root_dir).map_err(io_error)?;
         crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
         let state_dir = root_dir
@@ -328,7 +331,7 @@ impl Folder {
     }
 
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
-        let root = registry::resolved(root.as_ref());
+        let root = registry::named(root.as_ref())?;
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -368,7 +371,7 @@ impl Folder {
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        let root = registry::resolved(root.as_ref());
+        let root = registry::named(root.as_ref())?;
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -683,34 +686,15 @@ fn read_file(file: &std::fs::File) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// A root that became a link since it was named is refused by the open with
+/// the system's own error; the walk names the link instead.
 fn not_a_folder(root: &Path) -> CoreError {
-    linked_root(root).unwrap_or_else(|| {
+    registry::named(root).err().unwrap_or_else(|| {
         CoreError::Invalid(format!(
             "{} is not a folder; `folders add` makes one",
             root.display()
         ))
     })
-}
-
-/// The no-follow open refuses a link named as the folder with the system's
-/// own error, such as `Not a directory` on macOS, which names neither the
-/// link nor the directory to name instead.
-fn linked_root(root: &Path) -> Option<CoreError> {
-    if !std::fs::symlink_metadata(root)
-        .ok()?
-        .file_type()
-        .is_symlink()
-    {
-        return None;
-    }
-    let instead = std::fs::canonicalize(root).map_or_else(
-        |_| "the directory itself".to_string(),
-        |target| format!("the directory it points to, {}", target.display()),
-    );
-    Some(CoreError::Invalid(format!(
-        "{} is a symbolic link, and a folder is never opened through one; name {instead}",
-        root.display()
-    )))
 }
 
 /// One process works a folder at a time: every working path starts from a

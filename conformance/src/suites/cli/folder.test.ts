@@ -444,6 +444,9 @@ describe("a folder round trip", () => {
       join(dir, "alias"),
     ]);
     expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(
+      `${join(realpathSync(dir), "alias")} is a symbolic link`,
+    );
     await c.cli.json(["folders", "status", named]);
 
     await c.cli.json(["folders", "remove", named]);
@@ -476,12 +479,58 @@ describe("a folder round trip", () => {
     // Templates keep the spellings that path.join would normalize. The
     // witness: the same spelling through a directory opens the folder.
     await c.cli.json(["folders", "status", `${dir}/real/../real/notes`]);
+    const climbed = `${dir}/linked/../real/notes`;
+    const link = `${join(realpathSync(dir), "linked")} is a symbolic link`;
+    for (const command of [
+      ["folders", "status", climbed],
+      ["folders", "add", climbed, "--folder", settings.item.id, "--yes"],
+    ]) {
+      const refused = await c.cli.refused(command);
+      expect(refused.code, command.join(" ")).toBe(1);
+      expect(refused.envelope.error.code).toBe("invalid");
+      expect(refused.envelope.error.message).toContain(link);
+    }
+  });
+
+  it("refuses a path that climbs out of a directory that does not exist, and makes nothing", async () => {
+    const real = join(dir, "real");
+    mkdirSync(join(real, "notes"), { recursive: true });
+    symlinkSync(real, join(dir, "linked"));
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("missing-climb"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    // A template keeps the spelling that path.join would normalize.
     const refused = await c.cli.refused([
       "folders",
-      "status",
-      `${dir}/linked/../real/notes`,
+      "add",
+      `${dir}/missing/../linked/notes`,
+      "--folder",
+      settings.item.id,
+      "--yes",
     ]);
+    expect(refused.code).toBe(1);
     expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(
+      `climbs back out of ${join(realpathSync(dir), "missing")}, which does not exist`,
+    );
+    expect(existsSync(join(dir, "missing"))).toBe(false);
+    expect(existsSync(join(real, "notes", ".marfa"))).toBe(false);
+    // The witness: without the climb, the same folder is added.
+    await c.cli.json([
+      "folders",
+      "add",
+      join(dir, "linked", "notes"),
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    expect(existsSync(join(real, "notes", ".marfa", "core.sqlite"))).toBe(true);
   });
 
   it("is in step after the one push that writes its files", async () => {

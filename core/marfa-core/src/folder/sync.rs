@@ -141,7 +141,7 @@ impl Folder {
     /// the first sync still waits to be confirmed. A folder whose directory
     /// is gone is only taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
-        let dir = &super::registry::resolved(dir.as_ref());
+        let dir = &super::registry::named(dir.as_ref())?;
         let has_store = crate::directory::Directory::open(dir)
             .and_then(|root| root.child(Path::new(STATE_DIR), false))
             .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
