@@ -3826,7 +3826,7 @@ export interface components {
         /** @description A safe problem code and its count. */
         FolderStatusProblem: {
             /**
-             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable file; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.
+             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.
              * @enum {string}
              */
             code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid";

@@ -5492,7 +5492,7 @@
               "root_gone",
               "settings_invalid"
             ],
-            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable file; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings."
+            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings."
           },
           "count": {
             "type": "integer",

@@ -46,7 +46,7 @@ const Problem = z
     code: z
       .enum(FOLDER_PROBLEM_CODES)
       .describe(
-        "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable file; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.",
+        "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.",
       ),
     count: Count.describe(
       "The number of current observations with this problem.",
