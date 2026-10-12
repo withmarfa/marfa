@@ -356,7 +356,7 @@ When a write repeats an `Idempotency-Key` and its body under another `X-Marfa-Re
 
 If a conditional read names an `X-Marfa-Read-View` that is empty, repeated, or not exactly 64 lowercase hexadecimal characters, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/read-views.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `compliance/read-view-order.test.ts › answers 401, then 400 to a malformed read view, then 409 to a stale one before it reads the body or asks whether the key reaches any type`.
+**Tests:** `compliance/read-views.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `compliance/read-view-order.test.ts › answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ### `read-views/conditional-query-ordinary`
 
@@ -370,7 +370,7 @@ When a `GET` other than `GET /events`, or a `POST /items/bulk-get`, that names `
 
 **Reason:** a stale read view is refused before the query, the credential's reach or the resource is judged, so that the refusal says nothing about them.
 
-**Tests:** `compliance/read-views.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `compliance/read-view-order.test.ts › answers 400 to a malformed copy of a stale read view, and 409 to the stale read view itself`, `› answers 400 to an item page that asks for no metadata, though its read view is stale`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it reads the body or asks whether the key reaches any type`.
+**Tests:** `compliance/read-views.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `compliance/read-view-order.test.ts › answers 400 to a malformed copy of a stale read view, and 409 to the stale read view itself`, `› answers 400 to an item page that asks for no metadata, though its read view is stale`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ### `read-views/conditional-coherent`
 
@@ -410,7 +410,7 @@ When an app's access token sends `GET /keys/current` with a header that equals i
 
 When the server answers a request that names `X-Marfa-Read-View` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `403 type_not_permitted`, `403 edge_permission_denied`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Read-View` on the answer.
 
-**Tests:** `compliance/read-views.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `compliance/read-view-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it reads the body or asks whether the key reaches any type`.
+**Tests:** `compliance/read-views.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale read view`, `compliance/read-view-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`, `› answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ## Which items a read view lists
 

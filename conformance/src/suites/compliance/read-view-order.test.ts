@@ -336,7 +336,7 @@ describe("the read view header on a write", () => {
 });
 
 describe("the order POST /items/bulk-get asks its refusals in", () => {
-  it("answers 401, then 400 to a malformed read view, then 409 to a stale one before it reads the body or asks whether the key reaches any type", async () => {
+  it("answers 401, then 400 to a malformed read view, then 409 to a stale one before it checks the ids or asks whether the key reaches any type", async () => {
     const row = await seed("bulk-get order");
     const proof = await bootstrap();
     const bulkGet = (
