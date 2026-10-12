@@ -1490,7 +1490,9 @@ fn read_writes(
             .as_deref()
             .map(str::parse::<Verdict>)
             .transpose()?;
-        if verdict == Some(Verdict::Blocked) {
+        if verdict == Some(Verdict::Blocked)
+            && raw.reason.as_deref() != Some(crate::model::AWAITING_DEPENDENCY)
+        {
             raw.reason
                 .as_deref()
                 .unwrap_or_default()
@@ -2665,19 +2667,17 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
     )?)
 }
 
+/// A drain returns these rows to unanswered before it starts, so the block
+/// is the last drain's finding rather than a state that sticks.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
-    let clearing: Vec<&str> = BlockedReason::ALL
-        .into_iter()
-        .filter(|reason| reason.clears_itself())
-        .map(BlockedReason::as_str)
-        .collect();
-    let places = vec!["?"; clearing.len()].join(", ");
     Ok(conn.execute(
-        &format!(
-            "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
-              WHERE verdict = ? AND reason IN ({places})"
-        ),
-        params_from_iter(std::iter::once(Verdict::Blocked.as_str()).chain(clearing)),
+        "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
+          WHERE verdict = ?1 AND reason IN (?2, ?3)",
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::CredentialRefused.as_str(),
+            crate::model::AWAITING_DEPENDENCY
+        ],
     )?)
 }
 
@@ -4501,11 +4501,15 @@ mod tests {
     #[test]
     fn a_drain_unblocks_the_reasons_that_clear_and_no_other() {
         let conn = conn();
-        for reason in BlockedReason::ALL {
+        for reason in BlockedReason::ALL
+            .map(BlockedReason::as_str)
+            .into_iter()
+            .chain([crate::model::AWAITING_DEPENDENCY])
+        {
             conn.execute(
                 "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, queued_at)
                  VALUES (?1, 'update_item', ?1, '{}', 'blocked', ?1, '2026-01-01T00:00:00Z')",
-                [reason.as_str()],
+                [reason],
             )
             .unwrap();
         }

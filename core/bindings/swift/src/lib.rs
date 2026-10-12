@@ -406,7 +406,6 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
-    AwaitingDependency,
 }
 
 /// Which handle this process holds on the store.
@@ -1249,7 +1248,6 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::KeySpent => BlockedReason::KeySpent,
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
-            R::AwaitingDependency => BlockedReason::AwaitingDependency,
         }
     }
 }
@@ -1262,7 +1260,6 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::KeySpent => R::KeySpent,
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
-            BlockedReason::AwaitingDependency => R::AwaitingDependency,
         }
     }
 }

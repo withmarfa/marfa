@@ -8337,7 +8337,7 @@ Options:
           Release every write blocked for this reason instead of one by id
 
           [possible values: credential_refused, key_spent, ancestor_unavailable,
-          conflict_unresolved, awaiting_dependency]
+          conflict_unresolved]
 
       --reader
           Open the store to read only: never claim the writer role, never write, and refuse a path

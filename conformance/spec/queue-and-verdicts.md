@@ -700,6 +700,8 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 A device MUST give a `blocked` write exactly one of the reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved` and `awaiting_dependency`, and no other.
 
+**Reason:** `awaiting_dependency` is kept so the queue says why a drain held a write (`queue-and-verdicts/held-reason`), though nothing outside the queue stops such a write: a binding shows it as waiting (`queue-and-verdicts/binding-shows-waiting`), and no caller releases by it (`queue-and-verdicts/release-reason-held`).
+
 **Tests:** `device/classification.test.ts › reports one of the five blocked reasons and no other`.
 
 ### `queue-and-verdicts/blocked-not-counted`
@@ -1049,6 +1051,14 @@ When a caller releases by a blocked reason, a device MUST release every write bl
 **Reason:** a reason names blocked writes only, so a release by reason never takes a `dead` write, which carries no reason and is released by its id.
 
 **Tests:** `device/classification.test.ts › releases by reason the rows blocked for it, and never a dead one`.
+
+### `queue-and-verdicts/release-reason-held`
+
+If a caller releases by the reason `awaiting_dependency`, then a device MUST refuse the release, releasing nothing.
+
+**Reason:** a held write is released by the answer to the write it waits for, and by nothing a caller does (`queue-and-verdicts/held-released-same-pass`).
+
+**Tests:** `device/classification.test.ts › refuses a release by the reason a held write waits under, releasing nothing`.
 
 ### `queue-and-verdicts/release-unsent-refused`
 
