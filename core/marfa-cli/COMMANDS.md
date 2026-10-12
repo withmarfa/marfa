@@ -6501,7 +6501,7 @@ Commands:
   drain       Send what the queue holds and record what came back
   forget      Clear the writes the server has answered
   discard     Take a refused write out of the queue, with the content it carried
-  release     Send a blocked or dead write again, under a fresh key
+  release     Send a blocked, dead or unsent refused write again, under a fresh key
   withdraw    Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue,
               and put the copy back to what the server holds
   status      What the local copy holds and where it came from
@@ -8326,7 +8326,10 @@ Output:
 ### marfa device release
 
 ```text
-Send a blocked or dead write again, under a fresh key
+Send a blocked, dead or unsent refused write again, under a fresh key.
+
+A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind,
+never by this command.
 
 Usage: marfa device release [OPTIONS] [ID]
 
@@ -8351,7 +8354,7 @@ Options:
           where no store has been made
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 
 Server:
       --url <URL>

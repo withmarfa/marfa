@@ -150,7 +150,10 @@ pub enum DeviceCommand {
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Send a blocked or dead write again, under a fresh key.
+    /// Send a blocked, dead or unsent refused write again, under a fresh key.
+    ///
+    /// A write blocked `awaiting_dependency` is released only by the answer
+    /// to the write it waits behind, never by this command.
     Release {
         /// The queued write to release.
         #[arg(
