@@ -492,6 +492,50 @@ describe("a folder round trip", () => {
     }
   });
 
+  it("removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to", async () => {
+    const add = async (name: string) => {
+      const settings = await c.cli.json<ItemEnvelope>([
+        "folders",
+        "create",
+        "--title",
+        unique(`relinked-${name}`),
+        "--search",
+        JSON.stringify({ types: ["core.note"] }),
+      ]);
+      trackFolder(c.ctx, settings.item.id);
+      const added = await c.cli.json<{ dir: string }>([
+        "folders",
+        "add",
+        join(dir, name, "notes"),
+        "--folder",
+        settings.item.id,
+        "--yes",
+      ]);
+      return added.dir;
+    };
+    const first = await add("a");
+    const second = await add("b");
+    const listed = async () =>
+      (await c.cli.json<Array<{ dir: string }>>(["folders", "list"])).map(
+        (entry) => entry.dir,
+      );
+    expect(await listed()).toEqual(expect.arrayContaining([first, second]));
+
+    renameSync(join(dir, "a"), join(dir, "a-moved"));
+    symlinkSync(join(dir, "b"), join(dir, "a"));
+    await c.cli.json(["folders", "remove", first]);
+    expect(
+      existsSync(join(second, ".marfa", "core.sqlite")),
+      "removing the first folder removed the folder its link leads to",
+    ).toBe(true);
+    expect(
+      existsSync(join(dir, "a-moved", "notes", ".marfa", "core.sqlite")),
+    ).toBe(true);
+    const after = await listed();
+    expect(after).toContain(second);
+    expect(after).not.toContain(first);
+  });
+
   it("refuses a path that climbs out of a directory that does not exist, and makes nothing", async () => {
     const real = join(dir, "real");
     mkdirSync(join(real, "notes"), { recursive: true });

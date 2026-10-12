@@ -331,7 +331,11 @@ impl Folder {
     }
 
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
-        let root = registry::named(root.as_ref())?;
+        Folder::open_at(registry::root_of(root.as_ref())?, server)
+    }
+
+    /// Opens `root` as given, without resolving it again.
+    fn open_at(root: PathBuf, server: Option<Server>) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -371,7 +375,7 @@ impl Folder {
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        let root = registry::named(root.as_ref())?;
+        let root = registry::root_of(root.as_ref())?;
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;

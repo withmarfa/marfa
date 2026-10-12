@@ -3510,6 +3510,14 @@ When the same admitted directory is registered through an equivalent absolute sp
 
 **Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
 
+### `folders/remove-listed-acts-where-listed`
+
+When a folder is removed by the path the machine’s folder registry lists it at, a device MUST NOT remove or unlist any other folder.
+
+**Reason:** A symbolic link can replace a listed folder's directory after it was listed, and the link can lead into another folder.
+
+**Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`.
+
 ### `folders/registry-removed-state`
 
 When a registry read finds a readable directory whose folder state was removed, a device MUST remove that directory’s registry entry.
