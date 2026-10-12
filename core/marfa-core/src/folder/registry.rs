@@ -136,12 +136,16 @@ impl Registry {
         .map(|_| ())
     }
 
-    /// Answers whether the folder was listed.
-    pub fn unregister(&self, dir: &Path) -> Result<bool> {
+    /// Takes off the entry for `dir`, and every entry for `store` where one
+    /// is given, so a folder moved since it was listed leaves no entry
+    /// behind. Answers whether any was listed.
+    pub fn unregister(&self, dir: &Path, store: Option<&str>) -> Result<bool> {
         let dir = absolute(dir);
         self.change(Unreadable::Refuse, |listed| {
             let before = listed.len();
-            listed.retain(|entry| entry.dir != dir);
+            listed.retain(|entry| {
+                entry.dir != dir && (store.is_none() || entry.store.as_deref() != store)
+            });
             listed.len() != before
         })
         .map(|(_, changed)| changed)
@@ -284,9 +288,7 @@ pub(crate) enum Reached {
 /// could mean either folder, so it is refused.
 pub(crate) fn reach(dir: &Path) -> Result<Reached> {
     let spelled = absolute(dir);
-    let listed = Registry::located()
-        .and_then(|registry| registry.listing())
-        .unwrap_or_default();
+    let listed = listing();
     if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
         return Ok(Reached::Listed(entry.clone()));
     }
@@ -317,22 +319,50 @@ pub(crate) fn reach(dir: &Path) -> Result<Reached> {
     }
 }
 
-/// Why a listed path is not opened: a symbolic link that now stands in it,
-/// which a listed folder is never reached through.
-pub(crate) fn linked_listing(dir: &Path) -> Option<CoreError> {
+/// The machine's registry as written, or nothing where there is none or it
+/// cannot be read.
+pub(crate) fn listing() -> Vec<Registered> {
+    Registry::located()
+        .and_then(|registry| registry.listing())
+        .unwrap_or_default()
+}
+
+/// The entry listed at the directory `root` names: the one whose listed path,
+/// opened without following links, is that directory, or where nothing opens
+/// there, the one listed by that path.
+pub(crate) fn listed_at(root: &Path, listed: &[Registered]) -> Option<Registered> {
+    match Directory::open(root) {
+        Ok(target) => listed
+            .iter()
+            .find(|entry| stands_at(&entry.dir, &target))
+            .cloned(),
+        Err(_) => listed.iter().find(|entry| entry.dir == root).cloned(),
+    }
+}
+
+/// The first symbolic link on `path`, checked one spelled prefix at a time.
+pub(crate) fn first_link(path: &Path) -> Option<PathBuf> {
     let mut prefix = PathBuf::new();
-    for part in dir.components() {
+    for part in path.components() {
         prefix.push(part);
         if std::fs::symlink_metadata(&prefix).is_ok_and(|entry| entry.file_type().is_symlink()) {
-            return Some(CoreError::Invalid(format!(
-                "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one; `folders remove {}` only takes it off the list",
-                dir.display(),
-                prefix.display(),
-                dir.display()
-            )));
+            return Some(prefix);
         }
     }
     None
+}
+
+/// Why a listed path is not opened: a symbolic link that now stands in it,
+/// which a listed folder is never reached through.
+pub(crate) fn linked_listing(dir: &Path) -> Option<CoreError> {
+    first_link(dir).map(|link| {
+        CoreError::Invalid(format!(
+            "{} is listed in the folder registry, but {} is now a symbolic link, and a listed folder is never reached through one; `folders remove {}` only takes it off the list",
+            dir.display(),
+            link.display(),
+            dir.display()
+        ))
+    })
 }
 
 /// Whether `dir`, following its links, is the directory `target` holds.
@@ -527,7 +557,7 @@ mod tests {
         let registry = Registry::at(temp.path().join(FILE_NAME));
         registry.add(&parent_spelling, "outer", None).unwrap();
         assert!(registry.add(&inner, "inner", None).is_err());
-        registry.unregister(&parent_spelling).unwrap();
+        registry.unregister(&parent_spelling, None).unwrap();
         registry.add(&inner, "inner", None).unwrap();
         assert!(registry.add(&parent_spelling, "outer", None).is_err());
     }
@@ -634,7 +664,17 @@ mod tests {
             Folder::status_of(&named),
             Err(CoreError::Invalid(message)) if message.contains("is not a folder")
         ));
-        Folder::remove_at(&named).unwrap();
+        // A removal follows a link only through the listed path, and names it.
+        assert!(matches!(
+            Folder::remove_at(&named),
+            Err(CoreError::Invalid(message))
+                if message.contains(&format!("listed at {}", root.display()))
+        ));
+        assert!(root.join(STATE_DIR).join("core.sqlite").exists());
+        assert_eq!(
+            Folder::remove_at(&root).unwrap(),
+            crate::folder::Removal::Deleted(root.clone())
+        );
         assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
 
         let server = crate::scripted::Scripted::start();
@@ -844,7 +884,11 @@ mod tests {
 
         assert!(Folder::open(&first, None).is_err());
         assert!(Folder::status_of(&first).is_err());
-        Folder::remove_at(&first).unwrap();
+        assert!(matches!(
+            Folder::remove_at(&first).unwrap(),
+            crate::folder::Removal::Unlisted { dir, reason }
+                if dir == first && reason == format!("{} is now a symbolic link", base.join("a").display())
+        ));
         assert!(
             store(&second).exists(),
             "the other folder's store was removed"
@@ -916,8 +960,79 @@ mod tests {
         intact(&first);
         assert!(listed().contains(&second));
         assert!(!listed().contains(&first));
-        Folder::remove_at(alias.path().join("base/b/notes")).unwrap();
+        assert!(Folder::remove_at(alias.path().join("base/b/notes")).is_err());
+        intact(&second);
+        assert_eq!(
+            Folder::remove_at(&second).unwrap(),
+            crate::folder::Removal::Deleted(second.clone())
+        );
         assert!(!second.join(STATE_DIR).join("core.sqlite").exists());
+    }
+
+    #[test]
+    fn a_relinked_listed_path_never_removes_the_folder_it_leads_to_however_often_or_unlisted() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let (first, second) = (base.join("a/notes"), base.join("b/notes"));
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        bound_folder(&second, "01a00000-0000-7000-8000-000000000002");
+        drop(Folder::open(&first, None).unwrap());
+        drop(Folder::open(&second, None).unwrap());
+        std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
+        let store = second.join(STATE_DIR).join("core.sqlite");
+        let registry = Registry::located().unwrap();
+
+        assert!(
+            Folder::remove_at(&first).is_ok(),
+            "the listed path is taken off the list"
+        );
+        assert!(
+            Folder::remove_at(&first).is_err(),
+            "a second removal followed the link"
+        );
+        assert!(store.exists());
+
+        // A pass through the path once the registry is lost lists the folder
+        // the path leads to, as a scan does.
+        std::fs::remove_file(registry.path()).unwrap();
+        Folder::open(&first, None).unwrap().register();
+        assert!(
+            registry
+                .folders()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.dir == second)
+        );
+        assert!(
+            Folder::remove_at(&first).is_err(),
+            "a removal followed the link once the registry was lost"
+        );
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn removing_a_moved_folder_takes_every_entry_for_its_store_off_the_list() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let first = base.join("a/notes");
+        bound_folder(&first, "01a00000-0000-7000-8000-000000000001");
+        drop(Folder::open(&first, None).unwrap());
+        std::fs::create_dir(base.join("c")).unwrap();
+        let moved = base.join("c/notes");
+        std::fs::rename(&first, &moved).unwrap();
+
+        Folder::remove_at(&moved).unwrap();
+        assert!(!moved.join(STATE_DIR).join("core.sqlite").exists());
+        let listed = Registry::located().unwrap().folders().unwrap();
+        assert!(
+            !listed
+                .iter()
+                .any(|entry| entry.dir == first || entry.dir == moved),
+            "{listed:?}"
+        );
     }
 
     #[test]
@@ -935,11 +1050,27 @@ mod tests {
         std::fs::rename(&second, &first).unwrap();
         let registry = Registry::located().unwrap();
 
-        Folder::remove_at(&first).unwrap();
+        assert!(matches!(
+            Folder::remove_at(&first).unwrap(),
+            crate::folder::Removal::Unlisted { dir, reason }
+                if dir == first && reason.contains("not the one the registry lists")
+        ));
         assert!(
             first.join(STATE_DIR).join("core.sqlite").exists(),
             "the folder moved into the listed folder's place was removed"
         );
+
+        // An entry with no store cannot be shown to own the state there.
+        let third = base.join("c/notes");
+        bound_folder(&third, "01a00000-0000-7000-8000-000000000003");
+        registry
+            .register(&third, "01a00000-0000-7000-8000-000000000003", None)
+            .unwrap();
+        assert!(matches!(
+            Folder::remove_at(&third).unwrap(),
+            crate::folder::Removal::Unlisted { reason, .. } if reason.contains("lists no store")
+        ));
+        assert!(third.join(STATE_DIR).join("core.sqlite").exists());
         let listed = registry.folders().unwrap();
         assert!(!listed.iter().any(|entry| entry.dir == first));
         assert!(

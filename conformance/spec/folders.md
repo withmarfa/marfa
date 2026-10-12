@@ -3512,7 +3512,7 @@ When the same admitted directory is registered through an equivalent absolute sp
 
 ### `folders/remove-listed-acts-where-listed`
 
-When a listed folder is removed, a device MUST delete only the state of the folder that the machine’s folder registry lists at that folder’s directory, and never another folder’s state.
+When a folder is removed by a path that names a listed entry, a device MUST delete folder state at that entry's directory only where that state's store identity is the one the machine’s folder registry lists for the entry.
 
 **Reason:** After a folder is listed, a symbolic link or another folder can take its directory's place.
 
@@ -3524,13 +3524,37 @@ If a folder is removed by the path at which the machine’s folder registry list
 
 **Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
 
-### `folders/remove-unlisted-no-follow`
+### `folders/remove-follows-only-listed-path`
 
-If a folder that the machine’s folder registry does not list is removed by a path that passes through a symbolic link, then a device MUST refuse the removal with `invalid`.
+If a folder is removed by a path that passes through a symbolic link and is not the path at which the machine’s folder registry lists a folder, then a device MUST refuse the removal with `invalid`.
 
-**Reason:** No listed entry binds such a path to a folder, so the link could lead to any folder.
+**Reason:** A link above a folder can come to lead into another folder after the folder was listed, and only the listed path binds a removal to the folder the registry lists.
 
-**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`.
+
+### `folders/remove-link-refusal-names-listed`
+
+If a removal is refused because its path passes through a symbolic link in a directory above the folder that no later `..` climbs back out of, and the path reaches a folder that the machine’s folder registry lists, then a device MUST name that folder's listed path in the refusal's message.
+
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
+### `folders/remove-drops-store-entries`
+
+When a folder's state is removed, a device MUST take every entry that lists that folder's store off the machine’s folder registry.
+
+**Tests:** `cli/folder.test.ts › takes a moved folder's old entry off the list when it is removed at its new place`.
+
+### `folders/remove-deleted-reported`
+
+When a removal deletes a folder's state, the CLI MUST report `removed` as `true` with the directory whose state was deleted.
+
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › takes a moved folder's old entry off the list when it is removed at its new place`.
+
+### `folders/remove-unlisted-reported`
+
+When a removal takes a registry entry off without deleting folder state, the CLI MUST report `removed` as `false` with the reason.
+
+**Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
 ### `folders/registry-removed-state`
 
@@ -4512,7 +4536,7 @@ When a command other than an add or a removal names an existing folder by a path
 
 ### `folders/ambiguous-path-refused`
 
-If a command other than an add names a folder by a path that the machine’s folder registry does not list, and a listed folder path reaches the same directory only through a symbolic link, then a device MUST refuse the path with `invalid`.
+If a command other than an add or a removal names a folder by a path that the machine’s folder registry does not list, and a listed folder path reaches the same directory only through a symbolic link, then a device MUST refuse the path with `invalid`.
 
 **Reason:** The path could mean the folder at that directory or the listed folder whose directory the link replaced.
 

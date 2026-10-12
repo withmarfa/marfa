@@ -1,7 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::elsewhere;
-use super::registry::{self, Reached};
+use super::registry::{self, Reached, Registered};
 use super::{
     CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport, Synced,
 };
@@ -141,40 +141,75 @@ impl Folder {
 
     /// Takes the folder at `dir` off this machine: its own state under
     /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed. A listed folder's state
-    /// goes only where the store at its listed path is the one the registry
-    /// lists for it; otherwise, as where its directory is gone, it is only
-    /// taken off the registry.
-    pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
+    /// the first sync still waits to be confirmed. Only the path the registry
+    /// lists is followed through a symbolic link. A listed folder's state goes
+    /// only where the store at its listed path is the one the registry lists
+    /// for it; otherwise its entry alone is taken off the registry.
+    pub fn remove_at(dir: impl AsRef<Path>) -> Result<Removal> {
         let dir = dir.as_ref();
-        match registry::reach(dir)? {
-            Reached::Listed(entry) => {
-                if held(&entry.dir) {
-                    let folder = Folder::open_without_listing(entry.dir.clone(), None)?;
-                    if entry.store.is_some() && elsewhere::listed_store(&folder.core) == entry.store
-                    {
-                        return folder.remove();
-                    }
-                }
-                Folder::forget(&entry.dir)?;
-                Ok(())
-            }
-            Reached::Unlisted(root) => {
-                // Nothing listed binds the path to a folder, so a removal
-                // follows no link to reach one.
-                let spelled = registry::absolute(dir);
-                if let Ok(target) = Directory::open(&root)
-                    && !registry::stands_at(&spelled, &target)
-                {
-                    return Err(CoreError::Invalid(format!(
-                        "{} passes through a symbolic link, and the folder registry lists no folder by it, so `folders remove` does not follow the link; name the folder by a path without symbolic links",
-                        spelled.display()
-                    )));
-                }
-                Folder::open_without_listing(root, None)?.remove()
+        let spelled = registry::absolute(dir);
+        let listed = registry::listing();
+        if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
+            return Folder::remove_listed(entry.clone());
+        }
+        if let Some(link) = registry::first_link(&spelled) {
+            let instead = match registry::reach(dir)? {
+                Reached::Listed(entry) => format!(
+                    "the folder it reaches is listed at {}; to remove that folder, name that path, as `folders list` shows it",
+                    entry.dir.display()
+                ),
+                Reached::Unlisted(_) => "name the folder by a path without symbolic links".into(),
+            };
+            return Err(CoreError::Invalid(format!(
+                "{} passes through the symbolic link {}, and `folders remove` follows a link only through the path the folder registry lists; {instead}",
+                spelled.display(),
+                link.display()
+            )));
+        }
+        let root = registry::named(dir)?;
+        match registry::listed_at(&root, &listed) {
+            Some(entry) => Folder::remove_listed(entry),
+            None => {
+                Folder::open_without_listing(root.clone(), None)?.remove()?;
+                Ok(Removal::Deleted(root))
             }
         }
     }
+
+    /// Bound to the store the registry lists for `entry`, so a folder that
+    /// has taken its directory's place is never removed in its stead.
+    fn remove_listed(entry: Registered) -> Result<Removal> {
+        let reason = if let Some(link) = registry::first_link(&entry.dir) {
+            format!("{} is now a symbolic link", link.display())
+        } else if !held(&entry.dir) {
+            "no folder state is there".to_string()
+        } else {
+            let folder = Folder::open_without_listing(entry.dir.clone(), None)?;
+            match (&entry.store, elsewhere::listed_store(&folder.core)) {
+                (Some(listed), Some(found)) if *listed == found => {
+                    folder.remove()?;
+                    return Ok(Removal::Deleted(entry.dir));
+                }
+                (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
+                _ => "the folder state there is not the one the registry lists for it".to_string(),
+            }
+        };
+        Folder::forget(&entry.dir)?;
+        Ok(Removal::Unlisted {
+            dir: entry.dir,
+            reason,
+        })
+    }
+}
+
+/// What a removal did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removal {
+    /// The folder's own state at this directory went; its files stay.
+    Deleted(PathBuf),
+    /// Only the registry entry for this directory went, and nothing was
+    /// deleted, for the reason given.
+    Unlisted { dir: PathBuf, reason: String },
 }
 
 fn held(root: &Path) -> bool {

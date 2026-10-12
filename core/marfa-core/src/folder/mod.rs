@@ -25,7 +25,7 @@ mod sync;
 mod transfer;
 mod watch;
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
-pub use sync::SyncReport;
+pub use sync::{Removal, SyncReport};
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
 
@@ -403,7 +403,7 @@ impl Folder {
     /// Answers whether the directory was listed.
     pub fn forget(dir: impl AsRef<Path>) -> Result<bool> {
         match Registry::located() {
-            Some(registry) => registry.unregister(dir.as_ref()),
+            Some(registry) => registry.unregister(dir.as_ref(), None),
             None => Ok(false),
         }
     }
@@ -454,7 +454,7 @@ impl Folder {
             )));
         }
         if let Some(registry) = Registry::located() {
-            registry.unregister(&self.root)?;
+            registry.unregister(&self.root, elsewhere::listed_store(&self.core).as_deref())?;
         }
         self.refuse_if_gone()?;
         let Folder {
