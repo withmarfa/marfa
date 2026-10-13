@@ -750,10 +750,7 @@ impl Http {
         self.hold(&response, status, false)?;
         let named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after = retry_after(&response);
-        let body = response
-            .into_body()
-            .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let body = whole(response.into_body())?;
         if !(200..300).contains(&status) {
             return Err(if named {
                 refusal(status, &body, retry_after)
@@ -957,10 +954,7 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         // A body that will not read is a transport failure, not an answer.
-        let body = response
-            .into_body()
-            .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let body = whole(response.into_body())?;
         let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
             Ok(envelope) => envelope.error.code,
             Err(_) => String::new(),
@@ -1045,7 +1039,7 @@ impl Http {
         if !(200..300).contains(&status) {
             let named = header(&response, CONTRACT_HEADER).is_some();
             let retry_after = retry_after(&response);
-            let text = response.into_body().read_to_string().unwrap_or_default();
+            let text = whole(response.into_body()).unwrap_or_default();
             if status == 401 && named {
                 return Err(CoreError::CopyExpired {
                     reason: "credential_ended".into(),
@@ -1372,10 +1366,7 @@ impl Http {
             .collect::<Vec<_>>();
         let certified = conditional
             .is_none_or(|expected| proof.len() == 1 && proof[0].to_str().ok() == Some(expected));
-        let text = response
-            .into_body()
-            .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let text = whole(response.into_body())?;
         if !(200..300).contains(&status) {
             let error = self.refused(status, named, &text, retry_after);
             if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
@@ -1421,6 +1412,16 @@ impl Http {
             }
         })
     }
+}
+
+/// An answer read whole, past ureq's default 10 MiB: a page of 200 rows or a
+/// bulk read of 100 can be larger, and a row as large as the server's request
+/// cap allows. The agent's body budget still bounds how long it may take.
+fn whole(body: ureq::Body) -> Result<String, CoreError> {
+    body.into_with_config()
+        .limit(u64::MAX)
+        .read_to_string()
+        .map_err(|error| CoreError::Network(error.to_string()))
 }
 
 fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {
@@ -1936,6 +1937,125 @@ mod tests {
                 .fetch(get(&["items"], false), true)
                 .unwrap();
             assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
+            serving.join().unwrap().unwrap();
+        }
+    }
+
+    /// Serves `body` once, with its length or in chunks, and hands back the
+    /// address and the server.
+    fn serve_once(
+        body: String,
+        chunked: bool,
+    ) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept()?;
+            let mut reader = std::io::BufReader::new(socket.try_clone()?);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut reader, &mut line)?;
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            std::io::Read::read_exact(&mut reader, &mut vec![0; length])?;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
+                if chunked {
+                    "Transfer-Encoding: chunked\r\n".into()
+                } else {
+                    format!("Content-Length: {}\r\n", body.len())
+                }
+            )?;
+            if chunked {
+                for chunk in body.as_bytes().chunks(65_536) {
+                    write!(socket, "{:x}\r\n", chunk.len())?;
+                    socket.write_all(chunk)?;
+                    socket.write_all(b"\r\n")?;
+                }
+                socket.write_all(b"0\r\n\r\n")?;
+            } else {
+                socket.write_all(body.as_bytes())?;
+            }
+            Ok(())
+        });
+        (url, serving)
+    }
+
+    /// A page of 200 rows, a bulk read of 100 and a write's answer can each
+    /// be larger than ureq's default 10 MiB, and an answer cut off there
+    /// would fail every hydration that holds such rows.
+    #[test]
+    fn every_whole_read_takes_an_answer_over_ten_mib() {
+        let row = |at: usize| {
+            let mut item: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+                "item.updated",
+                &format!("row-{at}"),
+                "core.note",
+                1,
+            ))
+            .unwrap();
+            item["item"]["properties"]["body"] = "x".repeat(1_000_000).into();
+            item
+        };
+        let rows: Vec<serde_json::Value> = (0..11).map(row).collect();
+        let ids: Vec<String> = (0..11).map(|at| format!("row-{at}")).collect();
+        let page = serde_json::json!({
+            "data": rows.iter().map(|row| serde_json::json!({"item": row["item"], "metadata": {"tags": []}})).collect::<Vec<_>>(),
+            "next_cursor": null,
+        })
+        .to_string();
+        let bulk = serde_json::json!({
+            "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+            "metadata": ids.iter().map(|id| serde_json::json!({"item_id": id, "tags": []})).collect::<Vec<_>>(),
+        })
+        .to_string();
+        let answer =
+            serde_json::json!({"item": rows[0]["item"], "padding": "y".repeat(11_000_000)})
+                .to_string();
+        for body in [&page, &bulk, &answer] {
+            assert!(body.len() > 10 * 1024 * 1024);
+        }
+        for chunked in [false, true] {
+            let (url, serving) = serve_once(page.clone(), chunked);
+            let read = Http::new(&url, "k")
+                .unwrap()
+                .items_page(&ItemsQuery {
+                    r#type: None,
+                    tier: SliceTier::All,
+                    cursor: None,
+                })
+                .unwrap();
+            assert_eq!(read.data.len(), 11, "a listing page");
+            serving.join().unwrap().unwrap();
+
+            let (url, serving) = serve_once(bulk.clone(), chunked);
+            let read = Http::new(&url, "k").unwrap().items_by_id(&ids).unwrap();
+            assert_eq!(read.len(), 11, "a bulk read");
+            serving.join().unwrap().unwrap();
+
+            let (url, serving) = serve_once(answer.clone(), chunked);
+            let sent = Http::new(&url, "k")
+                .unwrap()
+                .send(&Outgoing {
+                    method: Method::Post,
+                    segments: vec!["items".into()],
+                    params: Vec::new(),
+                    body: "{}",
+                    idempotency_key: "key",
+                })
+                .unwrap();
+            assert_eq!(sent.body, answer, "a write's answer");
             serving.join().unwrap().unwrap();
         }
     }

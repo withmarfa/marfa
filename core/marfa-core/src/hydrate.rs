@@ -870,6 +870,32 @@ mod tests {
         );
     }
 
+    /// A hundred pinned rows in one answer can pass ureq's default 10 MiB
+    /// where each read alone did not, and every hydration of such a copy
+    /// would fail.
+    #[test]
+    fn a_hydration_takes_a_read_of_pinned_rows_over_ten_mib() {
+        let server = Scripted::start();
+        let (core, pinned) = pinned_copy(&server, 12);
+        let mut body = bulk_body(
+            &pinned
+                .iter()
+                .map(|id| (id.as_str(), true))
+                .collect::<Vec<_>>(),
+        );
+        for item in body["items"].as_array_mut().unwrap() {
+            item["properties"]["body"] = "x".repeat(900_000).into();
+        }
+        let body = body.to_string();
+        assert!(body.len() > 10 * 1024 * 1024);
+        server.on(
+            "/items/bulk-get",
+            vec![scripted::certified(scripted::json(200, &body))],
+        );
+
+        assert_eq!(hydrate(&core).unwrap().items, 12);
+    }
+
     /// Each is an answer the hydration cannot take as the server's word on
     /// its read view, so the copy expires as on any other conditional read.
     #[test]
