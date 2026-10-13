@@ -4008,17 +4008,24 @@ mod tests {
     fn a_create_landing_on_a_row_another_claim_pinned_keeps_its_pin() {
         use crate::folder::state;
         let mut conn = conn();
-        for id in ["linked", "linked-alone"] {
+        for id in ["linked", "linked-alone", "linked-unpinned"] {
             pin(&conn, id).unwrap();
             conn.execute("INSERT INTO body_pins (item_id) VALUES (?1)", [id])
                 .unwrap();
         }
-        for id in ["lined", "lined-alone"] {
+        for id in ["lined", "lined-alone", "lined-unpinned"] {
             pin(&conn, id).unwrap();
             state::hold_edge_end(&conn, id, true).unwrap();
         }
         for (minted, answered) in [("minted-a", "linked"), ("minted-b", "lined")] {
             pin(&conn, minted).unwrap();
+            adopt_answered_id(&conn, minted, answered).unwrap();
+        }
+        // A create the copy did not pin leaves each claim its own.
+        for (minted, answered) in [
+            ("minted-c", "linked-unpinned"),
+            ("minted-d", "lined-unpinned"),
+        ] {
             adopt_answered_id(&conn, minted, answered).unwrap();
         }
 
