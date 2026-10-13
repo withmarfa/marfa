@@ -3104,7 +3104,7 @@ When a body's link names an item only the server holds, a device MUST pin that i
 
 ### `device/body-pin-release`
 
-When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go.
+When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go, unless the caller or a folder has pinned the item since, or a pinned create has been answered with it since (`device/pin-create-lasts`).
 
 **Reason:** the pin was made for the edge alone.
 
