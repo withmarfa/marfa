@@ -2519,6 +2519,44 @@ describe("catch-up keeps the copy to its slice", () => {
     expect(status.ok && status.value.pinned).toEqual(["settings"]);
   });
 
+  it("reads a pinned folder row again at a hydration, which the bulk read answers only with system", async () => {
+    harness = await startHarness("pinned-system-row");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    const settings = (version: number, title: string) =>
+      wireItem({
+        id: "settings",
+        type: "system.folder",
+        version,
+        properties: { title },
+      });
+    server.copyAnswer(
+      "GET",
+      "/items/settings",
+      answers.updated(settings(1, "pinned")),
+      answers.updated(settings(2, "read again")),
+    );
+    const title = async (): Promise<unknown> => {
+      const held = await device.get("settings");
+      return held.ok ? held.value.properties.title : "not held";
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    // The witness: the pin read the row.
+    expect(await title()).toBe("pinned");
+
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      await title(),
+      "a hydration's bulk read left a pinned system row out, so the copy loses the folder settings it pinned",
+    ).toBe("read again");
+  });
+
   it("keeps a pinned row that leaves the slice", async () => {
     harness = await startHarness("pinned-leaves");
     const { server, device } = harness;

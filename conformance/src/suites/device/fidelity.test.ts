@@ -1461,7 +1461,10 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a row of a type the key does not hold, in a bulk read by id",
       { status: left.status, body: left.data },
-      bulkGetOf([answers.itemNotFound(note.data.item.id)], false),
+      bulkGetOf([answers.itemNotFound(note.data.item.id)], {
+        viewed: false,
+        system: true,
+      }),
       { same: ["items", "metadata"] },
     );
 
@@ -3246,10 +3249,53 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
         certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
         certifiedRead(answers.itemNotFound(gone)),
       ],
-      true,
+      { viewed: true, system: true },
     ),
     { same: ["listed"], shape: ["items", "metadata"] },
   );
+  // A pinned folder row is a `system.*` row, which the bulk read answers
+  // only where `include` names `system` (`items/bulk-get-system`).
+  const folder = await client.createFolder({
+    title: `fidelity ${ctx.runId}`,
+    search: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
+  });
+  expect(folder.ok, JSON.stringify(folder.error)).toBe(true);
+  trackFolder(ctx, folder.data.item.id);
+  for (const system of [false, true]) {
+    const read = await fetch(`${apiUrl}/items/bulk-get`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ids: [folder.data.item.id],
+        include: ["edges", "metadata", ...(system ? ["system"] : [])],
+      }),
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get("X-Marfa-Read-View")).toBe(fence);
+    const real = (await read.json()) as { items: { id: string }[] };
+    const scripted = bulkGetOf(
+      [
+        certifiedRead(
+          answers.updated(
+            wireItem({ id: folder.data.item.id, type: "system.folder" }),
+          ),
+        ),
+      ],
+      { viewed: true, system },
+    );
+    expect(
+      (scriptedBody(scripted) as { items: { id: string }[] }).items.map(
+        (item) => item.id,
+      ),
+      `the scripted bulk read and the server disagree on a system row ${system ? "with" : "without"} system`,
+    ).toEqual(real.items.map((item) => item.id));
+    expectFidelity(
+      `a bulk read of a system row ${system ? "with" : "without"} system`,
+      { status: read.status, body: real },
+      scripted,
+      { same: ["listed"], shape: ["items", "metadata"] },
+    );
+  }
   const ordinary = await fetch(
     `${apiUrl}/items/${seeded.id}?include=metadata`,
     { headers: { Authorization: `Bearer ${apiKey}` } },

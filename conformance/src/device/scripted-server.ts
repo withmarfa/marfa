@@ -331,7 +331,9 @@ export class ScriptedServer {
    * A bulk read by id that no fixture scripted is answered from the reads by
    * id the fixture did script, one for each id in the order named, because
    * the server resolves each id as a read by id does: a fixture that scripts
-   * a row's read scripts what a bulk read of it answers.
+   * a row's read scripts what a bulk read of it answers. The one difference
+   * is a `system.*` row, which the bulk read leaves out unless its `include`
+   * names `system` (`items/bulk-get-system`).
    */
   private respond(recorded: RecordedRequest): Answer | undefined {
     const route = this.routes.find((candidate) =>
@@ -346,8 +348,12 @@ export class ScriptedServer {
     }
     if (recorded.method === "POST" && recorded.pathname === "/items/bulk-get") {
       let ids: string[];
+      let include: string[] | undefined;
       try {
-        ({ ids } = JSON.parse(recorded.body) as { ids: string[] });
+        ({ ids, include } = JSON.parse(recorded.body) as {
+          ids: string[];
+          include?: string[];
+        });
       } catch {
         return answers.validation("validation_error", "the body is not JSON");
       }
@@ -365,10 +371,10 @@ export class ScriptedServer {
         if (read === undefined) return NOT_SCRIPTED;
         reads.push(read);
       }
-      return bulkGetOf(
-        reads,
-        recorded.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
-      );
+      return bulkGetOf(reads, {
+        viewed: recorded.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
+        system: include?.includes("system") ?? false,
+      });
     }
     this.unmatched.push(`${recorded.method} ${recorded.pathname}`);
     return undefined;

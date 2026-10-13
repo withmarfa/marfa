@@ -752,12 +752,16 @@ export function certifiedRead(
  * What `POST /items/bulk-get` answers for ids whose reads by id answer
  * `reads`, in the order the request named them. The server resolves each id
  * as a read by id does, so a `200` gives the id's row and a `404` leaves the
- * id out (`items/bulk-get` and `items/bulk-get-omits`). Any other answer is
- * the whole request's. Under a read view the answer is certified only where
- * every read was, and then carries `listed` beside `items`
- * (`read-views/listed-bulk-get`).
+ * id out (`items/bulk-get` and `items/bulk-get-omits`), but for a `system.*`
+ * row, which it leaves out unless `include` names `system`
+ * (`items/bulk-get-system`). Any other answer is the whole request's. Under a
+ * read view the answer is certified only where every read was, and then
+ * carries `listed` beside `items` (`read-views/listed-bulk-get`).
  */
-export function bulkGetOf(reads: Answer[], viewed: boolean): Answer {
+export function bulkGetOf(
+  reads: Answer[],
+  options: { viewed: boolean; system: boolean },
+): Answer {
   const gated = reads.filter((read) => read.kind === "gated");
   if (gated.length > 0)
     return {
@@ -765,13 +769,13 @@ export function bulkGetOf(reads: Answer[], viewed: boolean): Answer {
       until: Promise.all(gated.map((read) => read.until)).then(() => undefined),
       then: bulkGetOf(
         reads.map((read) => (read.kind === "gated" ? read.then : read)),
-        viewed,
+        options,
       ),
     };
   const items: unknown[] = [];
   const metadata: unknown[] = [];
   const listed: unknown[] = [];
-  let certified = viewed;
+  let certified = options.viewed;
   let contract: string | string[] | null | undefined;
   for (const read of reads) {
     if (read.kind !== "json" || (read.status !== 200 && read.status !== 404))
@@ -787,6 +791,12 @@ export function bulkGetOf(reads: Answer[], viewed: boolean): Answer {
       metadata?: unknown;
       listed?: unknown;
     };
+    if (
+      !options.system &&
+      typeof row.item.type === "string" &&
+      row.item.type.startsWith("system.")
+    )
+      continue;
     items.push(row.item);
     metadata.push(
       row.metadata ?? { item_id: row.item.id, tags: [], extensions: {} },
