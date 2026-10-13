@@ -750,7 +750,10 @@ impl Http {
         self.hold(&response, status, false)?;
         let named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after = retry_after(&response);
-        let body = whole(response.into_body())?;
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| CoreError::Network(error.to_string()))?;
         if !(200..300).contains(&status) {
             return Err(if named {
                 refusal(status, &body, retry_after)
@@ -1039,7 +1042,7 @@ impl Http {
         if !(200..300).contains(&status) {
             let named = header(&response, CONTRACT_HEADER).is_some();
             let retry_after = retry_after(&response);
-            let text = whole(response.into_body()).unwrap_or_default();
+            let text = response.into_body().read_to_string().unwrap_or_default();
             if status == 401 && named {
                 return Err(CoreError::CopyExpired {
                     reason: "credential_ended".into(),
@@ -1195,16 +1198,7 @@ impl Http {
         let body = if call.stream && (200..300).contains(&status) {
             ReplyBody::Stream(Box::new(response.into_body().into_reader()))
         } else {
-            ReplyBody::Text(
-                response
-                    .into_body()
-                    // A page or export can exceed ureq's default 10 MiB.
-                    .into_with_config()
-                    .limit(u64::MAX)
-                    .lossy_utf8(true)
-                    .read_to_string()
-                    .map_err(|error| CoreError::Network(error.to_string()))?,
-            )
+            ReplyBody::Text(whole(response.into_body())?)
         };
         Ok(Reply {
             status,
@@ -1414,12 +1408,15 @@ impl Http {
     }
 }
 
-/// An answer read whole, past ureq's default 10 MiB: a page of 200 rows or a
-/// bulk read of 100 can be larger, and a row as large as the server's request
-/// cap allows. The agent's body budget still bounds how long it may take.
+/// An answer read whole, past ureq's default 10 MiB, which a page of 200
+/// rows, a bulk read of 100 or an export can pass. A text answer that is not
+/// UTF-8, such as a proxy's page, is read with its bad bytes replaced, so its
+/// status still reaches the caller; JSON is read strictly. The body budget
+/// still bounds how long the read may take.
 fn whole(body: ureq::Body) -> Result<String, CoreError> {
     body.into_with_config()
         .limit(u64::MAX)
+        .lossy_utf8(true)
         .read_to_string()
         .map_err(|error| CoreError::Network(error.to_string()))
 }
@@ -1941,12 +1938,9 @@ mod tests {
         }
     }
 
-    /// Serves `body` once, with its length or in chunks, and hands back the
-    /// address and the server.
-    fn serve_once(
-        body: String,
-        chunked: bool,
-    ) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
+    /// Answers one request with `answer`, written as it is, once the request
+    /// has been read whole, and hands back the address and the server.
+    fn serve(answer: Vec<u8>) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let serving = std::thread::spawn(move || {
@@ -1968,28 +1962,117 @@ mod tests {
                 }
             }
             std::io::Read::read_exact(&mut reader, &mut vec![0; length])?;
-            write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
-                if chunked {
-                    "Transfer-Encoding: chunked\r\n".into()
-                } else {
-                    format!("Content-Length: {}\r\n", body.len())
-                }
-            )?;
-            if chunked {
-                for chunk in body.as_bytes().chunks(65_536) {
-                    write!(socket, "{:x}\r\n", chunk.len())?;
-                    socket.write_all(chunk)?;
-                    socket.write_all(b"\r\n")?;
-                }
-                socket.write_all(b"0\r\n\r\n")?;
-            } else {
-                socket.write_all(body.as_bytes())?;
-            }
+            socket.write_all(&answer)?;
             Ok(())
         });
         (url, serving)
+    }
+
+    /// Serves `body` once as a `200` naming the contract, with its length or
+    /// in chunks.
+    fn serve_once(
+        body: String,
+        chunked: bool,
+    ) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
+        let mut answer = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
+            if chunked {
+                "Transfer-Encoding: chunked\r\n".into()
+            } else {
+                format!("Content-Length: {}\r\n", body.len())
+            }
+        )
+        .into_bytes();
+        if chunked {
+            for chunk in body.as_bytes().chunks(65_536) {
+                answer.extend(format!("{:x}\r\n", chunk.len()).into_bytes());
+                answer.extend(chunk);
+                answer.extend(b"\r\n");
+            }
+            answer.extend(b"0\r\n\r\n");
+        } else {
+            answer.extend(body.into_bytes());
+        }
+        serve(answer)
+    }
+
+    /// A proxy in front of the server answers in its own words, which need
+    /// not be UTF-8, and its status and wait are still the answer.
+    #[test]
+    fn a_proxy_page_that_is_not_utf8_keeps_its_status_and_wait() {
+        let page = || {
+            let body = b"<html>Service indisponible \xe0 cette heure</html>".to_vec();
+            let mut answer = format!(
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/html; charset=iso-8859-1\r\nRetry-After: 120\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            answer.extend(body);
+            serve(answer)
+        };
+        let (url, serving) = page();
+        let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        });
+        assert!(
+            matches!(
+                read,
+                Err(CoreError::Unnamed {
+                    status: 503,
+                    retry_after_seconds: Some(120),
+                    ..
+                })
+            ),
+            "a read: {read:?}"
+        );
+        serving.join().unwrap().unwrap();
+
+        let (url, serving) = page();
+        let sent = Http::new(&url, "k")
+            .unwrap()
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: "{}",
+                idempotency_key: "key",
+            })
+            .unwrap();
+        assert_eq!(
+            (sent.status, sent.retry_after_seconds, sent.contract_named),
+            (503, Some(120), false),
+            "a write's answer"
+        );
+        assert!(sent.is_environmental());
+        serving.join().unwrap().unwrap();
+
+        let (url, serving) = page();
+        let reply = Http::new(&url, "k")
+            .unwrap()
+            .call(get(&["items"], false))
+            .unwrap();
+        assert_eq!((reply.status, reply.retry_after_seconds), (503, Some(120)));
+        assert!(reply.body.contains("indisponible"), "{}", reply.body);
+        serving.join().unwrap().unwrap();
+
+        // JSON is read strictly: a byte that is not UTF-8 is no answer.
+        let body = b"{\"data\":[],\"next_cursor\":\"\xe0\"}".to_vec();
+        let mut answer = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        answer.extend(body);
+        let (url, serving) = serve(answer);
+        let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        });
+        assert!(matches!(read, Err(CoreError::Network(_))), "{read:?}");
+        serving.join().unwrap().unwrap();
     }
 
     /// A page of 200 rows, a bulk read of 100 and a write's answer can each
