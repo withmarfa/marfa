@@ -288,6 +288,16 @@ pub fn hold_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), Core
     )
 }
 
+/// Keeps a line's hold of `id`, but as a hold of a pin the folder did not
+/// make, so its release leaves the pin to whoever holds it now.
+pub fn disown_edge_end(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    let key = format!("{EDGE_END}{id}");
+    if crate::store::meta_get(conn, &key)?.as_deref() == Some(MADE) {
+        crate::store::meta_set(conn, &key, "")?;
+    }
+    Ok(())
+}
+
 /// Lets a line's hold go, and the pin with it where the folder made it and
 /// no binding holds it.
 pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), CoreError> {

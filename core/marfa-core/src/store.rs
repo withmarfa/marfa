@@ -1980,6 +1980,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     ] {
         conn.execute(statement, params![local, answered])?;
     }
+    let carried = pinned(conn, local)?;
     if conn.execute(
         "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
         params![local, answered],
@@ -1989,6 +1990,13 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     }
     // Left where the server's row was pinned already.
     unpin(conn, local)?;
+    // The create's pin is somebody's own on the row it lands on, so the
+    // release of a pin the body rule or a folder line made there must not
+    // take it.
+    if carried {
+        conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [answered])?;
+        crate::folder::state::disown_edge_end(conn, answered)?;
+    }
     drop_beneath(conn, Subject::Item, local)?;
     settle_read_back(conn, Subject::Item, local)?;
     // The writes just moved onto `answered` wait on the row as the copy
@@ -3991,6 +3999,47 @@ mod tests {
         assert!(!item_held(&conn, "n1").unwrap());
         assert!(purge_item(&conn, "n1").unwrap());
         assert!(edges_from(&conn, "n2").unwrap().is_empty());
+    }
+
+    /// A create answered with a row the body rule or a folder line pinned
+    /// lands its own pin there, which their release must not take
+    /// (`device/pin-create-lasts`).
+    #[test]
+    fn a_create_landing_on_a_row_another_claim_pinned_keeps_its_pin() {
+        use crate::folder::state;
+        let mut conn = conn();
+        for id in ["linked", "linked-alone", "linked-unpinned"] {
+            pin(&conn, id).unwrap();
+            conn.execute("INSERT INTO body_pins (item_id) VALUES (?1)", [id])
+                .unwrap();
+        }
+        for id in ["lined", "lined-alone", "lined-unpinned"] {
+            pin(&conn, id).unwrap();
+            state::hold_edge_end(&conn, id, true).unwrap();
+        }
+        for (minted, answered) in [("minted-a", "linked"), ("minted-b", "lined")] {
+            pin(&conn, minted).unwrap();
+            adopt_answered_id(&conn, minted, answered).unwrap();
+        }
+        // A create the copy did not pin leaves each claim its own.
+        for (minted, answered) in [
+            ("minted-c", "linked-unpinned"),
+            ("minted-d", "lined-unpinned"),
+        ] {
+            adopt_answered_id(&conn, minted, answered).unwrap();
+        }
+
+        crate::body::rule::after_answers(&mut conn).unwrap();
+        for (id, made) in state::edge_ends(&conn).unwrap() {
+            state::release_edge_end(&conn, &id, made).unwrap();
+        }
+
+        // The witness: each claim's release takes a pin that is only its own.
+        assert_eq!(
+            pins(&conn).unwrap(),
+            ["lined", "linked"],
+            "a create's pin went with a body link's or a folder line's release"
+        );
     }
 
     #[test]

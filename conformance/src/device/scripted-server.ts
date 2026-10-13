@@ -6,7 +6,12 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import document from "../../../openapi.json" with { type: "json" };
-import { answers, certifiedRead, SCRIPTED_READ_VIEW } from "./marfa-answers.js";
+import {
+  answers,
+  bulkGetOf,
+  certifiedRead,
+  SCRIPTED_READ_VIEW,
+} from "./marfa-answers.js";
 
 /**
  * A server the fixture writes the answers for.
@@ -113,6 +118,19 @@ function matches(route: Route, method: string, pathname: string): boolean {
     ? route.pathname === pathname
     : route.pathname.test(pathname);
 }
+
+/** What a door no fixture scripted answers. */
+const NOT_SCRIPTED: Answer = {
+  kind: "json",
+  status: 501,
+  body: {
+    error: {
+      code: "not_scripted",
+      message: "no answer was scripted for this door",
+    },
+  },
+  contract: null,
+};
 
 /** How often a held stream says something, well inside a device's idle bound. */
 const KEEPALIVE_MS = 250;
@@ -286,13 +304,14 @@ export class ScriptedServer {
       };
       this.recorded.push(recorded);
 
-      const route = this.routes.find((candidate) =>
-        matches(candidate, recorded.method, recorded.pathname),
-      );
       // Every real server answers its root, which `status` and `whoami`
       // read; a fixture that scripts no root gets the one naming the
       // server's contract.
-      if (!route && recorded.method === "GET" && recorded.pathname === "/") {
+      if (
+        recorded.method === "GET" &&
+        recorded.pathname === "/" &&
+        !this.routes.some((candidate) => matches(candidate, "GET", "/"))
+      ) {
         this.send(
           answers.root(
             this.contract === null ? undefined : Number(this.contract),
@@ -301,28 +320,64 @@ export class ScriptedServer {
         );
         return;
       }
-      if (!route) {
-        this.unmatched.push(`${recorded.method} ${recorded.pathname}`);
-        response.writeHead(501, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: {
-              code: "not_scripted",
-              message: "no answer was scripted for this door",
-            },
-          }),
-        );
-        return;
-      }
+      this.send(this.respond(recorded) ?? NOT_SCRIPTED, response);
+    });
+  }
 
+  /**
+   * The next answer scripted for the request's door, or undefined where none
+   * is, which is recorded as unmatched.
+   *
+   * A bulk read by id that no fixture scripted is answered from the reads by
+   * id the fixture did script, one for each id in the order named, because
+   * the server resolves each id as a read by id does: a fixture that scripts
+   * a row's read scripts what a bulk read of it answers. The one difference
+   * is a `system.*` row, which the bulk read leaves out unless its `include`
+   * names `system` (`items/bulk-get-system`).
+   */
+  private respond(recorded: RecordedRequest): Answer | undefined {
+    const route = this.routes.find((candidate) =>
+      matches(candidate, recorded.method, recorded.pathname),
+    );
+    if (route) {
       const responder =
         route.responders.length > 1
           ? (route.responders.shift() as Responder)
           : route.responders[0];
-      const answer =
-        typeof responder === "function" ? responder(recorded) : responder;
-      this.send(answer, response);
-    });
+      return typeof responder === "function" ? responder(recorded) : responder;
+    }
+    if (recorded.method === "POST" && recorded.pathname === "/items/bulk-get") {
+      let ids: string[];
+      let include: string[] | undefined;
+      try {
+        ({ ids, include } = JSON.parse(recorded.body) as {
+          ids: string[];
+          include?: string[];
+        });
+      } catch {
+        return answers.validation("validation_error", "the body is not JSON");
+      }
+      const reads: Answer[] = [];
+      for (const id of ids) {
+        const read = this.respond({
+          ...recorded,
+          method: "GET",
+          pathname: `/items/${id}`,
+          query: new URLSearchParams({ include: "edges,metadata" }),
+          target: `/items/${id}?include=edges,metadata`,
+          body: "",
+          raw: Buffer.alloc(0),
+        });
+        if (read === undefined) return NOT_SCRIPTED;
+        reads.push(read);
+      }
+      return bulkGetOf(reads, {
+        viewed: recorded.headers["x-marfa-read-view"] === SCRIPTED_READ_VIEW,
+        system: include?.includes("system") ?? false,
+      });
+    }
+    this.unmatched.push(`${recorded.method} ${recorded.pathname}`);
+    return undefined;
   }
 
   private named(): Record<string, string> {

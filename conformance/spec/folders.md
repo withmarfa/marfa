@@ -1538,7 +1538,7 @@ While at least one document line names an item outside the slice, a device MUST 
 
 ### `folders/edge-pin-release`
 
-When no file binding or edge line requires an item pinned by the folder, a device MUST release the folder's pin.
+When no file binding or edge line requires an item pinned by the folder, a device MUST release the folder's pin, unless a pinned create was answered with the item after an edge line pinned it (`device/pin-create-lasts`).
 
 **Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
 

@@ -104,6 +104,14 @@ When a pinned create is answered with the id of another row, a device MUST move 
 
 **Tests:** `device/catch-up.test.ts › pins a row of its own create the server does not hold yet, and moves the pin to the id the create is answered with`.
 
+### `device/pin-create-lasts`
+
+When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the row (`device/purge-accepted`), the read after an answer to a write of the row finds no such row, an event says the row was purged, or a folder that binds a file to the row lets the row go once no file or line of the folder needs it (`folders/edge-pin-release`).
+
+**Reason:** a device cannot tell when an app stops showing a row it created, so the pin ends only on the caller's word, on the server's word that the row is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the row. A pin that a body's link (`device/body-pin`) or a folder's line (`folders/edge-pin-held`) made on a row before a create was answered with that row becomes the create's, so the link's or the line's release leaves it. The pin moves with the row (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of a row its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
+
+**Tests:** `device/pins-live.test.ts › keeps the pin of its own create outside its slice past the answer and the next hydration, until it is taken off`, `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, `device/catch-up.test.ts › takes the pin off a row whose create was refused`, `› takes the pin off a purged row`, `device/folders-identity.test.ts › lets go of the pin of an item whose file's path another item takes`.
+
 ### `device/pin-refused-create`
 
 When a certified read confirms that the server holds no row for a pinned create it refused, a device MUST let the row go with its pin.
@@ -132,23 +140,23 @@ When a device hydrates, a device MUST keep every pin it holds, the hydration tha
 
 When a device hydrates, a device MUST hold each pinned row as the server answers it then, read by id where the slice does not bring it.
 
-**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`.
+**Tests:** `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`, `› reads a pinned folder row again at a hydration, which the bulk read answers only with system`, `device/pins-live.test.ts › holds a pinned folder row, and keeps a pin whose row went to the bin without a row`.
 
 ### `device/pin-gone-kept`
 
-If a hydration's read of a pinned row answers that the server holds no such row, then a device MUST keep the pin and hold no row for it.
+If the server leaves a pinned row out of a hydration's read, then a device MUST keep the pin and hold no row for it.
 
-**Reason:** the server answers a row of a type the key can no longer read as one it does not hold.
+**Reason:** the server leaves out a row in the bin, or of a type the key can no longer read, as it leaves out one it does not hold (`items/bulk-get` and `items/bulk-get-omits`).
 
-**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`, `device/fidelity.test.ts › matches the refusals a device must not retry`.
+**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`, `device/pins-live.test.ts › holds a pinned folder row, and keeps a pin whose row went to the bin without a row`, `device/fidelity.test.ts › matches the refusals a device must not retry`.
 
 ### `device/pin-gone-completes`
 
-If a hydration's read of a pinned row answers that the server holds no such row, then a device MUST complete the hydration.
+If the server leaves a pinned row out of a hydration's read, then a device MUST complete the hydration.
 
 **Reason:** a row the key can no longer read would otherwise stop every hydration of the copy.
 
-**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`.
+**Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`, `device/pins-live.test.ts › holds a pinned folder row, and keeps a pin whose row went to the bin without a row`.
 
 ### `device/unpin-says`
 
@@ -501,6 +509,14 @@ When a device hydrates, a device MUST read the item listing for each type its sl
 When a device hydrates, a device MUST read each item listing until a page answers no `next_cursor`, past a page that is empty.
 
 **Tests:** `device/hydration.test.ts › walks past an empty page that still carries a cursor`, `› reports the counts, the pages and the cursor it stored`.
+
+### `device/hydrate-pins-batched`
+
+When a device hydrates, a device MUST read the pinned rows its slice does not bring with `POST /items/bulk-get` under the hydration's read view, at most 100 ids to a request.
+
+**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`read-views/listed-bulk-get`).
+
+**Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its read view, not one request each`.
 
 ### `device/hydrate-repeated-cursor`
 
@@ -3088,7 +3104,7 @@ When a body's link names an item only the server holds, a device MUST pin that i
 
 ### `device/body-pin-release`
 
-When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go.
+When no `references` edge reaches an item a body's link pinned, a device MUST let that pin go, unless the caller or a folder has pinned the item since, or a pinned create has been answered with it since (`device/pin-create-lasts`).
 
 **Reason:** the pin was made for the edge alone.
 

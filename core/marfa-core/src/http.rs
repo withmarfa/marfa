@@ -14,11 +14,15 @@ use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
 use crate::model::SliceTier;
 use crate::wire::{
-    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItemWithMetadata, WirePage,
-    WireType,
+    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItem, WireItemWithMetadata,
+    WireMetadata, WirePage, WireType,
 };
 
 pub const PAGE_LIMIT: u32 = 200;
+
+/// The most ids `POST /items/bulk-get` takes in one request
+/// (`items/bulk-get-cap`).
+pub const BULK_GET_LIMIT: usize = 100;
 
 /// How long a server may take to begin an answer, and to send the body of
 /// one read whole.
@@ -838,6 +842,81 @@ impl Http {
         }
     }
 
+    /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, each row with
+    /// its metadata, the first page of its edges of each type and, under a
+    /// read view, `listed`. It asks for `system` because a pin can name a
+    /// `system.*` row, which the door otherwise leaves out
+    /// (`items/bulk-get-system`). An id the answer leaves out names no row
+    /// the key may read outside the bin (`items/bulk-get-omits`).
+    pub(crate) fn items_by_id(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<WireItemWithMetadata>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Metadata {
+            item_id: String,
+            #[serde(default)]
+            tags: Vec<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            items: Vec<WireItem>,
+            metadata: Vec<Metadata>,
+            #[serde(default)]
+            listed: Option<Vec<bool>>,
+        }
+        if ids.len() > BULK_GET_LIMIT {
+            return Err(CoreError::Invalid(format!(
+                "a bulk read takes at most {BULK_GET_LIMIT} ids, not {}",
+                ids.len()
+            )));
+        }
+        let body = serde_json::json!({
+            "ids": ids,
+            "include": ["edges", "metadata", "system"],
+        })
+        .to_string();
+        let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
+        let unreadable = |why: &str| {
+            if self.view.is_some() {
+                crate::read_view::invalid()
+            } else {
+                CoreError::Decoding(format!("/items/bulk-get: {why}"))
+            }
+        };
+        let answered = answer.items.len();
+        if answer.metadata.len() != answered {
+            return Err(unreadable("the metadata does not pair with the items"));
+        }
+        let listed = match answer.listed {
+            Some(listed) if listed.len() == answered => listed.into_iter().map(Some).collect(),
+            Some(_) => return Err(unreadable("`listed` does not pair with the items")),
+            None if self.view.is_some() => return Err(unreadable("no `listed` under a read view")),
+            None => vec![None; answered],
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::with_capacity(answered);
+        for ((item, metadata), listed) in answer.items.into_iter().zip(answer.metadata).zip(listed)
+        {
+            if !ids.contains(&item.id) || !seen.insert(item.id.clone()) {
+                return Err(unreadable(
+                    "an item the request did not name, or named twice",
+                ));
+            }
+            if metadata.item_id != item.id {
+                return Err(unreadable("the metadata does not pair with the items"));
+            }
+            rows.push(WireItemWithMetadata {
+                listed,
+                item,
+                metadata: WireMetadata {
+                    tags: metadata.tags,
+                },
+            });
+        }
+        Ok(rows)
+    }
+
     /// Redirects, contract mismatches and transport or renewal failures are
     /// errors. Other responses retain their status and code together for the
     /// drain to classify; `refusal()` drops the status.
@@ -878,10 +957,7 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         // A body that will not read is a transport failure, not an answer.
-        let body = response
-            .into_body()
-            .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let body = whole(response.into_body())?;
         let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
             Ok(envelope) => envelope.error.code,
             Err(_) => String::new(),
@@ -1122,16 +1198,7 @@ impl Http {
         let body = if call.stream && (200..300).contains(&status) {
             ReplyBody::Stream(Box::new(response.into_body().into_reader()))
         } else {
-            ReplyBody::Text(
-                response
-                    .into_body()
-                    // A page or export can exceed ureq's default 10 MiB.
-                    .into_with_config()
-                    .limit(u64::MAX)
-                    .lossy_utf8(true)
-                    .read_to_string()
-                    .map_err(|error| CoreError::Network(error.to_string()))?,
-            )
+            ReplyBody::Text(whole(response.into_body())?)
         };
         Ok(Reply {
             status,
@@ -1240,20 +1307,47 @@ impl Http {
         segments: &[&str],
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
+        self.read_json(segments, params, None)
+    }
+
+    /// A read, sent as a `GET`, or as a `POST` of `body` for a read whose
+    /// question is a body. Under a read view it is a conditional read: the
+    /// answer has to carry the view back.
+    fn read_json<T: DeserializeOwned>(
+        &self,
+        segments: &[&str],
+        params: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
         let conditional = self.view.as_deref().filter(|_| !segments.is_empty());
         let response = self.authorized(|authorization| {
-            let mut request = self
-                .agent
-                .get(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", authorization);
-            if let Some(view) = conditional {
-                request = request.header("X-Marfa-Read-View", view);
-            }
-            request
-                .call()
-                .map_err(|error| CoreError::Network(error.to_string()))
+            let sent = match body {
+                None => {
+                    let mut request = self
+                        .agent
+                        .get(url.as_str())
+                        .header("Accept", "application/json")
+                        .header("Authorization", authorization);
+                    if let Some(view) = conditional {
+                        request = request.header("X-Marfa-Read-View", view);
+                    }
+                    request.call()
+                }
+                Some(body) => {
+                    let mut request = self
+                        .agent
+                        .post(url.as_str())
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", authorization);
+                    if let Some(view) = conditional {
+                        request = request.header("X-Marfa-Read-View", view);
+                    }
+                    request.send(body)
+                }
+            };
+            sent.map_err(|error| CoreError::Network(error.to_string()))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
@@ -1266,10 +1360,7 @@ impl Http {
             .collect::<Vec<_>>();
         let certified = conditional
             .is_none_or(|expected| proof.len() == 1 && proof[0].to_str().ok() == Some(expected));
-        let text = response
-            .into_body()
-            .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let text = whole(response.into_body())?;
         if !(200..300).contains(&status) {
             let error = self.refused(status, named, &text, retry_after);
             if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
@@ -1284,6 +1375,7 @@ impl Http {
             let value: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))?;
             if conditional.is_some()
+                && body.is_none()
                 && segments.first() == Some(&"items")
                 && (segments.len() == 1 || segments.len() == 2)
             {
@@ -1314,6 +1406,19 @@ impl Http {
             }
         })
     }
+}
+
+/// An answer read whole, past ureq's default 10 MiB, which a page of 200
+/// rows, a bulk read of 100 or an export can pass. A text answer that is not
+/// UTF-8, such as a proxy's page, is read with its bad bytes replaced, so its
+/// status still reaches the caller; JSON is read strictly. The body budget
+/// still bounds how long the read may take.
+fn whole(body: ureq::Body) -> Result<String, CoreError> {
+    body.into_with_config()
+        .limit(u64::MAX)
+        .lossy_utf8(true)
+        .read_to_string()
+        .map_err(|error| CoreError::Network(error.to_string()))
 }
 
 fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {
@@ -1829,6 +1934,211 @@ mod tests {
                 .fetch(get(&["items"], false), true)
                 .unwrap();
             assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
+            serving.join().unwrap().unwrap();
+        }
+    }
+
+    /// Answers one request with `answer`, written as it is, once the request
+    /// has been read whole, and hands back the address and the server.
+    fn serve(answer: Vec<u8>) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept()?;
+            let mut reader = std::io::BufReader::new(socket.try_clone()?);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut reader, &mut line)?;
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            std::io::Read::read_exact(&mut reader, &mut vec![0; length])?;
+            socket.write_all(&answer)?;
+            Ok(())
+        });
+        (url, serving)
+    }
+
+    /// Serves `body` once as a `200` naming the contract, with its length or
+    /// in chunks.
+    fn serve_once(
+        body: String,
+        chunked: bool,
+    ) -> (String, std::thread::JoinHandle<std::io::Result<()>>) {
+        let mut answer = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
+            if chunked {
+                "Transfer-Encoding: chunked\r\n".into()
+            } else {
+                format!("Content-Length: {}\r\n", body.len())
+            }
+        )
+        .into_bytes();
+        if chunked {
+            for chunk in body.as_bytes().chunks(65_536) {
+                answer.extend(format!("{:x}\r\n", chunk.len()).into_bytes());
+                answer.extend(chunk);
+                answer.extend(b"\r\n");
+            }
+            answer.extend(b"0\r\n\r\n");
+        } else {
+            answer.extend(body.into_bytes());
+        }
+        serve(answer)
+    }
+
+    /// A proxy in front of the server answers in its own words, which need
+    /// not be UTF-8, and its status and wait are still the answer.
+    #[test]
+    fn a_proxy_page_that_is_not_utf8_keeps_its_status_and_wait() {
+        let page = || {
+            let body = b"<html>Service indisponible \xe0 cette heure</html>".to_vec();
+            let mut answer = format!(
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/html; charset=iso-8859-1\r\nRetry-After: 120\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            answer.extend(body);
+            serve(answer)
+        };
+        let (url, serving) = page();
+        let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        });
+        assert!(
+            matches!(
+                read,
+                Err(CoreError::Unnamed {
+                    status: 503,
+                    retry_after_seconds: Some(120),
+                    ..
+                })
+            ),
+            "a read: {read:?}"
+        );
+        serving.join().unwrap().unwrap();
+
+        let (url, serving) = page();
+        let sent = Http::new(&url, "k")
+            .unwrap()
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: "{}",
+                idempotency_key: "key",
+            })
+            .unwrap();
+        assert_eq!(
+            (sent.status, sent.retry_after_seconds, sent.contract_named),
+            (503, Some(120), false),
+            "a write's answer"
+        );
+        assert!(sent.is_environmental());
+        serving.join().unwrap().unwrap();
+
+        let (url, serving) = page();
+        let reply = Http::new(&url, "k")
+            .unwrap()
+            .call(get(&["items"], false))
+            .unwrap();
+        assert_eq!((reply.status, reply.retry_after_seconds), (503, Some(120)));
+        assert!(reply.body.contains("indisponible"), "{}", reply.body);
+        serving.join().unwrap().unwrap();
+
+        // JSON is read strictly: a byte that is not UTF-8 is no answer.
+        let body = b"{\"data\":[],\"next_cursor\":\"\xe0\"}".to_vec();
+        let mut answer = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        answer.extend(body);
+        let (url, serving) = serve(answer);
+        let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
+            r#type: None,
+            tier: SliceTier::All,
+            cursor: None,
+        });
+        assert!(matches!(read, Err(CoreError::Network(_))), "{read:?}");
+        serving.join().unwrap().unwrap();
+    }
+
+    /// A page of 200 rows, a bulk read of 100 and a write's answer can each
+    /// be larger than ureq's default 10 MiB, and an answer cut off there
+    /// would fail every hydration that holds such rows.
+    #[test]
+    fn every_whole_read_takes_an_answer_over_ten_mib() {
+        let row = |at: usize| {
+            let mut item: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+                "item.updated",
+                &format!("row-{at}"),
+                "core.note",
+                1,
+            ))
+            .unwrap();
+            item["item"]["properties"]["body"] = "x".repeat(1_000_000).into();
+            item
+        };
+        let rows: Vec<serde_json::Value> = (0..11).map(row).collect();
+        let ids: Vec<String> = (0..11).map(|at| format!("row-{at}")).collect();
+        let page = serde_json::json!({
+            "data": rows.iter().map(|row| serde_json::json!({"item": row["item"], "metadata": {"tags": []}})).collect::<Vec<_>>(),
+            "next_cursor": null,
+        })
+        .to_string();
+        let bulk = serde_json::json!({
+            "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+            "metadata": ids.iter().map(|id| serde_json::json!({"item_id": id, "tags": []})).collect::<Vec<_>>(),
+        })
+        .to_string();
+        let answer =
+            serde_json::json!({"item": rows[0]["item"], "padding": "y".repeat(11_000_000)})
+                .to_string();
+        for body in [&page, &bulk, &answer] {
+            assert!(body.len() > 10 * 1024 * 1024);
+        }
+        for chunked in [false, true] {
+            let (url, serving) = serve_once(page.clone(), chunked);
+            let read = Http::new(&url, "k")
+                .unwrap()
+                .items_page(&ItemsQuery {
+                    r#type: None,
+                    tier: SliceTier::All,
+                    cursor: None,
+                })
+                .unwrap();
+            assert_eq!(read.data.len(), 11, "a listing page");
+            serving.join().unwrap().unwrap();
+
+            let (url, serving) = serve_once(bulk.clone(), chunked);
+            let read = Http::new(&url, "k").unwrap().items_by_id(&ids).unwrap();
+            assert_eq!(read.len(), 11, "a bulk read");
+            serving.join().unwrap().unwrap();
+
+            let (url, serving) = serve_once(answer.clone(), chunked);
+            let sent = Http::new(&url, "k")
+                .unwrap()
+                .send(&Outgoing {
+                    method: Method::Post,
+                    segments: vec!["items".into()],
+                    params: Vec::new(),
+                    body: "{}",
+                    idempotency_key: "key",
+                })
+                .unwrap();
+            assert_eq!(sent.body, answer, "a write's answer");
             serving.join().unwrap().unwrap();
         }
     }

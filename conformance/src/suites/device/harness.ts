@@ -63,6 +63,17 @@ export function queuedEdit(
   return { ok: true, value: outcome.value };
 }
 
+/** How many requests read row `id`: alone by id, or in a bulk read by id. */
+export function readsOf(server: ScriptedServer, id: string): number {
+  return server.requests.filter(
+    (request) =>
+      (request.method === "GET" && request.pathname === `/items/${id}`) ||
+      (request.method === "POST" &&
+        request.pathname === "/items/bulk-get" &&
+        (JSON.parse(request.body) as { ids: string[] }).ids.includes(id)),
+  ).length;
+}
+
 export function requireBinary(): string {
   const binary = process.env.MARFA_DEVICE_BIN;
   if (binary === undefined || binary === "") {

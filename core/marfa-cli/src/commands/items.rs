@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
+use marfa_core::http::BULK_GET_LIMIT;
 use marfa_core::{file_type_for, mime_type_for};
 use serde_json::{Map, Value, json};
 
@@ -981,9 +982,6 @@ fn edges(
     }
     out.line(&output::edges_from(&page, inbound, &titles))
 }
-
-/// The most ids `POST /items/bulk-get` takes in one request.
-const BULK_GET_LIMIT: usize = 100;
 
 /// A run that stops partway leaves the earlier steps standing; the blob is
 /// content-addressed, so a retry uploads nothing new.
