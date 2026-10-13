@@ -4731,13 +4731,18 @@ describe("reading only what changed", () => {
     try {
       await settle();
       const kept = join(made.dir, "kept.md");
-      const time = join(
+      // Staged outside the folder with the file's own time, and copied in
+      // by one `cp -p`, which writes the file in place and puts the time
+      // back at once: a pass between a write and a separate `touch` would
+      // see the time moved and read the file.
+      const staged = join(
         mkdtempSync(join(realpathSync(tmpdir()), "marfa-time-")),
-        "time",
+        "kept.md",
       );
-      execFileSync("touch", ["-r", kept, time]);
-      writeFileSync(kept, read(made, "kept.md").replace("first", "FIRST"));
-      execFileSync("touch", ["-r", time, kept]);
+      writeFileSync(staged, read(made, "kept.md").replace("first", "FIRST"));
+      chmodSync(staged, statSync(kept).mode);
+      execFileSync("touch", ["-r", kept, staged]);
+      execFileSync("cp", ["-p", staged, kept]);
       put(made, "edited.md", read(made, "edited.md").replace("first", "FIRST"));
       await vi.waitFor(
         () => expect(sentUpdates(made).length).toBeGreaterThan(updates),
