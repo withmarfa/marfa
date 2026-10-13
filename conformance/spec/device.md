@@ -146,7 +146,7 @@ When a device hydrates, a device MUST hold each pinned row as the server answers
 
 If the server leaves a pinned row out of a hydration's read, then a device MUST keep the pin and hold no row for it.
 
-**Reason:** the server leaves out a row in the bin, or of a type the key can no longer read, as it leaves out one it does not hold (`items/bulk-get-omits`).
+**Reason:** the server leaves out a row in the bin, or of a type the key can no longer read, as it leaves out one it does not hold (`items/bulk-get` and `items/bulk-get-omits`).
 
 **Tests:** `device/catch-up.test.ts › keeps a pin the key can no longer read, and completes the hydration`, `device/pins-live.test.ts › holds a pinned folder row, and keeps a pin whose row went to the bin without a row`, `device/fidelity.test.ts › matches the refusals a device must not retry`.
 
@@ -514,7 +514,7 @@ When a device hydrates, a device MUST read each item listing until a page answer
 
 When a device hydrates, a device MUST read the pinned rows its slice does not bring with `POST /items/bulk-get` under the hydration's read view, at most 100 ids to a request.
 
-**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`read-views/listed-bulk-get`).
+**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`read-views/listed-bulk-get`).
 
 **Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its read view, not one request each`.
 
