@@ -71,6 +71,9 @@ async function serving(options = {}) {
         });
       if (options.slowWrites) setTimeout(answer, 500);
       else answer();
+    } else if (path === "/items/bulk-get" && req.method === "POST") {
+      // This server holds no row, so a bulk read by id answers none.
+      json(200, { items: [], metadata: [], listed: [] });
     } else if (path === "/items") {
       pages += 1;
       if (options.slowPages && pages === 1) {

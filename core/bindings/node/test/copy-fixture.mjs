@@ -10,12 +10,15 @@ export const FENCE = "a".repeat(64);
 
 /**
  * The scripted JSON reads below model a single certified view. Writes and
- * root descriptions carry no read proof. Item listing flags remain explicit
- * in each fixture's body.
+ * root descriptions carry no read proof; the bulk read by id is a read sent
+ * as a `POST`. Item listing flags remain explicit in each fixture's body.
  * @param {import("node:http").IncomingMessage} req
  */
 export function readProof(req) {
-  if (req.method !== "GET" || req.url === "/") return {};
+  const read =
+    req.method === "GET" ||
+    (req.method === "POST" && req.url === "/items/bulk-get");
+  if (!read || req.url === "/") return {};
   assert.equal(req.headers["x-marfa-read-view"], FENCE);
   return { "x-marfa-read-view": FENCE };
 }
