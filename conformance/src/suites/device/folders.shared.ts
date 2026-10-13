@@ -34,10 +34,12 @@ import type { WireEdgeOptions } from "../../device/marfa-answers.js";
  * `include` globs in `vitest.config.ts` do not run it.
  */
 
-/** Content writes, including every non-read except the exact health-report door. */
+/** Content writes: every request but a read, the bulk read by id, which is
+ *  sent as a `POST`, and the exact health-report door. */
 export function isContentWrite(request: RecordedRequest): boolean {
   return (
     request.method !== "GET" &&
+    !(request.method === "POST" && request.pathname === "/items/bulk-get") &&
     !(
       request.method === "PUT" &&
       /^\/folders\/[^/]+\/status$/.test(request.pathname)
