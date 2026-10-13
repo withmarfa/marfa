@@ -191,8 +191,8 @@ fn hydrate_inner(
             }
         }
 
-        // A pin the answer leaves out names no row the key may read, and
-        // stays without one (`device/pin-gone-kept`).
+        // A pin the answer leaves out names no row the key may read outside
+        // the bin, and stays without one (`device/pin-gone-kept`).
         let pinned: Vec<String> = {
             let conn = core.conn()?;
             let mut unheld = Vec::new();
