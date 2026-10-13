@@ -17,10 +17,11 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * The rows a working copy pins outside its slice, read again by a hydration
- * against a real server (`device/hydration-pins-batched`,
- * `device/pin-read-on-hydration` and `device/pin-gone-kept`), through a proxy
- * that records every request the device sends.
+ * The rows a working copy pins outside its slice, and how long a create's pin
+ * lasts, against a real server (`device/hydrate-pins-batched`,
+ * `device/pin-read-on-hydration`, `device/pin-gone-kept` and
+ * `device/pin-create-lasts`), through a proxy that records every request the
+ * device sends.
  */
 
 let client: MarfaClient;
