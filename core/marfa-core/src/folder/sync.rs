@@ -192,9 +192,10 @@ impl Folder {
                     return Ok(Removal::Deleted(entry.dir));
                 }
                 (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
-                (_, found) => format!(
+                (Some(_), None) => "no store id can be read from the folder state there, so it cannot be shown to be its own".to_string(),
+                (Some(_), Some(found)) => format!(
                     "the folder state there is not the one the registry lists for it; {}",
-                    whose(found.as_deref())
+                    whose(&found)
                 ),
             }
         };
@@ -217,12 +218,10 @@ pub enum Removal {
 }
 
 /// Whose state a listed folder's directory holds instead of its own.
-fn whose(store: Option<&str>) -> String {
-    let holder = store.and_then(|store| {
-        registry::listing()
-            .into_iter()
-            .find(|entry| entry.store.as_deref() == Some(store))
-    });
+fn whose(store: &str) -> String {
+    let holder = registry::listing()
+        .into_iter()
+        .find(|entry| entry.store.as_deref() == Some(store));
     match holder {
         Some(entry) => format!(
             "it is the state of the folder listed at {}",

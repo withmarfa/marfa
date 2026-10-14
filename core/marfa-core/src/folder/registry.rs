@@ -1511,6 +1511,21 @@ mod tests {
         ));
         assert!(fourth.join(STATE_DIR).join("core.sqlite").exists());
 
+        // State whose store id cannot be read is not said to be anyone's.
+        let sixth = base.join("f/notes");
+        bound_folder(&sixth, "01a00000-0000-7000-8000-000000000006");
+        registry
+            .register(&sixth, "01a00000-0000-7000-8000-000000000006", Some("s6"))
+            .unwrap();
+        assert_eq!(
+            Folder::remove_at(&sixth).unwrap(),
+            crate::folder::Removal::Unlisted {
+                dir: sixth.clone(),
+                reason: "no store id can be read from the folder state there, so it cannot be shown to be its own".into(),
+            }
+        );
+        assert!(sixth.join(STATE_DIR).join("core.sqlite").exists());
+
         // An entry with no store cannot be shown to own the state there.
         let third = base.join("c/notes");
         bound_folder(&third, "01a00000-0000-7000-8000-000000000003");
