@@ -1417,11 +1417,19 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 ### `events/schedule-fails-visibly`
 
-If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, or behind the oldest event the log retains, then the server MUST end each run of `webhook-schedule` with `last_outcome` `error`.
+If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST end each run of `webhook-schedule` with `last_outcome` `error`.
 
 **Reason:** a gap the scheduler cannot account for would otherwise skip events that fan out without saying so.
 
 **Tests:** `compliance/webhook-schedule-gap.test.ts › ends a webhook-schedule run with error when its log position cannot be accounted for`.
+
+### `events/webhook-bulk-backlog`
+
+When an ordinary write follows a bulk write of 50,000 items with fan-out disabled, the server MUST deliver that ordinary write's event to an eligible, responsive webhook receiver within five seconds under the default housekeeping cadence.
+
+**Reason:** events that do not fan out must not consume successive scheduling runs before an event that does fan out can be reached; their payloads are not inspected by webhook scheduling because they cannot create deliveries.
+
+**Tests:** `compliance/webhook-bulk-backlog.test.ts › delivers the next fan-out within ordinary latency after 50,000 bulk rows`.
 
 ## The audit log
 

@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "./index.js";
 import type { Storage } from "../interface.js";
+import { SqliteEventLogStore } from "./event-log-store.js";
+import type { DrizzleDb } from "./connection.js";
 
 const HOUR = 3_600_000;
 
@@ -133,5 +135,82 @@ describe("SqliteEventLogStore.getAfter within a byte budget", () => {
     expect(
       (await s.eventLog.getAfter(0n, 2, { maxBytes: 1_000_000 })).length,
     ).toBe(2);
+  });
+});
+
+describe("SqliteEventLogStore.getNonFanoutEnd", () => {
+  it("verifies a 50,000-row no-fanout prefix with one payload-free query", async () => {
+    const s = await logAged([]);
+    const raw = s as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      `WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<50000)
+       INSERT INTO event_log (event_type, payload, enable_fanout, created_at)
+       SELECT 'created', 'not JSON', 0, ? FROM rows`,
+      [new Date().toISOString()],
+    );
+    const db = s.betterAuthDb as DrizzleDb;
+    const store = new SqliteEventLogStore(db);
+    const query = vi.spyOn(db, "get");
+    try {
+      expect(await store.getNonFanoutEnd(0n, 50000n)).toBe(50000n);
+      expect(query).toHaveBeenCalledTimes(1);
+    } finally {
+      query.mockRestore();
+    }
+  });
+  it("stops before every fan-out and respects its captured head", async () => {
+    const s = await logAged([0, 0, 0, 0, 0, 0]);
+    const raw = s as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "UPDATE event_log SET enable_fanout=0 WHERE id IN (1,2,4,6)",
+      [],
+    );
+    expect(await s.eventLog.getNonFanoutEnd(0n, 6n)).toBe(2n);
+    expect(await s.eventLog.getNonFanoutEnd(2n, 6n)).toBe(2n);
+    expect(await s.eventLog.getNonFanoutEnd(3n, 6n)).toBe(4n);
+    expect(await s.eventLog.getNonFanoutEnd(5n, 6n)).toBe(6n);
+    expect(await s.eventLog.getNonFanoutEnd(0n, 1n)).toBe(1n);
+  });
+  it("refuses an internal hole, a missing tail and an ahead cursor", async () => {
+    const s = await logAged([0, 0, 0]);
+    const raw = s as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun("UPDATE event_log SET enable_fanout=0", []);
+    expect(await s.eventLog.getNonFanoutEnd(0n, 3n)).toBe(3n);
+    await raw.__sqliteRun("DELETE FROM event_log WHERE id=2", []);
+    await expect(s.eventLog.getNonFanoutEnd(0n, 3n)).rejects.toThrow(
+      "inconsistent",
+    );
+    await expect(s.eventLog.getNonFanoutEnd(3n, 4n)).rejects.toThrow(
+      "inconsistent",
+    );
+    await expect(s.eventLog.getNonFanoutEnd(4n, 3n)).rejects.toThrow("ahead");
+  });
+  it("keeps adjacent IDs exact beyond 2^53 and at the i64 ceiling", async () => {
+    const s = await logAged([]);
+    const raw = s as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    for (const start of [9007199254740992n, 9223372036854775804n]) {
+      for (let n = 1n; n <= 3n; n++)
+        await raw.__sqliteRun(
+          "INSERT INTO event_log (id, event_type, payload, enable_fanout, created_at) VALUES (CAST(? AS INTEGER), 'created', '{}', ?, ?)",
+          [(start + n).toString(), n === 3n ? 1 : 0, new Date().toISOString()],
+        );
+      expect(await s.eventLog.getNonFanoutEnd(start, start + 3n)).toBe(
+        start + 2n,
+      );
+      expect(await s.eventLog.getNonFanoutEnd(start, start + 1n)).toBe(
+        start + 1n,
+      );
+      expect(await s.eventLog.getNonFanoutEnd(start + 2n, start + 3n)).toBe(
+        start + 2n,
+      );
+    }
   });
 });

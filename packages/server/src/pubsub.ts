@@ -164,8 +164,8 @@ export interface EdgeEventWithId extends EdgeEvent {
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 
 /**
- * Process-local event bus: the distribution channel for Server-Sent
- * Events and outbound webhook dispatch.
+ * Process-local event bus: the distribution channel for Server-Sent Events.
+ * Outbound webhook scheduling reads the persisted event log.
  *
  * Process-local, and that is the limit of it: a subscriber sees the events
  * its own process publishes and no others. There is no cross-process
@@ -173,8 +173,8 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
  * stream only what its own process wrote.
  */
 const emitter = new EventEmitter();
-// Each open event stream and the webhook delivery each listen here, so the
-// count grows with the number of viewers, which is uncapped unless
+// Each open event stream listens here, so the count grows with the number
+// of viewers, which is uncapped unless
 // `MARFA_SSE_MAX_VIEWERS` caps it. Node's warning at a fixed count would
 // fire on ordinary load rather than on a leak.
 emitter.setMaxListeners(0);
@@ -505,8 +505,7 @@ export interface SubscribeOptions {
    * `iterator.return()` alone cannot unwind a generator suspended on an
    * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
-   * (the SSE route) pass one to `subscribeAll`, and the webhook consumer
-   * hands the one its `stop()` aborts to both of its loops.
+   * (the SSE route) pass one to `subscribeAll`.
    */
   signal?: AbortSignal;
 }

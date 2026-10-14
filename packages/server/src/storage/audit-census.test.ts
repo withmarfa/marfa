@@ -28,7 +28,7 @@ const READS: Record<string, string> = {
   OauthProviderStore:
     "getClient getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey findDeviceCodeRequest",
   AuditStore: "has list",
-  EventLogStore: "getAfter getMinRetainedId getMaxId",
+  EventLogStore: "getAfter getNonFanoutEnd getMinRetainedId getMaxId",
   SettingsStore: "get",
   EdgeStore:
     "get listFromSource listToTarget list countsBySourceBatch countsByTargetBatch existsExactBatch findByTriple listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",
