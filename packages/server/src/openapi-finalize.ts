@@ -1174,7 +1174,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 token_endpoint_auth_method: {
                   type: "string",
                   description:
-                    "How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`.",
+                    "How the client proves itself at the token endpoint: `none`, `client_secret_basic` or `client_secret_post`. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.",
                 },
               },
             },

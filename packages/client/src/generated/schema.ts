@@ -23202,7 +23202,7 @@ export interface operations {
                     application_type?: string;
                     /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
                     scope?: string;
-                    /** @description How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. */
+                    /** @description How the client proves itself at the token endpoint: `none`, `client_secret_basic` or `client_secret_post`. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`. */
                     token_endpoint_auth_method?: string;
                 };
             };
