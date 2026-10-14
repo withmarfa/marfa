@@ -1425,7 +1425,7 @@ If the log's position for scheduling webhooks is ahead of the log, missing on a 
 
 ### `events/webhook-bulk-backlog`
 
-When an ordinary write follows a bulk write of 50,000 items with fan-out disabled, the server MUST deliver that ordinary write's event to an eligible, responsive webhook receiver within five seconds under the default housekeeping cadence.
+When an ordinary write follows a bulk write of 50,000 items with fan-out disabled on an otherwise idle server using the default housekeeping cadence, with one eligible webhook subscription, no other pending fan-out work and a promptly responsive receiver, the server MUST deliver that ordinary write's event to that receiver within five seconds.
 
 **Reason:** events that do not fan out must not consume successive scheduling runs before an event that does fan out can be reached; their payloads are not inspected by webhook scheduling because they cannot create deliveries.
 
