@@ -86,7 +86,7 @@ const releaseArtifacts = [
 ];
 
 function holdArtifacts(names: string[]): void {
-  const guard = release.jobs?.build?.steps?.find((step) =>
+  const guard = release.jobs?.sign?.steps?.find((step) =>
     step.name?.startsWith("Hold the artifacts"),
   )?.run;
   expect(typeof guard).toBe("string");
@@ -96,7 +96,11 @@ function holdArtifacts(names: string[]): void {
     for (const name of names) writeFileSync(join(directory, name), "artifact");
     execFileSync("bash", ["-e", "-c", guard], {
       cwd: directory,
-      env: { ...process.env, VERSION: version },
+      env: {
+        ...process.env,
+        VERSION: version,
+        GITHUB_WORKSPACE: resolve(WORKFLOWS, "..", ".."),
+      },
       stdio: "pipe",
     });
   } finally {
