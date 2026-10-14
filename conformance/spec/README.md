@@ -79,7 +79,7 @@ Statements sit under `##` headings that group them. A `##` section may open with
 
 - **Subject.** The subject is the server, a device or the CLI:
   - **The server** is any implementation of the server's half.
-  - **A device** is the engine every native client embeds (`core/`). The fixtures assert a rule about a device through the CLI. It holds for an app built on the Swift package or the Node module where that package exposes the operation the rule names.
+  - **A device** is the engine every native client embeds (`core/`). The fixtures assert a rule about a device through the CLI. It holds for an app built on the Swift SDK or the Node module where that library exposes the operation the rule names.
   - **The CLI** is the `marfa` program, for what only it does.
 - **Observable.** A rule says what a client, a sender or an owner can see: a status, a code, a field, a stored value, a file on disk. It never says how the server does it. A transaction or a lock appears only as the effect a client can see.
 

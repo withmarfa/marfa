@@ -7,7 +7,7 @@ Marfa is a home for your personal data that you run yourself. You keep your note
 - **Your structure.** Define the kinds of things you keep and how they link. Marfa checks everything against them.
 - **Open to every app.** Apps from WithMarfa will use the same interface as anything you build.
 - **Bring data in.** [Connectors](https://github.com/withmarfa/marfa-connectors) pull in data from other services. GitHub, Todoist and RSS exist today.
-- **Use it from anywhere.** A command-line tool, a [TypeScript client](./packages/client) and a [Swift package](https://github.com/withmarfa/marfa-swift), all built on one HTTP API.
+- **Use it from anywhere.** A command-line tool, a [TypeScript SDK](./packages/client) and a [Swift SDK](https://github.com/withmarfa/marfa-swift), all built on one HTTP API.
 - **Open source.** Everything WithMarfa makes is public. If you are interested, open an issue and say hello.
 
 Under the hood, Marfa is a server that keeps everything in a single SQLite file and speaks plain HTTP. There is no database to set up, and the file is easy to copy and back up. You run it on your own machine or in a container.
@@ -19,7 +19,7 @@ Under the hood, Marfa is a server that keeps everything in a single SQLite file 
 | [`@withmarfa/types`](./packages/types)   | Core type and edge JSON schemas; emits the runtime registries                                                            |
 | [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes                                                                          |
 | [`@withmarfa/server`](./packages/server) | The Hono HTTP server, on SQLite                                                                                          |
-| [`@withmarfa/client`](./packages/client) | The TypeScript client, generated from `openapi.json`                                                                     |
+| [`@withmarfa/client`](./packages/client) | The TypeScript SDK, generated from `openapi.json`                                                                        |
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
