@@ -221,7 +221,8 @@ impl Folder {
     /// Installs `renew` before binding makes its first server request.
     /// A refused or failed add takes back the directories and files it made,
     /// but for anything it put in a `.marfa` that already held a store, and
-    /// leaves everything that was there before it.
+    /// leaves everything that was there before it. A refusal after the
+    /// settings file is written leaves the one found there rewritten.
     pub fn add(
         root: impl AsRef<Path>,
         folder: &str,
