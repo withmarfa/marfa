@@ -3,7 +3,7 @@
 [![@withmarfa/client on npm](https://img.shields.io/npm/v/%40withmarfa%2Fclient?label=%40withmarfa%2Fclient)](https://www.npmjs.com/package/@withmarfa/client)
 [![@withmarfa/core on npm](https://img.shields.io/npm/v/%40withmarfa%2Fcore?label=%40withmarfa%2Fcore)](https://www.npmjs.com/package/@withmarfa/core)
 [![Latest release](https://img.shields.io/github/v/release/withmarfa/marfa)](https://github.com/withmarfa/marfa/releases/latest)
-[![CI](https://img.shields.io/github/actions/workflow/status/withmarfa/marfa/ci.yml?branch=main&label=CI)](https://github.com/withmarfa/marfa/actions/workflows/ci.yml?query=branch%3Amain)
+[![CI](https://img.shields.io/github/actions/workflow/status/withmarfa/marfa/ci.yml?branch=main&event=push&label=CI)](https://github.com/withmarfa/marfa/actions/workflows/ci.yml?query=branch%3Amain)
 [![License](https://img.shields.io/github/license/withmarfa/marfa)](./LICENSE)
 
 > **Early project.** Marfa is at version 0.0.x. Things will change without notice, and nothing is stable yet.
