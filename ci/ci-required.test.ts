@@ -95,8 +95,8 @@ describe("what a change runs", () => {
       ["ci-sqlite", "version-fields"],
     ],
     [
-      "top-level documentation and the licence",
-      ["GLOSSARY.md", "LICENSE"],
+      "top-level documentation, the README's images and the licence",
+      ["GLOSSARY.md", "LICENSE", "assets/architecture-light.svg"],
       ["ci-sqlite"],
     ],
     ["the licence alone", ["LICENSE"], ["ci-sqlite"]],
