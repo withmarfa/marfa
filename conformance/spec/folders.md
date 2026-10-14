@@ -1226,7 +1226,7 @@ When retyping a document changes its body property, a device MUST preserve the o
 
 ### `folders/retype-unsuited`
 
-If a document names an unknown type or a file type, then a device MUST refuse its creation or retype locally.
+If a document names an unknown type, a `system.*` type or a file type, then a device MUST refuse its creation or retype locally.
 
 **Tests:** `device/folders-frontmatter.test.ts › refuses a type no document can be, before sending anything`.
 

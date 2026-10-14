@@ -5296,10 +5296,27 @@ describe("what frontmatter says", () => {
 
   it("refuses a type no document can be, before sending anything", async () => {
     const id = "01a00000-0000-7000-8000-0000000014b1";
+    const settled = "01a00000-0000-7000-8000-0000000014b2";
     harness = await folderHarness("folder-type-unsuited", {
+      // The server's catalog holds `system.folder`, so a document naming it
+      // is refused for being a system type, not an unknown one.
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [...SCRIPTED_TYPES, wireType("system.folder")],
+          next_cursor: null,
+        },
+      },
       rows: {
         "core.note": [
           { item: { id, properties: { title: "Typed", body: "text\n" } } },
+          {
+            item: {
+              id: settled,
+              properties: { title: "Settled", body: "text\n" },
+            },
+          },
         ],
       },
     });
@@ -5310,7 +5327,13 @@ describe("what frontmatter says", () => {
       "type: user.nothing",
     );
     writeFileSync(join(harness.dir, "Typed.md"), typed);
+    const system = read(harness, "Settled.md").replace(
+      "type: core.note",
+      "type: system.folder",
+    );
+    writeFileSync(join(harness.dir, "Settled.md"), system);
     put(harness, "Bytes.md", "---\ntype: core.file\n---\nnot bytes\n");
+    put(harness, "Folder.md", "---\ntype: system.folder\n---\nsettings\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
@@ -5322,9 +5345,18 @@ describe("what frontmatter says", () => {
       pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
     ).toEqual([
       ["Bytes.md", "refused"],
+      ["Folder.md", "refused"],
+      ["Settled.md", "refused"],
       ["Typed.md", "refused"],
     ]);
     expect(read(harness, "Typed.md")).toBe(typed);
+    expect(read(harness, "Settled.md")).toBe(system);
+    const queue = await harness.folder.device().queue();
+    expect(
+      queue.ok &&
+        queue.value.filter((row) => row.kind.endsWith("_item")).length,
+      "a type no document can be was queued",
+    ).toBe(0);
   });
 
   it("takes a versioned file's missing tags line as no tags, and a lineless file's as no change", async () => {

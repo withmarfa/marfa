@@ -2386,11 +2386,11 @@ When a copy that has never hydrated hydrates against a server, a device MUST kee
 
 ### `device/create-slice-tier`
 
-When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds.
+When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds, or a lookup of it does not answer that no row on the server holds it (`queue-and-verdicts/keyed-create-lookup-found` and `queue-and-verdicts/keyed-create-lookup-unknown`).
 
 **Reason:** a create sent with no tier would land at the key's default tier, which may not be where the copy showed it.
 
-**Tests:** `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a feed row by its natural key in a slice of both without moving it`.
+**Tests:** `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a feed row by its natural key in a slice of both without moving it`, `› re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
 
 ### `device/declared-checked`
 
@@ -3357,6 +3357,30 @@ When the server answers a read-back by id `400 invalid_id`, a device MUST take t
 **Reason:** an id the server could never have given a row names no row, as plainly as a `404` says so. Read as a failure, the read-back would stay owed, the row the create showed would stay in the copy, and a discard of the create would be refused while the read-back waited.
 
 **Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`.
+
+## Rows only their own operation writes
+
+### `device/system-write-refused`
+
+If a caller creates an item of a `system.*` type through a working copy, retypes a row to one, or edits, deletes, restores or moves to another state a `system.*` row the copy holds, then a device MUST refuse it `forbidden`, carrying the server's `403 type_not_permitted`.
+
+**Reason:** the server refuses every such write through the item operations to every key (`items/system-types`), and a copy that queued one would show a change that never lands until a drain says so. A restore of a row the copy does not hold names no type the copy knows, so it is queued and left to the server.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
+
+### `device/system-write-nothing-saved`
+
+When a device refuses a write to a `system.*` row `type_not_permitted`, a device MUST save and queue nothing of the write.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
+
+### `device/system-folder-door`
+
+When a device refuses a write to a `system.folder` row `type_not_permitted`, a device MUST name the folder operations in the refusal's message.
+
+**Reason:** a folder is written through its own operations (`items/folder-create`), which a working copy sends at once.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
 
 ## Before a first hydration
 

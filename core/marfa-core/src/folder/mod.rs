@@ -4994,6 +4994,11 @@ fn blank(value: &Value) -> bool {
 }
 
 fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
+    if crate::store::is_system(r#type) {
+        return Some(format!(
+            "{type} is written only through its own operation, never as a document"
+        ));
+    }
     if !catalog.known(r#type) {
         return Some(format!("{type} is not a type this copy holds"));
     }

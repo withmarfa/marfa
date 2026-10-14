@@ -214,6 +214,18 @@ describe("an edit that moves an edge's end", () => {
     };
     let found = false;
     server.answer("POST", "/items", answers.ancestorUnavailable(theirs, 0));
+    server.answer(
+      "POST",
+      "/items/lookup",
+      answers.lookup([
+        wireItem({
+          id: THEIRS,
+          properties: theirs.properties,
+          source: "notes",
+          source_id: "moved-onto.md",
+        }),
+      ]),
+    );
     server.copyAnswer("GET", `/items/${THEIRS}`, () =>
       found
         ? answers.updated(

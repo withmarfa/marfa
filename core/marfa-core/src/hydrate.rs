@@ -74,7 +74,16 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
-    refuse_unreadable(http, &types, tier, &catalog_rows)?;
+    // The key it reads names the source a write naming none is stamped with
+    // (`items/source-own`), so a copy's first such create finds the row it
+    // holds under it.
+    if let Some(source) = refuse_unreadable(http, &types, tier, &catalog_rows)? {
+        store::learn_source(
+            &*core.conn()?,
+            &store::credential_digest(&http.authorization()),
+            source.as_deref(),
+        )?;
+    }
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
     crate::catch_up::refuse_if_stopped(stop)?;
     {
@@ -253,7 +262,12 @@ fn hydrate_inner(
             let tx = conn.transaction()?;
             context.check(&tx)?;
             let catalog = Catalog::load(&tx)?;
-            lay_queue_over(&tx, &catalog, &edge_types)?;
+            lay_queue_over(
+                &tx,
+                &catalog,
+                &edge_types,
+                Some(&store::credential_digest(&http.authorization())),
+            )?;
             store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
@@ -282,6 +296,7 @@ pub(crate) fn lay_queue_over(
     conn: &rusqlite::Connection,
     catalog: &Catalog,
     whole: &[String],
+    credential: Option<&str>,
 ) -> Result<()> {
     let waiting = store::current_waiting_writes(conn, &store::waiting_writes(conn)?)?;
     let mut items: Vec<&str> = Vec::new();
@@ -299,12 +314,22 @@ pub(crate) fn lay_queue_over(
                 if !store::item_held(conn, &id)? {
                     let mut wire = draft.wire(&id);
                     // A keyed create sent with no tier lands on the row its
-                    // key names, at that row's tier.
+                    // key names, at that row's tier, and is shown until the
+                    // answer at the tier the slice chose where the copy does
+                    // not hold that row.
                     if draft.tier.is_none()
-                        && let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id)
-                        && let Some(held) = store::item_under_key(conn, source, source_id)?
+                        && let Some(source_id) = &draft.source_id
                     {
-                        wire.tier = held.tier.map(|tier| tier.as_str().into());
+                        let held =
+                            match store::source_of(conn, draft.source.as_deref(), credential)? {
+                                Some(source) => store::item_under_key(conn, &source, source_id)?,
+                                None => None,
+                            };
+                        if let Some(held) = held {
+                            wire.tier = held.tier.map(|tier| tier.as_str().into());
+                        } else if let Some(tier) = store::chosen_tier(conn, &row.id)? {
+                            wire.tier = Some(tier.as_str().into());
+                        }
                     }
                     if draft.occurred_at.is_none() {
                         wire.occurred_at.clone_from(&row.queued_at);
@@ -469,24 +494,32 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
 /// A named type is readable when the credential reads it or any type under
 /// it, because the server serves a named type's readable descendants and
 /// refuses it only when nothing it selects is readable.
+/// Answers the key's own source where it read the key: `Some(None)` for a
+/// credential that is not a key.
 fn refuse_unreadable(
     http: &Http,
     types: &[String],
     tier: SliceTier,
     catalog: &WireCatalog,
-) -> Result<()> {
+) -> Result<Option<Option<String>>> {
     let named: Vec<&str> = types
         .iter()
         .map(String::as_str)
         .filter(|name| *name != store::EVERY_TYPE && !name.ends_with(".*"))
         .collect();
     if named.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
-    let unreadable: Vec<&str> = match http.current_key()? {
+    let key = http.current_key()?;
+    let learned = key.as_ref().and_then(|key| {
+        key.get("source")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    });
+    let unreadable: Vec<&str> = match &key {
         Some(key) => named
             .into_iter()
-            .filter(|name| !reads_under(&key, name, catalog))
+            .filter(|name| !reads_under(key, name, catalog))
             .collect(),
         None => {
             let mut refused = Vec::new();
@@ -508,7 +541,7 @@ fn refuse_unreadable(
         }
     };
     if unreadable.is_empty() {
-        return Ok(());
+        return Ok(Some(learned));
     }
     Err(CoreError::Forbidden {
         code: "type_not_permitted".into(),
@@ -1082,6 +1115,39 @@ mod tests {
 
     /// The server serves a named type's readable descendants, so a key that
     /// reads only a type under the one declared is not refused for it.
+    #[test]
+    fn a_hydration_learns_the_source_its_credential_stamps_a_write_naming_none_with() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[("core.note", None)]))],
+        );
+        server.on(
+            "/keys/current",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"source":"reader","type_permissions":{"core.note":"write"}}"#,
+            ))],
+        );
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            ))],
+        );
+        // What the scripted stream does after the key is read is not this
+        // test's subject.
+        let _ = hydrate(&core);
+        let credential = store::credential_digest(&core.http().unwrap().authorization());
+        assert_eq!(
+            store::learned_source(&core.conn().unwrap(), &credential).unwrap(),
+            Some(Some("reader".into())),
+            "a hydration read the key and did not keep its source, so a fresh copy's first create naming none cannot find the row it holds"
+        );
+    }
+
     #[test]
     fn a_key_that_reads_only_a_descendant_of_a_declared_type_hydrates_it() {
         let server = Scripted::start();

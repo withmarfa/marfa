@@ -1113,6 +1113,12 @@ export const answers = {
       requested_version: requestedVersion,
     },
   }),
+  /** `POST /items/lookup`, answering the rows the keys it named hold. */
+  lookup: (items: Array<Record<string, unknown>>): Answer => ({
+    kind: "json",
+    status: 200,
+    body: { data: items, tombstones: [] },
+  }),
   unauthorized: (): Answer =>
     refusal(401, "unauthorized", "Invalid or missing credential"),
   forbidden: (code: string): Answer =>

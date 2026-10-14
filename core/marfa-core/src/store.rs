@@ -1112,6 +1112,105 @@ fn effect_key(id: &str) -> String {
     format!("dead_effect/{id}")
 }
 
+fn chosen_tier_key(id: &str) -> String {
+    format!("chosen_tier/{id}")
+}
+
+/// The tier a keyed create naming none was given by the copy's slice, which
+/// the drain sends only where the server holds no row under its key.
+pub fn choose_tier(conn: &Connection, id: &str, tier: Tier) -> Result<(), CoreError> {
+    meta_set(conn, &chosen_tier_key(id), tier.as_str())
+}
+
+pub fn chosen_tier(conn: &Connection, id: &str) -> Result<Option<Tier>, CoreError> {
+    meta_get(conn, &chosen_tier_key(id))?
+        .map(|tier| tier.parse())
+        .transpose()
+}
+
+const META_CREDENTIAL_SOURCE: &str = "credential_source";
+
+/// The source the server stamps a write naming none with: the credential's
+/// own (`items/source-own`), as `GET /keys/current` last answered it for the
+/// credential `credential` names, a digest of it. `None` where that door
+/// would not say, as for a signed-in app's token.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CredentialSource {
+    credential: String,
+    source: Option<String>,
+}
+
+pub fn learn_source(
+    conn: &Connection,
+    credential: &str,
+    source: Option<&str>,
+) -> Result<(), CoreError> {
+    meta_set(
+        conn,
+        META_CREDENTIAL_SOURCE,
+        &serde_json::to_string(&CredentialSource {
+            credential: credential.into(),
+            source: source.map(str::to_string),
+        })?,
+    )
+}
+
+/// What was learned for `credential`, and `None` where nothing was.
+pub fn learned_source(
+    conn: &Connection,
+    credential: &str,
+) -> Result<Option<Option<String>>, CoreError> {
+    Ok(meta_get(conn, META_CREDENTIAL_SOURCE)?
+        .map(|text| serde_json::from_str::<CredentialSource>(&text))
+        .transpose()?
+        .filter(|learned| learned.credential == credential)
+        .map(|learned| learned.source))
+}
+
+/// What a credential is known by in the copy: a digest of what it sends,
+/// never the credential itself.
+pub fn credential_digest(authorization: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(authorization.as_bytes()))
+}
+
+/// The source a write naming `named`, or none, falls under: `named`, or the
+/// source learned for `credential`, a digest of the credential the copy
+/// sends with. `None` where nothing was learned for that credential, or the
+/// copy has no credential to send with, so a drain asks.
+pub fn source_of(
+    conn: &Connection,
+    named: Option<&str>,
+    credential: Option<&str>,
+) -> Result<Option<String>, CoreError> {
+    if let Some(named) = named {
+        return Ok(Some(named.into()));
+    }
+    let Some(credential) = credential else {
+        return Ok(None);
+    };
+    Ok(learned_source(conn, credential)?.flatten())
+}
+
+pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        == Some(0))
+}
+
+/// Only before the write is first sent: the body sent is the one every
+/// retry under its key sends again.
+pub fn set_unsent_payload(conn: &Connection, id: &str, payload: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET payload = ?2 WHERE id = ?1 AND sent = 0",
+        params![id, payload],
+    )?;
+    Ok(())
+}
+
 fn dead_effect(conn: &Connection, row: &QueuedWrite) -> Result<DeadEffect, CoreError> {
     let saved: DeadEffect = meta_get(conn, &effect_key(&row.id))?
         .map(|json| serde_json::from_str(&json))
@@ -2874,6 +2973,7 @@ fn take_out(
     }
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
+    meta_delete(conn, &chosen_tier_key(&row.id))?;
     put_back(conn, row)
 }
 
@@ -2894,7 +2994,9 @@ fn forget_answered_inner(conn: &Connection, clean_effects: bool) -> Result<usize
         let pass = forget_answered_once(conn)?;
         if pass == 0 {
             if clean_effects {
-                conn.execute("DELETE FROM main.meta WHERE key LIKE 'dead_effect/%' AND substr(key, length('dead_effect/') + 1) NOT IN (SELECT id FROM main.queue)", [])?;
+                for prefix in ["dead_effect/", "chosen_tier/"] {
+                    conn.execute("DELETE FROM main.meta WHERE key LIKE ?1 || '%' AND substr(key, length(?1) + 1) NOT IN (SELECT id FROM main.queue)", [prefix])?;
+                }
             }
             return Ok(cleared);
         }
@@ -2996,6 +3098,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         }
         conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
         meta_delete(conn, &effect_key(id))?;
+        meta_delete(conn, &chosen_tier_key(id))?;
         return Ok(true);
     };
     take_out(conn, &row, &held, "discarded")?;

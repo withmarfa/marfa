@@ -36,6 +36,8 @@ mod sse;
 #[cfg(test)]
 mod stop_tests;
 mod store;
+#[cfg(test)]
+mod tier_tests;
 mod time;
 mod validation;
 mod wire;
@@ -925,6 +927,7 @@ impl Core {
                 &tx,
                 &catalog::Catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
+                self.credential().as_deref(),
             )?;
         }
         tx.commit()?;
@@ -953,6 +956,7 @@ impl Core {
                 &tx,
                 &catalog::Catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
+                self.credential().as_deref(),
             )?;
         }
         // One transaction: a release part-way through would leave some rows
@@ -1027,6 +1031,7 @@ impl Core {
             &tx,
             &catalog::Catalog::load(&tx)?,
             &store::whole_edge_types(&tx)?,
+            self.credential().as_deref(),
         )?;
         tx.commit()?;
         Ok(true)
@@ -1060,7 +1065,7 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
-        let queued = queue_create(&tx, &catalog, draft, &[])?;
+        let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
         if body == Body::Read
             && let Some(item) = queued
                 .item_id
@@ -1274,6 +1279,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         };
+        refuse_system_type(&held.r#type)?;
         let deleting = kind == WriteKind::DeleteItem;
         let versioned = serde_json::json!({ "version": held.version }).to_string();
         let payload = if deleting {
@@ -1565,7 +1571,7 @@ impl Core {
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         refuse_invalid_names(&draft.tags, &draft.properties)?;
-        self.refuse_unknown_type(&draft.r#type)?;
+        self.refuse_unwritable_type(&draft.r#type)?;
         store::refuse_unless_usable(&*self.conn()?)?;
         let file = std::fs::File::open(path).map_err(|error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", path.display()))
@@ -1580,8 +1586,9 @@ impl Core {
         draft: &Draft,
     ) -> Result<QueuedWrite> {
         refuse_invalid_names(&draft.tags, &draft.properties)?;
-        self.refuse_unknown_type(&draft.r#type)?;
+        self.refuse_unwritable_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
+        let credential = self.credential();
         self.with_upload_reader(path, reader, &mime_type, |tx, catalog, upload, taken| {
             let mut draft = draft.clone();
             name_bytes(
@@ -1591,7 +1598,13 @@ impl Core {
                 taken,
                 &mime_type,
             );
-            queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))
+            queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )
         })
     }
 
@@ -1621,6 +1634,13 @@ impl Core {
         based: Based,
     ) -> Result<QueuedWrite> {
         refuse_invalid_names(&[], &edit.properties)?;
+        // Before any bytes are taken in, as `refuse_unwritable_type` is.
+        if let Some(held) = store::item_by_id(&*self.conn()?, id)? {
+            refuse_system_type(&held.r#type)?;
+        }
+        if let Some(r#type) = &edit.r#type {
+            refuse_system_type(r#type)?;
+        }
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload_reader(path, reader, &mime_type, |tx, catalog, upload, taken| {
             let mut edit = edit.clone();
@@ -1644,7 +1664,8 @@ impl Core {
 
     /// Checked before any bytes are taken in, so a refused create leaves no
     /// bytes behind that nothing names.
-    fn refuse_unknown_type(&self, r#type: &str) -> Result<()> {
+    fn refuse_unwritable_type(&self, r#type: &str) -> Result<()> {
+        refuse_system_type(r#type)?;
         let conn = self.conn()?;
         if catalog::Catalog::load(&conn)?.known(r#type) {
             return Ok(());
@@ -1716,7 +1737,8 @@ impl Core {
             }
         }
         let (mime_type, mut draft) = file_draft(path, attachment, &[]);
-        self.refuse_unknown_type(&draft.r#type)?;
+        self.refuse_unwritable_type(&draft.r#type)?;
+        let credential = self.credential();
         self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             name_bytes(
                 &mut draft.properties,
@@ -1733,7 +1755,13 @@ impl Core {
                 let title = body::rule::unique_title(tx, catalog, target, &title)?;
                 draft.properties.insert("title".into(), title.into());
             }
-            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let item = queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )?;
             let file = item.item_id.clone().unwrap_or_default();
             let edge = queue_edge(
                 tx,
@@ -1759,7 +1787,8 @@ impl Core {
         store::refuse_unless_usable(&*self.conn()?)?;
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         refuse_invalid_names(&draft.tags, &draft.properties)?;
-        self.refuse_unknown_type(&draft.r#type)?;
+        self.refuse_unwritable_type(&draft.r#type)?;
+        let credential = self.credential();
         self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             name_bytes(
                 &mut draft.properties,
@@ -1768,7 +1797,13 @@ impl Core {
                 taken,
                 &mime_type,
             );
-            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let item = queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )?;
             Ok(Added {
                 upload: upload.clone(),
                 item,
@@ -1987,6 +2022,13 @@ impl Core {
         catalog::served(&listed)
     }
 
+    /// A digest of the credential this copy sends with, where it has one.
+    fn credential(&self) -> Option<String> {
+        self.http()
+            .ok()
+            .map(|http| store::credential_digest(&http.authorization()))
+    }
+
     fn http(&self) -> Result<&http::Http> {
         self.http.as_deref().ok_or(CoreError::NoServer)
     }
@@ -2109,6 +2151,26 @@ fn refuse_invalid_names(
     validation::property_names(properties)
 }
 
+/// The server refuses a `system.*` write through the item operations to every
+/// key (`items/system-types`), so one queued would show a change that never
+/// lands until a drain says so.
+fn refuse_system_type(r#type: &str) -> Result<()> {
+    if !store::is_system(r#type) {
+        return Ok(());
+    }
+    let door = if r#type == FOLDER_TYPE {
+        ": a folder is written through the folder operations, `device folders create`, `change` and `revoke` on the command line"
+    } else {
+        ""
+    };
+    Err(CoreError::Forbidden {
+        code: "type_not_permitted".into(),
+        message: format!(
+            "{type} is written only through its own operation, never as an item{door}"
+        ),
+    })
+}
+
 /// An id is minted here, where the draft names none, so a queued row is
 /// readable locally before the server answers.
 fn queue_create(
@@ -2116,17 +2178,26 @@ fn queue_create(
     catalog: &catalog::Catalog,
     draft: &Draft,
     after: &[String],
+    credential: Option<&str>,
 ) -> Result<QueuedWrite> {
     refuse_invalid_names(&draft.tags, &draft.properties)?;
     if let Some(id) = &draft.id {
         validation::id("id", id)?;
     }
+    refuse_system_type(&draft.r#type)?;
     if !catalog.known(&draft.r#type) {
         return Err(CoreError::UnknownType {
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
-    let target = match (&draft.source, &draft.source_id) {
+    // A key naming no source is under the credential's own
+    // (`items/source-own`), as learned for the credential in use; where it
+    // is not known, the tier is chosen here and the drain asks.
+    let key_source = match &draft.source_id {
+        Some(_) => store::source_of(tx, draft.source.as_deref(), credential)?,
+        None => None,
+    };
+    let target = match (&key_source, &draft.source_id) {
         (Some(source), Some(source_id)) => store::item_under_key(tx, source, source_id)?,
         _ => None,
     };
@@ -2154,10 +2225,10 @@ fn queue_create(
         &properties,
         current.is_some() || draft.source_id.is_none(),
     )?;
-    // Sent with the slice's tier: left out, the server takes the key's
-    // default, and a row shown at one tier would come back at another. Held
-    // and sent in the order the server answers, so the copy shows one order
-    // before the answer and after it.
+    // A tier is chosen where none is named: left out, the server gives a new
+    // row the key's default, and a row shown at one tier would come back at
+    // another. Held and sent in the order the server answers, so the copy
+    // shows one order before the answer and after it.
     let mut draft = draft.clone();
     draft.properties = catalog.in_answer_order(
         &draft.r#type,
@@ -2165,22 +2236,30 @@ fn queue_create(
     );
     // A key naming a row the server answered sends no tier, since the server
     // leaves that row's tier as it stands (`items/tier-upsert`) and one sent
-    // would move it. A key naming a create still waiting sends that create's
+    // would move it. A key naming a create still waiting takes that create's
     // tier: if the create is refused, this one makes the row, and left out the
-    // tier would be the credential's default.
+    // tier would be the credential's default. A key naming no row the copy
+    // holds from the server may name one at a tier the slice leaves out, so
+    // the drain asks the server before it sends the tier chosen here
+    // (`queue-and-verdicts/keyed-create-lookup`).
     let keyed_tier = target.as_ref().and_then(|held| held.tier);
+    let mut chosen = None;
     if draft.tier.is_none() && unresolved {
         draft.tier = keyed_tier;
+        chosen = keyed_tier;
     }
     if draft.tier.is_none() && (unresolved || keyed_tier.is_none()) {
-        draft.tier = Some(match store::slice(tx)? {
+        let tier = match store::slice(tx)? {
             Some((_, tier)) => tier.create_tier(),
             // Nothing has named a tier yet, so the copy saves at the one an
             // app is reading unless it says otherwise.
             None if store::never_synced(tx)? => Tier::Library,
             None => return Err(CoreError::HydrationIncomplete),
-        });
+        };
+        draft.tier = Some(tier);
+        chosen = Some(tier);
     }
+    let chosen = chosen.filter(|_| draft.source_id.is_some());
     let draft = &draft;
     let shown_tier = draft.tier.or(keyed_tier);
     let id = draft
@@ -2219,7 +2298,10 @@ fn queue_create(
             depends_on: after,
         },
     )?;
-    if let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id) {
+    if let Some(tier) = chosen {
+        store::choose_tier(tx, &queued.id, tier)?;
+    }
+    if let (Some(source), Some(source_id)) = (&key_source, &draft.source_id) {
         store::follow_row_under_key(tx, &queued, source, source_id)?;
     }
     // Queued in the same transaction, so a create never drops its tags.
@@ -2274,6 +2356,10 @@ fn queue_update(
             message: format!("{id} is not a row this copy holds"),
         });
     };
+    refuse_system_type(&held.r#type)?;
+    if let Some(r#type) = &edit.r#type {
+        refuse_system_type(r#type)?;
+    }
     let Some(base) = edit.base_version else {
         return Err(CoreError::Invalid(format!(
             "an update to {id} carries no version; name the version the edit was based on"
@@ -3301,9 +3387,10 @@ mod tests {
                 ..Default::default()
             };
             let resynced = core.create_item(&keyed("article-1")).unwrap();
-            // The witness: a key naming no held row is sent the slice's tier.
+            // The witness: a key naming no held row is queued at the slice's
+            // tier, which the drain sends where a lookup finds no row.
             let fresh = core.create_item(&keyed("article-2")).unwrap();
-            // A key naming a create still waiting is sent that create's tier,
+            // A key naming a create still waiting is queued at that create's tier,
             // which it lands at whether or not the first is refused.
             let again = core.create_item(&keyed("article-2")).unwrap();
             let shown = |write: &QueuedWrite| {
@@ -3346,7 +3433,7 @@ mod tests {
                 .unwrap();
             assert!(!store::item_held(&conn, &resynced_id).unwrap());
             let catalog = catalog::Catalog::load(&conn).unwrap();
-            hydrate::lay_queue_over(&conn, &catalog, &[]).unwrap();
+            hydrate::lay_queue_over(&conn, &catalog, &[], None).unwrap();
             assert_eq!(
                 store::items_by_ids(&conn, std::slice::from_ref(&resynced_id))
                     .unwrap()
@@ -3394,6 +3481,92 @@ mod tests {
                 "pinned from a slice at {slice}"
             );
         }
+    }
+
+    #[test]
+    fn an_item_write_to_a_system_row_is_refused_before_anything_is_saved_or_queued() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            store::replace_types(
+                &conn,
+                &[
+                    store::testing::wire_type("core.note", None, Some("title")),
+                    store::testing::wire_type(FOLDER_TYPE, None, Some("title")),
+                ],
+            )
+            .unwrap();
+            let folder = store::testing::wire_item(
+                "folder",
+                FOLDER_TYPE,
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": "Inbox" }),
+            );
+            store::put_server_item(&conn, &folder, Some(&[]), &catalog::Indexing::default())
+                .unwrap();
+        }
+        let before = core.get("folder").unwrap();
+        let held = store::count(&core.conn().unwrap(), "items").unwrap();
+        let refused = |result: Result<QueuedWrite>, what: &str| match result {
+            Err(CoreError::Forbidden { code, message }) => {
+                assert_eq!(code, "type_not_permitted", "{what}");
+                assert!(message.contains("folders create"), "{what}: {message}");
+            }
+            other => panic!("{what} was not refused type_not_permitted: {other:?}"),
+        };
+        refused(
+            core.create_item(&Draft {
+                r#type: FOLDER_TYPE.into(),
+                properties: properties(serde_json::json!({ "title": "New" })),
+                ..Default::default()
+            }),
+            "a create",
+        );
+        let edit = |r#type: Option<&str>| Edit {
+            properties: properties(serde_json::json!({ "title": "Renamed" })),
+            base_version: Some(1),
+            r#type: r#type.map(str::to_string),
+            ..Edit::default()
+        };
+        refused(core.update_item("folder", &edit(None)), "an edit");
+        refused(
+            core.update_item("folder", &edit(Some("core.note"))),
+            "a retype from",
+        );
+        refused(core.delete_item("folder"), "a delete");
+        refused(
+            core.transition_item("folder", ItemState::Archived),
+            "a transition",
+        );
+        refused(core.restore_item("folder"), "a restore");
+        let retyped = Edit {
+            base_version: Some(3),
+            ..edit(Some(FOLDER_TYPE))
+        };
+        refused(core.update_item("row", &retyped), "a retype to");
+        assert!(core.queue().unwrap().is_empty());
+        assert_eq!(core.get("folder").unwrap(), before);
+        assert_eq!(core.get("row").unwrap().unwrap().r#type, "core.note");
+        assert_eq!(store::count(&core.conn().unwrap(), "items").unwrap(), held);
+
+        // The witness: the same doors queue a write of a row that is not.
+        core.update_item(
+            "row",
+            &Edit {
+                base_version: Some(3),
+                ..edit(None)
+            },
+        )
+        .unwrap();
+        core.transition_item("row", ItemState::Archived).unwrap();
+        core.create_item(&Draft {
+            r#type: "core.note".into(),
+            properties: properties(serde_json::json!({ "title": "New" })),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(core.queue().unwrap().len(), 3);
     }
 
     #[test]

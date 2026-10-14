@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
+import {
+  answers,
+  refusal,
+  typeCatalog,
+  wireItem,
+  wireType,
+} from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, Outcome } from "../../device/protocol.js";
 import { BUILT_FOR } from "../../device/scripted-server.js";
 import {
@@ -322,6 +328,157 @@ describe("a device refuses a write only the server may make", () => {
     ]);
     for (const id of malformed)
       expect((await device.get(id)).ok, id).toBe(false);
+  });
+
+  it("refuses an item write to a system row on every door, before it saves or queues anything", async () => {
+    const FOLDER = "01a00000-0000-7000-8000-0000000000c1";
+    harness = await startHarness("system-row");
+    const { device, server } = harness;
+    scriptHydration(server, {
+      head: "10",
+      catalog: typeCatalog([
+        wireType("system.folder", {
+          fields: {
+            title: { type: "string", description: "The folder's name" },
+          },
+        }),
+      ]),
+      rows: {
+        "core.note": [{ item: { id: "n1" } }],
+        "system.folder": [
+          {
+            item: {
+              id: FOLDER,
+              type: "system.folder",
+              properties: { title: "Inbox" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await device.hydrate(["core.note", "system.folder"], "library")).ok,
+    ).toBe(true);
+    const folderBefore = await device.get(FOLDER);
+    expect(folderBefore.ok, JSON.stringify(folderBefore)).toBe(true);
+    const listed = async () => {
+      const rows = await device.list({ allStates: true, limit: 100 });
+      return rows.ok ? rows.value.map((row) => row.id).sort() : rows;
+    };
+    const before = await listed();
+
+    const refused = async (
+      what: string,
+      outcome: Outcome<unknown>,
+    ): Promise<void> => {
+      expect(
+        outcome.ok,
+        `${what} of a system row was queued, so the copy shows a change the server refuses to every key`,
+      ).toBe(false);
+      if (outcome.ok) return;
+      const envelope = JSON.parse(outcome.refusal.raw) as {
+        error: {
+          code: string;
+          message: string;
+          server: { status: number; code: string } | null;
+        };
+      };
+      expect(
+        [
+          envelope.error.code,
+          envelope.error.server?.status,
+          envelope.error.server?.code,
+        ],
+        `${what} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
+      ).toEqual(["forbidden", 403, "type_not_permitted"]);
+      expect(
+        envelope.error.message,
+        `${what} was refused without naming the folder operations a folder is written through`,
+      ).toContain("folders create");
+    };
+    await refused(
+      "a create",
+      await device.create({
+        type: "system.folder",
+        properties: { title: "New folder" },
+      }),
+    );
+    await refused(
+      "an edit",
+      await device.update(FOLDER, {
+        version: 1,
+        properties: { title: "Renamed" },
+      }),
+    );
+    await refused(
+      "a retype from system.folder",
+      await device.update(FOLDER, {
+        version: 1,
+        properties: { title: "Renamed", body: "now a note" },
+        type: "core.note",
+      }),
+    );
+    await refused(
+      "a retype to system.folder",
+      await device.update("n1", {
+        version: 1,
+        properties: {},
+        type: "system.folder",
+      }),
+    );
+    await refused("a delete", await device.deleteItem(FOLDER));
+    await refused("a restore", await device.restoreItem(FOLDER));
+    await refused(
+      "a transition",
+      await device.transitionItem(FOLDER, "archived"),
+    );
+
+    const queue = await device.queue();
+    expect(queue.ok && queue.value, "a refused write was queued").toEqual([]);
+    expect(await listed(), "a refused write saved a row").toEqual(before);
+    expect(await device.get(FOLDER)).toEqual(folderBefore);
+    const note = await device.get("n1");
+    expect(note.ok && note.value.type).toBe("core.note");
+
+    // The witness: the same doors queue each write of a core.note.
+    const witnesses: Array<[string, Outcome<unknown>]> = [
+      [
+        "a create",
+        await device.create({
+          type: "core.note",
+          properties: { title: "New note", body: "b" },
+        }),
+      ],
+      [
+        "an edit",
+        await device.update("n1", { version: 1, properties: { title: "x" } }),
+      ],
+      [
+        "a retype",
+        await device.update("n1", {
+          version: 1,
+          properties: { text: "a passage" },
+          type: "core.highlight",
+        }),
+      ],
+      ["a transition", await device.transitionItem("n1", "archived")],
+      ["a delete", await device.deleteItem("n1")],
+      ["a restore", await device.restoreItem("n1")],
+    ];
+    for (const [what, outcome] of witnesses) {
+      expect(outcome.ok, `${what} of a note: ${JSON.stringify(outcome)}`).toBe(
+        true,
+      );
+    }
+    const queued = await device.queue();
+    expect(queued.ok && queued.value.map((row) => row.kind)).toEqual([
+      "create_item",
+      "update_item",
+      "update_item",
+      "transition_item",
+      "delete_item",
+      "restore_item",
+    ]);
   });
 
   it("refuses a list or a search naming a type outside the server's grammar", async () => {

@@ -550,7 +550,10 @@ pub struct CreateArgs {
     pub tags: Vec<String>,
     /// The tier to write it at; the default is the tier of the held row its
     /// natural key names, else the slice's tier, or the library from a slice
-    /// of both or before a first hydration.
+    /// of both or before a first hydration. A create carrying `--source-id`
+    /// goes with that tier only where a lookup answers that no row on the
+    /// server holds its natural key, and otherwise with none, which keeps a
+    /// row's tier as it stands.
     #[arg(long)]
     pub tier: Option<Tier>,
     /// The source to stamp it with.
