@@ -5,7 +5,7 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 ## Working here
 
 - American English in code, comments and commits. Scoped Conventional Commits (`fix(server):`, `refactor(core):`).
-- One clone per machine. Parallel work happens in worktrees inside it, made with `git worktree add .claude/worktrees/<name> -b <branch> origin/main`; never a second clone or a sibling folder. Once a branch is merged, `git worktree remove` its worktree and run `git worktree prune`; if git refuses, report it rather than forcing it. Once the work is merged, bring the local `main` up to date (`git pull --ff-only` on `main`) so the next piece of work starts from it.
+- Make worktrees in `.claude/worktrees/` (`git worktree add .claude/worktrees/<name> -b <branch> origin/main`). Once the work is merged, remove the worktree and its local branch (`git worktree remove`, then `git branch -D`, because git sees a squash-merged branch as unmerged) and run `git pull --ff-only` on `main`. If git refuses a removal, report it rather than forcing it.
 - Feature branches and pull requests; never push `main`. A session merges its own pull request once every required check is green and the review its risk calls for is done, with that depth stated on the pull request: squash, branch deleted, in stack order. Cancel superseded runs; never hold back a push or a check to ration runners.
 - All CI runs on standard GitHub-hosted runners, never personal or paid third-party ones (`ci/workflow-runner.test.ts` enforces it).
 - A draft pull request runs only the quick jobs (named in `scripts/ci-required.ts`: the format check, build, typecheck and lint, the type registry and the version check), and the rest is skipped and passes. The gate job of `ci.yml`, `Full CI`, waits for every other job but the nightly report and fails if any failed or was cancelled; on a draft it is named `Draft CI`, so the required `Full CI` stays expected, and blocks a merge, until the run that marking it ready starts has finished. Marking it ready for review, and every push after, runs everything. `Full CI` and `Pull request description` are the required checks, since a merge waits only on required checks; a job added to `ci.yml` is a need of the gate (`ci/full-ci-gate.test.ts` pins it).
@@ -41,7 +41,7 @@ A version exists only as a git tag, created only when a release is called for, e
 
 ## Secrets
 
-Software-consumed values live in Infisical, never in a file here. A local `.infisical.json`, which Git ignores, maps a checkout to its project; run anything that needs them under `aic-infisical-run -- <command>`. `.env.example` carries names, never values.
+Software-consumed values live in Infisical, never in a file here. A local `.infisical.json`, which Git ignores, maps a checkout to its project; run anything that needs them with `infisical run -- <command>`. `.env.example` carries names, never values.
 
 ## Words
 
