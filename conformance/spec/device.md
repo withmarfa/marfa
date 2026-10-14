@@ -2980,13 +2980,13 @@ When the read of a row after the server answers or refuses a write to it is answ
 
 **Reason:** a read by id answers a row in the bin as one that is gone (`items/get-missing`), so the device asks the bin which it is. A slice holds its rows in the bin as in any other state, and a copy that has already taken the row's `item.deleted` event, or that trashed the row itself, gets no later event that brings the row back.
 
-**Tests:** `device/bin-live.test.ts › keeps a row another client trashed when the read after its refused edit finds it gone by id`, `› keeps a row it trashed itself, pinned, at the server's version once the delete is answered`.
+**Tests:** `device/bin-live.test.ts › keeps a row another client trashed when the read after its refused edit finds it gone by id`, `› keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered`.
 
 ### `device/read-back-trashed-pin`
 
 When the read of a row after the server answers or refuses a write to it finds the row in the server's bin, a device MUST keep the pin the row holds.
 
-**Tests:** `device/bin-live.test.ts › keeps a row it trashed itself, pinned, at the server's version once the delete is answered`.
+**Tests:** `device/bin-live.test.ts › keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered`.
 
 ## A slice of both tiers
 

@@ -249,9 +249,10 @@ it("keeps a row another client trashed when the read after its refused edit find
   ).toEqual([note.id]);
 });
 
-it("keeps a row it trashed itself, pinned, at the server's version once the delete is answered", async () => {
+it("keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered", async () => {
   const note = await heldNote("trashed here");
-  const copy = await device("own-delete", "library");
+  // A copy of the feed, so only the pin holds the library's note.
+  const copy = await device("own-delete", "feed");
   value(await copy.pin(note.id));
   value(await copy.deleteItem(note.id));
   // The witness: the copy shows its own delete in the bin while it waits.

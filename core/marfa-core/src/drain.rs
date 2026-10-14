@@ -1779,6 +1779,12 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
             })
             .collect::<Result<Vec<_>>>()?
     };
+    // `land` reads these, and takes no row in the bin
+    // (`queue-and-verdicts/landed-target-unreadable`).
+    let landing: HashSet<String> = pending
+        .iter()
+        .filter_map(|(_, shape)| shape.strip_prefix("land:").map(str::to_owned))
+        .collect();
     for (row, shape) in pending {
         crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
@@ -1822,6 +1828,9 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
         crate::catch_up::refuse_if_stopped(stop)?;
+        if entry.subject == Subject::Item && landing.contains(&entry.id) {
+            continue;
+        }
         match read_owed(core, &entry, Bin::Held).and_then(|read| apply_owed(core, &entry, &read)) {
             Err(
                 error @ (CoreError::Redirected { .. }
@@ -2774,6 +2783,13 @@ mod tests {
         server.on("/items", vec![in_the_bin(&[("a", 4)])]);
         let (_dir, core) = deleting(&server, &["a"]);
         store::pin(&core.conn().unwrap(), "a").unwrap();
+        // The slice no longer takes the row, so only the pin holds it.
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_SLICE_TYPES,
+            "[\"core.task\"]",
+        )
+        .unwrap();
         let report = core.drain().unwrap();
         assert_eq!(report.verdicts[0].verdict, Some(Verdict::Accepted));
         let asked = server.seen("/items");
@@ -3468,6 +3484,30 @@ mod tests {
         assert!(
             !store::item_held(&conn, "server").unwrap(),
             "a row in the bin is not the row a natural key landed on"
+        );
+        drop(conn);
+
+        // A later drain reads the target again for the landing alone.
+        assert!(
+            read_owed_backs(&core, &AtomicBool::new(false))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(server.seen("/items/server").len(), 2);
+        assert!(
+            server.seen("/items").is_empty(),
+            "a waiting landing's target was looked for in the bin"
+        );
+        let conn = core.conn().unwrap();
+        assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
+        assert!(!store::item_held(&conn, "server").unwrap());
+        assert_eq!(
+            store::owed_read_backs(&conn)
+                .unwrap()
+                .iter()
+                .map(|owed| owed.id.as_str())
+                .collect::<Vec<_>>(),
+            ["server"]
         );
     }
 
