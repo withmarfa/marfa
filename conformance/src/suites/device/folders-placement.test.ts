@@ -1187,6 +1187,10 @@ describe("where a file sits", () => {
       const first = listings();
       await new Promise((resolve) => setTimeout(resolve, 5_000));
       expect(
+        watching.running(),
+        `the watch ended, so no later pass could read: ${watching.stderr}`,
+      ).toBe(true);
+      expect(
         listings() - first,
         "a watch read again at every pass for a placement it could not give way from",
       ).toBe(0);
@@ -1290,6 +1294,10 @@ describe("where a file sits", () => {
     if (!failed.ok) return;
     expect(failed.value.drain.unavailable).toBeTruthy();
     expect(failed.value.drain.gave_way).toBe(0);
+    // The witness: this drain is the one the server refused the placement in.
+    expect(
+      failed.value.drain.verdicts.map((entry) => [entry.kind, entry.verdict]),
+    ).toEqual([["create_edge", "refused"]]);
     expect(
       listings() - before,
       "a drain that could not reach the server read again to give way",
@@ -1310,9 +1318,6 @@ describe("where a file sits", () => {
             "in-folder",
       ).length,
     ).toBe(2);
-    expect(
-      late.value.drain.verdicts.filter((entry) => entry.verdict === "refused"),
-    ).toEqual([]);
     const queued = await second.folder.device().queue();
     expect(
       queued.ok && queued.value.filter((row) => row.verdict === "refused"),
