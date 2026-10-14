@@ -255,31 +255,7 @@ jobs:
             echo "::error::The binary reports '$reported', not 'marfa $VERSION'."
             exit 1
           fi
-
-      # A dry run signs and notarizes too, so a change to this step is proved
-      # before a tag depends on it.
-      - name: Sign and notarize the binary
-        working-directory: core
-        env:
-          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash "$GITHUB_WORKSPACE/scripts/release/sign-binary.sh" target/release/marfa
-
-      - name: Pack the binary
-        working-directory: core
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          reported=$(target/release/marfa --version)
-          if [ "$reported" != "marfa $VERSION" ]; then
-            echo "::error::The signed binary reports '$reported', not 'marfa $VERSION'."
-            exit 1
-          fi
-          tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
+          cp target/release/marfa "$RUNNER_TEMP/artifacts/marfa"
 
       - name: Pack @withmarfa/client
         env:
@@ -289,34 +265,78 @@ jobs:
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # Exactly the three the publish job reads, by name: an upload that only
-      # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the three a release carries
+      # The binary goes to the sign job unsigned, beside the two packages.
+      - name: Hold the build to the binary and the two packages
         working-directory: ${{ runner.temp }}/artifacts
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          expected=$(printf '%s\n' \
-            "marfa-$VERSION-darwin-arm64.tar.gz" \
-            "withmarfa-client-$VERSION.tgz" \
-            "withmarfa-core-$VERSION.tgz" | LC_ALL=C sort)
-          found=$(for file in *; do printf '%s\n' "$file"; done | LC_ALL=C sort)
-          if [ "$found" != "$expected" ]; then
-            echo "::error::The artifacts are not the three a release carries."
-            diff <(echo "$expected") <(echo "$found") || true
-            exit 1
-          fi
-          for file in $found; do
-            if [ ! -s "$file" ]; then
-              echo "::error::$file is empty."
-              exit 1
-            fi
-          done
-          echo "$found"
+          bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
+            marfa "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: release-${{ steps.version.outputs.version }}
+          name: build-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Signing runs in a job of its own, which installs and builds nothing, so the
+  # signing identity never shares a machine with the build's dependencies. A
+  # dry run signs and notarizes too, so a change here is proved before a tag
+  # depends on it.
+  sign:
+    name: Sign the binary
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ needs.build.outputs.version }}
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Sign and notarize the binary
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # An artifact keeps no file modes.
+          chmod +x "$RUNNER_TEMP/artifacts/marfa"
+          bash scripts/release/sign-binary.sh "$RUNNER_TEMP/artifacts/marfa"
+
+      - name: Pack the binary
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          reported=$(./marfa --version)
+          if [ "$reported" != "marfa $VERSION" ]; then
+            echo "::error::The signed binary reports '$reported', not 'marfa $VERSION'."
+            exit 1
+          fi
+          tar -czf "marfa-$VERSION-darwin-arm64.tar.gz" marfa
+          rm marfa
+
+      # Exactly the three the publish job reads, by name: an upload that only
+      # refuses an empty folder would carry a run missing one.
+      - name: Hold the artifacts to the three a release carries
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ needs.build.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
 
@@ -333,7 +353,7 @@ jobs:
   # Publishing needs the GitHub-hosted OIDC identity trusted by npm.
   publish:
     name: Publish
-    needs: build
+    needs: [build, sign]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30

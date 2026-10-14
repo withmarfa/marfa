@@ -19,6 +19,7 @@ const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "core.yml:core",
   "release.yml:build",
+  "release.yml:sign",
   "control-socket.yml:macos",
 ]);
 
