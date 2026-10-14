@@ -182,7 +182,6 @@ pub struct CatchUpReport {
     pub applied: i64,
     pub skipped: i64,
     pub cursor: String,
-    pub reached_head: bool,
     /// The catch-up changed the catalog the copy holds. A catch-up that
     /// fails says the same on its error, as `catalogChanged`.
     pub catalog_changed: bool,
@@ -1335,7 +1334,6 @@ impl Task for CatchUp {
             applied: count(report.applied),
             skipped: count(report.skipped),
             cursor: report.cursor,
-            reached_head: report.reached_head,
             catalog_changed: report.catalog_changed,
         })
     }
