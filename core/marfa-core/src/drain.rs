@@ -12,6 +12,7 @@ use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
+use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
 use crate::{read_view, store};
@@ -521,6 +522,26 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
 }
 
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+    let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
+    let result = drain_checked(core, stop);
+    telemetry::ended!(op, result.as_ref(), |report| {
+        outcome = if report.stopped.is_some() {
+            "credential_refused"
+        } else if report.unavailable.is_some() {
+            "unavailable"
+        } else {
+            "ok"
+        },
+        answered = report.answered,
+        held = report.held,
+        undelivered = report.undelivered,
+        unsent = report.unsent,
+        unmade = report.unmade,
+    });
+    result
+}
+
+fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // The handle before the server, so a second opener with no server is
     // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
@@ -569,6 +590,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         match crate::catch_up::read_unless_stopped(stop, http, Http::confirm_origin) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
+                telemetry::degraded!(&error);
                 report.unavailable = Some(format!(
                     "the server could not say which instance it is, so nothing was sent: {error}"
                 ));
@@ -602,6 +624,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                 Ok(true)
             }
             Err(error) if error.is_environmental() => {
+                telemetry::degraded!(&error);
                 report.unavailable = Some(format!(
                     "the server could not say which instance it is, so nothing was sent: {error}"
                 ));
@@ -765,6 +788,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                 break;
             }
             Err(error) => {
+                telemetry::degraded!(&error);
                 report.unavailable = Some(format!(
                     "the server could not say whether a row holds the natural key the create {} carries, so nothing more was sent: {}",
                     row.id,
@@ -839,9 +863,29 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             let conn = core.conn()?;
             store::mark_sent(&conn, &row.id)?;
         }
-        let (answer, shape) = match sendable {
-            Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
-            Sendable::Upload { bytes, mime_type } => (upload(http, bytes, &mime_type), Shape::Blob),
+        let (answer, shape) = {
+            let write = telemetry::operation!("write", kind, status);
+            telemetry::record!(write, kind = row.kind.as_str());
+            let sent = match sendable {
+                Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
+                Sendable::Upload { bytes, mime_type } => {
+                    (upload(http, bytes, &mime_type), Shape::Blob)
+                }
+            };
+            telemetry::ended!(
+                write,
+                sent.0.as_ref(),
+                |answer| {
+                    outcome = if answer.is_environmental() {
+                        "unavailable"
+                    } else {
+                        "answered"
+                    },
+                    status = answer.status,
+                },
+                unanswered
+            );
+            sent
         };
         if row.kind == WriteKind::CreateItem {
             lookups.forget(&row.body);
@@ -1741,6 +1785,7 @@ fn settle_success(
     let read = match read_owed(core, &owed, Bin::Held) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
+            telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
@@ -1990,6 +2035,7 @@ fn land(
         // but nothing else waits on a row the server may never hold again.
         Ok(_) => return Ok(settled),
         Err(error) if error.is_environmental() => {
+            telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
