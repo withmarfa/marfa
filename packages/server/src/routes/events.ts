@@ -2,15 +2,16 @@ import { EVENT_LIMITS } from "./_event-limits.js";
 import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
 import { trackStream } from "./open-streams.js";
 import { invalidReadViewRequest } from "../middleware/read-view.js";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
+import { type Context, type MiddlewareHandler } from "hono";
+import { EventQuerySchema, eventStreamRoute } from "./events-schema.js";
 import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
 import { assertTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { EXTRA_PATHS } from "../openapi-finalize.js";
 import { refuseEmptyNarrowingValues } from "../middleware/empty-narrowing-values.js";
 import {
-  documentedQueryKeys,
+  declaredQueryKeys,
   refuseUndeclaredQueryKeys,
 } from "../middleware/undeclared-query-keys.js";
 import {
@@ -405,15 +406,11 @@ function parseEdgeMode(raw: string | undefined): EdgeMode {
 }
 
 /**
- * The query keys the stream takes, read from its published description: the
- * route is a plain Hono handler, so there is no schema to read them from, and
- * `createOpenAPIRouter` does not give it the credential check that comes
- * ahead of the refusal on every other door.
+ * The stream's query keys and description use one schema. The handler keeps
+ * its credential check ahead of the refusal, as on other doors.
  */
 const refuseUndeclaredEventKeys: MiddlewareHandler<AppEnv> = (() => {
-  const declared = documentedQueryKeys(
-    (EXTRA_PATHS["/events"] as { get: unknown }).get,
-  );
+  const declared = declaredQueryKeys(EventQuerySchema);
   const refuseUndeclared = refuseUndeclaredQueryKeys(declared);
   const refuseEmpty = refuseEmptyNarrowingValues(declared);
   return async (c, next) => {
@@ -426,8 +423,9 @@ const refuseUndeclaredEventKeys: MiddlewareHandler<AppEnv> = (() => {
 export function eventRoutes(
   storage: Storage,
   options: EventRoutesOptions = {},
-): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+): OpenAPIHono<AppEnv> {
+  const router = new OpenAPIHono<AppEnv>();
+  router.openAPIRegistry.registerPath(eventStreamRoute);
   let liveViewers = 0;
 
   // GET /events — Server-Sent Events stream with replay support

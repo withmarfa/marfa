@@ -5,12 +5,10 @@
  * `createOpenAPIRouter` hangs `requireDeclaredCredential` off each route
  * that declares one, so the guarded set is read back out of Hono's route
  * table by handler identity rather than kept beside it as a second list of
- * protected paths. What that leaves is the routes registered as plain Hono
- * handlers, which carry no declaration to read: those are named below, each
- * with what it is, and the walk fails on a route in neither place. A door
- * added without a declaration has to be classified here before this file
- * goes green, which is the point — the last shape of this defect was a door
- * whose refusal nobody had looked for.
+ * protected paths. Plain handlers may register a schema while retaining
+ * their own credential check. Those are named below and exercised with a
+ * bare request, so documentation alone cannot count as a runtime gate.
+ * The walk fails on a route classified in neither place.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { requireDeclaredCredential } from "../middleware/auth.js";
@@ -67,11 +65,8 @@ function operationDoors(paths: Record<string, unknown>): Set<string> {
  * route that loses the declaration leaves both sets at once and their
  * equality still holds. This is the set that does not move when it does.
  *
- * **Both documents, because neither contains the other.**
- * `finalizeOpenAPISpec` strips the internal operations and injects the
- * plain-Hono ones the registry never sees, so the registry alone misses a
- * door the server publishes and the published document alone misses one it
- * serves without publishing.
+ * Both the registry and the served document are checked, so document
+ * shaping cannot remove a door from the census.
  */
 function documentedDoors(): Set<string> {
   const registry = ctx.app.getOpenAPI31Document({
@@ -92,9 +87,7 @@ function documentedDoors(): Set<string> {
 
 /**
  * The documented operations, in the registry or the published document,
- * that take no credential, each with why. The root and registration are
- * published; the blob link's target is in the registry only, and carries its
- * credential in the URL.
+ * that take no credential, each with why.
  *
  * A caller cannot be asked for a credential in order to learn how to obtain
  * one, or which instance it is about to sign in to, so registration and the
@@ -107,8 +100,6 @@ const OPEN_OPERATIONS: Record<string, string> = {
     "the instance's description, where a caller with no credential yet reads which instance answers and which contract it speaks",
   "POST /auth/oauth2/register":
     "dynamic client registration, which is how a client comes to hold anything",
-  "GET /blobs/:hash/fetch":
-    "the target of an instance-served blob link: the signature in the query is the credential, minted by GET /blobs/{hash}/url to whoever held a bearer, so a browser or a media player can be handed the URL as it is",
 };
 
 function declaredDoors(): Set<string> {
@@ -191,13 +182,13 @@ const OPEN_DOORS: Record<string, string> = {
 };
 
 /**
- * Doors that do take a credential and have no declaration to take it from,
- * because they are plain Hono handlers: an SSE stream and two routes that
- * answer HTML elsewhere in their file. Each refuses as its handler's first
- * act, which the sweep below holds them to.
+ * Doors whose plain handlers check the credential themselves, whether or
+ * not they register a schema. Each refuses before validating request input,
+ * which the sweep below holds them to.
  */
 const CREDENTIAL_IN_HANDLER: Record<string, string> = {
-  "GET /events": "the event stream, which is not a `createRoute` operation",
+  "GET /events":
+    "the event stream registers a schema but retains its credential and type-read checks in the plain handler",
   "GET /auth/grants": "lists the apps the owner authorized",
   "DELETE /auth/grants/:id": "revokes one",
 };
@@ -232,12 +223,14 @@ async function bare(
 }
 
 describe("the credential gate", () => {
-  it("guards exactly the doors whose declaration asks for a credential", () => {
+  it("uses the shared gate for every declared credential door without its own gate", () => {
     const declared = declaredDoors();
     // The positive control. An empty declaration set would satisfy the
     // comparison below while proving the gate is attached to nothing.
     expect(declared.size).toBeGreaterThan(60);
-    expect([...guardedDoors()].sort()).toEqual([...declared].sort());
+    expect([...guardedDoors()].sort()).toEqual(
+      [...declared].filter((door) => !(door in CREDENTIAL_IN_HANDLER)).sort(),
+    );
   });
 
   it("leaves no published operation ungated except the ones named open", () => {
@@ -271,7 +264,7 @@ describe("the credential gate", () => {
     expect(wrong.sort()).toEqual([]);
   });
 
-  it("refuses a bare request on the undeclared doors that take one", async () => {
+  it("refuses a bare request on every door that checks its own credential", async () => {
     const doors = Object.keys(CREDENTIAL_IN_HANDLER);
     expect(doors.length).toBeGreaterThan(0);
     const wrong: string[] = [];

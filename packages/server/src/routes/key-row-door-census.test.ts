@@ -69,6 +69,12 @@ const NOT_A_DOOR: Record<string, string> = {
     "long-lived work re-reading the credential it acts for, as the bearer check does: a bulk-action job before each chunk, an event stream before each batch of frames",
 };
 
+/** Members named `keys` that are not the key store, pinned to one call. */
+const NOT_KEY_STORE: Record<string, string> = {
+  "routes/oauth-registration-schema.ts › oauthRegistrationRoute › describe":
+    "describes the native provider's JWKS array schema at jwks.shape.keys; it reads no storage",
+};
+
 /** Files that name the key table itself, each with why. */
 const KEY_TABLE: Record<string, string> = {
   "storage/sqlite/schema.ts": "declares the table",
@@ -162,7 +168,13 @@ describe("every call into the key store is classified", () => {
   it("reaches a key row only through the reach module, or for a named reason", () => {
     const unclassified: string[] = [];
     const outside: string[] = [];
+    const nonStore: string[] = [];
     for (const call of calls) {
+      const identity = `${call.file} › ${call.fn} › ${call.method}`;
+      if (identity in NOT_KEY_STORE) {
+        nonStore.push(identity);
+        continue;
+      }
       if (!ROW_ACCESS.has(call.method)) {
         if (!(call.method in NOT_ROW_ACCESS)) {
           unclassified.push(`${call.file} › ${call.method}`);
@@ -174,6 +186,7 @@ describe("every call into the key store is classified", () => {
     }
     expect(unclassified).toEqual([]);
     expect(outside.sort()).toEqual(Object.keys(NOT_A_DOOR).sort());
+    expect(nonStore.sort()).toEqual(Object.keys(NOT_KEY_STORE).sort());
   });
 
   it("is not handed the store under another name", () => {

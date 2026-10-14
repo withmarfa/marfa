@@ -111,7 +111,7 @@ The document's `info.description` holds the rules that apply everywhere, each un
 
 ## Where the text lives
 
-- An operation's summary, description and responses: its `createRoute` definition in `packages/server/src/routes/`. The operations served as plain Hono handlers, such as `GET /` and `GET /events`, are written out in `EXTRA_PATHS` in `packages/server/src/openapi-finalize.ts`.
+- An operation's summary, description and responses: its `createRoute` definition in `packages/server/src/routes/`. The operations served as plain Hono handlers register schema-backed descriptions beside their mounts: the instance description, event stream and OAuth registration schemas live in `packages/server/src/routes/`.
 - A field's or parameter's description: `.describe()` on its schema. A code comment never reaches the document.
 - The general sections, the shared responses and the shared header parameters: `packages/server/src/openapi-finalize.ts`. `limit` and `cursor`: `packages/server/src/page-limits.ts`.
 - After any change, run `pnpm generate` and commit everything it writes in the same pull request: `openapi.json`, the TypeScript SDK generated from it and the core's contract version.

@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Describe the instance
+         * @description Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
+         */
+        get: operations["getInstance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/items": {
         parameters: {
             query?: never;
@@ -1496,6 +1516,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/oauth2/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register an OAuth client
+         * @description Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.
+         */
+        post: operations["registerOAuthClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream change events
+         * @description Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.
+         */
+        get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhooks": {
         parameters: {
             query?: never;
@@ -1622,66 +1682,6 @@ export interface paths {
         get: operations["getServerMetrics"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Describe the instance
-         * @description Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
-         */
-        get: operations["getInstance"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream change events
-         * @description Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.
-         */
-        get: operations["streamEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/oauth2/register": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Register an OAuth client
-         * @description Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.
-         */
-        post: operations["registerOAuthClient"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2037,6 +2037,39 @@ export interface components {
             /** @description More about the error, such as the field it concerns. Each code defines its own details. */
             details?: {
                 [key: string]: unknown;
+            };
+        };
+        /** @description An instance: its identity, build, contract version and features. */
+        InstanceDescription: {
+            /**
+             * @description Always `marfa`.
+             * @enum {string}
+             */
+            name: "marfa";
+            /** @description The build the instance runs. */
+            version: string;
+            /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
+            instance_id: string;
+            /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
+            contract: number;
+            /** @description The features the instance serves, such as `items` and `webhooks`. */
+            features: string[];
+        };
+        /** @description An error response. */
+        ValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
             };
         };
         /** @description An item with its metadata. */
@@ -2566,23 +2599,6 @@ export interface components {
             occurred_before?: string;
             /** @description A filter expression, in the grammar `filter` takes on `GET /items`. */
             filter?: string;
-        };
-        /** @description An error response. */
-        ValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description An error response. */
         ForbiddenRefusal: {
@@ -4279,6 +4295,83 @@ export interface components {
                 };
             };
         };
+        /** @description An OAuth client: its app metadata and the grants it uses. */
+        OAuthClientRegistration: {
+            /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
+            redirect_uris?: string[];
+            /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
+            scope?: string;
+            /** @description The app's name, which Marfa shows a person asked to approve it. */
+            client_name?: string;
+            /** @description The app's home page URL. Leave it out if the app has none. */
+            client_uri?: string;
+            /** @description The app's logo URL. Leave it out if the app has none. */
+            logo_uri?: string;
+            /** @description Contact addresses for the app. Leave it out if there are none. */
+            contacts?: string[];
+            /** @description The app's terms of service URL. Leave it out if the app has none. */
+            tos_uri?: string;
+            /** @description The app's privacy policy URL. Leave it out if the app has none. */
+            policy_uri?: string;
+            /** @description The software's identifier. Leave it out if there is none. */
+            software_id?: string;
+            /** @description The software's version. Leave it out if there is none. */
+            software_version?: string;
+            /** @description A signed software statement. Leave it out to register without one. */
+            software_statement?: string;
+            /** @description Addresses the app may return to after sign-out. Leave it out if there are none. */
+            post_logout_redirect_uris?: string[];
+            /**
+             * @description `none` is public, `client_secret_basic` uses HTTP Basic and `client_secret_post` sends the secret in the body. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.
+             * @default client_secret_basic
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "none" | "client_secret_basic" | "client_secret_post";
+            /** @description The client's public JSON Web Key Set. Leave it out if the client has none. */
+            jwks?: {
+                /** @description The client's public JSON Web Keys, including any extension members. */
+                keys: {
+                    [key: string]: unknown;
+                }[];
+            };
+            /** @description The URL of the client's public JSON Web Key Set. Leave it out if the client has none. */
+            jwks_uri?: string;
+            /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`. */
+            grant_types?: string[];
+            /** @description The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`. */
+            response_types?: "code"[];
+            /**
+             * @description `web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`.
+             * @enum {string}
+             */
+            application_type?: "web" | "native";
+            /**
+             * @description `public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`.
+             * @enum {string}
+             */
+            subject_type?: "public";
+            /** @description `true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding. */
+            dpop_bound_access_tokens?: boolean;
+            /** @description Resource identifiers to register the client for. Leave it out for the instance's default resources. */
+            resources?: string[];
+        };
+        /** @description An error response. */
+        StreamCapacityExhaustedOrWriteContentionRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "stream_capacity_exhausted" | "write_contention";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description A webhook sends the events you choose, as you can read them, to a URL. */
         Webhook: {
             /** @description Unique identifier for the webhook. */
@@ -4488,23 +4581,6 @@ export interface components {
                 };
             };
         };
-        /** @description An error response. */
-        StreamCapacityExhaustedOrWriteContentionRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "stream_capacity_exhausted" | "write_contention";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         /** @description An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions. */
         ItemEventFrame: {
             /**
@@ -4658,6 +4734,52 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceDescription"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+        };
+    };
     listItems: {
         parameters: {
             query?: {
@@ -21524,6 +21646,411 @@ export interface operations {
             };
         };
     };
+    registerOAuthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthClientRegistration"];
+            };
+        };
+        responses: {
+            /** @description Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`. */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The redirect URIs, as registered. */
+                        redirect_uris?: string[];
+                        /** @description Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token. */
+                        scope?: string;
+                        /** @description The app's name, as registered. */
+                        client_name?: string;
+                        /** @description The app's home page URL, as registered. Absent if none was sent. */
+                        client_uri?: string;
+                        /** @description Icon URL for the application */
+                        logo_uri?: string;
+                        /** @description List representing ways to contact people responsible for this client, typically email addresses */
+                        contacts?: string[];
+                        /** @description Client's terms of service uri */
+                        tos_uri?: string;
+                        /** @description Client's policy uri */
+                        policy_uri?: string;
+                        /** @description Unique identifier assigned by the developer to help in the dynamic registration process */
+                        software_id?: string;
+                        /** @description Version identifier for the software_id */
+                        software_version?: string;
+                        /** @description JWT containing metadata values about the client software as claims */
+                        software_statement?: string;
+                        /** @description List of allowed logout redirect uris */
+                        post_logout_redirect_uris?: string[];
+                        /**
+                         * @description How the client proves itself at the token endpoint.
+                         * @enum {string}
+                         */
+                        token_endpoint_auth_method?: "none" | "client_secret_basic" | "client_secret_post";
+                        /** @description The client's public JSON Web Key Set, as registered. */
+                        jwks?: {
+                            /** @description The client's public JSON Web Keys, including any extension members. */
+                            keys: {
+                                [key: string]: unknown;
+                            }[];
+                        };
+                        /** @description The URL of the client's public JSON Web Key Set, as registered. */
+                        jwks_uri?: string;
+                        /** @description The grants, as registered. */
+                        grant_types?: string[];
+                        /** @description The response types, as registered. */
+                        response_types?: "code"[];
+                        /**
+                         * @description `web` or `native`.
+                         * @enum {string}
+                         */
+                        application_type?: "web" | "native";
+                        /**
+                         * @description `public` for public subject identifiers.
+                         * @enum {string}
+                         */
+                        subject_type?: "public";
+                        /** @description `true` if the client always uses DPoP for its token requests. */
+                        dpop_bound_access_tokens?: boolean;
+                        /** @description Final resource identifiers linked to the registered client */
+                        resources?: string[];
+                        /** @description Unique identifier for the client. */
+                        client_id: string;
+                        /** @description The secret the client proves itself with at the token endpoint. Absent for a public client. */
+                        client_secret?: string;
+                        /** @description When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't. */
+                        client_secret_expires_at?: number;
+                        /** @description The ID of the user who registered the client. Absent for anonymous registration. */
+                        user_id?: string;
+                        /** @description When the client was registered, in seconds since the Unix epoch. */
+                        client_id_issued_at?: number;
+                        /** @description `true` if the client is disabled. */
+                        disabled?: boolean;
+                    };
+                };
+            };
+            /**
+             * @description - `invalid_client_metadata`: client metadata is invalid.
+             *     - `invalid_redirect_uri`: a redirect URI is invalid.
+             *     - `invalid_scope`: a scope is not allowed.
+             *     - `invalid_target`: a resource is invalid.
+             *     - `invalid_software_statement`: a software statement is invalid.
+             *
+             *     These errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"] | {
+                        /**
+                         * @description The OAuth error code.
+                         * @enum {string}
+                         */
+                        error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope" | "invalid_target" | "invalid_software_statement";
+                        /** @description A description of the error for a person to read. */
+                        error_description?: string;
+                    };
+                };
+            };
+            /**
+             * @description An error in the shape RFC 6750 defines:
+             *     - `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.
+             */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description The OAuth error code.
+                         * @enum {string}
+                         */
+                        error: "invalid_token";
+                        /** @description A description of the error for a person to read. */
+                        error_description?: string;
+                    };
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /**
+             * @description An error with `message` and `code`, rather than Marfa's own shape:
+             *     - `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.
+             */
+            415: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description A machine-readable code for the error. Use it in your logic.
+                         * @enum {string}
+                         */
+                        code: "UNSUPPORTED_MEDIA_TYPE";
+                        /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                        message: string;
+                    };
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: {
+                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`. */
+                copy?: "1";
+                /** @description Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type. */
+                type?: string;
+                /** @description Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`. */
+                edges?: "all" | "none";
+            };
+            header?: {
+                /** @description On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy. */
+                "X-Marfa-Read-View"?: string;
+                /** @description The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Returns the stream. Each frame's `event:` names it:
+             *     - `stream_cursor`: first, where the log stands.
+             *     - An event, such as `item.created`, with its event ID as `id:`.
+             *     - `stream_live`: once the catch-up is over.
+             *     - `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.
+             */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example : connected
+                     *
+                     *     event: stream_cursor
+                     *     data: {"event_type":"stream_cursor","cursor":"1041"}
+                     *
+                     *     event: stream_live
+                     *     data: {"event_type":"stream_live","cursor":"1041"}
+                     *
+                     *     id: 1042
+                     *     event: item.created
+                     *     data: {"event_type":"item.created","item":{"id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","type":"core.note","properties":{"title":"Reading list","body":"Finish the chapter on tides."},"state":"active","tier":"library","version":1,"schema_version":0,"source":"notes-app","occurred_at":"2026-10-03T09:30:00.000Z","created_at":"2026-10-03T09:30:00.000Z","updated_at":"2026-10-03T09:30:00.000Z"},"metadata":{"item_id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","tags":[],"extensions":{}}}
+                     */
+                    "text/event-stream": components["schemas"]["EventStreamFrame"];
+                };
+            };
+            /**
+             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.
+             *     - `unknown_type`: a `type` entry isn't registered.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /**
+             * @description - `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamCapacityExhaustedOrWriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     listWebhooks: {
         parameters: {
             query?: never;
@@ -22933,435 +23460,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    getInstance: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /**
-                         * @description Always `marfa`.
-                         * @constant
-                         */
-                        name: "marfa";
-                        /** @description The build the instance runs. */
-                        version: string;
-                        /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
-                        instance_id: string;
-                        /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
-                        contract: number;
-                        /** @description The features the instance serves, such as `items` and `webhooks`. */
-                        features: string[];
-                    };
-                };
-            };
-            /** @description `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-        };
-    };
-    streamEvents: {
-        parameters: {
-            query?: {
-                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`. */
-                copy?: "1";
-                /** @description Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type. */
-                type?: string;
-                /** @description Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`. */
-                edges?: "all" | "none";
-            };
-            header?: {
-                /** @description On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy. */
-                "X-Marfa-Read-View"?: string;
-                /** @description The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream. */
-                "Last-Event-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /**
-             * @description Returns the stream. Each frame's `event:` names it:
-             *     - `stream_cursor`: first, where the log stands.
-             *     - An event, such as `item.created`, with its event ID as `id:`.
-             *     - `stream_live`: once the catch-up is over.
-             *     - `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.
-             */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example : connected
-                     *
-                     *     event: stream_cursor
-                     *     data: {"event_type":"stream_cursor","cursor":"1041"}
-                     *
-                     *     event: stream_live
-                     *     data: {"event_type":"stream_live","cursor":"1041"}
-                     *
-                     *     id: 1042
-                     *     event: item.created
-                     *     data: {"event_type":"item.created","item":{"id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","type":"core.note","properties":{"title":"Reading list","body":"Finish the chapter on tides."},"state":"active","tier":"library","version":1,"schema_version":0,"source":"notes-app","occurred_at":"2026-10-03T09:30:00.000Z","created_at":"2026-10-03T09:30:00.000Z","updated_at":"2026-10-03T09:30:00.000Z"},"metadata":{"item_id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","tags":[],"extensions":{}}}
-                     */
-                    "text/event-stream": components["schemas"]["EventStreamFrame"];
-                };
-            };
-            /**
-             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.
-             *     - `unknown_type`: a `type` entry isn't registered.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
-                };
-            };
-            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /**
-             * @description - `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later.
-             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
-             */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StreamCapacityExhaustedOrWriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    registerOAuthClient: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
-                    redirect_uris?: string[];
-                    /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`. */
-                    grant_types?: string[];
-                    /** @description The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`. */
-                    response_types?: string[];
-                    /** @description The app's name, which Marfa shows a person asked to approve it. */
-                    client_name?: string;
-                    /** @description `web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`. */
-                    application_type?: string;
-                    /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
-                    scope?: string;
-                    /** @description How the client proves itself at the token endpoint: `none`, `client_secret_basic` or `client_secret_post`. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`. */
-                    token_endpoint_auth_method?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`. */
-            201: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description Unique identifier for the client. */
-                        client_id?: string;
-                        /** @description The secret the client proves itself with at the token endpoint. Absent for a public client. */
-                        client_secret?: string;
-                        /** @description When the client was registered, in seconds since the Unix epoch. */
-                        client_id_issued_at?: number;
-                        /** @description Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token. */
-                        scope?: string;
-                        /** @description The redirect URIs, as registered. */
-                        redirect_uris?: string[];
-                        /** @description The grants, as registered. */
-                        grant_types?: string[];
-                        /** @description The response types, as registered. */
-                        response_types?: string[];
-                        /** @description How the client proves itself at the token endpoint. */
-                        token_endpoint_auth_method?: string;
-                        /** @description When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't. */
-                        client_secret_expires_at?: number;
-                        /** @description The app's name, as registered. */
-                        client_name?: string;
-                        /** @description `web` or `native`. */
-                        application_type?: string;
-                        /** @description `true` if the client is disabled. */
-                        disabled?: boolean;
-                        /** @description `true` if the client always uses DPoP for its token requests. */
-                        dpop_bound_access_tokens?: boolean;
-                    };
-                };
-            };
-            /**
-             * @description An error in the shape RFC 7591 defines:
-             *     - `invalid_client_metadata`: a field is invalid, such as `grant_types` naming `client_credentials`.
-             *     - `invalid_redirect_uri`: a redirect URI is missing, malformed or not allowed for the `application_type`.
-             *     - `invalid_scope`: `scope` names a scope the instance doesn't allow.
-             *
-             *     An unknown query parameter gets Marfa's own `validation_error` instead.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"] | {
-                        /** @enum {string} */
-                        error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope";
-                        error_description?: string;
-                    };
-                };
-            };
-            /**
-             * @description An error in the shape RFC 6750 defines:
-             *     - `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.
-             */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {string} */
-                        error: "invalid_token";
-                        error_description?: string;
-                    };
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /**
-             * @description An error with `message` and `code`, rather than Marfa's own shape:
-             *     - `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.
-             */
-            415: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /**
-                         * @description A machine-readable code for the error. Use it in your logic.
-                         * @enum {string}
-                         */
-                        code: "UNSUPPORTED_MEDIA_TYPE";
-                        /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                        message: string;
-                    };
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };

@@ -469,6 +469,7 @@ const getBlobUrlRoute = createRoute({
  */
 const fetchBlobRoute = createRoute({
   operationId: "fetchBlob",
+  hide: true,
   method: "get",
   path: "/{hash}/fetch",
   tags: ["Blobs"],

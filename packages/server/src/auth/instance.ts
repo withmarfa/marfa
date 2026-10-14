@@ -392,6 +392,11 @@ export interface MarfaAuth {
    *  plugin signed it with. Never log or serialize it. */
   signingSecret: string;
   api: unknown;
+  registration?:
+    | ReturnType<
+        typeof buildOauthProviderPlugin
+      >["endpoints"]["registerOAuthClient"]
+    | undefined;
 }
 
 /**
@@ -434,6 +439,14 @@ function storageRefusedWrite(err: unknown): boolean {
 }
 
 export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
+  const oauthProvider =
+    options.storage && options.apiKeySalt
+      ? buildOauthProviderPlugin({
+          storage: options.storage,
+          apiKeySalt: options.apiKeySalt,
+          baseURL: options.baseURL,
+        })
+      : undefined;
   const schema = {
     user: sqliteSchema.auth_user,
     session: sqliteSchema.auth_session,
@@ -566,16 +579,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       jwt({ disableSettingJwtHeader: true }),
       // The per-account limit on password sign-in; see `sign-in-throttle.ts`.
       ...(options.storage ? [buildSignInThrottlePlugin(options.storage)] : []),
-      ...(options.storage && options.apiKeySalt
+      ...(options.storage && options.apiKeySalt && oauthProvider
         ? [
-            withSessionEndAudit(
-              buildOauthProviderPlugin({
-                storage: options.storage,
-                apiKeySalt: options.apiKeySalt,
-                baseURL: options.baseURL,
-              }),
-              options.storage,
-            ),
+            withSessionEndAudit(oauthProvider, options.storage),
             // Scope validation and security observations precede the provider;
             // credential writes and grant projection use the audited adapter.
             buildOauthProjectionPlugin({
@@ -1254,6 +1260,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       );
     },
     api: instance.api,
+    registration: oauthProvider?.endpoints.registerOAuthClient,
     getSession: (headers: Headers, lookup = {}) =>
       (lookup.readOnly
         ? (work: () => Promise<MarfaAuthSession | null>) =>

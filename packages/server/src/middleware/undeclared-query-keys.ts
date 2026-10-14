@@ -94,20 +94,6 @@ export function declaredQueryKeys(schema: unknown): string[] {
   return Object.keys(shape);
 }
 
-/**
- * The query parameters a hand-written OpenAPI operation documents, for a
- * door that is not a `createRoute` route and so has no schema to read.
- */
-export function documentedQueryKeys(operation: unknown): string[] {
-  const parameters = (operation as { parameters?: unknown } | null)?.parameters;
-  if (!Array.isArray(parameters)) return [];
-  return parameters.flatMap((parameter: { name?: unknown; in?: unknown }) =>
-    parameter.in === "query" && typeof parameter.name === "string"
-      ? [parameter.name]
-      : [],
-  );
-}
-
 function refusal(
   unknown: string[],
   declared: readonly string[],

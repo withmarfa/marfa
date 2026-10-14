@@ -1,3 +1,9 @@
+import {
+  instanceDescriptionRoute,
+  InstanceDescriptionSchema,
+} from "./routes/instance-description.js";
+import type { z } from "@hono/zod-openapi";
+import { oauthRegistrationRoute } from "./routes/oauth-registration-schema.js";
 import { ConnectorProblemsSchema } from "./routes/_connector-problems.js";
 import { requireSecureOwnerTransport } from "./auth/owner-browser.js";
 import { controlRoutes } from "./control/routes.js";
@@ -9,6 +15,7 @@ import {
   EXPOSED_RESPONSE_HEADERS,
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
+  PUBLIC_TAGS,
 } from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
@@ -403,6 +410,7 @@ export function createApp(
   // holds no credential can read it: the id is what distinguishes two
   // instances answering the same shape, which is exactly the question
   // somebody pointing a client at an address is asking.
+  app.openAPIRegistry.registerPath(instanceDescriptionRoute);
   app.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
     // One address, two readers: a program takes the description and a person
     // opening it in a browser takes a page.
@@ -420,13 +428,14 @@ export function createApp(
           : renderRootPage(c.var.cspNonce),
       );
     }
-    return c.json({
+    const description: z.infer<typeof InstanceDescriptionSchema> = {
       name: "marfa",
       version: deployedVersion,
       instance_id: instanceId,
       contract: CONTRACT_VERSION,
       features,
-    });
+    };
+    return c.json(description);
   });
   // Ahead of the credential and the limiter, as the probe of a container
   // must be. Detailed diagnostics check instance.read independently.
@@ -777,6 +786,10 @@ export function createApp(
   // serves reach it; every other path answers 404 (`routes/auth-fence.ts`).
   if (auth) {
     const authInstance = auth;
+    if (auth.registration)
+      app.openAPIRegistry.registerPath(
+        oauthRegistrationRoute(auth.registration),
+      );
     app.on(["POST", "GET"], "/auth/*", async (c) => {
       refuseUnservedLibraryPath(new URL(c.req.url).pathname);
       // The one door of the library's that the document publishes. It takes
@@ -843,6 +856,7 @@ export function createApp(
     app.getOpenAPI31Document({
       openapi: "3.1.0",
       info: OPENAPI_DOCUMENT_INFO,
+      tags: PUBLIC_TAGS,
     }),
   );
   app.get("/openapi.json", refuseUndeclaredQueryKeys([]), (c) =>

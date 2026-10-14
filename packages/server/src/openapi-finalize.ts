@@ -1,30 +1,15 @@
+import { OpenAPIHono } from "@hono/zod-openapi";
 /**
- * Final shaping of the generated OpenAPI document for the public reference.
- *
- * `app.getOpenAPI31Document()` reflects every registered `createRoute`, in
- * registration order, with no top-level tag list and no operations for the
- * routes defined as plain Hono handlers. This pass makes the published spec
- * a deliberate, consumer-facing shape:
- *
- *   1. Sets an ordered, described top-level `tags` list (resources first).
- *   2. Strips platform-internal operations (the blob link target). They still serve — they are simply not part of the
- *      public reference.
- *   3. Injects the routes defined as plain Hono handlers (the instance
- *      root, the SSE stream and OAuth dynamic client registration), which
- *      the reflection cannot see.
- *   4. Adds the stream's frames and the request Marfa sends to a webhook,
- *      which no route declares.
- *
- * Both the live `/openapi.json` endpoint (`app.ts`) and the committed
- * `openapi.json` (`scripts/generate-openapi.ts`) call this, so the two never
- * drift.
+ * Add the middleware's refusals and headers, and the stream and webhook
+ * frames, to the document generated from the registered route schemas.
+ * The live and committed documents use this same shaping step.
  */
 
 import { CONDITIONAL_READ_OPERATIONS } from "./middleware/read-view.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import {
   IDEMPOTENCY_IN_FLIGHT,
-  REFUSAL_TEXT,
+  makeErrorResponseSchema,
   refusalComponentName,
 } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
@@ -105,7 +90,7 @@ export const SERVERS = [
  * has and is withholding, which is the same defect as advertising a feature
  * with no door behind it.
  */
-const PUBLIC_TAGS = [
+export const PUBLIC_TAGS = [
   { name: "Items", description: "The records Marfa stores, each of a type." },
   {
     name: "Bulk actions",
@@ -169,17 +154,6 @@ const PUBLIC_TAGS = [
     description: "Export the instance's data, and restore it from an archive.",
   },
 ];
-
-/**
- * Operations excluded from the public reference, by operationId. These are
- * platform-internal — they still serve, but app developers never call them.
- * A new internal route adds its operationId here.
- */
-export const INTERNAL_OPERATION_IDS = new Set<string>([
-  // blobs.ts — the target of an instance-served link, which
-  // `GET /blobs/{hash}/url` hands out; nothing calls it by name
-  "fetchBlob",
-]);
 
 /**
  * The `Idempotency-Key` header, added to every door that honors it.
@@ -325,9 +299,8 @@ const ANSWERED_AHEAD_OF_THE_LIMITER = new Set([413]);
 /**
  * A refusal middleware answers on behalf of the doors it is mounted over.
  *
- * No route declares these, so they are written out rather than reflected;
- * `openapi-published.test.ts` compares each against a reflected
- * `makeErrorResponseSchema(codes)` so the two cannot drift.
+ * Reflected through the same schema factory the route declarations use,
+ * so middleware and handler refusals share one envelope.
  */
 export interface ChainRefusal {
   codes: readonly [string, ...string[]];
@@ -338,6 +311,22 @@ export interface ChainRefusal {
 
 const WRITTEN_REFUSALS: ChainRefusal[] = [];
 
+function reflectedRefusal(
+  codes: readonly [string, ...string[]],
+): Record<string, unknown> {
+  const name = refusalComponentName(codes);
+  // Hono owns the schema metadata registry, including in the production bundle.
+  const document = new OpenAPIHono();
+  document.openAPIRegistry.register(name, makeErrorResponseSchema(codes));
+  const schema = document.getOpenAPI31Document({
+    openapi: "3.1.0",
+    info: OPENAPI_DOCUMENT_INFO,
+  }).components?.schemas?.[name];
+  if (schema === undefined)
+    throw new Error(`Refusal schema ${name} was not reflected`);
+  return schema as Record<string, unknown>;
+}
+
 function chainRefusal(
   codes: readonly [string, ...string[]],
   description: string,
@@ -346,31 +335,7 @@ function chainRefusal(
   const refusal: ChainRefusal = {
     codes,
     name,
-    schema: {
-      type: "object",
-      properties: {
-        error: {
-          type: "object",
-          properties: {
-            code: {
-              type: "string",
-              enum: [...codes].sort(),
-              description: REFUSAL_TEXT.code,
-            },
-            message: { type: "string", description: REFUSAL_TEXT.message },
-            details: {
-              type: "object",
-              additionalProperties: {},
-              description: REFUSAL_TEXT.details,
-            },
-          },
-          required: ["code", "message"],
-          description: REFUSAL_TEXT.error,
-        },
-      },
-      required: ["error"],
-      description: REFUSAL_TEXT.refusal,
-    },
+    schema: reflectedRefusal(codes),
     response: {
       description,
       content: {
@@ -423,11 +388,6 @@ export const CHAIN_REFUSALS = {
     "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
   ),
 } as const;
-
-const UNDECLARED_QUERY_REFUSAL = chainRefusal(
-  ["validation_error"],
-  "`validation_error`: the query has a parameter this endpoint doesn't take.",
-);
 
 const READ_VIEW_REFUSAL = chainRefusal(
   ["read_view_changed"],
@@ -950,7 +910,7 @@ const EXAMPLE_ITEM_ID = "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b";
 const EXAMPLE_TIME = "2026-10-03T09:30:00.000Z";
 
 /** A stream opened without a cursor, as it reads on the wire. */
-const STREAM_EXAMPLE = [
+export const STREAM_EXAMPLE = [
   ": connected",
   "",
   "event: stream_cursor",
@@ -985,361 +945,9 @@ const STREAM_EXAMPLE = [
   "",
 ].join("\n");
 
-/**
- * Consumer routes defined as plain Hono handlers, invisible to the
- * `createRoute` reflection. Documented here so the reference is complete.
- *
- * Their refusals are written out for the same reason the route is: there is
- * no `createRoute` to reflect one from.
- */
-export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
-  "/": {
-    get: {
-      operationId: "getInstance",
-      tags: ["Instance"],
-      summary: "Describe the instance",
-      description:
-        "Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
-      responses: {
-        "400": UNDECLARED_QUERY_REFUSAL.response,
-        "200": {
-          description:
-            "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  name: {
-                    type: "string",
-                    const: "marfa",
-                    description: "Always `marfa`.",
-                  },
-                  version: {
-                    type: "string",
-                    description: "The build the instance runs.",
-                  },
-                  instance_id: {
-                    type: "string",
-                    description:
-                      "Unique identifier for the instance. `GET /config` and an archive's manifest show the same value.",
-                  },
-                  contract: {
-                    type: "integer",
-                    minimum: 0,
-                    description:
-                      "The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release.",
-                  },
-                  features: {
-                    type: "array",
-                    items: { type: "string" },
-                    description:
-                      "The features the instance serves, such as `items` and `webhooks`.",
-                  },
-                },
-                required: [
-                  "name",
-                  "version",
-                  "instance_id",
-                  "contract",
-                  "features",
-                ],
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-  "/events": {
-    get: {
-      operationId: "streamEvents",
-      tags: ["Event stream"],
-      summary: "Stream change events",
-      description:
-        "Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.",
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        {
-          name: "copy",
-          in: "query",
-          required: false,
-          schema: { type: "string", enum: ["1"] },
-          description:
-            "Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`.",
-        },
-        {
-          ...READ_VIEW_PARAMETER,
-          description:
-            "On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy.",
-        },
-        {
-          name: "type",
-          in: "query",
-          required: false,
-          schema: { type: "string" },
-          description:
-            "Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type.",
-        },
-        {
-          name: "edges",
-          in: "query",
-          required: false,
-          schema: { type: "string", enum: ["all", "none"], default: "all" },
-          description:
-            "Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`.",
-        },
-        {
-          name: "Last-Event-ID",
-          in: "header",
-          required: false,
-          schema: { type: "string" },
-          description:
-            "The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream.",
-        },
-      ],
-      responses: {
-        "200": {
-          description:
-            "Returns the stream. Each frame's `event:` names it:\n- `stream_cursor`: first, where the log stands.\n- An event, such as `item.created`, with its event ID as `id:`.\n- `stream_live`: once the catch-up is over.\n- `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.",
-          content: {
-            "text/event-stream": {
-              schema: { $ref: "#/components/schemas/EventStreamFrame" },
-              example: STREAM_EXAMPLE,
-            },
-          },
-        },
-        "400": chainRefusal(
-          ["validation_error", "unknown_type"],
-          "- `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.\n- `unknown_type`: a `type` entry isn't registered.",
-        ).response,
-        "403": chainRefusal(
-          ["type_not_permitted"],
-          "- `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can.",
-        ).response,
-        "503": chainRefusal(
-          ["stream_capacity_exhausted", "write_contention"],
-          `- \`stream_capacity_exhausted\`: the instance is serving as many streams as its operator allows. Try again later.\n- ${WRITE_CONTENTION_TEXT}`,
-        ).response,
-      },
-    },
-  },
-  "/auth/oauth2/register": {
-    post: {
-      operationId: "registerOAuthClient",
-      tags: ["Access"],
-      summary: "Register an OAuth client",
-      description:
-        "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
-      requestBody: {
-        required: true,
-        content: {
-          "application/json": {
-            schema: {
-              type: "object",
-              properties: {
-                redirect_uris: {
-                  type: "array",
-                  items: { type: "string" },
-                  description:
-                    "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
-                },
-                grant_types: {
-                  type: "array",
-                  items: { type: "string" },
-                  description:
-                    "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`.",
-                },
-                response_types: {
-                  type: "array",
-                  items: { type: "string" },
-                  description:
-                    "The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`.",
-                },
-                client_name: {
-                  type: "string",
-                  description:
-                    "The app's name, which Marfa shows a person asked to approve it.",
-                },
-                application_type: {
-                  type: "string",
-                  description:
-                    "`web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`.",
-                },
-                scope: {
-                  type: "string",
-                  description:
-                    "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use.",
-                },
-                token_endpoint_auth_method: {
-                  type: "string",
-                  description:
-                    "How the client proves itself at the token endpoint: `none`, `client_secret_basic` or `client_secret_post`. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.",
-                },
-              },
-            },
-          },
-        },
-      },
-      responses: {
-        "201": {
-          description:
-            "Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  client_id: {
-                    type: "string",
-                    description: "Unique identifier for the client.",
-                  },
-                  client_secret: {
-                    type: "string",
-                    description:
-                      "The secret the client proves itself with at the token endpoint. Absent for a public client.",
-                  },
-                  client_id_issued_at: {
-                    type: "integer",
-                    description:
-                      "When the client was registered, in seconds since the Unix epoch.",
-                  },
-                  scope: {
-                    type: "string",
-                    description:
-                      "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token.",
-                  },
-                  redirect_uris: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "The redirect URIs, as registered.",
-                  },
-                  grant_types: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "The grants, as registered.",
-                  },
-                  response_types: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "The response types, as registered.",
-                  },
-                  token_endpoint_auth_method: {
-                    type: "string",
-                    description:
-                      "How the client proves itself at the token endpoint.",
-                  },
-                  client_secret_expires_at: {
-                    type: "integer",
-                    description:
-                      "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't.",
-                  },
-                  client_name: {
-                    type: "string",
-                    description: "The app's name, as registered.",
-                  },
-                  application_type: {
-                    type: "string",
-                    description: "`web` or `native`.",
-                  },
-                  disabled: {
-                    type: "boolean",
-                    description: "`true` if the client is disabled.",
-                  },
-                  dpop_bound_access_tokens: {
-                    type: "boolean",
-                    description:
-                      "`true` if the client always uses DPoP for its token requests.",
-                  },
-                },
-              },
-            },
-          },
-        },
-        "400": {
-          description:
-            "An error in the shape RFC 7591 defines:\n- `invalid_client_metadata`: a field is invalid, such as `grant_types` naming `client_credentials`.\n- `invalid_redirect_uri`: a redirect URI is missing, malformed or not allowed for the `application_type`.\n- `invalid_scope`: `scope` names a scope the instance doesn't allow.\n\nAn unknown query parameter gets Marfa's own `validation_error` instead.",
-          content: {
-            "application/json": {
-              schema: {
-                anyOf: [
-                  {
-                    $ref: `#/components/schemas/${UNDECLARED_QUERY_REFUSAL.name}`,
-                  },
-                  {
-                    type: "object",
-                    properties: {
-                      error: {
-                        type: "string",
-                        enum: [
-                          "invalid_client_metadata",
-                          "invalid_redirect_uri",
-                          "invalid_scope",
-                        ],
-                      },
-                      error_description: { type: "string" },
-                    },
-                    required: ["error"],
-                  },
-                ],
-              },
-            },
-          },
-        },
-        "401": {
-          description:
-            "An error in the shape RFC 6750 defines:\n- `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  error: { type: "string", enum: ["invalid_token"] },
-                  error_description: { type: "string" },
-                },
-                required: ["error"],
-              },
-            },
-          },
-        },
-        "415": {
-          description:
-            "An error with `message` and `code`, rather than Marfa's own shape:\n- `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  code: {
-                    type: "string",
-                    enum: ["UNSUPPORTED_MEDIA_TYPE"],
-                    description: REFUSAL_TEXT.code,
-                  },
-                  message: {
-                    type: "string",
-                    description: REFUSAL_TEXT.message,
-                  },
-                },
-                required: ["code", "message"],
-              },
-            },
-          },
-        },
-        // Declared here rather than by the floor, which hangs it off a
-        // door's `security`, and this door has none: the registration is
-        // still a write, and it meets the write lock as any other does.
-        "503": CHAIN_REFUSALS.writeContention.response,
-      },
-    },
-  },
-};
-
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
-  spec.tags = PUBLIC_TAGS;
-
-  // Build a new paths object excluding internal operations, rather than
-  // deleting keys in place (cleaner, and avoids dynamic-delete).
+  // Keep the document the caller supplied separate from the additions.
   const sourcePaths = (spec.paths ?? {}) as Record<
     string,
     Record<string, unknown>
@@ -1348,13 +956,6 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   for (const [pathKey, methods] of Object.entries(sourcePaths)) {
     const keptMethods: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {
-      const operationId = (op as { operationId?: unknown } | null)?.operationId;
-      if (
-        typeof operationId === "string" &&
-        INTERNAL_OPERATION_IDS.has(operationId)
-      ) {
-        continue;
-      }
       if (
         IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`) &&
         op !== null &&
@@ -1377,15 +978,7 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
     }
   }
 
-  // Inject the plain-Hono consumer routes the reflection can't see.
-  for (const [pathKey, def] of Object.entries(EXTRA_PATHS)) {
-    nextPaths[pathKey] = { ...(nextPaths[pathKey] ?? {}), ...def };
-  }
-
-  // Declare the middleware-set response headers, last so that the injected
-  // routes above are covered too: they are served through the same logger
-  // as everything else, and a client reading the reference has no way to
-  // know which routes the reflection happened to see.
+  // Every registered operation is served through the same middleware.
   for (const [pathKey, methods] of Object.entries(nextPaths)) {
     const withHeaders: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {

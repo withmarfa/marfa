@@ -124,6 +124,7 @@ export function closed(node: unknown, isAllOfBranch = false): unknown {
 interface Operation {
   operationId?: string;
   parameters?: { name?: string; in?: string }[];
+  requestBody?: { content?: Record<string, { schema?: unknown }> };
   responses?: Record<
     string,
     { content?: Record<string, { schema?: unknown }> }
