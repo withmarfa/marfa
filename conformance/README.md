@@ -83,7 +83,7 @@ to the byte, then removes what it wrote to the bucket. The report goes to
 `reports/restore-drill.md`, and `deploy/README.md` is what it proves.
 
 `pnpm marfa:up` builds the workspace packages if they are not built, starts
-the server with `tsx` (never watch mode), waits for `/health`, claims the owner through the private socket using the
+the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
 production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, the pid and the env file; pass

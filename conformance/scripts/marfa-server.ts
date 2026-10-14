@@ -28,9 +28,10 @@ import { tmpdir } from "node:os";
  * `stopServer` stops and nothing more, because the restore drill reads the
  * database of a server it has just stopped.
  *
- * The server starts through `tsx` directly rather than the package's `dev`
- * script, which is watch mode and belongs to a person at a keyboard, under
- * `run-server.mjs`, which writes how the server ended to `server.exit`.
+ * The server starts as a direct Node child with the tsx loader and the
+ * instrumentation preload, under `run-server.mjs`, which writes how the
+ * server ended to `server.exit`. The package's `dev` script is watch mode
+ * and belongs to a person at a keyboard.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -186,16 +187,12 @@ function ensureBuilt(): void {
   }
 }
 
-function tsxBinary(): string {
-  const candidates = [
-    resolve(REPO_ROOT, "packages/server/node_modules/.bin/tsx"),
-    resolve(REPO_ROOT, "node_modules/.bin/tsx"),
-  ];
-  const found = candidates.find((c) => existsSync(c));
-  if (!found) {
-    throw new Error("no tsx binary in this checkout; run pnpm install first");
-  }
-  return found;
+/** Runtime command supervised for a server entrypoint and its preloads. */
+export function serverRuntime(args: string[]): [string, ...string[]] {
+  // The tsx CLI force-kills a child that cannot acknowledge a signal within
+  // its short relay window. A direct Node child lets shutdown finish and
+  // makes the supervisor record the server's own exit.
+  return [process.execPath, "--import", "tsx", ...args];
 }
 
 function readPid(pidFile: string): number | undefined {
@@ -384,10 +381,11 @@ async function startServer(args: BootOptions): Promise<Started> {
     [
       RUN_SERVER,
       p.exit,
-      tsxBinary(),
-      "--import",
-      "./src/instrumentation.ts",
-      "src/index.ts",
+      ...serverRuntime([
+        "--import",
+        "./src/instrumentation.ts",
+        "src/index.ts",
+      ]),
     ],
     {
       cwd: resolve(REPO_ROOT, "packages/server"),
