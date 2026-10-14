@@ -2124,7 +2124,8 @@ impl Core {
     /// Answers whether the row was one a discard takes: refused, and with no
     /// write still waiting on it, or a create refused onto a row its natural
     /// key names that no read has found, whose waiting writes it refuses
-    /// unsent.
+    /// unsent. A create's discard first waits for a drain already running to
+    /// end.
     pub fn discard(&self, id: String) -> Result<bool, MarfaError> {
         Ok(self.inner.discard(&id)?)
     }

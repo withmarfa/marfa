@@ -1904,7 +1904,8 @@ impl Core {
     /// Takes a refused write out of the queue, with what it carried. Answers
     /// `false` for a row that is not refused, or one a write still waits on,
     /// unless it is a create refused onto a row no read has found: the writes
-    /// waiting on that one are refused unsent.
+    /// waiting on that one are refused unsent. A create's discard first waits
+    /// for a drain already running to end.
     pub fn discard(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         // Only a create's discard refuses other writes, and a running drain
