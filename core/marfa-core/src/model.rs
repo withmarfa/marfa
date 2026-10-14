@@ -397,7 +397,6 @@ pub struct CatchUpReport {
     pub applied: u64,
     pub skipped: u64,
     pub cursor: String,
-    pub reached_head: bool,
     /// The catch-up replaced the catalog the copy holds with one that
     /// differs from it.
     pub catalog_changed: bool,

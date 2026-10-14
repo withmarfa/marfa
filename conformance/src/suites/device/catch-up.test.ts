@@ -1605,7 +1605,7 @@ describe("catch-up replays from the cursor", () => {
     ).toEqual(["(none)", "10", "10", "12"]);
   });
 
-  it("reports reaching the head, and reports stopping short of it", async () => {
+  it("reports what a catch-up carried, and refuses one that stopped short", async () => {
     harness = await startHarness("head-report");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
@@ -1630,9 +1630,13 @@ describe("catch-up replays from the cursor", () => {
     const complete = await device.catchUp();
     expect(complete.ok).toBe(true);
     expect(
-      complete.ok ? complete.value.reached_head : undefined,
-      "a catch-up that reached the log's head did not say so, so nothing can tell a current copy from a lagging one",
-    ).toBe(true);
+      complete.ok ? complete.value : undefined,
+      "a catch-up that ended on the marker did not report what it applied, what it skipped and where its cursor stands",
+    ).toMatchObject({ applied: 1, skipped: 0, cursor: "12" });
+    expect(
+      complete.ok ? Object.keys(complete.value).sort() : undefined,
+      "the report carried a field beyond the counts, the cursor and the catalog flag, which a caller would read as a promise the contract does not make",
+    ).toEqual(["applied", "catalog_changed", "cursor", "skipped"]);
   });
 });
 
@@ -1656,11 +1660,9 @@ describe("catch-up ends on the replay's marker", () => {
     const caught = await device.catchUp();
     expect(caught.ok).toBe(true);
     expect(
-      caught.ok
-        ? [caught.value.applied, caught.value.cursor, caught.value.reached_head]
-        : undefined,
+      caught.ok ? [caught.value.applied, caught.value.cursor] : undefined,
       "the catch-up did not end on the marker at its cursor, so a device whose head rows are withheld waits out the silence, reports itself behind, and keeps a cursor that ages out",
-    ).toEqual([1, "14", true]);
+    ).toEqual([1, "14"]);
 
     await device.catchUp();
     expect(
@@ -3708,8 +3710,8 @@ describe("a cursor the log no longer holds", () => {
  * A server restored from a backup holds a log that ends behind the copy's
  * cursor, and another instance started at the same address holds another
  * log altogether. Either way the copy holds rows the server does not, and
- * misses rows it does; a catch-up that answered "reached the head" would
- * leave it reporting itself current for good.
+ * misses rows it does; a catch-up that ended cleanly would leave it
+ * reporting itself current for good.
  */
 describe("a server that is not the one the copy followed", () => {
   const OTHER_INSTANCE = "00000000-0000-7000-8000-0000000000ff";

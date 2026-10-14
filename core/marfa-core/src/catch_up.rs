@@ -427,9 +427,9 @@ pub(crate) fn replay_build(
         applied: 0,
         skipped: 0,
         cursor: cursor.clone(),
-        reached_head: false,
         catalog_changed: false,
     };
+    let mut reached_head = false;
     let mut head: Option<u64> = None;
     let mut greatest = read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
     let mut connected = false;
@@ -496,7 +496,7 @@ pub(crate) fn replay_build(
                         {
                             report.cursor = cursor;
                         }
-                        report.reached_head = true;
+                        reached_head = true;
                         break;
                     }
                     "stream_incomplete" => {
@@ -533,7 +533,7 @@ pub(crate) fn replay_build(
             }
         }
     }
-    if !report.reached_head {
+    if !reached_head {
         return Err(CoreError::StreamIncomplete {
             reason: "replay_failed".into(),
         });
@@ -2084,7 +2084,7 @@ mod tests {
             let conn = core.conn().unwrap();
             store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
         }
-        assert!(core.catch_up().unwrap().reached_head);
+        core.catch_up().unwrap();
         assert!(
             !server.seen("/types").is_empty(),
             "the catch-up read no catalog, so its absence above proves nothing"
@@ -2615,7 +2615,6 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
         let report = catch_up(&core, &http, MS(1000), &AtomicBool::new(false), &mut false).unwrap();
-        assert!(report.reached_head);
         assert_eq!(report.cursor, "14");
     }
 
@@ -2693,7 +2692,7 @@ mod tests {
             )],
         );
         let (_dir, core) = hydrated(&server);
-        assert!(core.catch_up().unwrap().reached_head);
+        core.catch_up().unwrap();
         assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
     }
 
@@ -2726,7 +2725,7 @@ mod tests {
         );
         let (_dir, core) = hydrated(&server);
         // The witness: the instance it was hydrated from catches up.
-        assert!(core.catch_up().unwrap().reached_head);
+        core.catch_up().unwrap();
 
         let other = "00000000-0000-7000-8000-0000000000ff";
         server.on(

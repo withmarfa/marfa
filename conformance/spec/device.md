@@ -822,7 +822,7 @@ If a catch-up's stream ends before its live marker, then a device MUST end the c
 
 **Reason:** a catch-up that stopped short of the head must not read as a clean pass.
 
-**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `› reports reaching the head, and reports stopping short of it`.
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `› reports what a catch-up carried, and refuses one that stopped short`.
 
 ### `device/catch-up-incomplete-cursor`
 
@@ -858,9 +858,9 @@ If a live marker names no position, then a device MUST expire the copy.
 
 ### `device/catch-up-report`
 
-When a catch-up ends on its live marker, a device MUST report how many events it applied, how many it skipped, the cursor it reached and that it reached the log's head.
+When a catch-up ends on its live marker, a device MUST report how many events it applied, how many it skipped and the cursor it reached.
 
-**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› skips an event at the version it holds that was stamped before the row it holds`, `› reports reaching the head, and reports stopping short of it`, `› moves the cursor past the rows the stream withheld, and resumes from there`.
+**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› skips an event at the version it holds that was stamped before the row it holds`, `› reports what a catch-up carried, and refuses one that stopped short`, `› moves the cursor past the rows the stream withheld, and resumes from there`.
 
 ### `device/cursor-zero`
 

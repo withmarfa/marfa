@@ -173,7 +173,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
 
     let quiet = core.catch_up().unwrap();
     assert_eq!(quiet.applied, 0, "{quiet:?}");
-    assert!(quiet.reached_head, "{quiet:?}");
+    assert_eq!(quiet.skipped, 0, "{quiet:?}");
 
     let status = core.status().unwrap();
     assert_eq!(status.slice_tier, Some(SliceTier::Library));

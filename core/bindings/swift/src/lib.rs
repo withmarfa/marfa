@@ -234,7 +234,6 @@ pub struct CatchUpReport {
     pub applied: u64,
     pub skipped: u64,
     pub cursor: String,
-    pub reached_head: bool,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
 }
@@ -1650,7 +1649,6 @@ impl Core {
             applied: report.applied,
             skipped: report.skipped,
             cursor: report.cursor,
-            reached_head: report.reached_head,
             catalog_changed: report.catalog_changed,
         })
     }
