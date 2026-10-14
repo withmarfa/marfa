@@ -9,6 +9,7 @@ pub mod identity;
 mod landing;
 mod lines;
 pub mod lists;
+mod made;
 mod names;
 pub(crate) mod placement;
 mod preserve;
@@ -32,6 +33,7 @@ pub mod state;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -217,6 +219,10 @@ impl Flagged {
 impl Folder {
     /// The directory need not exist.
     /// Installs `renew` before binding makes its first server request.
+    /// A refused or failed add takes back the directories and files it made,
+    /// but for anything it put in a `.marfa` that already held a store, and
+    /// leaves everything that was there before it. A refusal after the
+    /// settings file is written leaves the one found there rewritten.
     pub fn add(
         root: impl AsRef<Path>,
         folder: &str,
@@ -225,30 +231,47 @@ impl Folder {
     ) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = registry::named(root.as_ref())?;
-        let root_dir = Directory::create(&root).map_err(|error| {
-            registry::named(&root)
-                .err()
-                .unwrap_or_else(|| io_error(error))
-        })?;
+        let mut made = made::Made::default();
+        let added = Folder::admit(root, folder, server, renew, &mut made);
+        if added.is_err() {
+            made.take_back();
+        }
+        added
+    }
+
+    /// Records in `made` what it makes, before it can fail.
+    fn admit(
+        root: PathBuf,
+        folder: &str,
+        server: Server,
+        renew: Option<crate::http::Renew>,
+        made: &mut made::Made,
+    ) -> Result<Folder> {
+        let root_dir =
+            Directory::create_recorded(&root, &mut made.directories).map_err(|error| {
+                registry::named(&root)
+                    .err()
+                    .unwrap_or_else(|| io_error(error))
+            })?;
         admitted_root(&root_dir).map_err(io_error)?;
         crate::directory_vfs::DirectoryVfs::supported(root_dir.file())?;
         let state_dir = root_dir
-            .child(Path::new(STATE_DIR), true)
+            .child_recorded(Path::new(STATE_DIR), &mut made.directories)
             .map_err(io_error)?;
-        let fresh = state_dir.contains_no_files().unwrap_or(false);
         swap_root(&root, "replace-root-before-store-open");
-        let added = Folder::bind(
-            root,
-            root_dir.clone(),
-            state_dir.clone(),
-            folder,
-            server,
-            renew,
-        );
-        if added.is_err() && fresh {
-            let _ = state_dir.clear();
-        }
-        added
+        let lock_there = state_dir
+            .entry_kind(Path::new(crate::lock::DIRECTORY_LOCK))
+            .is_ok();
+        let lock = Arc::new(Core::claim_directory(&state_dir)?);
+        made.lock = Some(Arc::clone(&lock));
+        made.holding(&state_dir, lock_there);
+        let core = working(Core::open_claimed(
+            &state_dir,
+            &root.join(STATE_DIR).join("core.sqlite"),
+            Some(server),
+            lock,
+        )?)?;
+        Folder::bind(root, root_dir, state_dir, folder, core, renew)
     }
 
     fn bind(
@@ -256,15 +279,9 @@ impl Folder {
         root_dir: Directory,
         state_dir: Directory,
         folder: &str,
-        server: Server,
+        core: Core,
         renew: Option<crate::http::Renew>,
     ) -> Result<Folder> {
-        let state = root.join(STATE_DIR);
-        let core = working(Core::open_directory(
-            &state_dir,
-            &state.join("core.sqlite"),
-            Some(server),
-        )?)?;
         if let Some(renew) = renew {
             core.renew_credential_with(renew);
         }

@@ -2051,10 +2051,10 @@ describe("where a file sits", () => {
       const row = scriptFolderRow(server, {
         search: { types: ["core.note"] },
       });
-      const dir = join(
-        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-no-placement-")),
-        "notes",
+      const parent = mkdtempSync(
+        join(realpathSync(tmpdir()), "marfa-folder-no-placement-"),
       );
+      const dir = join(parent, "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,
@@ -2063,12 +2063,40 @@ describe("where a file sits", () => {
       try {
         const added = await folder.add(row.id);
         expect(added.ok, JSON.stringify(grant)).toBe(places);
-        if (added.ok) continue;
+        if (added.ok) {
+          // The witness: an add that is not refused makes the directory and
+          // its working copy.
+          expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(true);
+          continue;
+        }
         expect(added.refusal.raw).toContain("edge.in-folder:write");
-        expect(
-          existsSync(join(dir, ".marfa", "core.sqlite")),
-          "a refused add left its working copy behind",
-        ).toBe(false);
+        const left = existsSync(dir)
+          ? readdirSync(dir, { recursive: true })
+          : null;
+        expect(left, "a refused add left the directory it made").toBeNull();
+
+        // A directory that was there before, with the person's file and the
+        // empty state a removed folder leaves, is kept as it was.
+        const existing = join(parent, "existing");
+        mkdirSync(join(existing, ".marfa", "core.sqlite.blobs"), {
+          recursive: true,
+        });
+        writeFileSync(join(existing, "Note.md"), "the person's note\n");
+        const before = readdirSync(existing, { recursive: true }).sort();
+        const again = await new CliFolder(existing, {
+          binary: requireBinary(),
+          url: server.url,
+          key: KEY,
+        }).add(row.id);
+        expect(again.ok, JSON.stringify(again)).toBe(false);
+        if (!again.ok)
+          expect(again.refusal.raw).toContain("edge.in-folder:write");
+        expect(readdirSync(existing, { recursive: true }).sort()).toEqual(
+          before,
+        );
+        expect(readFileSync(join(existing, "Note.md"), "utf8")).toBe(
+          "the person's note\n",
+        );
       } finally {
         await server.stop();
       }

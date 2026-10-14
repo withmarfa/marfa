@@ -10,6 +10,15 @@ pub(crate) struct Directory {
     file: std::sync::Arc<File>,
 }
 
+#[derive(Debug)]
+pub(crate) struct MadeDirectory;
+
+impl MadeDirectory {
+    pub(crate) fn take_back(&self) -> io::Result<bool> {
+        unsupported()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct OFlags;
 impl OFlags {
@@ -60,7 +69,13 @@ impl Directory {
     pub(crate) fn create(_: &Path) -> io::Result<Self> {
         unsupported()
     }
+    pub(crate) fn create_recorded(_: &Path, _: &mut Vec<MadeDirectory>) -> io::Result<Self> {
+        unsupported()
+    }
     pub(crate) fn child(&self, _: &Path, _: bool) -> io::Result<Self> {
+        unsupported()
+    }
+    pub(crate) fn child_recorded(&self, _: &Path, _: &mut Vec<MadeDirectory>) -> io::Result<Self> {
         unsupported()
     }
     pub(crate) fn up(&self) -> io::Result<Self> {
@@ -96,9 +111,6 @@ impl Directory {
     pub(crate) fn observed_identity(&self, _: &Path) -> io::Result<Option<(u64, u64, u128)>> {
         unsupported()
     }
-    pub(crate) fn contains_no_files(&self) -> io::Result<bool> {
-        unsupported()
-    }
     pub(crate) fn clear(&self) -> io::Result<()> {
         unsupported()
     }
@@ -106,6 +118,9 @@ impl Directory {
         unsupported()
     }
     pub(crate) fn unlink(&self, _: &Path) -> io::Result<()> {
+        unsupported()
+    }
+    pub(crate) fn remove_dir(&self, _: &Path, _: &Self) -> io::Result<bool> {
         unsupported()
     }
     pub(crate) fn rename(&self, _: &Path, _: &Self, _: &Path, _: bool) -> io::Result<()> {

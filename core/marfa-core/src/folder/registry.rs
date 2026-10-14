@@ -1035,7 +1035,9 @@ mod tests {
         );
         assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
 
+        let (_registry, _own) = own_registry();
         let server = crate::scripted::Scripted::start();
+        served(&server, "01a00000-0000-7000-8000-000000000002");
         let added = Folder::add(
             temp.path().join("link/fresh"),
             "01a00000-0000-7000-8000-000000000002",
@@ -1044,9 +1046,15 @@ mod tests {
                 key: "fixture".into(),
             }),
             None,
+        )
+        .unwrap();
+        assert_eq!(added.root(), real.join("fresh"));
+        assert!(
+            real.join("fresh")
+                .join(STATE_DIR)
+                .join("core.sqlite")
+                .is_file()
         );
-        assert!(!matches!(added, Err(CoreError::Io(_))), "{:?}", added.err());
-        assert!(real.join("fresh").join(STATE_DIR).is_dir());
     }
 
     #[test]
@@ -1811,5 +1819,227 @@ mod tests {
         assert!(add(&shut, &one, "f1", None).is_err());
         std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read(shut.path()).unwrap(), b"");
+    }
+
+    /// Answers an add of `folder` as a server holding it does, up to the
+    /// listing: its row, the catalog its search reads, and a credential that
+    /// is not a key, of which no placement grant is asked.
+    fn served(server: &crate::scripted::Scripted, folder: &str) {
+        use crate::scripted::{json, refusal, types};
+        server.on(
+            &format!("/items/{folder}"),
+            vec![json(
+                200,
+                &format!(
+                    r#"{{"item":{{"id":"{folder}","type":"system.folder","properties":{{"title":"folder","search":{{"types":["core.note"]}}}},"state":"active","version":1,"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
+                ),
+            )],
+        );
+        server.on("/types", vec![types(&[("core.note", None)])]);
+        server.on("/keys/current", vec![refusal(403, "forbidden")]);
+    }
+
+    /// What `dir` holds, each entry by its path inside it, with a short
+    /// file's text, a longer file's length, or where a link points, read
+    /// without following a link.
+    fn tree(dir: &Path) -> Vec<(PathBuf, String)> {
+        let mut found = Vec::new();
+        let mut pending = vec![PathBuf::new()];
+        while let Some(at) = pending.pop() {
+            for entry in std::fs::read_dir(dir.join(&at)).unwrap() {
+                let entry = entry.unwrap();
+                let path = at.join(entry.file_name());
+                let kind = entry.file_type().unwrap();
+                let held = if kind.is_dir() {
+                    pending.push(path.clone());
+                    "a directory".to_string()
+                } else if kind.is_symlink() {
+                    let to = std::fs::read_link(dir.join(&path)).unwrap();
+                    format!("a link to {}", to.display())
+                } else {
+                    let bytes = std::fs::read(dir.join(&path)).unwrap();
+                    match String::from_utf8(bytes) {
+                        Ok(text) if text.len() <= 64 => text,
+                        Ok(text) => format!("{} bytes", text.len()),
+                        Err(error) => format!("{} bytes", error.as_bytes().len()),
+                    }
+                };
+                found.push((path, held));
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn a_refused_add_takes_back_what_it_made_and_keeps_what_was_there() {
+        use crate::folder::Folder;
+        use crate::scripted::{self, Scripted};
+        let (registry, _own) = own_registry();
+        let folder = "01a00000-0000-7000-8000-000000000301";
+        let refused = |refusal: &str, error: &CoreError| match refusal {
+            "unreachable" => error.is_environmental(),
+            "address" => {
+                matches!(error, CoreError::Invalid(message) if message.contains("not a server url"))
+            }
+            "unreadable" => {
+                matches!(error, CoreError::Forbidden { code, .. } if code == "type_not_permitted")
+            }
+            "placement" => {
+                matches!(error, CoreError::Forbidden { code, .. } if code == "edge_permission_denied")
+            }
+            _ => matches!(
+                error,
+                CoreError::Invalid(message) if message.contains("would hold one another's files")
+            ),
+        };
+
+        let mut left = Vec::new();
+        for refusal in [
+            "unreachable",
+            "address",
+            "unreadable",
+            "placement",
+            "nested",
+        ] {
+            for start in ["absent", "empty", "emptied", "held"] {
+                let temp =
+                    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+                let base = temp.path();
+                let target = match start {
+                    "absent" => base.join("new/deeper/notes"),
+                    _ => base.join("notes"),
+                };
+                let state = target.join(STATE_DIR);
+                match start {
+                    "empty" => std::fs::create_dir(&target).unwrap(),
+                    // As removing a folder leaves its state.
+                    "emptied" => std::fs::create_dir_all(state.join("core.sqlite.blobs")).unwrap(),
+                    "held" => {
+                        std::fs::create_dir_all(state.join("core.sqlite.blobs")).unwrap();
+                        std::fs::write(target.join("Note.md"), "the person's note\n").unwrap();
+                        std::fs::write(state.join("kept"), "not the store's\n").unwrap();
+                    }
+                    _ => {}
+                }
+                let server = Scripted::start();
+                let mut url = server.url();
+                match refusal {
+                    "unreachable" => url = "http://127.0.0.1:9".into(),
+                    // Refused only once the store it opens is made.
+                    "address" => url = "mailto:folder".into(),
+                    "unreadable" => server.on(
+                        &format!("/items/{folder}"),
+                        vec![scripted::refusal(403, "type_not_permitted")],
+                    ),
+                    "placement" => {
+                        served(&server, folder);
+                        server.on(
+                            "/keys/current",
+                            vec![scripted::json(
+                                200,
+                                r#"{"type_permissions":{"*":"write"},"edge_permissions":{"*":"write","in-folder":"read"}}"#,
+                            )],
+                        );
+                    }
+                    _ => {
+                        // The directory holding the one added is a listed
+                        // folder, which the add learns only once it lists.
+                        served(&server, folder);
+                        std::fs::create_dir(base.join(STATE_DIR)).unwrap();
+                        std::fs::write(base.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
+                        registry.register(base, "outer", Some("outer")).unwrap();
+                    }
+                }
+                let before = tree(base);
+                let added = Folder::add(
+                    &target,
+                    folder,
+                    Some(crate::Server {
+                        url,
+                        key: "fixture".into(),
+                    }),
+                    None,
+                );
+                let said = format!("{refusal} at {start}: {:?}", added.as_ref().err());
+                assert!(
+                    added.as_ref().is_err_and(|error| refused(refusal, error)),
+                    "{said}"
+                );
+                let after = tree(base);
+                if after != before {
+                    left.push(format!("{said}\n  before: {before:?}\n  after:  {after:?}"));
+                }
+                registry.unregister(base, None).unwrap();
+            }
+        }
+        assert!(left.is_empty(), "{}", left.join("\n"));
+
+        // The witness: where nothing refuses it, the same add makes the
+        // directories and the store.
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let target = temp.path().join("new/deeper/notes");
+        let server = Scripted::start();
+        served(&server, folder);
+        let added = Folder::add(
+            &target,
+            folder,
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+            None,
+        );
+        assert!(added.is_ok(), "{:?}", added.err());
+        assert!(target.join(STATE_DIR).join("core.sqlite").is_file());
+    }
+
+    #[test]
+    fn a_refused_add_over_a_folder_keeps_its_state() {
+        use crate::folder::Folder;
+        let (_registry, _own) = own_registry();
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = temp.path().join("notes");
+        let first = "01a00000-0000-7000-8000-000000000302";
+        bound_folder(&root, first);
+        std::fs::create_dir(root.join(STATE_DIR).join("core.sqlite.blobs")).unwrap();
+        std::fs::write(root.join("Note.md"), "the person's note\n").unwrap();
+        // The store's own bytes are SQLite's to keep; every other entry is
+        // compared whole.
+        let kept = |dir: &Path| {
+            tree(dir)
+                .into_iter()
+                .map(|(path, held)| {
+                    if path.starts_with(Path::new("notes").join(STATE_DIR))
+                        && path
+                            .file_name()
+                            .is_some_and(|name| name.to_string_lossy().starts_with("core.sqlite"))
+                        && held != "a directory"
+                    {
+                        (path, "the store's".to_string())
+                    } else {
+                        (path, held)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = kept(temp.path());
+
+        let added = Folder::add(
+            &root,
+            "01a00000-0000-7000-8000-000000000303",
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            }),
+            None,
+        );
+        assert!(
+            matches!(&added, Err(CoreError::Invalid(message)) if message.contains(&format!("already follows the folder {first}"))),
+            "{:?}",
+            added.err()
+        );
+        assert_eq!(kept(temp.path()), before);
+        assert_eq!(Folder::open(&root, None).unwrap().folder_id(), first);
     }
 }

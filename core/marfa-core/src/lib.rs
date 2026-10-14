@@ -188,16 +188,35 @@ pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {
-    #[cfg(unix)]
     pub(crate) fn open_directory(
         state: &directory::Directory,
         store_label: &Path,
         server: Option<Server>,
     ) -> Result<Core> {
+        let lock = Arc::new(Self::claim_directory(state)?);
+        Self::open_claimed(state, store_label, server, lock)
+    }
+
+    /// The writer lock of the store in `state`, claimed apart from the
+    /// store, so a caller can go on holding it after the store closes.
+    #[cfg(unix)]
+    pub(crate) fn claim_directory(state: &directory::Directory) -> Result<lock::WriterLock> {
+        lock::WriterLock::claim_directory(&directory_vfs::DirectoryVfs::new(state.file())?)
+    }
+
+    /// Opens the store in `state` under `lock`, which `claim_directory`
+    /// claimed there.
+    #[cfg(unix)]
+    pub(crate) fn open_claimed(
+        state: &directory::Directory,
+        store_label: &Path,
+        server: Option<Server>,
+        lock: Arc<lock::WriterLock>,
+    ) -> Result<Core> {
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
-        let lock = lock::WriterLock::claim_directory(&vfs)?;
-        let cache = blob::Cache::anchored(state, store_label, lock.handle() == Handle::Writer)?;
-        if lock.handle() == Handle::Writer {
+        let writer = lock.handle() == Handle::Writer;
+        let cache = blob::Cache::anchored(state, store_label, writer)?;
+        if writer {
             cache.sweep_incoming(INCOMING_GRACE);
         }
         Self::from_connection(
@@ -214,16 +233,24 @@ impl Core {
         Self::from_connection(
             store::read_directory(&vfs, store_label)?,
             None,
-            lock::WriterLock::reader(),
+            Arc::new(lock::WriterLock::reader()),
             Some(blob::Cache::anchored(state, store_label, false)?),
         )
     }
 
     #[cfg(not(unix))]
-    pub(crate) fn open_directory(
+    pub(crate) fn claim_directory(_state: &directory::Directory) -> Result<lock::WriterLock> {
+        Err(CoreError::Invalid(
+            "folder directory capabilities are unavailable on this platform".into(),
+        ))
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn open_claimed(
         _state: &directory::Directory,
         _store_label: &Path,
         _server: Option<Server>,
+        _lock: Arc<lock::WriterLock>,
     ) -> Result<Core> {
         Err(CoreError::Invalid(
             "folder directory capabilities are unavailable on this platform".into(),
@@ -252,7 +279,7 @@ impl Core {
             cache.sweep_incoming(INCOMING_GRACE);
             owner_only(path)?;
         }
-        Self::from_connection(store::open(path)?, server, lock, Some(cache))
+        Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
     }
 
     /// Never claims the writer role, so a helper started before the app
@@ -274,7 +301,7 @@ impl Core {
 
     pub fn open_in_memory(server: Option<Server>) -> Result<Core> {
         let lock = lock::WriterLock::claim(None)?;
-        Self::from_connection(store::open_in_memory()?, server, lock, None)
+        Self::from_connection(store::open_in_memory()?, server, Arc::new(lock), None)
     }
 
     pub fn handle(&self) -> Handle {
@@ -297,7 +324,7 @@ impl Core {
     fn from_connection(
         conn: Connection,
         server: Option<Server>,
-        lock: lock::WriterLock,
+        lock: Arc<lock::WriterLock>,
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let http = match server {
@@ -321,7 +348,6 @@ impl Core {
             store::hold_local_catalog(&conn)?;
         }
         let conn = Arc::new(Mutex::new(conn));
-        let lock = Arc::new(lock);
         if let Some((expected_origin, expected_instance)) = relocation {
             let http = http.as_ref().expect("relocation has a server");
             let db = Arc::clone(&conn);

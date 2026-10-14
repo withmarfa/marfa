@@ -5,4 +5,4 @@ mod implementation;
 #[path = "directory_unsupported.rs"]
 mod implementation;
 
-pub(crate) use implementation::{Directory, FileType, Mode, OFlags};
+pub(crate) use implementation::{Directory, FileType, MadeDirectory, Mode, OFlags};
