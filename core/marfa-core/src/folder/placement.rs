@@ -39,8 +39,9 @@ pub(super) struct Held {
 const KEY_REREAD: Duration = Duration::from_secs(60);
 
 /// How long a placement write whose give-way read failed waits before the
-/// same process reads for it again: a watch drains every second, and a read
-/// refused for good would otherwise spend the key's rate limit.
+/// same open `Folder` reads for it again: a watch drains every second, and a
+/// read refused for good would otherwise spend the key's rate limit. A
+/// `Folder` opened afresh, as each Swift `sync` call opens one, reads at once.
 const GIVE_WAY_REREAD: Duration = Duration::from_secs(60);
 
 /// The key as last asked, and when; `None` where the asking failed.
