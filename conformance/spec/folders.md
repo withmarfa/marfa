@@ -2564,7 +2564,15 @@ If a key lacks `edge.in-folder:write`, then the CLI MUST refuse `folders add` na
 
 ### `folders/placement-add-cleanup`
 
-When `folders add` is refused for lacking placement permission, a device MUST remove the directory it created for the failed add.
+When `folders add` is refused for lacking placement permission, a device MUST remove every directory and file it created for the failed add.
+
+**Tests:** `device/folders-placement.test.ts › names the permission a key without in-folder write lacks, when it is added`.
+
+### `folders/placement-add-cleanup-keeps`
+
+When `folders add` is refused for lacking placement permission, a device MUST keep every directory and file that existed before the add.
+
+**Reason:** A directory being added often already holds the person's files, or the empty state directory that removing a folder leaves.
 
 **Tests:** `device/folders-placement.test.ts › names the permission a key without in-folder write lacks, when it is added`.
 
@@ -4612,7 +4620,7 @@ While the admitted root or its state directory is absent or replaced, a device M
 
 ### `folders/cleanup-retains-empty-directories`
 
-When removing a folder's administrative state, a device MUST clear files through retained directories without removing the directory entries themselves.
+When a folder's removal deletes its administrative state, a device MUST clear the state's files through retained directories without removing the directory entries themselves.
 
 **Reason:** Checking a child's identity and then removing its pathname cannot atomically exclude a replacement child. Empty administrative directories retain no folder state.
 
