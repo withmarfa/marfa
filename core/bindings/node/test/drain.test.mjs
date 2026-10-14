@@ -33,6 +33,8 @@ async function unclaiming(missingGrant = false) {
       json(200, { data: [], next_cursor: null });
     } else if (path === "/keys/current") {
       json(200, { type_permissions: { "*": "write" } });
+    } else if (path === "/items/lookup") {
+      json(200, { data: [] });
     } else if (path === "/items" && req.method === "POST") {
       json(403, {
         error: {
