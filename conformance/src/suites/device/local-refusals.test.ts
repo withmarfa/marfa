@@ -453,6 +453,14 @@ describe("a device refuses a write only the server may make", () => {
         "an edit",
         await device.update("n1", { version: 1, properties: { title: "x" } }),
       ],
+      [
+        "a retype",
+        await device.update("n1", {
+          version: 1,
+          properties: { text: "a passage" },
+          type: "core.highlight",
+        }),
+      ],
       ["a transition", await device.transitionItem("n1", "archived")],
       ["a delete", await device.deleteItem("n1")],
       ["a restore", await device.restoreItem("n1")],
@@ -465,6 +473,7 @@ describe("a device refuses a write only the server may make", () => {
     const queued = await device.queue();
     expect(queued.ok && queued.value.map((row) => row.kind)).toEqual([
       "create_item",
+      "update_item",
       "update_item",
       "transition_item",
       "delete_item",
