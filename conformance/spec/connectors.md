@@ -348,7 +348,7 @@ When the server has recorded a heartbeat, the server MUST give the registration 
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/heartbeat`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`.
+**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/heartbeat-refused-keeps`
 
@@ -456,7 +456,7 @@ When the server decides whether a run's `finished_at` is before its `started_at`
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/runs`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
+**Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/run-refused-not-recorded`
 
@@ -636,7 +636,7 @@ If the server refuses a take with `400`, then the server MUST NOT take or move t
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/hold`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`.
+**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/hold-other-keeps`
 
@@ -678,7 +678,7 @@ If `DELETE /connectors/{id}/hold` names no `process`, then the server MUST answe
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `DELETE /connectors/{id}/hold`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`.
+**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ## The state document
 
@@ -768,7 +768,7 @@ If the server refuses `PUT /connectors/{id}/state`, then the server MUST leave t
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `GET /connectors/{id}/state`, `PUT /connectors/{id}/state`, `POST /connectors/{id}/agreements`, `POST /connectors/{id}/agreements/lookup` or `GET /connectors/{id}/agreements`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › keeps state and agreements to the connector's own key`.
+**Tests:** `compliance/connector-state.test.ts › keeps state and agreements to the connector's own key`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/state-other-keeps`
 

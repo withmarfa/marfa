@@ -10,6 +10,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -872,9 +873,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(heartbeatRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     const at = await storage.connectors.heartbeat(connector.id);
     if (at === null) {
       throw new MarfaError(
@@ -886,9 +886,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(reportRunRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), RunInputSchema);
     const body = c.req.valid("json");
     const started_at = normalizeTimeBound(body.started_at, "started_at");
@@ -1012,9 +1011,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listDeliveriesRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     const { state, endpoint_id, limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.inbound.listDeliveries(
@@ -1029,10 +1027,9 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(deliveryBodyRoute, async (c) => {
-    const key = requireAuth(c);
     const { id, delivery_id } = c.req.valid("param");
     const connector = await connectorOrRefuse(storage, id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     const body = await storage.inbound.body(connector.id, delivery_id);
     if (body === null) {
       throw new MarfaError(ErrorCode.DELIVERY_NOT_FOUND, "Delivery not found");
@@ -1043,9 +1040,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(markHandledRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), HandledInputSchema);
     const { ids, outcome } = c.req.valid("json");
     const marked = await storage.inbound.markHandled(
@@ -1093,11 +1089,13 @@ export function requireOwnKeyOrManager(
   );
 }
 
-export function requireOwnKey(ownerKeyId: string, keyId: string): void {
-  if (ownerKeyId !== keyId) {
+export function requireOwnKey(ownerKeyId: string, c: Context<AppEnv>): ApiKey {
+  const key = c.get("apiKey");
+  if (isDirectAuthority(c) || (key !== undefined && ownerKeyId !== key.id)) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Only the connector's own key may do this",
     );
   }
+  return requireAuth(c);
 }
