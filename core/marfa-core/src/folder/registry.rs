@@ -208,12 +208,7 @@ impl Registry {
         );
         // Two folders registering at once would each write back a list
         // missing the other's entry.
-        let lock = directory
-            .open_file(
-                &name.with_extension("lock"),
-                OFlags::WRONLY | OFlags::CREATE,
-                Mode::from_raw_mode(0o600),
-            )
+        let lock = open_lock(&directory, &name.with_extension("lock"))
             .map_err(|error| self.failed("lock", &error))?;
         lock.lock().map_err(|error| self.failed("lock", &error))?;
         let (mut listing, replaced) = match directory.read(name) {
@@ -337,6 +332,26 @@ fn within(inner: &Directory, outer: &Directory) -> Option<bool> {
         at = up;
     }
     None
+}
+
+/// Opens the registry's lock file, making it where it is missing. macOS can
+/// answer that the file does not exist to one of several processes making it
+/// at the same moment, so that answer is asked again a few times.
+fn open_lock(directory: &Directory, name: &Path) -> std::io::Result<std::fs::File> {
+    let mut asked = 0;
+    loop {
+        match directory.open_file(
+            name,
+            OFlags::WRONLY | OFlags::CREATE,
+            Mode::from_raw_mode(0o600),
+        ) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && asked < 8 => {
+                asked += 1;
+                std::thread::yield_now();
+            }
+            opened => return opened,
+        }
+    }
 }
 
 fn machine_path(home: &Path) -> PathBuf {
@@ -1752,6 +1767,29 @@ mod tests {
                 .starts_with(std::env::temp_dir().canonicalize().unwrap())
         );
         assert_ne!(Registry::located().unwrap().path(), machine);
+    }
+
+    #[test]
+    fn a_registry_that_many_open_at_once_for_the_first_time_is_read_by_each() {
+        for _ in 0..50 {
+            let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+            let registry = Registry::at(root.path().join(FILE_NAME));
+            let start = std::sync::Barrier::new(16);
+            std::thread::scope(|scope| {
+                let readers: Vec<_> = (0..16)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            start.wait();
+                            registry.folders()
+                        })
+                    })
+                    .collect();
+                for reader in readers {
+                    let read = reader.join().unwrap();
+                    assert!(read.is_ok(), "{read:?}");
+                }
+            });
+        }
     }
 
     #[test]
