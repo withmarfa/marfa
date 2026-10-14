@@ -40,10 +40,16 @@ interface Job {
   steps: Step[];
 }
 
-function jobs(): Record<string, Job> {
+interface ReleaseJobs {
+  build: Job;
+  sign: Job;
+  publish: Job;
+}
+
+function jobs(): ReleaseJobs {
   const workflow = parse(
     readFileSync(join(ROOT, ".github", "workflows", "release.yml"), "utf8"),
-  ) as { jobs: Record<string, Job> };
+  ) as { jobs: ReleaseJobs };
   return workflow.jobs;
 }
 
@@ -105,8 +111,9 @@ describe("the release signs the binary in a job of its own", () => {
     expect(signing).toBeGreaterThanOrEqual(0);
     expect(pack).toBeGreaterThan(signing);
     expect(sign.if).toBeUndefined();
-    expect(sign.steps[signing].if).toBeUndefined();
-    expect(sign.steps[signing]["continue-on-error"]).toBeUndefined();
+    const step = sign.steps[signing];
+    expect(step?.if).toBeUndefined();
+    expect(step?.["continue-on-error"]).toBeUndefined();
   });
 
   it("gives the signing step every secret it reads, from the repository's secrets", () => {
