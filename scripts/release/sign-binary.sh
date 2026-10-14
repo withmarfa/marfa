@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sign a macOS binary with the maintainer's Developer ID, under the hardened
 # runtime, and have Apple notarize it. A browser marks what it downloads, and
-# macOS refuses to run a marked program that Apple has not notarized; `curl`
-# and `gh` mark nothing, which is why only a browser download was refused.
+# macOS refuses to run a marked program that Apple has not notarized. `curl`
+# and `gh` mark nothing, so only a browser download shows whether this worked.
 #
 # A bare binary cannot carry its notarization ticket, so nothing is stapled:
 # macOS looks the ticket up online the first time a marked copy runs.
