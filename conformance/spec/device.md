@@ -3358,6 +3358,30 @@ When the server answers a read-back by id `400 invalid_id`, a device MUST take t
 
 **Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`.
 
+## Rows only their own operation writes
+
+### `device/system-write-refused`
+
+If a caller creates an item of a `system.*` type through a working copy, retypes a row to one, or edits, deletes, restores or moves to another state a `system.*` row the copy holds, then a device MUST refuse it `forbidden`, carrying the server's `403 type_not_permitted`.
+
+**Reason:** the server refuses every such write through the item operations to every key (`items/system-types`), and a copy that queued one would show a change that never lands until a drain says so. A restore of a row the copy does not hold names no type the copy knows, so it is queued and left to the server.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
+
+### `device/system-write-nothing-saved`
+
+When a device refuses a write to a `system.*` row `type_not_permitted`, a device MUST save and queue nothing of the write.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
+
+### `device/system-folder-door`
+
+When a device refuses a write to a `system.folder` row `type_not_permitted`, a device MUST name the folder operations in the refusal's message.
+
+**Reason:** a folder is written through its own operations (`items/folder-create`), which a working copy sends at once.
+
+**Tests:** `device/local-refusals.test.ts › refuses an item write to a system row on every door, before it saves or queues anything`.
+
 ## Before a first hydration
 
 ### `device/drain-no-cursor`
