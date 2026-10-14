@@ -502,6 +502,8 @@ enum Refusal {
         link: PathBuf,
         reached: std::io::Result<PathBuf>,
         own: bool,
+        /// The whole path, made absolute.
+        named: PathBuf,
     },
     /// A `..` that climbs back out of a directory that does not exist.
     Missing(CoreError),
@@ -511,15 +513,29 @@ impl Refusal {
     fn into_error(self) -> CoreError {
         match self {
             Refusal::Missing(error) => error,
-            Refusal::Link { link, reached, own } => {
+            Refusal::Link {
+                link,
+                reached,
+                own,
+                named,
+            } => {
+                let listed = listing();
                 // A link standing where a folder is listed has taken that
-                // folder's place, so the directory it points to is not the
-                // folder the path names.
-                let replaced = own && listing().iter().any(|entry| entry.dir == link);
-                replaced
-                    .then(|| linked_listing(&link))
-                    .flatten()
-                    .unwrap_or_else(|| through_link(&link, reached, own))
+                // folder's place, however the path spells the link, so the
+                // directory it leads to is not the folder the path names.
+                if let Some(refused) =
+                    replaced(&link, &listed).and_then(|entry| linked_listing(&entry.dir))
+                {
+                    return refused;
+                }
+                // Past a climbed link, a path can read as one directory and
+                // reach another, and a listed path that reaches it through a
+                // link could be the folder meant.
+                let reached = reached.ok().filter(|target| {
+                    own || (same_directory(target, &resolved(&as_written(&named)))
+                        && !reached_through_link(target, &listed))
+                });
+                through_link(&link, reached.as_deref(), own)
             }
         }
     }
@@ -573,6 +589,7 @@ fn walk(dir: &Path) -> (PathBuf, Option<Refusal>) {
                         link: at.clone(),
                         reached: std::fs::canonicalize(&at),
                         own: true,
+                        named: absolute.clone(),
                     };
                     at.extend(&parts[index + 1..]);
                     return (at, Some(refused));
@@ -606,6 +623,7 @@ fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<Re
                         link: entry,
                         reached: std::fs::canonicalize(absolute),
                         own: false,
+                        named: absolute.to_path_buf(),
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -627,17 +645,71 @@ fn climb_refused(at: &Path, segment: &[Component], absolute: &Path) -> Option<Re
 /// The no-follow open refuses a link with the system's own error, such as
 /// `Not a directory` on macOS, which names neither the link nor the
 /// directory to name instead.
-fn through_link(link: &Path, reached: std::io::Result<PathBuf>, own: bool) -> CoreError {
+fn through_link(link: &Path, reached: Option<&Path>, own: bool) -> CoreError {
     let instead = match (reached, own) {
-        (Ok(target), true) => format!("the directory it points to, {}", target.display()),
-        (Ok(target), false) => format!("the directory the path reaches, {}", target.display()),
-        (Err(_), true) => "the directory itself".into(),
-        (Err(_), false) => "the folder by a path without it".into(),
+        (Some(target), true) => format!("the directory it points to, {}", target.display()),
+        (Some(target), false) => format!("the directory the path reaches, {}", target.display()),
+        (None, true) => "the directory itself".into(),
+        (None, false) => "the folder by a path without it".into(),
     };
     CoreError::Invalid(format!(
         "{} is a symbolic link, and a folder is never opened through one; name {instead}",
         link.display()
     ))
+}
+
+/// The listed folder whose own directory entry, reached through any links
+/// above it, is now the symbolic link at `link`. Found by the link's
+/// identity, so that no spelling of either path is missed.
+fn replaced(link: &Path, listed: &[Registered]) -> Option<Registered> {
+    let found = link_identity(link)?;
+    listed
+        .iter()
+        .find(|entry| link_identity(&resolved(&entry.dir)) == Some(found))
+        .cloned()
+}
+
+/// Whether a listed folder's path reaches `target` only through a symbolic
+/// link.
+fn reached_through_link(target: &Path, listed: &[Registered]) -> bool {
+    Directory::open(target).is_ok_and(|target| {
+        listed
+            .iter()
+            .any(|entry| leads_to(&entry.dir, &target) && !stands_at(&entry.dir, &target))
+    })
+}
+
+/// The identity of the symbolic link at `path`, reached without following
+/// any link above it.
+fn link_identity(path: &Path) -> Option<(u64, u64)> {
+    let (parent, name) = (path.parent()?, path.file_name()?);
+    Directory::open(parent)
+        .and_then(|parent| parent.link_identity(Path::new(name)))
+        .ok()
+}
+
+/// `path` as it reads, each `..` taking off the name before it.
+fn as_written(path: &Path) -> PathBuf {
+    let mut written = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                written.pop();
+            }
+            Component::CurDir => {}
+            part => written.push(part),
+        }
+    }
+    written
+}
+
+/// Whether `one` and `other`, opened without following links, are one
+/// directory.
+fn same_directory(one: &Path, other: &Path) -> bool {
+    match (Directory::open(one), Directory::open(other)) {
+        (Ok(one), Ok(other)) => one.same(&other).unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// Whether walking `climbed` from `at` without following links comes back
@@ -1040,25 +1112,24 @@ mod tests {
             })
         };
 
-        for (named, link, reaches) in [
+        // The directory the path reaches is offered only where the path,
+        // read without following the link, names the same directory.
+        for (named, link, instead) in [
             (
                 base.join("link/../real/notes"),
                 base.join("link"),
-                root.clone(),
+                format!("the directory the path reaches, {}", root.display()),
             ),
             (
                 root.join("inside/.."),
                 root.join("inside"),
-                base.to_path_buf(),
+                "the folder by a path without it".to_string(),
             ),
         ] {
             let names = |error: Option<CoreError>| match error {
                 Some(CoreError::Invalid(message)) => {
                     message.starts_with(&format!("{} is a symbolic link", link.display()))
-                        && message.ends_with(&format!(
-                            "the directory the path reaches, {}",
-                            reaches.display()
-                        ))
+                        && message.ends_with(&instead)
                 }
                 _ => false,
             };
@@ -1140,6 +1211,7 @@ mod tests {
         drop(Folder::open(&second, None).unwrap());
         std::fs::rename(&first, base.join("a/notes-moved")).unwrap();
         std::os::unix::fs::symlink(&second, &first).unwrap();
+        std::fs::create_dir(base.join("x")).unwrap();
         let alias = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         std::os::unix::fs::symlink(base, alias.path().join("base")).unwrap();
         let names_both = |error: Option<CoreError>| match error {
@@ -1153,31 +1225,96 @@ mod tests {
             }
             _ => false,
         };
+        let server = || {
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            })
+        };
 
-        for spelling in [first.clone(), alias.path().join("base/a/notes")] {
+        let mut spellings = vec![
+            first.clone(),
+            alias.path().join("base/a/notes"),
+            base.join("a/notes/../notes"),
+            base.join("a/notes/../../a/notes"),
+            base.join("a/notes/inner/.."),
+            base.join("x/../a/notes"),
+        ];
+        // Only a volume that folds letter case reaches the link by these.
+        spellings.extend(
+            [
+                base.join("a/NOTES"),
+                base.join("A/NOTES"),
+                base.join("A/notes"),
+            ]
+            .into_iter()
+            .filter(|folded| folded.exists()),
+        );
+        for spelling in &spellings {
+            let said = spelling.display();
+            assert!(names_both(Folder::open(spelling, None).err()), "{said}");
+            assert!(names_both(Folder::status_of(spelling).err()), "{said}");
             assert!(
-                names_both(Folder::open(&spelling, None).err()),
+                names_both(
+                    Folder::add(
+                        spelling,
+                        "01a00000-0000-7000-8000-000000000001",
+                        server(),
+                        None
+                    )
+                    .err()
+                ),
+                "{said}"
+            );
+            if *spelling != first {
+                assert!(names_both(Folder::remove_at(spelling).err()), "{said}");
+            }
+            assert!(
+                second.join(STATE_DIR).join("core.sqlite").exists(),
+                "{said}"
+            );
+        }
+
+        // A listed path whose directory above is now a link to a directory
+        // where a link to the other folder stands: every path to that link
+        // names the listing.
+        let fourth = base.join("d/notes");
+        bound_folder(&fourth, "01a00000-0000-7000-8000-000000000004");
+        drop(Folder::open(&fourth, None).unwrap());
+        std::fs::rename(base.join("d"), base.join("d-moved")).unwrap();
+        std::fs::create_dir(base.join("e")).unwrap();
+        std::os::unix::fs::symlink(&second, base.join("e/notes")).unwrap();
+        std::os::unix::fs::symlink(base.join("e"), base.join("d")).unwrap();
+        let mut reaching = vec![fourth.clone(), base.join("e/notes")];
+        reaching.extend(
+            [base.join("D/notes"), base.join("e/NOTES")]
+                .into_iter()
+                .filter(|folded| folded.exists()),
+        );
+        for spelling in &reaching {
+            assert!(
+                matches!(
+                    Folder::status_of(spelling).err(),
+                    Some(CoreError::Invalid(message))
+                        if message.contains(&format!("`folders remove {}`", fourth.display()))
+                            && !message.contains("name the directory")
+                ),
                 "{}",
                 spelling.display()
             );
-            assert!(names_both(Folder::status_of(&spelling).err()));
         }
-        let through = alias.path().join("base/a/notes");
-        assert!(names_both(Folder::remove_at(&through).err()));
-        let server = Some(crate::Server {
-            url: "http://127.0.0.1:9".into(),
-            key: "fixture".into(),
-        });
-        assert!(names_both(
-            Folder::add(
-                &through,
-                "01a00000-0000-7000-8000-000000000001",
-                server,
-                None
-            )
-            .err()
+
+        // A climb out of a link whose path reads as one directory and reaches
+        // another is never told to name the one it reaches.
+        std::fs::create_dir_all(base.join("c")).unwrap();
+        std::fs::create_dir(second.join("sub")).unwrap();
+        std::os::unix::fs::symlink(second.join("sub"), base.join("c/l")).unwrap();
+        let climbed = base.join("c/l/..");
+        assert!(matches!(
+            Folder::status_of(&climbed).err(),
+            Some(CoreError::Invalid(message))
+                if message.ends_with("name the folder by a path without it")
         ));
-        assert!(second.join(STATE_DIR).join("core.sqlite").exists());
 
         // The witness: a link that took no listed folder's place is refused
         // naming the directory it points to.
@@ -1188,6 +1325,11 @@ mod tests {
             Some(CoreError::Invalid(message))
                 if message.ends_with(&format!("name the directory it points to, {}", second.display()))
         ));
+        assert!(matches!(
+            Folder::remove_at(&first).unwrap(),
+            crate::folder::Removal::Unlisted { .. }
+        ));
+        assert!(second.join(STATE_DIR).join("core.sqlite").exists());
     }
 
     #[test]
@@ -1221,23 +1363,22 @@ mod tests {
             );
         };
 
+        // None is told to name a directory, which would be the other folder's.
+        let redirects = |error: Option<CoreError>| match error {
+            Some(CoreError::Invalid(message)) => message.contains("name the directory"),
+            _ => true,
+        };
         for spelling in [
             alias.path().join("base/a/notes"),
             base.join("A/notes"),
             base.join("a/NOTES"),
             base.join("b/../a/notes"),
+            base.join("a/../a/notes"),
         ] {
-            assert!(
-                Folder::open(&spelling, None).is_err(),
-                "{}",
-                spelling.display()
-            );
-            assert!(Folder::status_of(&spelling).is_err());
-            assert!(
-                Folder::remove_at(&spelling).is_err(),
-                "{}",
-                spelling.display()
-            );
+            let said = spelling.display();
+            assert!(!redirects(Folder::open(&spelling, None).err()), "{said}");
+            assert!(!redirects(Folder::status_of(&spelling).err()), "{said}");
+            assert!(!redirects(Folder::remove_at(&spelling).err()), "{said}");
             intact(&spelling);
             assert!(listed().contains(&first) && listed().contains(&second));
         }

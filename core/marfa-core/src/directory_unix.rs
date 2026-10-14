@@ -195,6 +195,16 @@ impl Directory {
         Ok(fs::FileType::from_raw_mode(stat.st_mode))
     }
 
+    /// The device and inode of the symbolic link at `relative`, not of what
+    /// it leads to.
+    pub(crate) fn link_identity(&self, relative: &Path) -> io::Result<(u64, u64)> {
+        let (parent, name) = self.parent(relative, false)?;
+        let stat = fs::statat(parent.file(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if fs::FileType::from_raw_mode(stat.st_mode) != fs::FileType::Symlink {
+            return Err(invalid_path());
+        }
+        Ok((stat.st_dev as u64, stat.st_ino as u64))
+    }
     pub(crate) fn entry_identity(&self, relative: &Path) -> io::Result<(u64, u64)> {
         let (parent, name) = self.parent(relative, false)?;
         let stat = fs::statat(parent.file(), &name, AtFlags::SYMLINK_NOFOLLOW)?;

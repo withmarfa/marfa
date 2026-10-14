@@ -648,12 +648,23 @@ describe("a folder round trip", () => {
     symlinkSync(dir, join(elsewhere, "base"));
     const through = join(elsewhere, "base", "a", "notes");
     const store = join(second, ".marfa", "core.sqlite");
+    // Templates keep the spellings that path.join would normalize. Only a
+    // volume that folds letter case reaches the link by the last.
+    const spellings = [
+      through,
+      `${dir}/a/notes/../notes`,
+      `${dir}/x/../a/notes`,
+      ...[join(dir, "a", "NOTES")].filter((folded) => existsSync(folded)),
+    ];
+    mkdirSync(join(dir, "x"));
     try {
       for (const command of [
         ["folders", "status", first],
-        ["folders", "status", through],
-        ["folders", "push", through],
-        ["folders", "remove", through],
+        ...spellings.flatMap((spelling) => [
+          ["folders", "status", spelling],
+          ["folders", "push", spelling],
+          ["folders", "remove", spelling],
+        ]),
       ]) {
         const refused = await c.cli.refused(command);
         const said = command.join(" ");
@@ -665,7 +676,7 @@ describe("a folder round trip", () => {
           `\`folders remove ${first}\` only takes it off the list`,
         );
         expect(refused.envelope.error.message, said).not.toContain(
-          "name the directory it points to",
+          "name the directory",
         );
       }
       expect(existsSync(store)).toBe(true);
