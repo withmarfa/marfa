@@ -2384,6 +2384,38 @@ When a device gives way to another device's placement, a device MUST remove its 
 
 **Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`.
 
+### `folders/placement-give-way-later`
+
+When a folder drains while its queue holds one of its placement writes that the server answered as stale or refused as a duplicate, a device MUST give way to the server's placement in that drain, whichever drain the answer came in, unless a read made to give way from that write failed in the same process less than a minute before.
+
+**Reason:** a give-way whose read failed is finished by a later drain that can read the server, so the copy does not keep showing a move the server answered as stale. A watch drains every second, and a read refused for good, read again at each of them, would spend the key's rate limit.
+
+**Tests:** `device/folders-placement.test.ts › finishes giving way at a later drain when the read it gives way from fails`, `› keeps a move it cannot give way from while the read is refused %i, and fails no drain`.
+
+### `folders/placement-give-way-read-fails`
+
+If the server answers the read a device gives way from with an environmental failure or a refusal, then a device MUST keep the placement write in the queue as the server answered it, and the working copy as it was.
+
+**Reason:** only a read of the server's placement says where the file goes. A read refused `403` or `404` can be answered once the key or the item changes, so the write stays where the person can see it, withdraw it (`queue-and-verdicts/withdraw-takes-out`) or discard it, and a later drain reads again (`folders/placement-give-way-later`).
+
+**Tests:** `device/folders-placement.test.ts › finishes giving way at a later drain when the read it gives way from fails`, `› keeps a move it cannot give way from while the read is refused %i, and fails no drain`.
+
+### `folders/placement-give-way-drain-goes-on`
+
+If the server answers the read a device gives way from with an environmental failure or a refusal, then a device MUST complete the folder's drain and report every verdict it reached.
+
+**Reason:** one placement the server cannot or will not let it read does not stop the rest of the folder from syncing.
+
+**Tests:** `device/folders-placement.test.ts › finishes giving way at a later drain when the read it gives way from fails`, `› keeps a move it cannot give way from while the read is refused %i, and fails no drain`.
+
+### `folders/placement-give-way-newer-kept`
+
+When a device gives way from moves of an `in-folder` edge that the server answered as stale, a device MUST keep in the queue each write to that edge queued after the last of those moves.
+
+**Reason:** a move made after the copy heard of the other machine's placement is based on it, and is the person's latest word on where the file goes.
+
+**Tests:** `device/folders-placement.test.ts › keeps a move made after the one it gives way from, unsent when it gives way`.
+
 ### `folders/placement-newer-copy`
 
 When a device gives way to another machine's placement, a device MUST retain a newer placement already held in its working copy instead of replacing it with the older placement read from the server.
