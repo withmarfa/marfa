@@ -1410,7 +1410,7 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
-    let read = match read_owed(core, &owed) {
+    let read = match read_owed(core, &owed, Bin::Held) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
@@ -1656,7 +1656,7 @@ fn land(
         tx.commit()?;
     }
     let mut settled = Settled::plain(Some(Verdict::Refused), Some(code), row.refusals);
-    let read = match read_owed(core, &owed) {
+    let read = match read_owed(core, &owed, Bin::NotFound) {
         Ok(read @ ReadBack::Item { held: Some(_), .. }) => read,
         // The receipt stays owed and the writes behind the create stay held,
         // but nothing else waits on a row the server may never hold again.
@@ -1726,7 +1726,7 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
-    match read_owed(core, &owed).and_then(|read| {
+    match read_owed(core, &owed, Bin::Held).and_then(|read| {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         check_read_back(&tx, &read)?;
@@ -1822,7 +1822,7 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
         crate::catch_up::refuse_if_stopped(stop)?;
-        match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
+        match read_owed(core, &entry, Bin::Held).and_then(|read| apply_owed(core, &entry, &read)) {
             Err(
                 error @ (CoreError::Redirected { .. }
                 | CoreError::ContractMismatch { .. }
@@ -1875,12 +1875,20 @@ pub(crate) enum ReadBack {
 pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let owed = store::owed_of(&*core.conn()?, row)?;
     match owed {
-        Some(owed) => read_owed(core, &owed),
+        Some(owed) => read_owed(core, &owed, Bin::Held),
         None => Ok(ReadBack::Nothing),
     }
 }
 
-fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
+/// Whether an item read-back takes a row the server holds in the bin as
+/// held, or as no row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bin {
+    Held,
+    NotFound,
+}
+
+fn read_owed(core: &Core, owed: &store::Owed, bin: Bin) -> Result<ReadBack> {
     let (context, before) = {
         let conn = core.conn()?;
         (
@@ -1904,8 +1912,17 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
         });
     }
     let held = match http.item(&owed.id) {
-        Ok(found) => found,
-        Err(CoreError::Forbidden { .. }) => None,
+        Ok(Some(found)) => Some(found),
+        // A read by id answers a row in the bin `404` as it answers a row
+        // that is gone (`items/get-missing`), and the slice may hold such a
+        // row. A landing takes no row in the bin
+        // (`queue-and-verdicts/landed-target-unreadable`).
+        Ok(None) if bin == Bin::Held => match http.trashed_item(&owed.id) {
+            Ok(found) => found,
+            Err(CoreError::Forbidden { .. }) => None,
+            Err(error) => return Err(context.failed(core, error)?),
+        },
+        Ok(None) | Err(CoreError::Forbidden { .. }) => None,
         Err(error) if names_no_row(&error) => None,
         Err(error) => return Err(context.failed(core, error)?),
     };
@@ -2493,6 +2510,43 @@ mod tests {
         (dir, core)
     }
 
+    /// The server's bin as `GET /items?state=trashed` answers it under the
+    /// copy's read view: each row trashed, at `version`, stamped after the
+    /// copy's own.
+    fn in_the_bin(rows: &[(&str, i64)]) -> crate::scripted::Answer {
+        let data: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(id, version)| {
+                let mut row: serde_json::Value = serde_json::from_str(
+                    &crate::scripted::item_payload("item.deleted", id, "core.note", *version),
+                )
+                .unwrap();
+                row.as_object_mut().unwrap().remove("event_type");
+                row["item"]["state"] = "trashed".into();
+                row["item"]["updated_at"] = "2026-03-01T00:00:00Z".into();
+                row["listed"] = true.into();
+                row
+            })
+            .collect();
+        crate::scripted::certified(crate::scripted::json(
+            200,
+            &json!({ "data": data, "next_cursor": null }).to_string(),
+        ))
+    }
+
+    fn held_in_the_bin(core: &Core, id: &str, version: i64) {
+        let held = store::items_by_ids(&core.conn().unwrap(), &[id.to_string()])
+            .unwrap()
+            .pop()
+            .unwrap_or_else(|| panic!("the copy let go of {id}, which the bin holds"));
+        assert_eq!(held.state, crate::model::ItemState::Trashed);
+        assert_eq!(held.version, version);
+        assert_eq!(
+            held.updated_at, "2026-03-01T00:00:00Z",
+            "the copy holds the row the bin answered"
+        );
+    }
+
     #[test]
     fn a_drain_stopped_before_it_sends_leaves_every_write_queued_and_unsent() {
         use std::sync::atomic::AtomicBool;
@@ -2504,6 +2558,7 @@ mod tests {
                 crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
             ],
         );
+        server.on("/items", vec![in_the_bin(&[("a", 1)])]);
         let (_dir, core) = deleting(&server, &["a"]);
         let before = core.queue().unwrap();
         assert_eq!(
@@ -2515,6 +2570,7 @@ mod tests {
         // The witness: not stopped, the same drain reaches the server.
         core.drain_until(&AtomicBool::new(false)).unwrap();
         assert!(!server.seen("/items/a").is_empty());
+        held_in_the_bin(&core, "a", 1);
     }
 
     #[test]
@@ -2604,12 +2660,14 @@ mod tests {
                 "item_not_found",
             ))],
         );
+        server.on("/items", vec![in_the_bin(&[("a", 1)])]);
         core.drain().unwrap();
         assert_eq!(
             server.seen("/items/a").len(),
             3,
             "retry reads without resending the settled write"
         );
+        held_in_the_bin(&core, "a", 1);
         assert!(
             store::owed_read_backs(&core.conn().unwrap())
                 .unwrap()
@@ -2652,7 +2710,8 @@ mod tests {
 
     #[test]
     fn late_read_back_cannot_install_or_delete_or_settle_new_copy_debt() {
-        for present in [false, true] {
+        // The server holds the row, holds it in the bin, or holds it nowhere.
+        for (present, binned) in [(true, false), (false, true), (false, false)] {
             let server = crate::scripted::Scripted::start();
             let (_dir, core) = deleting(&server, &["a"]);
             let row = core.queue().unwrap().remove(0);
@@ -2667,10 +2726,21 @@ mod tests {
                 crate::scripted::refusal(404, "item_not_found")
             };
             server.on("/items/a", vec![crate::scripted::certified(answer)]);
+            server.on(
+                "/items",
+                vec![if binned {
+                    in_the_bin(&[("a", 1)])
+                } else {
+                    crate::scripted::certified(crate::scripted::json(
+                        200,
+                        r#"{"data":[],"next_cursor":null}"#,
+                    ))
+                }],
+            );
             let owed = store::owed_of(&core.conn().unwrap(), &row)
                 .unwrap()
                 .unwrap();
-            let read = read_owed(&core, &owed).unwrap();
+            let read = read_owed(&core, &owed, Bin::Held).unwrap();
             {
                 let conn = core.conn().unwrap();
                 read_view::advance_generation(&conn).unwrap();
@@ -2689,6 +2759,122 @@ mod tests {
             );
             assert_eq!(store::owed_read_backs(&conn).unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn an_accepted_delete_keeps_the_row_the_bin_holds_trashed_and_pinned() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+            ],
+        );
+        server.on("/items", vec![in_the_bin(&[("a", 4)])]);
+        let (_dir, core) = deleting(&server, &["a"]);
+        store::pin(&core.conn().unwrap(), "a").unwrap();
+        let report = core.drain().unwrap();
+        assert_eq!(report.verdicts[0].verdict, Some(Verdict::Accepted));
+        let asked = server.seen("/items");
+        assert_eq!(asked.len(), 1, "the read by id answered gone, so the bin");
+        assert!(asked[0].query.contains("state=trashed"));
+        assert_eq!(asked[0].read_view.as_deref(), Some(crate::scripted::FENCE));
+        held_in_the_bin(&core, "a", 4);
+        let conn = core.conn().unwrap();
+        assert!(store::pinned(&conn, "a").unwrap());
+        assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refused_write_keeps_the_row_the_bin_holds() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::refusal(404, "item_not_found"),
+                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+            ],
+        );
+        server.on("/items", vec![in_the_bin(&[("a", 2)])]);
+        let (_dir, core) = deleting(&server, &["a"]);
+        let report = core.drain().unwrap();
+        assert_eq!(report.verdicts[0].verdict, Some(Verdict::Refused));
+        assert_eq!(server.seen("/items").len(), 1, "the bin was asked");
+        held_in_the_bin(&core, "a", 2);
+        assert!(
+            store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_row_neither_the_read_by_id_nor_the_bin_holds_is_forgotten() {
+        let bin_answers = [
+            crate::scripted::certified(crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            )),
+            crate::scripted::certified(crate::scripted::refusal(403, "forbidden")),
+        ];
+        for bin in bin_answers {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                "/items/a",
+                vec![
+                    crate::scripted::json(200, r#"{"ok":true}"#),
+                    crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+                ],
+            );
+            server.on("/items", vec![bin]);
+            let (_dir, core) = deleting(&server, &["a"]);
+            store::pin(&core.conn().unwrap(), "a").unwrap();
+            // The witness: the copy holds the row until the drain.
+            assert!(store::item_held(&core.conn().unwrap(), "a").unwrap());
+            core.drain().unwrap();
+            assert_eq!(server.seen("/items").len(), 1, "the bin was asked");
+            let conn = core.conn().unwrap();
+            assert!(!store::item_held(&conn, "a").unwrap());
+            assert!(!store::pinned(&conn, "a").unwrap());
+            assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_bin_read_that_fails_keeps_the_row_and_the_read_owed() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+            ],
+        );
+        server.on(
+            "/items",
+            vec![crate::scripted::refusal(503, "server_unavailable")],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let report = core.drain().unwrap();
+        assert!(report.unavailable.is_some(), "{report:?}");
+        assert_eq!(report.verdicts[0].verdict, Some(Verdict::Accepted));
+        assert_eq!(server.seen("/items").len(), 1);
+        {
+            let conn = core.conn().unwrap();
+            assert!(store::item_held(&conn, "a").unwrap());
+            assert_eq!(store::owed_read_backs(&conn).unwrap().len(), 1);
+        }
+        // The next drain reads again, sending nothing, and keeps the row.
+        server.on("/items", vec![in_the_bin(&[("a", 1)])]);
+        core.drain().unwrap();
+        assert_eq!(server.seen("/items/a").len(), 3);
+        held_in_the_bin(&core, "a", 1);
+        assert!(
+            store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2759,7 +2945,7 @@ mod tests {
                 "edge_not_found",
             ))],
         );
-        let read = read_owed(&core, &owed).unwrap();
+        let read = read_owed(&core, &owed, Bin::Held).unwrap();
         apply_owed(&core, &owed, &read).unwrap();
         assert_eq!(server.seen("/edges/edge").len(), 1);
         assert!(server.seen("/items/source/edges").is_empty());
@@ -3222,6 +3408,70 @@ mod tests {
     }
 
     #[test]
+    fn natural_key_landing_on_a_row_in_the_bin_keeps_waiting() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (create, dependant) = {
+            let conn = core.conn().unwrap();
+            let local = store::testing::note("local", "draft", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &local, None, &Default::default()).unwrap();
+            let create = store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap();
+            let mut tag = write(
+                WriteKind::AddTag,
+                "local",
+                None,
+                None,
+                std::slice::from_ref(&create.id),
+            );
+            tag.tag = Some("kept");
+            let dependant = store::enqueue(&conn, &tag).unwrap();
+            (create, dependant)
+        };
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        server.on("/items", vec![in_the_bin(&[("server", 3)])]);
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        let settled = land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+        )
+        .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Refused));
+        assert!(settled.unavailable.is_none());
+        let conn = core.conn().unwrap();
+        assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
+        assert_eq!(
+            store::queued_write(&conn, &dependant.id).unwrap().unwrap(),
+            dependant
+        );
+        assert!(store::item_held(&conn, "local").unwrap());
+        assert!(
+            !store::item_held(&conn, "server").unwrap(),
+            "a row in the bin is not the row a natural key landed on"
+        );
+    }
+
+    #[test]
     fn a_read_reconciling_a_refusal_refused_naming_no_contract_ends_the_pass() {
         let server = crate::scripted::Scripted::start();
         let rows = ["a", "b"];
@@ -3270,6 +3520,7 @@ mod tests {
                 ],
             );
         }
+        server.on("/items", vec![in_the_bin(&[("a", 1), ("b", 1), ("c", 1)])]);
         let (_dir, core) = deleting(&server, &rows);
 
         let answered: Vec<usize> = std::thread::scope(|scope| {
@@ -3296,6 +3547,9 @@ mod tests {
             3,
             "the drains counted writes another drain had answered: {answered:?}"
         );
+        for id in rows {
+            held_in_the_bin(&core, id, 1);
+        }
     }
 
     #[test]
@@ -3425,6 +3679,7 @@ mod tests {
                     crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
                 ],
             );
+            server.on("/items", vec![in_the_bin(&[("prior", 1)])]);
             server.on(
                 "/items/current",
                 vec![crate::scripted::refusal(401, "unauthorized")],
@@ -3458,6 +3713,7 @@ mod tests {
             let after = core.queue().unwrap();
             assert_eq!(after[0].verdict, Some(Verdict::Accepted));
             assert!(after[0].answered_at.is_some());
+            held_in_the_bin(&core, "prior", 1);
             assert_eq!(after[1..], before[1..]);
             for (row, payload) in after.iter().zip(payloads).skip(1) {
                 assert_eq!(

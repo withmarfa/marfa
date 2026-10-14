@@ -218,6 +218,13 @@ fn a_stopped_drain_records_the_in_flight_answer_before_ending() {
             store::upsert_item(&conn, &note, None, &Default::default()).unwrap();
         }
         core.delete_item("a").unwrap();
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"data":[{"item":{"id":"a","type":"core.note","properties":{"title":"a"},"state":"trashed","tier":"library","version":1,"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"},"metadata":{"tags":[]},"listed":true}],"next_cursor":null}"#,
+            ))],
+        );
         let answer = if succeeds {
             vec![
                 scripted::json(200, r#"{"ok":true}"#),
@@ -243,6 +250,11 @@ fn a_stopped_drain_records_the_in_flight_answer_before_ending() {
             .unwrap();
         assert!(sent);
         assert_eq!(queue[0].verdict.is_some(), succeeds);
+        let held = store::items_by_ids(&core.conn().unwrap(), &["a".to_string()])
+            .unwrap()
+            .pop()
+            .expect("an accepted delete leaves the row in the copy, trashed");
+        assert_eq!(held.state, crate::model::ItemState::Trashed);
     }
 }
 
