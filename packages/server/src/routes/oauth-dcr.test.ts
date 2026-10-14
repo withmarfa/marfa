@@ -12,7 +12,7 @@
  * registered client is for.
  */
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -162,6 +162,51 @@ describe("POST /auth/oauth2/register through the provider plugin", () => {
     });
     expect(status).toBe(400);
     expect(body.error).toBe("invalid_client_metadata");
+  });
+
+  it("refuses private_key_jwt metadata with inline or remote keys", async () => {
+    ctx = await createTestContext({});
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwks = {
+      keys: [
+        {
+          ...publicKey.export({ format: "jwk" }),
+          kid: "dcr-key",
+          alg: "ES256",
+        },
+      ],
+    };
+    const metadata = {
+      client_name: "Assertion App",
+      application_type: "native",
+      grant_types: [DEVICE_CODE_GRANT_TYPE],
+      response_types: [],
+      jwks,
+    };
+    const witness = await register(ctx, {
+      ...metadata,
+      token_endpoint_auth_method: "none",
+    });
+    expect(witness.status).toBe(201);
+    expect(
+      await ctx.storage.oauthProvider!.getClient(witness.body.client_id!),
+    ).not.toBeNull();
+    for (const keyMetadata of [
+      { jwks },
+      { jwks_uri: "https://client.example.test/keys" },
+      {},
+      { jwks, token_endpoint_auth_method: " private_key_jwt " },
+    ]) {
+      const refused = await register(ctx, {
+        ...metadata,
+        jwks: undefined,
+        token_endpoint_auth_method: "private_key_jwt",
+        ...keyMetadata,
+      });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toBe("invalid_client_metadata");
+      expect(refused.body.client_id).toBeUndefined();
+    }
   });
 
   it("the authorization-code flow completes with a registered client", async () => {

@@ -899,6 +899,26 @@ When a client registers at `POST /auth/oauth2/register`, which takes no credenti
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`.
 
+### `keys-and-oauth/register-auth-methods`
+
+When valid client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `none`, `client_secret_basic` or `client_secret_post`, or omits it for the default `client_secret_basic`, the server MUST register the client with that method.
+
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › registers none, client_secret_basic and client_secret_post, defaulting to client_secret_basic`.
+
+### `keys-and-oauth/register-private-key-jwt`
+
+If client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `private_key_jwt`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` naming `private_key_jwt`.
+
+**Reason:** The instance does not support client assertion authentication, so registration refuses the method before an app relies on it.
+
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses private_key_jwt with inline keys, remote keys or no keys`.
+
+### `keys-and-oauth/discovery-auth-methods`
+
+The server MUST advertise `none`, `client_secret_basic` and `client_secret_post` as its token and revocation authentication methods, and `client_secret_basic` and `client_secret_post` as its introspection authentication methods, in both its OAuth authorization server metadata and OpenID configuration.
+
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › advertises only the client authentication methods it accepts`.
+
 ### `keys-and-oauth/register-scope`
 
 When the server accepts a registration that names a scope, the server MUST register and answer that scope, each literal once, in the order first named.

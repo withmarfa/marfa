@@ -665,10 +665,21 @@ export function buildOauthProjectionPlugin(opts: {
       ],
       before: [
         {
-          // What registration stores and answers. See
-          // `settleRegistrationScope`.
+          // Assertion authentication needs a replay store the instance does
+          // not have. Scope settlement also runs before the provider writes.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
           handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            // The provider trims the method after before-hooks have run.
+            const method = ctx.body?.token_endpoint_auth_method;
+            if (
+              typeof method === "string" &&
+              method.trim() === "private_key_jwt"
+            )
+              throw new APIError("BAD_REQUEST", {
+                error: "invalid_client_metadata",
+                error_description:
+                  "private_key_jwt is not supported; use none, client_secret_basic or client_secret_post.",
+              });
             settleRegistrationScope(ctx, liveScopes);
             return Promise.resolve();
           }),

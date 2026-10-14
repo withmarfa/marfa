@@ -655,22 +655,17 @@ export function createApp(
       } catch {
         return upstream;
       }
-      // RFC 8414 §2: the revocation endpoint admits a public client presenting
-      // its `client_id` alone, which is how every client this server issues
-      // revokes. The plugin advertises only the confidential methods there
-      // (secret in the header, secret in the body, private-key JWT) because
-      // its one override covers introspection as well, where a secret is
-      // required, so `none` is added here and to the revocation list only.
-      // This helper serves the authorization-server document and the OpenID
-      // ones alike, so both carry it. Without it a client reading the
-      // document concludes it cannot revoke, and keeps a grant it meant to
-      // end.
-      const revocationRaw = payload.revocation_endpoint_auth_methods_supported;
-      const revocationMethods = Array.isArray(revocationRaw)
-        ? revocationRaw.filter((m): m is string => typeof m === "string")
-        : [];
-      if (!revocationMethods.includes("none")) revocationMethods.push("none");
-      payload.revocation_endpoint_auth_methods_supported = revocationMethods;
+      // Registration refuses assertion authentication because this instance
+      // has no assertion replay store; discovery must describe the same set.
+      const confidentialMethods = ["client_secret_basic", "client_secret_post"];
+      const clientMethods = ["none", ...confidentialMethods];
+      payload.token_endpoint_auth_methods_supported = clientMethods;
+      payload.revocation_endpoint_auth_methods_supported = clientMethods;
+      payload.introspection_endpoint_auth_methods_supported =
+        confidentialMethods;
+      delete payload.token_endpoint_auth_signing_alg_values_supported;
+      delete payload.revocation_endpoint_auth_signing_alg_values_supported;
+      delete payload.introspection_endpoint_auth_signing_alg_values_supported;
       // Marfa extension: advertise the named permission bundles so clients
       // can render / request the bundled consent without hard-coding the
       // scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.
