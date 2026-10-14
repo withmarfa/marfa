@@ -1164,6 +1164,14 @@ When a catch-up brings a row while a withdraw's read of it is out, a device MUST
 
 **Tests:** waiting on #1890.
 
+### `queue-and-verdicts/drain-keeps-refusal`
+
+If a withdraw or a discard refuses a write while a drain runs, then a device MUST keep that refusal through the rest of the drain.
+
+**Reason:** held instead, the write would wait on a write the queue no longer holds, and nothing would release it.
+
+**Tests:** waiting on #1890.
+
 ### `queue-and-verdicts/clear-answered`
 
 When a caller clears the answered writes, a device MUST take out of the queue each write that was answered `accepted`, `merged` or `conflicted`, or that the server refused carrying no content, and that no unanswered, `blocked`, `dead` or unsent `refused` write depends on, other than a write whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row.
