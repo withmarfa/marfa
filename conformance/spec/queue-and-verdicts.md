@@ -356,7 +356,7 @@ When a write a queued write depends on is answered, a device MUST keep it in the
 
 When the CLI queues a write that depends on others and prints it as text, the CLI MUST print how many writes it depends on after `waiting on`.
 
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
+**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
 
 ### `queue-and-verdicts/command-queued-after`
 
@@ -368,7 +368,7 @@ When the CLI queues a write that follows another and prints it as text, the CLI 
 
 When the CLI prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto a row its natural key names that no read has found yet, the CLI MUST name that write after `waiting on`.
 
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's row until a read finds the row its natural key names`.
+**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's row until a read finds the row its natural key names`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
 
 ### `queue-and-verdicts/command-queue-not-waiting`
 
