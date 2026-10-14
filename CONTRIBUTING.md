@@ -107,7 +107,7 @@ green locally and red in CI without it.
 
 ## Releases
 
-A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core` and `@withmarfa/client`, publishes the packages and attaches all three artifacts to a GitHub release. The Swift SDK lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
+A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core` and `@withmarfa/client`, publishes the packages and attaches all three artifacts to a GitHub release. The binary is signed with the maintainer's Developer ID and notarized by Apple first (`scripts/release/sign-binary.sh`), so a copy downloaded in a browser runs. Signing reads the six `APPLE_*` repository secrets, kept in Infisical's `production` environment under `/release`. The Swift SDK lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
 
 ## Conformance suite
 

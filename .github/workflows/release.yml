@@ -4,7 +4,8 @@ name: Release
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
 # from that commit, uploads them to the run, and publishes them: the npm
 # packages `@withmarfa/core` and `@withmarfa/client`, and a GitHub release
-# carrying those tarballs and the binary archive.
+# carrying those tarballs and the binary archive. The binary in the archive
+# is signed with the maintainer's Developer ID and notarized.
 #
 # A dispatch with a `version` is a dry run: it runs the same build a tag
 # would, and skips only the publish job. It is how the workflow is exercised
@@ -252,6 +253,30 @@ jobs:
           reported=$(target/release/marfa --version)
           if [ "$reported" != "marfa $VERSION" ]; then
             echo "::error::The binary reports '$reported', not 'marfa $VERSION'."
+            exit 1
+          fi
+
+      # A dry run signs and notarizes too, so a change to this step is proved
+      # before a tag depends on it.
+      - name: Sign and notarize the binary
+        working-directory: core
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash "$GITHUB_WORKSPACE/scripts/release/sign-binary.sh" target/release/marfa
+
+      - name: Pack the binary
+        working-directory: core
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          reported=$(target/release/marfa --version)
+          if [ "$reported" != "marfa $VERSION" ]; then
+            echo "::error::The signed binary reports '$reported', not 'marfa $VERSION'."
             exit 1
           fi
           tar -czf "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" -C target/release marfa
