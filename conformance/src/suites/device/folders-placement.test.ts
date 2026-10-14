@@ -2089,6 +2089,8 @@ describe("where a file sits", () => {
           key: KEY,
         }).add(row.id);
         expect(again.ok, JSON.stringify(again)).toBe(false);
+        if (!again.ok)
+          expect(again.refusal.raw).toContain("edge.in-folder:write");
         expect(readdirSync(existing, { recursive: true }).sort()).toEqual(
           before,
         );
