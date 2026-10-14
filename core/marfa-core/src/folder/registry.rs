@@ -50,6 +50,10 @@ impl Registry {
 
     /// `None` with no home to keep one in: its folders then stand alone.
     pub fn located() -> Option<Registry> {
+        #[cfg(test)]
+        if let Some(own) = tests::OWN.with(|own| own.borrow().clone()) {
+            return Some(Registry::at(own));
+        }
         if let Some(named) = std::env::var_os(REGISTRY_ENV).filter(|named| !named.is_empty()) {
             return Some(Registry::at(named));
         }
@@ -761,6 +765,33 @@ pub(super) fn gone(entry: &Registered) -> bool {
 mod tests {
     use super::*;
 
+    thread_local! {
+        /// A registry of one test's own. Every test in a process otherwise
+        /// shares the one the runner names, so a test that deletes its
+        /// registry would take it from the tests running beside it.
+        pub(super) static OWN: std::cell::RefCell<Option<PathBuf>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Ends a test's own registry, panicking or not, since a single test
+    /// thread runs the next test on the same thread.
+    struct OwnRegistry {
+        _dir: tempfile::TempDir,
+    }
+
+    impl Drop for OwnRegistry {
+        fn drop(&mut self) {
+            OWN.with(|own| own.borrow_mut().take());
+        }
+    }
+
+    /// Lists this test's folders, on this thread, in a registry of its own.
+    fn own_registry() -> (Registry, OwnRegistry) {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        OWN.with(|own| *own.borrow_mut() = Some(dir.path().join(FILE_NAME)));
+        (Registry::located().unwrap(), OwnRegistry { _dir: dir })
+    }
+
     /// Adds the folder at `dir` as a folder add does, with its directory open.
     fn add(registry: &Registry, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
         registry.add(dir, &Directory::open(dir).unwrap(), folder, store)
@@ -1471,6 +1502,8 @@ mod tests {
     #[test]
     fn no_other_spelling_of_a_relinked_listed_folder_removes_the_folder_its_link_leads_to() {
         use crate::folder::Folder;
+        // It deletes its registry.
+        let (registry, _own) = own_registry();
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let base = temp.path();
         let (first, second) = (base.join("a/notes"), base.join("b/notes"));
@@ -1482,7 +1515,6 @@ mod tests {
         std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
         let alias = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         std::os::unix::fs::symlink(base, alias.path().join("base")).unwrap();
-        let registry = Registry::located().unwrap();
         let listed = || -> Vec<PathBuf> {
             registry
                 .folders()
@@ -1541,6 +1573,8 @@ mod tests {
     #[test]
     fn a_relinked_listed_path_never_removes_the_folder_it_leads_to_however_often_or_unlisted() {
         use crate::folder::Folder;
+        // It deletes its registry.
+        let (registry, _own) = own_registry();
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let base = temp.path();
         let (first, second) = (base.join("a/notes"), base.join("b/notes"));
@@ -1551,7 +1585,6 @@ mod tests {
         std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
         std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
         let store = second.join(STATE_DIR).join("core.sqlite");
-        let registry = Registry::located().unwrap();
 
         assert!(
             Folder::remove_at(&first).is_ok(),
