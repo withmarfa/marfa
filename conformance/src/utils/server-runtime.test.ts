@@ -67,7 +67,7 @@ describe("the supervised server runtime", () => {
           "});",
           'writeFileSync(process.argv[3]!, "entered");',
           'process.stdout.write("ready\\n");',
-          // A synchronous write prevents the runtime wrapper's signal
+          // Synchronous work prevents the runtime wrapper's signal
           // acknowledgement from running until the work finishes.
           "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);",
           "setInterval(() => undefined, 1000);",
