@@ -4346,10 +4346,10 @@ export interface components {
              */
             application_type?: "web" | "native";
             /**
-             * @description `public` or `pairwise`, which decides the client's subject identifiers. Leave it out to use public identifiers.
+             * @description `public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`.
              * @enum {string}
              */
-            subject_type?: "public" | "pairwise";
+            subject_type?: "public";
             /** @description `true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding. */
             dpop_bound_access_tokens?: boolean;
             /** @description Resource identifiers to register the client for. Leave it out for the instance's default resources. */
@@ -21719,10 +21719,10 @@ export interface operations {
                          */
                         application_type?: "web" | "native";
                         /**
-                         * @description `public` or `pairwise`, which decides the client's subject identifiers, as registered.
+                         * @description `public` for public subject identifiers.
                          * @enum {string}
                          */
-                        subject_type?: "public" | "pairwise";
+                        subject_type?: "public";
                         /** @description `true` if the client always uses DPoP for its token requests. */
                         dpop_bound_access_tokens?: boolean;
                         /** @description Final resource identifiers linked to the registered client */

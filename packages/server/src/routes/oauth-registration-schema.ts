@@ -34,7 +34,7 @@ const REQUEST_TEXT: Record<string, string> = {
   jwks_uri:
     "The URL of the client's public JSON Web Key Set. Leave it out if the client has none.",
   subject_type:
-    "`public` or `pairwise`, which decides the client's subject identifiers. Leave it out to use public identifiers.",
+    "`public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`.",
   dpop_bound_access_tokens:
     "`true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding.",
   resources:
@@ -61,6 +61,7 @@ const RESPONSE_TEXT: Record<string, string> = {
     "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't.",
   client_name: "The app's name, as registered.",
   application_type: "`web` or `native`.",
+  subject_type: "`public` for public subject identifiers.",
   disabled: "`true` if the client is disabled.",
   dpop_bound_access_tokens:
     "`true` if the client always uses DPoP for its token requests.",
@@ -83,13 +84,21 @@ export function oauthRegistrationRoute(
     })
     .optional();
   const methods = ["none", "client_secret_basic", "client_secret_post"];
+  // Marfa configures no pairwise secret; the provider refuses that subject type.
+  const publicSubject = z.enum(["public"]).optional();
   const body = z
     .object(
       Object.fromEntries(
         Object.entries(registration.options.body.shape)
           .filter(([name]) => !excluded.has(name))
           .map(([name, field]) => {
-            const described = (name === "jwks" ? publicKeys : field).describe(
+            const schema =
+              name === "jwks"
+                ? publicKeys
+                : name === "subject_type"
+                  ? publicSubject
+                  : field;
+            const described = schema.describe(
               REQUEST_TEXT[name] ?? field.description ?? "",
             );
             return [

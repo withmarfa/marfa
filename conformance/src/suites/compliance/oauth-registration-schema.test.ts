@@ -88,3 +88,66 @@ it("describes the resource and software-statement validation refusals", async ()
     expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
   }
 });
+
+it("publishes only the subject type the configured provider accepts", async () => {
+  const documentResponse = await fetch(`${server!.apiUrl}/openapi.json`);
+  expect(documentResponse.status).toBe(200);
+  const document = (await documentResponse.json()) as OpenApiDocument;
+  const operation = document.paths["/auth/oauth2/register"]?.post;
+  expect(operation).toBeDefined();
+  const requestSchema =
+    operation!.requestBody?.content?.["application/json"]?.schema;
+  const successSchema =
+    operation!.responses?.["201"]?.content?.["application/json"]?.schema;
+  const refusalSchema =
+    operation!.responses?.["400"]?.content?.["application/json"]?.schema;
+  expect(requestSchema).toBeDefined();
+  expect(successSchema).toBeDefined();
+  expect(refusalSchema).toBeDefined();
+  const metadata = {
+    client_name: "Subject Fixture",
+    application_type: "native",
+    grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    response_types: [],
+    token_endpoint_auth_method: "none",
+    subject_type: "public",
+  };
+  const register = (body: typeof metadata) =>
+    fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const publicResponse = await register(metadata);
+  const publicBody = await publicResponse.json();
+  expect(publicResponse.status).toBe(201);
+  expect(publicBody).toMatchObject({ subject_type: "public" });
+  const pairwiseMetadata = { ...metadata, subject_type: "pairwise" };
+  const pairwiseResponse = await register(pairwiseMetadata);
+  const pairwiseBody = await pairwiseResponse.json();
+  expect(pairwiseResponse.status).toBe(400);
+  expect(pairwiseBody).toMatchObject({
+    error: "invalid_client_metadata",
+    error_description:
+      "pairwise subject_type requires server pairwiseSecret configuration",
+  });
+  const validateRefusal = validatorFor(refusalSchema, document);
+  expect(
+    validateRefusal(pairwiseBody),
+    JSON.stringify(validateRefusal.errors),
+  ).toBe(true);
+  const validateRequest = validatorFor(requestSchema, document);
+  expect(
+    validateRequest(metadata),
+    JSON.stringify(validateRequest.errors),
+  ).toBe(true);
+  expect(validateRequest(pairwiseMetadata)).toBe(false);
+  const validateSuccess = validatorFor(successSchema, document);
+  expect(
+    validateSuccess(publicBody),
+    JSON.stringify(validateSuccess.errors),
+  ).toBe(true);
+  expect(validateSuccess({ ...publicBody, subject_type: "pairwise" })).toBe(
+    false,
+  );
+});

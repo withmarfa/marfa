@@ -6854,10 +6854,9 @@
           "subject_type": {
             "type": "string",
             "enum": [
-              "public",
-              "pairwise"
+              "public"
             ],
-            "description": "`public` or `pairwise`, which decides the client's subject identifiers. Leave it out to use public identifiers."
+            "description": "`public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`."
           },
           "dpop_bound_access_tokens": {
             "type": "boolean",
@@ -42133,11 +42132,10 @@
                       ]
                     },
                     "subject_type": {
-                      "description": "`public` or `pairwise`, which decides the client's subject identifiers, as registered.",
+                      "description": "`public` for public subject identifiers.",
                       "type": "string",
                       "enum": [
-                        "public",
-                        "pairwise"
+                        "public"
                       ]
                     },
                     "dpop_bound_access_tokens": {
