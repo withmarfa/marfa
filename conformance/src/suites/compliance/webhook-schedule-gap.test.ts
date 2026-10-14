@@ -84,6 +84,23 @@ const gaps: readonly {
     },
   },
   {
+    name: "inside a retained no-fanout prefix",
+    arrange: (db) => {
+      const rows = db
+        .prepare("SELECT id FROM event_log ORDER BY id DESC LIMIT 3")
+        .all() as { id: number }[];
+      expect(rows).toHaveLength(3);
+      const [last, middle, first] = rows;
+      db.prepare(
+        "UPDATE outbound_webhook_checkpoint SET last_event_id = ?, event_id = NULL, after_subscription_id = NULL",
+      ).run(String(first!.id - 1));
+      db.prepare(
+        "UPDATE event_log SET enable_fanout = 0 WHERE id >= ? AND id <= ?",
+      ).run(first!.id, last!.id);
+      db.prepare("DELETE FROM event_log WHERE id = ?").run(middle!.id);
+    },
+  },
+  {
     name: "behind the oldest event the log retains",
     arrange: (db) => {
       expect(head(db)).toBeGreaterThan(1);

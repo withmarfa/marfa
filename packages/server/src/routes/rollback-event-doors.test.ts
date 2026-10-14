@@ -10,21 +10,15 @@
  *
  * **Scope: the item and edge write doors.** Those are the routes a client
  * writes its own graph through, and they are what this file speaks for.
- * Other code publishes too, and its events are not lesser ones: grant
- * projection at sign-in and at consent, archive restore and the enrichment
- * sweeper all put ordinary item events on
- * the same stream a durable client persists. They are outside this file as a
- * boundary decision rather than an oversight, and the census at the bottom
- * names every one of them so the decision stays visible instead of implied.
+ * Archive restore publishes outside these doors and is named separately
+ * by the census below. Grant projection, consent and enrichment write
+ * through the shared item-write path whose publishes the census covers.
  *
- * **Both assertions are needed, and which one catches a regression depends
- * on the door.** The `emitter.emit` inside `publish()` is unconditional and
- * synchronous, so a same-process subscriber (SSE viewers, outbound webhook
- * delivery) always receives the phantom. The
- * `event_log` row does not always survive to show it, because the log is
- * written in the door's transaction, and a rolled-back transaction takes it
- * with everything else. The log then looks correct and ONLY the subscriber
- * assertion reddens, which is why both are made.
+ * **Both assertions are needed.** The persisted event belongs to the
+ * write's transaction, and the in-process announcement runs only after
+ * commit. A regression in either boundary can leave the log correct while
+ * a stream subscriber receives a phantom, or leave an event that a resumed
+ * stream or the webhook scheduler will replay after the write rolled back.
  *
  * **Each door is proved three times.** Once unbroken, so the subscriber is
  * known to hear this door at all — a negative assertion against a probe that

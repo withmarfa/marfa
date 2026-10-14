@@ -60,6 +60,35 @@ export class SqliteEventLogStore implements EventLogStore {
     }));
   }
 
+  async getNonFanoutEnd(afterId: bigint, headId: bigint): Promise<bigint> {
+    if (afterId > headId)
+      throw new Error("Outbound webhook checkpoint is ahead of the event log");
+    // Count only IDs and flags: even an oversized payload must not hold
+    // back unrelated fan-out. The count also proves there is no internal
+    // hole, which a minimum/maximum check alone cannot establish.
+    const row = await this.db.get<{ end_id: string; skipped: string }>(sql`
+      WITH boundary AS MATERIALIZED (
+        SELECT COALESCE(
+          (SELECT MIN(id) - 1 FROM event_log
+           WHERE id > CAST(${afterId.toString()} AS INTEGER)
+             AND id <= CAST(${headId.toString()} AS INTEGER)
+             AND enable_fanout != 0),
+          CAST(${headId.toString()} AS INTEGER)
+        ) AS id
+      )
+      SELECT CAST(id AS TEXT) AS end_id,
+        CAST((SELECT COUNT(*) FROM event_log
+              WHERE event_log.id > CAST(${afterId.toString()} AS INTEGER)
+                AND event_log.id <= boundary.id
+                AND enable_fanout = 0) AS TEXT) AS skipped
+      FROM boundary
+    `);
+    const end = BigInt(row.end_id);
+    if (BigInt(row.skipped) !== end - afterId)
+      throw new Error("Outbound webhook event log is inconsistent");
+    return end;
+  }
+
   /** How many of the next `limit` rows start within `maxBytes` of
    *  payload. `octet_length` reads each size from the row's header, so no
    *  payload is loaded to count it. */

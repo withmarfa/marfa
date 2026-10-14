@@ -233,7 +233,7 @@ describe("durable outbound event acknowledgement", () => {
     );
     ctx.storage.eventLog.getMaxId = head;
   });
-  it("bounds consecutive no-fanout events by the fetched-event budget", async () => {
+  it("skips a no-fanout run without spending the fetched-event budget", async () => {
     for (let n = 0; n < 129; n++)
       await ctx.storage.eventLog.append({
         event_type: "created",
@@ -241,9 +241,22 @@ describe("durable outbound event acknowledgement", () => {
         enable_fanout: false,
       });
     const first = await scheduler.runOnce();
+    expect(first.fetched).toBe(0);
+    expect(first.scannedBytes).toBe(0);
+    expect(first.cursor).toBe("129");
+    expect(first.scheduled).toBe(0);
+    expect((await scheduler.runOnce()).cursor).toBe("129");
+  });
+  it("keeps the fetched-event budget for fan-out events", async () => {
+    for (let n = 0; n < 129; n++)
+      await ctx.storage.eventLog.append({
+        event_type: "created",
+        payload: quietPayload(),
+        enable_fanout: true,
+      });
+    const first = await scheduler.runOnce();
     expect(first.fetched).toBe(128);
     expect(first.cursor).toBe("128");
-    expect(first.scheduled).toBe(0);
     expect((await scheduler.runOnce()).cursor).toBe("129");
   });
   it("excludes valid pre-birth subscriptions while draining consecutive events", async () => {
@@ -361,38 +374,160 @@ describe("durable outbound event acknowledgement", () => {
     expect(await queued(id)).toHaveLength(0);
     expect(wakes).toBe(0);
   });
-  it("bounds scanned bytes across skip-only events without stalling an oversized first event", async () => {
+  it("skips no-fanout payloads of any size without loading them", async () => {
     const frame = JSON.parse(quietPayload()) as {
       item: { properties: { body?: string } };
     };
-    frame.item.properties.body = "x".repeat(5 * 1024 * 1024);
-    for (let n = 0; n < 2; n++)
+    frame.item.properties.body = "x".repeat(9 * 1024 * 1024);
+    for (let n = 0; n < 3; n++)
       await ctx.storage.eventLog.append({
         event_type: "created",
         payload: JSON.stringify(frame),
         enable_fanout: false,
       });
-    const first = await scheduler.runOnce();
-    expect(first.fetched).toBe(2);
-    expect(first.scannedBytes).toBeLessThan(8 * 1024 * 1024);
-    expect(first.cursor).toBe("1");
-    expect((await scheduler.runOnce()).cursor).toBe("2");
-    frame.item.properties.body = "x".repeat(9 * 1024 * 1024);
+    const result = await scheduler.runOnce();
+    expect(result.fetched).toBe(0);
+    expect(result.scannedBytes).toBe(0);
+    expect(result.cursor).toBe("3");
+  });
+  it("reaches every fan-out between long no-fanout runs in one pass", async () => {
+    const id = await subscribe();
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    for (let n = 0; n < 3; n++) {
+      await raw.__sqliteRun(
+        `WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<10000)
+         INSERT INTO event_log (event_type, payload, enable_fanout, created_at)
+         SELECT 'created', ?, 0, ? FROM rows`,
+        [quietPayload(), new Date().toISOString()],
+      );
+      await write();
+    }
+    const result = await scheduler.runOnce();
+    expect(result.fetched).toBe(3);
+    expect(result.scheduled).toBe(3);
+    expect(result.cursor).toBe("30003");
+    expect(await queued(id)).toHaveLength(3);
+    const eventIds = await (
+      ctx.storage as unknown as {
+        __sqliteAll(sql: string): Promise<{ event_id: string }[]>;
+      }
+    ).__sqliteAll(
+      "SELECT event_id FROM outbound_webhook_deliveries ORDER BY CAST(event_id AS INTEGER)",
+    );
+    expect(eventIds.map((row) => row.event_id)).toEqual([
+      "10001",
+      "20002",
+      "30003",
+    ]);
+  });
+  it("rolls back a skipped prefix when fan-out fails, then retries it", async () => {
+    const id = await subscribe();
+    for (let n = 0; n < 200; n++)
+      await ctx.storage.eventLog.append({
+        event_type: "created",
+        payload: quietPayload(),
+        enable_fanout: false,
+      });
+    await write();
+    const original = ctx.storage.outboundWebhookDeliveries.schedule.bind(
+      ctx.storage.outboundWebhookDeliveries,
+    );
+    ctx.storage.outboundWebhookDeliveries.schedule = () =>
+      Promise.reject(new Error("fanout interrupted"));
+    await expect(scheduler.runOnce()).rejects.toThrow("fanout interrupted");
+    expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
+      0n,
+    );
+    expect(await queued(id)).toHaveLength(0);
+    ctx.storage.outboundWebhookDeliveries.schedule = original;
+    expect((await scheduler.runOnce()).scheduled).toBe(1);
+    expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
+      201n,
+    );
+    expect(await queued(id)).toHaveLength(1);
+  });
+  it("skips an unreadable no-fanout payload but refuses the same fan-out payload", async () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: JSON.stringify(frame),
+      payload: "not JSON",
       enable_fanout: false,
     });
+    expect((await scheduler.runOnce()).cursor).toBe("1");
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      payload: "not JSON",
+      enable_fanout: true,
+    });
+    await expect(scheduler.runOnce()).rejects.toThrow("cannot be read");
+    expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
+      1n,
+    );
+  });
+  it("leaves a concurrently admitted fan-out for the next captured head", async () => {
+    const id = await subscribe();
     await ctx.storage.eventLog.append({
       event_type: "created",
       payload: quietPayload(),
       enable_fanout: false,
     });
-    const oversized = await scheduler.runOnce();
-    expect(oversized.fetched).toBe(1);
-    expect(oversized.scannedBytes).toBeGreaterThan(8 * 1024 * 1024);
-    expect(oversized.cursor).toBe("3");
-    expect((await scheduler.runOnce()).cursor).toBe("4");
+    const original = ctx.storage.eventLog.getNonFanoutEnd.bind(
+      ctx.storage.eventLog,
+    );
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const proceed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ctx.storage.eventLog.getNonFanoutEnd = async (after, head) => {
+      const end = await original(after, head);
+      enter();
+      await proceed;
+      return end;
+    };
+    const running = scheduler.runOnce();
+    await entered;
+    const admitted = write();
+    release();
+    try {
+      const first = await running;
+      await admitted;
+      expect(first.cursor).toBe("1");
+      expect(first.scheduled).toBe(0);
+      expect(await queued(id)).toHaveLength(0);
+    } finally {
+      ctx.storage.eventLog.getNonFanoutEnd = original;
+    }
+    expect((await scheduler.runOnce()).scheduled).toBe(1);
+    expect(await queued(id)).toHaveLength(1);
+  });
+  it("finishes partial fan-out before skipping its following prefix", async () => {
+    const rows = await subscriptions(51);
+    for (let n = 0; n < 200; n++)
+      await ctx.storage.eventLog.append({
+        event_type: "created",
+        payload: quietPayload(),
+        enable_fanout: false,
+      });
+    await write();
+    for (let n = 0; n < 200; n++)
+      await ctx.storage.eventLog.append({
+        event_type: "created",
+        payload: quietPayload(),
+        enable_fanout: false,
+      });
+    const first = await scheduler.runOnce();
+    expect(first.scheduled).toBe(50);
+    expect(first.cursor).toBe("200");
+    expect(first.event).toBe("201");
+    const second = await scheduler.runOnce();
+    expect(second.scheduled).toBe(1);
+    expect(second.cursor).toBe("401");
+    for (const row of rows) expect(await queued(row.id)).toHaveLength(1);
   });
   it("bounds copied bytes across completed consecutive events", async () => {
     await subscribe();
@@ -719,12 +854,6 @@ describe("durable outbound event acknowledgement", () => {
       frame: { event_type: "item.created", item: null },
     },
     {
-      name: "null no-fanout item",
-      eventType: "created",
-      frame: { event_type: "item.created", item: null },
-      fanout: false,
-    },
-    {
       name: "incomplete item",
       eventType: "created",
       frame: { event_type: "item.created", item: { type: "core.note" } },
@@ -772,7 +901,7 @@ describe("durable outbound event acknowledgement", () => {
     },
   ])(
     "fails the scheduling job on a $name without acknowledging it",
-    async ({ eventType, frame, ...options }) => {
+    async ({ eventType, frame }) => {
       await subscribe();
       await write();
       expect((await scheduler.runOnce()).scheduled).toBe(1);
@@ -781,7 +910,7 @@ describe("durable outbound event acknowledgement", () => {
       await ctx.storage.eventLog.append({
         event_type: eventType,
         payload: JSON.stringify(frame),
-        enable_fanout: "fanout" in options ? options.fanout : true,
+        enable_fanout: true,
       });
       registerHousekeepingJobs(
         ctx.housekeeping,

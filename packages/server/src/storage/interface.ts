@@ -2149,6 +2149,11 @@ export interface EventLogStore {
     options?: { maxBytes?: number },
   ): Promise<PersistedEvent[]>;
 
+  /** End of the consecutive no-fanout prefix after `afterId`, no later
+   *  than `headId`, without reading payloads. Refuses missing rows.
+   *  Scheduling calls this inside the transaction that acknowledges it. */
+  getNonFanoutEnd(afterId: bigint, headId: bigint): Promise<bigint>;
+
   /**
    * Delete a prefix of the log: every event below the oldest one still
    * within the retention window, and never the newest, so no event

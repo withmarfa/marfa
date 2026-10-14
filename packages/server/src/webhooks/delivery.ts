@@ -406,7 +406,7 @@ export interface WebhookSchedulingContext {
 export class WebhookScheduler {
   constructor(private context: WebhookSchedulingContext) {}
 
-  /** Consecutive events within aggregate scan, subscription and copy budgets. */
+  /** Fan-out within aggregate scan, subscription and copy budgets. */
   async runOnce(): Promise<{
     examined: number;
     scheduled: number;
@@ -419,6 +419,7 @@ export class WebhookScheduler {
     const { storage } = this.context;
     const result = await storage.runInTransaction(async () => {
       const position = await storage.outboundWebhooks.checkpoint();
+      const initialLastEventId = position.lastEventId;
       const head = (await storage.eventLog.getMaxId()) ?? 0n;
       const minimum = await storage.eventLog.getMinRetainedId();
       if (
@@ -443,14 +444,19 @@ export class WebhookScheduler {
       const byteTarget = 8 * 1024 * 1024;
       const credentials = new Map<string, Promise<LiveCredential | null>>();
       while (fetched < 128 && examined < 50 && scheduled < 50) {
+        if (position.eventId === null) {
+          position.lastEventId = await storage.eventLog.getNonFanoutEnd(
+            position.lastEventId,
+            head,
+          );
+          if (position.lastEventId === head) break;
+        }
         const [event] = await storage.eventLog.getAfter(
           position.lastEventId,
           1,
         );
         if (!event) {
-          if (position.eventId !== null)
-            throw new Error("Outbound webhook in-progress event is missing");
-          break;
+          throw new Error("Outbound webhook in-progress event is missing");
         }
         fetched++;
         const payloadBytes = Buffer.byteLength(event.payload, "utf8");
@@ -462,6 +468,7 @@ export class WebhookScheduler {
         if (
           event.id !== position.lastEventId + 1n ||
           event.id > head ||
+          !event.enable_fanout ||
           (position.eventId !== null && position.eventId !== event.id)
         ) {
           throw new Error("Outbound webhook event log is inconsistent");
@@ -478,77 +485,73 @@ export class WebhookScheduler {
         }
         const frame = stored as Record<string, unknown>;
         const eventType = loggedWireEventName(event.event_type);
-        // Validate the retained frame independently of subscription matching
-        // and authorization: malformed history is a failed job, not a skip.
+        // Validate each fan-out frame independently of subscription matching
+        // and authorization: malformed fan-out is a failed job, not a skip.
         const isEdge = eventType.startsWith("edge.");
         if (!validWebhookFrame(frame, eventType))
           throw new Error("Outbound webhook event payload is inconsistent");
-        let complete = !event.enable_fanout;
-        if (event.enable_fanout) {
-          const pageLimit = 50 - examined;
-          const subscriptions = await storage.outboundWebhooks.listAfter(
-            position.afterSubscriptionId,
-            pageLimit,
-            { eventId: event.id, headId: head },
-          );
-          let pageExamined = 0;
-          for (const subscription of subscriptions) {
-            if (subscription.event_start_id > head) {
-              throw new Error(
-                "Outbound webhook subscription starts ahead of the event log",
-              );
-            }
-            let eligible =
-              subscription.active &&
-              event.id > subscription.event_start_id &&
-              subscription.events.includes(eventType);
-            if (eligible && !isEdge && subscription.type_filter) {
-              const item = frame.item;
-              eligible =
-                typeof item === "object" &&
-                item !== null &&
-                "type" in item &&
-                typeof item.type === "string" &&
-                eventMatchesTypeFilter(item.type, subscription.type_filter);
-            }
-            if (eligible) {
-              const name = ownerName(subscription.owner);
-              let credential = credentials.get(name);
-              if (!credential) {
-                credential = ownerCredential(storage, subscription.owner);
-                credentials.set(name, credential);
-              }
-              const standing = await credential;
-              eligible =
-                standing !== null && frameInReach(standing.key, frame) !== null;
-            }
-            if (eligible) {
-              // Allow one valid oversized payload; never reject accepted work.
-              // A row stopped here is not examined/acknowledged until next pass.
-              if (scheduled > 0 && queuedBytes + payloadBytes > byteTarget)
-                break;
-              await storage.outboundWebhookDeliveries.schedule({
-                webhookId: subscription.id,
-                eventId: event.id,
-                eventType,
-                payload: event.payload,
-                webhookUrl: subscription.url,
-                nextAttemptAt: new Date().toISOString(),
-              });
-              scheduled++;
-              queuedBytes += payloadBytes;
-            }
-            examined++;
-            pageExamined++;
-            position.afterSubscriptionId = subscription.id;
-            if (queuedBytes >= byteTarget || scheduled >= 50) break;
+        const pageLimit = 50 - examined;
+        const subscriptions = await storage.outboundWebhooks.listAfter(
+          position.afterSubscriptionId,
+          pageLimit,
+          { eventId: event.id, headId: head },
+        );
+        let pageExamined = 0;
+        for (const subscription of subscriptions) {
+          if (subscription.event_start_id > head) {
+            throw new Error(
+              "Outbound webhook subscription starts ahead of the event log",
+            );
           }
-          // Exactly full pages retain partial state until a bounded next read
-          // proves exhaustion. An early byte stop also retains the position.
-          complete =
-            subscriptions.length < pageLimit &&
-            pageExamined === subscriptions.length;
+          let eligible =
+            subscription.active &&
+            event.id > subscription.event_start_id &&
+            subscription.events.includes(eventType);
+          if (eligible && !isEdge && subscription.type_filter) {
+            const item = frame.item;
+            eligible =
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              typeof item.type === "string" &&
+              eventMatchesTypeFilter(item.type, subscription.type_filter);
+          }
+          if (eligible) {
+            const name = ownerName(subscription.owner);
+            let credential = credentials.get(name);
+            if (!credential) {
+              credential = ownerCredential(storage, subscription.owner);
+              credentials.set(name, credential);
+            }
+            const standing = await credential;
+            eligible =
+              standing !== null && frameInReach(standing.key, frame) !== null;
+          }
+          if (eligible) {
+            // Allow one valid oversized payload; never reject accepted work.
+            // A row stopped here is not examined/acknowledged until next pass.
+            if (scheduled > 0 && queuedBytes + payloadBytes > byteTarget) break;
+            await storage.outboundWebhookDeliveries.schedule({
+              webhookId: subscription.id,
+              eventId: event.id,
+              eventType,
+              payload: event.payload,
+              webhookUrl: subscription.url,
+              nextAttemptAt: new Date().toISOString(),
+            });
+            scheduled++;
+            queuedBytes += payloadBytes;
+          }
+          examined++;
+          pageExamined++;
+          position.afterSubscriptionId = subscription.id;
+          if (queuedBytes >= byteTarget || scheduled >= 50) break;
         }
+        // Exactly full pages retain partial state until a bounded next read
+        // proves exhaustion. An early byte stop also retains the position.
+        const complete =
+          subscriptions.length < pageLimit &&
+          pageExamined === subscriptions.length;
         if (complete) {
           position.lastEventId = event.id;
           position.eventId = null;
@@ -561,7 +564,8 @@ export class WebhookScheduler {
         )
           break;
       }
-      if (considered > 0) await storage.outboundWebhooks.acknowledge(position);
+      if (considered > 0 || position.lastEventId !== initialLastEventId)
+        await storage.outboundWebhooks.acknowledge(position);
       return {
         scheduled,
         examined,
