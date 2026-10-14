@@ -38,7 +38,15 @@ fi
 
 work=$(mktemp -d)
 keychain="$work/signing.keychain-db"
+# codesign finds an identity only in a keychain on the user's search list, so
+# the run's keychain joins the list for the signing and the list is put back.
+searched=()
+while IFS= read -r line; do
+  line="${line#"${line%%[![:space:]]*}"}"
+  searched+=("$(printf '%s' "$line" | tr -d '"')")
+done < <(security list-keychains -d user)
 cleanup() {
+  security list-keychains -d user -s ${searched[@]+"${searched[@]}"} 2>/dev/null || true
   security delete-keychain "$keychain" 2>/dev/null || true
   rm -rf "$work"
 }
@@ -57,6 +65,12 @@ security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$work/identity.p12" -k "$keychain" -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
   -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+security list-keychains -d user -s "$keychain" ${searched[@]+"${searched[@]}"}
+if ! security find-identity -v -p codesigning "$keychain" | grep -q "Developer ID Application"; then
+  echo "::error::The keychain holds no valid Developer ID Application identity:"
+  security find-identity -p codesigning "$keychain" || true
+  exit 1
+fi
 
 codesign --force --options runtime --timestamp --keychain "$keychain" \
   --sign "Developer ID Application" "$binary"
