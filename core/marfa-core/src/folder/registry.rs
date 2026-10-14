@@ -833,12 +833,14 @@ mod tests {
                 std::fs::create_dir_all(&folded).unwrap();
             }
             let added = add(&registry, &folded, "f2", Some("s2"));
-            assert_eq!(
-                added.is_err(),
-                insensitive,
-                "{}: {added:?}",
-                folded.display()
+            let nested = matches!(
+                &added,
+                Err(CoreError::Invalid(message)) if message.contains("would hold one another's files")
             );
+            assert_eq!(nested, insensitive, "{}: {added:?}", folded.display());
+            if !insensitive {
+                added.unwrap();
+            }
         }
     }
 
