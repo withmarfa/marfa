@@ -325,8 +325,7 @@ export function refusalComponentName(codes: readonly string[]): string {
 }
 
 /**
- * The refusal envelope's text, shared by the reflected schemas here and the
- * written ones in `openapi-finalize.ts`, which a test holds equal.
+ * The refusal envelope's text, shared by handler and middleware schemas.
  */
 export const REFUSAL_TEXT = {
   refusal: "An error response.",

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
-import { EXTRA_PATHS, CHAIN_REFUSALS } from "./openapi-finalize.js";
+import { CHAIN_REFUSALS, finalizeOpenAPISpec } from "./openapi-finalize.js";
 import { makeErrorResponseSchema } from "./openapi.js";
 import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
 
@@ -115,34 +115,119 @@ describe("published OpenAPI spec", () => {
     }
   });
 
-  it("serves every hand-declared path at the path it is published under", async () => {
-    // The reflection cannot see these routes, so their paths are typed by
-    // hand, and a typed path is one nothing else checks: the document can
-    // publish an operation at a path no router serves. Anything other than
-    // the router's 404 says the path is served: an unauthenticated stream
-    // request is refused as 401 and a bodyless registration as 400.
+  it("reflects the root, event stream and registration at their route mounts", async () => {
     const ctx = await createTestContext();
     try {
-      for (const [path, methods] of Object.entries(EXTRA_PATHS)) {
-        for (const method of Object.keys(methods)) {
-          const res = await request(
-            ctx.app,
-            method.toUpperCase(),
-            path.replace(/\{[^}]+\}/g, "x"),
-            { headers: { origin: "http://localhost:0" } },
-          );
-          expect(res.status, `${method.toUpperCase()} ${path}`).not.toBe(404);
-        }
+      const reflected = operationKeys(
+        ctx.app.getOpenAPI31Document({
+          openapi: "3.1.0",
+          info: { title: "reflected", version: "0" },
+        }) as unknown as Record<string, unknown>,
+      );
+      for (const door of [
+        "GET /",
+        "GET /events",
+        "POST /auth/oauth2/register",
+      ]) {
+        expect(published.has(door), `published witness: ${door}`).toBe(true);
+        expect(reflected.get(door)?.operationId, door).toBe(
+          published.get(door)?.operationId,
+        );
       }
     } finally {
       await ctx.cleanup();
     }
   });
 
+  it("serves the root, event stream and registration where their schemas publish them", async () => {
+    // These handlers retain their own validation and execution. Their
+    // registered descriptions must still name the paths that actually serve.
+    const ctx = await createTestContext();
+    try {
+      for (const [method, path] of [
+        ["GET", "/"],
+        ["GET", "/events"],
+        ["POST", "/auth/oauth2/register"],
+      ] as const) {
+        const res = await request(ctx.app, method, path, {
+          headers: { origin: "http://localhost:0" },
+        });
+        expect(res.status, `${method} ${path}`).not.toBe(404);
+      }
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("documents the registration schema's public fields and Marfa's supported methods", async () => {
+    const ctx = await createTestContext();
+    try {
+      const native = ctx.app.auth!.registration!;
+      const operation = published.get("POST /auth/oauth2/register")!;
+      const request = inlineOpenApiRefs(operation.requestBody, document) as {
+        content: {
+          "application/json": {
+            schema: { properties: Record<string, Record<string, unknown>> };
+          };
+        };
+      };
+      const properties = request.content["application/json"].schema.properties;
+      expect(Object.keys(properties).sort()).toEqual(
+        Object.keys(native.options.body.shape)
+          .filter(
+            (name) =>
+              ![
+                "skip_consent",
+                "backchannel_logout_uri",
+                "backchannel_logout_session_required",
+              ].includes(name),
+          )
+          .sort(),
+      );
+      expect(properties.token_endpoint_auth_method?.enum).toEqual([
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+      ]);
+      expect(properties.token_endpoint_auth_method?.default).toBe(
+        "client_secret_basic",
+      );
+      const response = inlineOpenApiRefs(
+        (operation.responses as Record<string, unknown>)["201"],
+        document,
+      ) as {
+        content: {
+          "application/json": {
+            schema: { required: string[]; properties: Record<string, unknown> };
+          };
+        };
+      };
+      expect(response.content["application/json"].schema.required).toContain(
+        "client_id",
+      );
+      expect(
+        response.content["application/json"].schema.properties,
+      ).toHaveProperty("dpop_bound_access_tokens");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("keeps the generator's top-level tags", () => {
+    const tags = [
+      { name: "Supplied", description: "Tags declared by the generator." },
+    ];
+    const document = {
+      openapi: "3.1.0",
+      info: { title: "probe", version: "0" },
+      tags,
+      paths: {},
+    };
+    expect(finalizeOpenAPISpec(document).tags).toBe(tags);
+  });
+
   it("gives every published operation an operationId", () => {
-    // The internal-operation exclusion in `openapi-finalize.ts` keys on
-    // operationId, so an operation without one can never be filtered out, and
-    // reference renderers fall back to generating an unstable anchor for it.
+    // Reference renderers otherwise generate an unstable anchor.
     const anonymous = [...published.entries()]
       .filter(([, operation]) => typeof operation.operationId !== "string")
       .map(([key]) => key)
@@ -273,8 +358,7 @@ describe("published OpenAPI spec", () => {
   it("declares the chain's own refusals as a reflected one would", () => {
     // The credential gate, the body-size cap and the limiter are each
     // middleware across a set of routes, so the operations that answer them
-    // are decided by where the middleware sits and the refusals are written
-    // out by hand in the finalizer. What a reflected refusal looks like is
+    // are decided by where the middleware sits. What a reflected refusal looks like is
     // not a matter of opinion: it is whatever `makeErrorResponseSchema`
     // produces, so one is built here and the two are compared. Reflected
     // through its own app rather than read out of the document, because the

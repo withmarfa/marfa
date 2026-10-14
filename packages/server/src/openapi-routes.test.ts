@@ -12,7 +12,6 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
-  INTERNAL_OPERATION_IDS,
 } from "./openapi-finalize.js";
 import { createTestContext } from "./test-utils.js";
 import type { TestContext } from "./test-utils.js";
@@ -174,34 +173,16 @@ describe("the document and the routes", () => {
     }
   });
 
-  it("strips exactly the operations named internal", () => {
-    expect(INTERNAL_OPERATION_IDS.size).toBeGreaterThan(0);
+  it("hides the blob link target at its route declaration", () => {
+    const door = "GET /blobs/:hash/fetch";
+    expect(servedDoors().has(door), "served witness").toBe(true);
     const registry = ctx.app.getOpenAPI31Document({
       openapi: "3.1.0",
       info: { title: "registry", version: "0" },
     });
-    const stripped: string[] = [];
-    for (const [path, item] of Object.entries(registry.paths ?? {})) {
-      for (const [method, operation] of Object.entries(
-        item as Record<string, { operationId?: string }>,
-      )) {
-        if (!HTTP_METHODS.includes(method.toUpperCase())) continue;
-        const id = operation.operationId;
-        if (id !== undefined && INTERNAL_OPERATION_IDS.has(id)) {
-          stripped.push(
-            `${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ":$1")}`,
-          );
-        }
-      }
-    }
-    expect(stripped.length).toBe(INTERNAL_OPERATION_IDS.size);
-    const published = publishedOperations();
-    for (const door of stripped) {
-      expect(published.has(door), `${door} was not stripped`).toBe(false);
-      expect(door in UNPUBLISHED, `${door} is not named unpublished`).toBe(
-        true,
-      );
-    }
+    expect(operationsIn(registry.paths ?? {}).has(door)).toBe(false);
+    expect(publishedOperations().has(door)).toBe(false);
+    expect(door in UNPUBLISHED).toBe(true);
   });
 });
 

@@ -23,6 +23,11 @@ const COMMITTED = new URL("../../../openapi.json", import.meta.url);
  */
 const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
   {
+    pattern: /^OAuthClientRegistration\.jwks\.keys$/,
+    reason:
+      "A JSON Web Key can carry extension members beyond its algorithm and public key material.",
+  },
+  {
     pattern: /^\w+Refusal\.error\.details$/,
     reason: "A refusal's details, which differ by code and by door.",
   },

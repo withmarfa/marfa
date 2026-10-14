@@ -897,7 +897,7 @@ The server MUST advertise `backchannel_logout_supported` and `backchannel_logout
 
 When a client registers at `POST /auth/oauth2/register`, which takes no credential, the server MUST answer `201` with a `client_id` and the metadata it registered.
 
-**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`.
+**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
 ### `keys-and-oauth/register-auth-methods`
 
@@ -957,7 +957,7 @@ If a web client's registration names a redirect URI on the loopback, by `http` o
 
 When a native client's registration names an `http` redirect URI on the loopback, the server MUST register it.
 
-**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`.
+**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
 ### `keys-and-oauth/register-unparseable`
 
