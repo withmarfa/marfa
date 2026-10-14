@@ -1232,7 +1232,7 @@ When a caller discards a create refused onto a row its natural key names that no
 
 When a caller discards a create refused onto a row its natural key names that no read has found yet, a device MUST refuse without sending every write that has no verdict or is `blocked` and waits for the create, and every such write that waits for one of those in turn, with the reason `the <kind> it waits for was discarded`.
 
-**Reason:** each names a row under an id the server never held, so sent it could only be refused, which is what a drain does to a write behind an ordinary refused create (`queue-and-verdicts/dependency-refused`). Refused, each stays in the queue with what it carries until it is discarded in turn (`queue-and-verdicts/clear-keeps-content`).
+**Reason:** each names a row under an id the server never held, so sent it could only be refused, which is what a drain does to a write behind an ordinary refused create (`queue-and-verdicts/dependency-refused`). Refused, each that carries content stays in the queue with it until it is discarded in turn (`queue-and-verdicts/clear-keeps-content`), and each that carries none goes at the next clearing (`queue-and-verdicts/clear-withdrawn-leftovers`).
 
 **Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
 
