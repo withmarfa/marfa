@@ -177,7 +177,7 @@ describe("stopping the instance on SIGTERM or SIGINT leaves its writes in the da
 
       let logAfterStop = -1;
       let inFileAlone = new Set<string>();
-      await server.restart({
+      const stopped = await server.restart({
         signal,
         whileStopped: () => {
           logAfterStop = logBytes(server.sqlitePath);
@@ -185,6 +185,7 @@ describe("stopping the instance on SIGTERM or SIGINT leaves its writes in the da
         },
       });
 
+      expect(stopped).toMatchObject({ code: 0, signal: null });
       expect(logAfterStop).toBe(0);
       for (const id of ids) expect(inFileAlone.has(id)).toBe(true);
     },
