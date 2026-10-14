@@ -3266,6 +3266,16 @@ describe("an answer the device applies keeps what it has not had answered", () =
   it("discards a refused create no read can land, refusing unsent the writes waiting on it", async () => {
     const { device, server, created, local, tagged, edited, linked, theirs } =
       await heldBehindUnfoundLanding("queue-landed-absent-discard", true);
+    // Waits on the edge's create, not on the create discarded, so it is
+    // refused in turn.
+    const annotated = await device.updateEdge(linked.edge_id ?? "", {
+      properties: { note: "waits on the edge" },
+      version: 0,
+    });
+    if (!annotated.ok || annotated.value === null)
+      throw new Error(JSON.stringify(annotated));
+    const annotation = annotated.value;
+    expect(annotation.depends_on).toEqual([linked.id]);
     const pins = async () => {
       const status = await device.status();
       if (!status.ok) throw new Error(JSON.stringify(status));
@@ -3319,7 +3329,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       queue.find((row) => row.id === created.id),
       "the discarded create stayed in the queue",
     ).toBeUndefined();
-    for (const write of [tagged, edited, linked]) {
+    for (const write of [tagged, edited, linked, annotation]) {
       const row = queue.find((each) => each.id === write.id);
       expect(
         [row?.verdict, row?.reason, row?.body],
@@ -3379,7 +3389,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       "the pin of the discarded create's row stayed after a read found no such row",
     ).not.toContain(local);
 
-    for (const write of [tagged, edited, linked]) {
+    for (const write of [tagged, edited, linked, annotation]) {
       const taken = await device.discard(write.id);
       expect(taken.ok && taken.value, JSON.stringify(taken)).toBe(true);
     }
