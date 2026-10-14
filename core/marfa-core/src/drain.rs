@@ -3336,6 +3336,9 @@ mod tests {
                 certified(refusal(404, "item_not_found")),
             ],
         );
+        // The bin holds `u`, which this device trashed, and not `local`,
+        // which the server never held.
+        server.on("/items", vec![in_the_bin(&[("u", 1)])]);
         std::thread::scope(|scope| {
             let drained = scope.spawn(|| core.drain());
             server.wait_for("/items/u", 1, Duration::from_secs(5));
@@ -3343,6 +3346,7 @@ mod tests {
             ready.store(true, Ordering::Relaxed);
             drained.join().unwrap().unwrap();
         });
+        held_in_the_bin(&core, "u", 1);
         let after = store::queued_write(&core.conn().unwrap(), &dependant.id)
             .unwrap()
             .unwrap();
@@ -3475,7 +3479,11 @@ mod tests {
         assert_eq!(settled.verdict, Some(Verdict::Refused));
         assert!(settled.unavailable.is_none());
         let conn = core.conn().unwrap();
-        assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
+        assert!(
+            store::pending_landings(&conn)
+                .unwrap()
+                .contains_key(&create.id)
+        );
         assert_eq!(
             store::queued_write(&conn, &dependant.id).unwrap().unwrap(),
             dependant
@@ -3499,7 +3507,11 @@ mod tests {
             "a waiting landing's target was looked for in the bin"
         );
         let conn = core.conn().unwrap();
-        assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
+        assert!(
+            store::pending_landings(&conn)
+                .unwrap()
+                .contains_key(&create.id)
+        );
         assert!(!store::item_held(&conn, "server").unwrap());
         assert_eq!(
             store::owed_read_backs(&conn)
