@@ -91,10 +91,27 @@ if (phase === "hydrate") {
     attached.item.dependsOn.includes(attached.upload.id),
     "the attached file item does not wait on its upload",
   );
-  core.createItem({
-    type: "system.folder",
-    properties: { title: "not the device's to write" },
-  });
+  const queuedBefore = core.queue().length;
+  /** @type {unknown} */
+  let refused;
+  try {
+    core.createItem({
+      type: "system.folder",
+      properties: { title: "not the device's to write" },
+    });
+  } catch (error) {
+    refused = error;
+  }
+  console.log(`system.folder create: ${refused instanceof Error ? refused.message : "queued"}`);
+  expect(
+    refused instanceof Error &&
+      /** @type {{ serverCode?: string }} */ (refused).serverCode === "type_not_permitted",
+    "a system.folder create was not refused type_not_permitted before it was queued",
+  );
+  expect(
+    core.queue().length === queuedBefore,
+    "a refused system.folder create was queued",
+  );
   console.log("queued, nothing answered:");
   printQueue(core);
   const offline = await core.drain();
@@ -135,15 +152,8 @@ if (phase === "hydrate") {
   }
   const outcomes = report.verdicts.map((entry) => describe(entry.verdict));
   expect(
-    outcomes.filter((outcome) => outcome === "refused: type_not_permitted")
-      .length === 1,
-    "the system.folder create was not refused type_not_permitted",
-  );
-  expect(
-    outcomes
-      .filter((outcome) => outcome !== "refused: type_not_permitted")
-      .every((outcome) => outcome === "accepted"),
-    "a write other than the system.folder create was not accepted",
+    outcomes.length > 0 && outcomes.every((outcome) => outcome === "accepted"),
+    "a write queued offline was not accepted",
   );
   const notes = core.list({ type: "core.note", tier: Tier.Feed });
   console.log(
@@ -169,18 +179,7 @@ if (phase === "hydrate") {
   const cleared = core.forgetAnswered();
   const left = core.queue();
   console.log(`cleared ${cleared} answered write(s); ${left.length} left`);
-  // The refused create carried content, so it stays until it is discarded.
-  expect(
-    left.length === 1 &&
-      left[0]?.verdict?.verdict === "refused" &&
-      left[0].kind === "create_item",
-    "the queue holds other than the refused create after clearing",
-  );
-  const kept = left[0];
-  if (kept === undefined) throw new Error("unreachable");
-  console.log(`kept the refused create's body: ${JSON.stringify(kept.body)}`);
-  expect(core.discard(kept.id), "the refused create was not discarded");
-  expect(core.queue().length === 0, "a discarded write was left in the queue");
+  expect(left.length === 0, "an answered write was left in the queue after clearing");
 } else if (phase === "follow") {
   // binding-proof.sh makes the note with the binary while this is held.
   const reader = MarfaCore.openReader(path);
