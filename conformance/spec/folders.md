@@ -2394,7 +2394,7 @@ When a folder drains while its queue holds one of its placement writes that the 
 
 ### `folders/placement-give-way-read-fails`
 
-If the server answers the read a device gives way from with an environmental failure or a refusal, then a device MUST keep the placement write in the queue as the server answered it, and the working copy as it was.
+If the read a device gives way from fails with an environmental failure or is refused, then a device MUST keep the placement write in the queue as the server answered it, and the working copy as it was.
 
 **Reason:** only a read of the server's placement says where the file goes. A read refused `403` or `404` can be answered once the key or the item changes, so the write stays where the person can see it, withdraw it (`queue-and-verdicts/withdraw-takes-out`) or discard it, and a later drain reads again (`folders/placement-give-way-later`).
 
@@ -2402,7 +2402,7 @@ If the server answers the read a device gives way from with an environmental fai
 
 ### `folders/placement-give-way-drain-goes-on`
 
-If the server answers the read a device gives way from with an environmental failure or a refusal, then a device MUST complete the folder's drain and report every verdict it reached.
+If the read a device gives way from fails with an environmental failure or is refused, then a device MUST complete the folder's drain and report every verdict it reached.
 
 **Reason:** one placement the server cannot or will not let it read does not stop the rest of the folder from syncing.
 
