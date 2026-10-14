@@ -1,6 +1,6 @@
 # Marfa
 
-The server (`packages/`), the Rust core every native client embeds (`core/`), and the contract both are held to (`conformance/`). The Swift package lives in `withmarfa/marfa-swift`.
+The server (`packages/`), the Rust core every native client embeds (`core/`), and the contract both are held to (`conformance/`). The Swift SDK lives in `withmarfa/marfa-swift`.
 
 ## Working here
 
