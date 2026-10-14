@@ -261,6 +261,9 @@ export class EdgeDoor {
   deleting?: (edge: WireEdgeOptions) => Answer | undefined;
   /** Listings of an item's edges still to fail, as a server failing now. */
   failListings = 0;
+  /** An answer standing in for the server's to a listing of an item's
+   *  edges, a refusal say; the door answers where it gives `undefined`. */
+  listing?: (source: string) => Answer | undefined;
   /** Edges an item's listing serves as they were, once each: a read answered
    *  before a change the copy has since taken (`device.md`, What the real
    *  server cannot be made to produce). */
@@ -377,7 +380,9 @@ export class EdgeDoor {
         this.failListings -= 1;
         return refusal(503, "unavailable", "Try again");
       }
-      const source = request.pathname.split("/").at(-2);
+      const source = request.pathname.split("/").at(-2) ?? "";
+      const standIn = this.listing?.(source);
+      if (standIn !== undefined) return standIn;
       const type = request.query.get("edge_type");
       return edgesPage(
         [...this.edges.values()]

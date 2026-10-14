@@ -121,6 +121,9 @@ pub struct Folder {
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
+    /// Placement writes whose give-way read failed in a watch, by queue id,
+    /// and when.
+    unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
     permissions: std::sync::OnceLock<bool>,
 }
 
@@ -304,6 +307,7 @@ impl Folder {
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
@@ -386,6 +390,7 @@ impl Folder {
             folder,
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         })
     }
@@ -412,6 +417,7 @@ impl Folder {
             folder,
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         }
         .status()
@@ -3157,6 +3163,12 @@ impl Drained {
 impl Folder {
     /// Its passes are one drain: another on the store waits for all of them.
     pub fn drain(&self) -> Result<Drained> {
+        self.drain_in(false)
+    }
+
+    /// `drain`, for a watch where `watched`, which waits out
+    /// `placement::GIVE_WAY_REREAD` before it reads again for a give-way.
+    pub(super) fn drain_in(&self, watched: bool) -> Result<Drained> {
         let one = self.core.one_drain();
         let mut report = self.core.drain_held(&one)?;
         let mut rebased = 0;
@@ -3170,7 +3182,7 @@ impl Folder {
         }
         // Queued even where the drain stopped, so the copy holds the edge the line asks for.
         self.make_edges_gone_before_their_move()?;
-        let gave_way = self.settle_placements(&mut report)?;
+        let gave_way = self.settle_placements(&mut report, watched)?;
         self.hold_refused()?;
         Ok(Drained {
             report,

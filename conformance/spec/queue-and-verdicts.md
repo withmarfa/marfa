@@ -1958,11 +1958,11 @@ When a create carrying no natural key carries a null for a property its type doe
 
 ### `queue-and-verdicts/folder-gives-way`
 
-When a folder gives way to another machine's placement of a file (`folders/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard.
+When a folder gives way to another machine's placement of a file (`folders/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard, other than a write queued after the move it gives way from (`folders/placement-give-way-newer-kept`).
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 
-**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`, `› keeps a move made after the one it gives way from`.
 
 ## A restore of a row the copy does not hold
 
