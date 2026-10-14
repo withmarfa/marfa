@@ -1,7 +1,4 @@
-import {
-  OpenAPIRegistry,
-  OpenApiGeneratorV31,
-} from "@asteasolutions/zod-to-openapi";
+import { OpenAPIHono } from "@hono/zod-openapi";
 /**
  * Add the middleware's refusals and headers, and the stream and webhook
  * frames, to the document generated from the registered route schemas.
@@ -318,11 +315,13 @@ function reflectedRefusal(
   codes: readonly [string, ...string[]],
 ): Record<string, unknown> {
   const name = refusalComponentName(codes);
-  const registry = new OpenAPIRegistry();
-  registry.register(name, makeErrorResponseSchema(codes));
-  const schema = new OpenApiGeneratorV31(
-    registry.definitions,
-  ).generateComponents().components?.schemas?.[name];
+  // Hono owns the schema metadata registry, including in the production bundle.
+  const document = new OpenAPIHono();
+  document.openAPIRegistry.register(name, makeErrorResponseSchema(codes));
+  const schema = document.getOpenAPI31Document({
+    openapi: "3.1.0",
+    info: OPENAPI_DOCUMENT_INFO,
+  }).components?.schemas?.[name];
   if (schema === undefined)
     throw new Error(`Refusal schema ${name} was not reflected`);
   return schema as Record<string, unknown>;
