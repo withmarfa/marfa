@@ -1907,12 +1907,12 @@ impl Core {
     /// waiting on that one are refused unsent.
     pub fn discard(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        // A drain already past its read of the queue would hold the writes
-        // this refuses as waiting on the create, over their refusal.
-        let _one = self
-            .pending_landings()?
-            .contains_key(id)
-            .then(|| self.one_drain());
+        // Only a create's discard refuses other writes, and a running drain
+        // can make any create one whose landing waits for a read, so each
+        // waits for the drain to end. The kind is all that cannot change.
+        let create = store::queued_write(&*self.conn()?, id)?
+            .is_some_and(|row| row.kind == WriteKind::CreateItem);
+        let _one = create.then(|| self.one_drain());
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         let discarded = store::discard(&tx, id)?;

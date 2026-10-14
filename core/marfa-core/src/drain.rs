@@ -673,9 +673,22 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         };
         match ready {
             Readiness::Held => {
-                let conn = core.conn()?;
+                // Decided on the verdicts read when the pass began, which a
+                // withdraw or a discard since may have answered: their
+                // refusal stands.
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                let now = store::queued_write(&tx, &row.id)?;
+                match now.as_ref().map(|now| now.verdict) {
+                    None => continue,
+                    Some(None | Some(Verdict::Blocked)) => {}
+                    Some(answered) => {
+                        answers.insert(row.id.clone(), answered);
+                        continue;
+                    }
+                }
                 store::record_verdict(
-                    &conn,
+                    &tx,
                     &row.id,
                     &store::Answered {
                         verdict: Verdict::Blocked,
@@ -684,6 +697,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                         conflicted_copy_id: None,
                     },
                 )?;
+                tx.commit()?;
                 answers.insert(row.id.clone(), Some(Verdict::Blocked));
                 waiting.insert(row.id.clone());
                 report.held += 1;
@@ -3052,6 +3066,92 @@ mod tests {
             assert!(core.discard(&each.id).unwrap());
         }
         assert!(core.queue().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_drain_keeps_a_refusal_a_withdraw_recorded_while_it_ran() {
+        use crate::scripted::{Answer, certified, json, refusal};
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let create = {
+            let conn = core.conn().unwrap();
+            for id in ["local", "u"] {
+                let item = store::testing::note(id, id, "", "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+            }
+            let create = store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap();
+            store::mark_sent(&conn, &create.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &create.id,
+                &store::Answered {
+                    verdict: Verdict::Blocked,
+                    reason: Some(BlockedReason::AncestorUnavailable.as_str()),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            create
+        };
+        // Sent while the withdraw runs, between the drain's read of the queue
+        // and its coming to the write held for the create.
+        core.delete_item("u").unwrap();
+        let dependant = {
+            let conn = core.conn().unwrap();
+            let mut edit = write(
+                WriteKind::UpdateItem,
+                "local",
+                None,
+                Some(0),
+                std::slice::from_ref(&create.id),
+            );
+            edit.payload = r#"{"properties":{"title":"mine"}}"#;
+            store::enqueue(&conn, &edit).unwrap()
+        };
+        let ready = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items/u",
+            vec![
+                Answer::WaitFor {
+                    ready: ready.clone(),
+                    answer: Box::new(json(200, r#"{"ok":true}"#)),
+                },
+                certified(refusal(404, "item_not_found")),
+            ],
+        );
+        server.on(
+            "/items/local",
+            vec![
+                certified(refusal(404, "item_not_found")),
+                certified(refusal(404, "item_not_found")),
+            ],
+        );
+        std::thread::scope(|scope| {
+            let drained = scope.spawn(|| core.drain());
+            server.wait_for("/items/u", 1, Duration::from_secs(5));
+            assert!(core.withdraw(&create.id).unwrap());
+            ready.store(true, Ordering::Relaxed);
+            drained.join().unwrap().unwrap();
+        });
+        let after = store::queued_write(&core.conn().unwrap(), &dependant.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (after.verdict, after.reason.as_deref()),
+            (
+                Some(Verdict::Refused),
+                Some("the create_item it waits for was withdrawn")
+            ),
+            "the drain held the write behind a create the queue no longer holds, over its refusal"
+        );
     }
 
     #[test]
