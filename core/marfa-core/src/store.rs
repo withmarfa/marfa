@@ -3140,16 +3140,24 @@ fn read_of_row_owed_elsewhere(conn: &Connection, id: &str) -> Result<bool, CoreE
 }
 
 /// Every write to the edge not accepted, refused ones included, leaves the
-/// queue, and the copy is put back as it was beneath them.
-pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
+/// queue, and the copy is put back as it was beneath them. With `through`, a
+/// queue id, only those queued no later than it leave. Answers the ids that
+/// left.
+pub fn withdraw_edge_writes(
+    conn: &Connection,
+    edge_id: &str,
+    through: Option<&str>,
+) -> Result<Vec<String>, CoreError> {
     let rows = read_writes(
         conn,
-        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3, ?4))",
-        [
+        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3, ?4))
+           AND (?5 IS NULL OR seq <= (SELECT seq FROM queue WHERE id = ?5))",
+        params![
             edge_id,
             Verdict::Blocked.as_str(),
             Verdict::Refused.as_str(),
             Verdict::Dead.as_str(),
+            through,
         ],
     )?;
     for row in &rows {
@@ -3159,7 +3167,7 @@ pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, C
     for row in &rows {
         put_back(conn, row)?;
     }
-    Ok(rows.len())
+    Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
 pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {

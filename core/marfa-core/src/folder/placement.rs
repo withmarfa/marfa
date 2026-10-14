@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,11 @@ pub(super) struct Held {
 /// How long a key's answer stands before it is asked again: a running watch
 /// meets a restored grant within it.
 const KEY_REREAD: Duration = Duration::from_secs(60);
+
+/// How long a placement write whose give-way read failed waits before the
+/// same process reads for it again: a watch drains every second, and a read
+/// refused for good would otherwise spend the key's rate limit.
+const GIVE_WAY_REREAD: Duration = Duration::from_secs(60);
 
 /// The key as last asked, and when; `None` where the asking failed.
 pub(super) struct KeyRead {
@@ -290,38 +295,20 @@ impl Folder {
         asked
     }
 
-    /// Gives way where another machine placed or moved the item first, and
-    /// remembers any other refusal. Answers how many gave way.
+    /// Gives way where another machine placed or moved the item first,
+    /// whichever drain the server said so in, and remembers any other refusal
+    /// this drain reports. Answers how many gave way.
     pub(super) fn settle_placements(&self, report: &mut DrainReport) -> Result<usize> {
-        let mut gave_way = 0;
         let mut refused: Vec<(String, Held)> = Vec::new();
-        let mut kept = Vec::new();
-        for verdict in std::mem::take(&mut report.verdicts) {
+        for verdict in &report.verdicts {
             let row = {
                 let conn = self.core.conn()?;
                 store::queued_write(&conn, &verdict.id)?
             };
             let Some(row) = row else {
-                kept.push(verdict);
                 continue;
             };
-            if !self.places_by(&row)? {
-                kept.push(verdict);
-                continue;
-            }
-            let duplicate = row.verdict == Some(Verdict::Refused)
-                && row.kind == WriteKind::CreateEdge
-                && row.answer.as_deref().is_some_and(is_duplicate);
-            let stale = row.blocked_reason() == Some(BlockedReason::ConflictUnresolved);
-            if duplicate || stale {
-                let (Some(source), Some(edge_id)) =
-                    (row.item_id.as_deref(), row.edge_id.as_deref())
-                else {
-                    kept.push(verdict);
-                    continue;
-                };
-                self.take_servers_placement(source, edge_id)?;
-                gave_way += 1;
+            if gives_way(&row) || !self.places_by(&row)? {
                 continue;
             }
             // Only the server's own answer to the placement: one refused with
@@ -347,13 +334,62 @@ impl Folder {
                 };
                 refused.push((item, Held { path, at }));
             }
-            kept.push(verdict);
         }
-        report.verdicts = kept;
         if !refused.is_empty() {
             self.remember_refused(refused)?;
         }
+        let (gave_way, withdrawn) = self.give_way()?;
+        report
+            .verdicts
+            .retain(|verdict| !withdrawn.contains(&verdict.id));
         Ok(gave_way)
+    }
+
+    /// Gives way from the latest of this folder's placement writes to each
+    /// edge that gives way. A read the server cannot answer now, or refuses,
+    /// leaves its write as it is for a later drain to read again, once
+    /// `GIVE_WAY_REREAD` has passed. Answers how many gave way and the writes
+    /// that left the queue.
+    fn give_way(&self) -> Result<(usize, HashSet<String>)> {
+        let queue = store::queued_writes(&*self.core.conn()?)?;
+        let mut latest: Vec<QueuedWrite> = Vec::new();
+        for row in queue {
+            if !gives_way(&row) || !self.places_by(&row)? {
+                continue;
+            }
+            match latest.iter_mut().find(|held| held.edge_id == row.edge_id) {
+                Some(held) => *held = row,
+                None => latest.push(row),
+            }
+        }
+        let mut unread = self
+            .unread_give_ways
+            .lock()
+            .map_err(|_| CoreError::Store("the give-way record was poisoned".into()))?;
+        unread.retain(|_, at| at.elapsed() < GIVE_WAY_REREAD);
+        let mut gave_way = 0;
+        let mut withdrawn = HashSet::new();
+        for row in latest {
+            if unread.contains_key(&row.id) {
+                continue;
+            }
+            match self.take_servers_placement(&row) {
+                Ok(Some(left)) => {
+                    gave_way += 1;
+                    withdrawn.extend(left);
+                }
+                Ok(None) => {}
+                Err(error) if ends_the_drain(&error) => return Err(error),
+                Err(error) => {
+                    unread.insert(row.id, Instant::now());
+                    // Every read after it would wait on the same server.
+                    if error.is_environmental() {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok((gave_way, withdrawn))
     }
 
     /// Whether a queued write is one of this folder's placements: an
@@ -382,10 +418,20 @@ impl Folder {
         Ok(edge_type.as_deref() == Some(PLACEMENT_EDGE))
     }
 
-    /// Puts the placement the server holds for `source` into the copy, in
-    /// place of any this machine holds, as the queue puts back any row it
-    /// read again: never over a row the copy took while the read was out.
-    fn take_servers_placement(&self, source: &str, edge_id: &str) -> Result<()> {
+    /// Puts the placement the server holds for the item `answered` places
+    /// into the copy, in place of any this machine holds, as the queue puts
+    /// back any row it read again: never over a row the copy took while the
+    /// read was out. Withdraws the writes to the edge queued up to
+    /// `answered`, or every one where `answered` is a create, since none can
+    /// reach an edge the server never made. Answers the writes withdrawn, or
+    /// `None` where `answered` no longer gives way once the read is in.
+    fn take_servers_placement(&self, answered: &QueuedWrite) -> Result<Option<Vec<String>>> {
+        let (Some(source), Some(edge_id)) =
+            (answered.item_id.as_deref(), answered.edge_id.as_deref())
+        else {
+            return Ok(None);
+        };
+        let through = (answered.kind != WriteKind::CreateEdge).then_some(answered.id.as_str());
         let (context, known) = {
             let conn = self.core.conn()?;
             let context = crate::read_view::Context::capture(&conn)?;
@@ -434,12 +480,15 @@ impl Folder {
             let mut conn = self.core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            store::withdraw_edge_writes(&tx, edge_id)?;
+            if !store::queued_write(&tx, &answered.id)?.is_some_and(|row| gives_way(&row)) {
+                return Ok(None);
+            }
+            let withdrawn = store::withdraw_edge_writes(&tx, edge_id, through)?;
             for read in &reads {
                 crate::drain::apply_read_back(&tx, read)?;
             }
             tx.commit()?;
-            Ok(())
+            Ok(Some(withdrawn))
         })();
         result.map_err(|error| {
             context
@@ -459,6 +508,29 @@ impl Folder {
         };
         record.placements.extend(placements);
         self.keep_refused(&record)
+    }
+}
+
+/// A placement the server answered as made over another machine's: a move
+/// based on a placement it has moved on from, or a create where it holds one.
+fn gives_way(row: &QueuedWrite) -> bool {
+    let duplicate = row.verdict == Some(Verdict::Refused)
+        && row.kind == WriteKind::CreateEdge
+        && row.answer.as_deref().is_some_and(is_duplicate);
+    duplicate || row.blocked_reason() == Some(BlockedReason::ConflictUnresolved)
+}
+
+/// A failure that is the copy's or the store's rather than the server's
+/// answer about one placement, which ends the drain as any read's does.
+fn ends_the_drain(error: &CoreError) -> bool {
+    match error {
+        CoreError::RenewalFailed(_) => !error.is_environmental(),
+        CoreError::Redirected { .. }
+        | CoreError::ContractMismatch { .. }
+        | CoreError::StorageFull(_)
+        | CoreError::CopyExpired { .. }
+        | CoreError::Store(_) => true,
+        _ => false,
     }
 }
 
@@ -655,6 +727,15 @@ mod tests {
         (dir, folder)
     }
 
+    /// The move `moved_and_refused_as_stale` queued.
+    fn blocked(folder: &Folder) -> QueuedWrite {
+        store::queued_writes(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .find(|row| row.edge_id.as_deref() == Some("placed"))
+            .unwrap()
+    }
+
     fn placed_at(version: i64, path: &str) -> crate::wire::WireEdge {
         let mut edge = store::testing::wire_edge("placed", "note", "folder", PLACEMENT_EDGE);
         edge.properties.insert("path".into(), path.into());
@@ -698,7 +779,7 @@ mod tests {
         );
         let (_dir, folder) = moved_and_refused_as_stale(server.url());
         std::thread::scope(|scope| {
-            let giving_way = scope.spawn(|| folder.take_servers_placement("note", "placed"));
+            let giving_way = scope.spawn(|| folder.take_servers_placement(&blocked(&folder)));
             server.wait_for(listing, 1, Duration::from_secs(10));
             // What a follow applies for a third move, made after the server
             // answered the read.
@@ -710,7 +791,7 @@ mod tests {
                 tx.commit().unwrap();
             }
             ready.store(true, Ordering::SeqCst);
-            giving_way.join().unwrap().unwrap();
+            assert!(giving_way.join().unwrap().unwrap().is_some());
         });
         let conn = folder.core.conn().unwrap();
         let held = store::edge_by_id(&conn, "placed").unwrap().unwrap();
@@ -762,13 +843,13 @@ mod tests {
             let (_dir, folder) = moved_and_refused_as_stale(server.url());
             store::put_server_edge(&folder.core.conn().unwrap(), &other(1)).unwrap();
             std::thread::scope(|scope| {
-                let giving_way = scope.spawn(|| folder.take_servers_placement("note", "placed"));
+                let giving_way = scope.spawn(|| folder.take_servers_placement(&blocked(&folder)));
                 server.wait_for("/edges/other", 1, Duration::from_secs(10));
                 if moved_meanwhile {
                     store::put_server_edge(&folder.core.conn().unwrap(), &other(2)).unwrap();
                 }
                 ready.store(true, Ordering::SeqCst);
-                giving_way.join().unwrap().unwrap();
+                assert!(giving_way.join().unwrap().unwrap().is_some());
             });
             let held = store::edge_by_id(&folder.core.conn().unwrap(), "other").unwrap();
             assert_eq!(
@@ -777,6 +858,238 @@ mod tests {
                 "moved meanwhile: {moved_meanwhile}"
             );
         }
+    }
+
+    fn drained(verdicts: Vec<crate::drain::DrainVerdict>) -> DrainReport {
+        DrainReport {
+            answered: verdicts.len(),
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts,
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    /// What the drain reported for each write to `placed` the queue holds.
+    fn reported(folder: &Folder) -> Vec<crate::drain::DrainVerdict> {
+        store::queued_writes(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.edge_id.as_deref() == Some("placed"))
+            .map(|row| crate::drain::DrainVerdict {
+                id: row.id,
+                kind: row.kind,
+                item_id: row.item_id,
+                edge_id: row.edge_id,
+                verdict: row.verdict,
+                reason: row.reason,
+                refusal: None,
+                conflicted_copy_id: None,
+                refusals: row.refusals,
+                replayed: false,
+                merged_fields: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn held_path(folder: &Folder) -> Option<String> {
+        let held = store::edge_by_id(&folder.core.conn().unwrap(), "placed").unwrap()?;
+        path_of(&held).map(str::to_string)
+    }
+
+    fn placements_listed(version: i64, path: &str) -> crate::scripted::Answer {
+        crate::scripted::certified(crate::scripted::json(
+            200,
+            &json!({ "data": [placed_json(version, path)], "next_cursor": null }).to_string(),
+        ))
+    }
+
+    /// The folder as the next process to open it finds it.
+    fn reopened(dir: &tempfile::TempDir, folder: Folder, url: String) -> Folder {
+        drop(folder);
+        Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url,
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_give_way_whose_read_failed_is_finished_by_a_later_drain() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/note/edges",
+            vec![
+                crate::scripted::refusal(503, "unavailable"),
+                placements_listed(2, "First/Plan.md"),
+            ],
+        );
+        let (dir, folder) = moved_and_refused_as_stale(server.url());
+        let _ = folder.settle_placements(&mut drained(reported(&folder)));
+        let folder = reopened(&dir, folder, server.url());
+        let gave_way = folder.settle_placements(&mut drained(Vec::new())).unwrap();
+        assert_eq!(gave_way, 1, "a later drain did not finish giving way");
+        assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
+        assert!(
+            store::queued_writes(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty(),
+            "the stale move stayed queued"
+        );
+    }
+
+    #[test]
+    fn a_give_way_read_that_fails_keeps_the_write_the_copy_and_the_report() {
+        let refusals = [
+            (503, "unavailable"),
+            (404, "item_not_found"),
+            (403, "edge_permission_denied"),
+        ];
+        for (status, code) in refusals {
+            let server = crate::scripted::Scripted::start();
+            // A refusal of a read carries the view it was asked in.
+            let refused = || match status {
+                503 => crate::scripted::refusal(status, code),
+                _ => crate::scripted::certified(crate::scripted::refusal(status, code)),
+            };
+            server.on(
+                "/items/note/edges",
+                vec![refused(), refused(), placements_listed(2, "First/Plan.md")],
+            );
+            let (dir, mut folder) = moved_and_refused_as_stale(server.url());
+            let before = blocked(&folder);
+            // Two drains of one process, then one of the next.
+            for (drain, reads) in [(0, 1), (1, 1), (2, 2)] {
+                if drain == 2 {
+                    folder = reopened(&dir, folder, server.url());
+                }
+                let mut report = drained(reported(&folder));
+                let gave_way = folder
+                    .settle_placements(&mut report)
+                    .unwrap_or_else(|error| {
+                        panic!("{status} failed drain {drain}: {error}");
+                    });
+                assert_eq!(gave_way, 0, "{status}");
+                assert_eq!(
+                    report.verdicts.iter().map(|v| &v.id).collect::<Vec<_>>(),
+                    vec![&before.id],
+                    "{status}: drain {drain} lost its verdict"
+                );
+                assert_eq!(blocked(&folder), before, "{status}");
+                assert_eq!(held_path(&folder).as_deref(), Some("Second/Plan.md"));
+                assert_eq!(
+                    server.seen("/items/note/edges").len(),
+                    reads,
+                    "{status}: drain {drain} read the placement again within the minute, or the next process did not"
+                );
+            }
+            // The witness: the read answered, it gives way.
+            let folder = reopened(&dir, folder, server.url());
+            assert_eq!(
+                folder.settle_placements(&mut drained(Vec::new())).unwrap(),
+                1
+            );
+            assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
+        }
+    }
+
+    #[test]
+    fn giving_way_keeps_a_move_queued_after_the_one_the_server_answered() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/note/edges",
+            vec![placements_listed(2, "First/Plan.md")],
+        );
+        let (_dir, folder) = moved_and_refused_as_stale(server.url());
+        let stale = blocked(&folder);
+        // A catch-up brought the other machine's move, under the stale one.
+        {
+            let conn = folder.core.conn().unwrap();
+            store::put_server_edge(&conn, &placed_at(2, "First/Plan.md")).unwrap();
+            store::lay_waiting_edge_writes_over(&conn, "placed").unwrap();
+        }
+        folder
+            .core
+            .update_edge(
+                "placed",
+                &EdgeEdit {
+                    properties: json!({ "path": "Third/Plan.md" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let queued = store::queued_writes(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(queued.len(), 2, "the later move was not queued on its own");
+        let later = queued.last().unwrap().clone();
+        let mut report = drained(reported(&folder));
+        assert_eq!(folder.settle_placements(&mut report).unwrap(), 1);
+        assert_eq!(
+            store::queued_writes(&folder.core.conn().unwrap()).unwrap(),
+            vec![later.clone()],
+            "giving way took a move queued after the one the server answered"
+        );
+        assert_eq!(
+            report.verdicts.iter().map(|v| &v.id).collect::<Vec<_>>(),
+            vec![&later.id],
+            "the withdrawn move is still reported, or the later one is not"
+        );
+        assert_ne!(stale.id, later.id);
+        let held = store::edge_by_id(&folder.core.conn().unwrap(), "placed")
+            .unwrap()
+            .unwrap();
+        assert_eq!((held.version, path_of(&held)), (2, Some("Third/Plan.md")));
+    }
+
+    #[test]
+    fn giving_way_from_two_stale_moves_of_one_edge_reads_once_and_takes_both() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/note/edges",
+            vec![placements_listed(2, "First/Plan.md")],
+        );
+        let (_dir, folder) = moved_and_refused_as_stale(server.url());
+        folder
+            .core
+            .update_edge(
+                "placed",
+                &EdgeEdit {
+                    properties: json!({ "path": "Third/Plan.md" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store::block_unanswered(
+            &folder.core.conn().unwrap(),
+            BlockedReason::ConflictUnresolved,
+        )
+        .unwrap();
+        assert_eq!(reported(&folder).len(), 2);
+        let mut report = drained(reported(&folder));
+        assert_eq!(folder.settle_placements(&mut report).unwrap(), 1);
+        assert_eq!(server.seen("/items/note/edges").len(), 1);
+        assert!(report.verdicts.is_empty());
+        assert!(
+            store::queued_writes(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
     }
 
     fn bound_file(path: &str) -> state::Bound {

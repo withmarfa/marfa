@@ -121,6 +121,8 @@ pub struct Folder {
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
+    /// Placement writes whose give-way read failed, by queue id, and when.
+    unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
     permissions: std::sync::OnceLock<bool>,
 }
 
@@ -304,6 +306,7 @@ impl Folder {
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
@@ -386,6 +389,7 @@ impl Folder {
             folder,
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         })
     }
@@ -412,6 +416,7 @@ impl Folder {
             folder,
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
         }
         .status()

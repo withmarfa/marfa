@@ -748,6 +748,7 @@ mod tests {
             folder: "folder".into(),
             core,
             key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
             root_dir,
             state_dir,
