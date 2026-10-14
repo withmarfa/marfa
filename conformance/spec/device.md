@@ -2386,11 +2386,11 @@ When a copy that has never hydrated hydrates against a server, a device MUST kee
 
 ### `device/create-slice-tier`
 
-When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds.
+When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds or a row the server answers a lookup with (`queue-and-verdicts/keyed-create-lookup-found`).
 
 **Reason:** a create sent with no tier would land at the key's default tier, which may not be where the copy showed it.
 
-**Tests:** `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a feed row by its natural key in a slice of both without moving it`.
+**Tests:** `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a feed row by its natural key in a slice of both without moving it`, `› re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
 
 ### `device/declared-checked`
 

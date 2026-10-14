@@ -2187,7 +2187,7 @@ marfa device items create [OPTIONS] --type <TYPE> --properties <JSON>
 | `--type <TYPE>` | The type the item is. |
 | `--properties <JSON>` | The properties, as a JSON object. |
 | `--tag <TAG>` | A tag, repeatable. Each is queued as a write of its own. |
-| `--tier <TIER>` | The tier to write it at; the default is the tier of the held row its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration. One of `library`, `feed`. |
+| `--tier <TIER>` | The tier to write it at; the default is the tier of the held row its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration. A create carrying `--source` and `--source-id` goes with no tier where the server holds a row under that key, which keeps its tier. One of `library`, `feed`. |
 | `--source <SOURCE>` | The source to stamp it with. |
 | `--source-id <SOURCE_ID>` | The id this row has in the system it came from. |
 | `--occurred-at <OCCURRED_AT>` | The item's own time, RFC 3339. Defaults to now. |

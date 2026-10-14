@@ -808,11 +808,11 @@ When a write meets an environmental failure, a device MUST send no write after i
 
 ### `queue-and-verdicts/read-failure-ends-pass`
 
-When a read a drain makes after an answer meets an environmental failure, a device MUST send no write after it in that drain.
+When a read a drain makes after an answer, or the lookup of a create's natural key, meets an environmental failure, a device MUST send no write after it in that drain.
 
-**Reason:** the read a refusal is reconciled against, made again from an earlier drain or made in this one, and the read of the row a create landed on, are asked of the same server as the writes.
+**Reason:** the read a refusal is reconciled against, made again from an earlier drain or made in this one, the read of the row a create landed on, and the lookup a create waits on (`queue-and-verdicts/keyed-create-lookup`), are asked of the same server as the writes.
 
-**Tests:** `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`.
+**Tests:** `device/classification.test.ts › ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › holds a create whose natural key the server cannot look up, and sends one whose lookup it refuses at the slice's tier`.
 
 ### `queue-and-verdicts/counted-failures`
 
@@ -1736,9 +1736,17 @@ When a create is refused `trashed`, a device MUST report the refusal as about a 
 
 ### `queue-and-verdicts/create-slice-tier`
 
-When a caller creates an item naming no tier, and its natural key names neither a row the copy holds from the server nor this device's own create still waiting, a device MUST send and show the create at the tier the copy's slice holds, `library` for a slice of both tiers.
+When a caller creates an item naming no tier, and its natural key names neither a row the copy holds from the server nor this device's own create still waiting, a device MUST show the create at the tier the copy's slice holds, `library` for a slice of both tiers.
 
-**Reason:** left out, the server gives the create its credential's `default_tier` (`items/tier-new`), which need not be the slice's, and the copy would show the row at one tier and get it back at another. In a slice of both, `library` is the tier a create naming none takes on the server.
+**Reason:** left out, the server gives a new row its credential's `default_tier` (`items/tier-new`), which need not be the slice's, and the copy would show the row at one tier and get it back at another. In a slice of both, `library` is the tier a create naming none takes on the server.
+
+**Tests:** `device/queue.test.ts › sends a create naming no tier with the tier the slice holds`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› asks the server about a create's natural key before it sends it, and sends no tier where a row holds the key`, `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
+
+### `queue-and-verdicts/unkeyed-create-tier`
+
+When a device sends a create that a caller made naming no tier and that does not carry both a `source` and a `source_id`, a device MUST send it at the tier the copy shows it at.
+
+**Reason:** left out, the server gives the row its credential's `default_tier` (`items/tier-new`), and the copy would show the row at one tier and get it back at another.
 
 **Tests:** `device/queue.test.ts › sends a create naming no tier with the tier the slice holds`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`.
 
@@ -1758,11 +1766,51 @@ When a caller creates an item naming no tier whose natural key names a row the c
 
 ### `queue-and-verdicts/keyed-create-own-tier`
 
-When a caller creates an item naming no tier whose natural key names this device's own create still waiting, a device MUST send and show the create at that create's tier.
+When a caller creates an item naming no tier whose natural key names this device's own create still waiting, a device MUST show the create at that create's tier.
 
-**Reason:** if the create ahead is refused, this one makes the row, and left out its tier would be the credential's default.
+**Reason:** if the create ahead is refused, this one makes the row, and it is sent at the tier it is shown at where the server holds no row under the key (`queue-and-verdicts/keyed-create-lookup-none`).
 
 **Tests:** `device/queue.test.ts › sends a create naming no tier whose natural key names its own create still waiting at that create's tier`.
+
+### `queue-and-verdicts/keyed-create-lookup`
+
+When a device first sends a create that a caller made naming no tier, carrying a `source` and a `source_id` that name no row the copy holds from the server, a device MUST first ask `POST /items/lookup` whether a row on the server holds that natural key.
+
+**Reason:** a copy holds no row at a tier its slice leaves out, nor one in the bin or of a type outside its slice, so it cannot tell a new key from one naming a row a person moved to the other tier. The keys of several such creates of one type and source are asked in one lookup.
+
+**Tests:** `device/queue.test.ts › asks the server about a create's natural key before it sends it, and sends no tier where a row holds the key`, `› sends a create naming no tier whose natural key names its own create still waiting at that create's tier`, `device/slice-tiers-live.test.ts › re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
+
+### `queue-and-verdicts/keyed-create-lookup-found`
+
+When the lookup of a create's natural key answers a row, in any state, a device MUST send the create with no `tier`.
+
+**Reason:** the server leaves the tier of a row a key resolves as it stands (`items/tier-upsert`), so a row a person moved to the feed stays there through a re-save from a copy of the library. The copy shows the create at the tier it chose until the answer, and the read-back that follows lets the row go where the slice does not hold its tier.
+
+**Tests:** `device/queue.test.ts › asks the server about a create's natural key before it sends it, and sends no tier where a row holds the key`, `device/slice-tiers-live.test.ts › re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
+
+### `queue-and-verdicts/keyed-create-lookup-none`
+
+When the lookup of a create's natural key answers no row, a device MUST send the create at the tier the copy shows it at.
+
+**Reason:** left out, the new row would take the credential's `default_tier` (`items/tier-new`). A row another writer makes under the key between the lookup and the send takes this tier; it is new, so no person has moved it.
+
+**Tests:** `device/queue.test.ts › asks the server about a create's natural key before it sends it, and sends no tier where a row holds the key`, `› sends a create naming no tier whose natural key names its own create still waiting at that create's tier`, `device/slice-tiers-live.test.ts › re-saves a row moved to the feed by its natural key from a copy of the library without moving it`.
+
+### `queue-and-verdicts/keyed-create-lookup-refused`
+
+If the server refuses the lookup of a create's natural key `403`, then a device MUST send the create at the tier the copy shows it at.
+
+**Reason:** a credential that may not read the type cannot learn whether a row holds the key, so the create goes as it would have without asking.
+
+**Tests:** `device/queue.test.ts › holds a create whose natural key the server cannot look up, and sends one whose lookup it refuses at the slice's tier`.
+
+### `queue-and-verdicts/keyed-create-lookup-unanswered`
+
+If the lookup of a create's natural key meets a dropped connection, a read that timed out, a `5xx`, a `408`, a `425`, a `429` or an answer naming no contract, then a device MUST leave the create unsent and uncounted for the next drain.
+
+**Reason:** sent without the answer, the create could move a row a person moved. The body a create is sent with is decided once, before its first send, so a retry under its idempotency key sends the same body (`queue-and-verdicts/sent-write-unchanged`).
+
+**Tests:** `device/queue.test.ts › holds a create whose natural key the server cannot look up, and sends one whose lookup it refuses at the slice's tier`.
 
 ### `queue-and-verdicts/create-outside-pinned`
 

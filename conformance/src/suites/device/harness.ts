@@ -457,6 +457,10 @@ export async function hydratedHarness(
  */
 export interface ScriptedWrites {
   create?: Responder[];
+  /** The lookup a keyed create naming no tier waits on
+   *  (`queue-and-verdicts/keyed-create-lookup`). Where creates are scripted
+   *  and this is not, no row holds any key. */
+  lookup?: Responder[];
   update?: Responder[];
   /** The certified single-item read used to reconcile a settled write. */
   read?: Responder[];
@@ -472,6 +476,12 @@ export function scriptWrites(
 ): void {
   if (options.create !== undefined)
     server.answer("POST", "/items", ...options.create);
+  if (options.create !== undefined || options.lookup !== undefined)
+    server.answer(
+      "POST",
+      "/items/lookup",
+      ...(options.lookup ?? [answers.lookup([])]),
+    );
   if (options.update !== undefined)
     server.answer("PATCH", /^\/items\/[^/]+$/, ...options.update);
   // A receipt cannot establish present read access (`device/read-back-keeps-verdict`), so

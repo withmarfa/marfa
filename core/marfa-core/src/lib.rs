@@ -36,6 +36,8 @@ mod sse;
 #[cfg(test)]
 mod stop_tests;
 mod store;
+#[cfg(test)]
+mod tier_tests;
 mod time;
 mod validation;
 mod wire;
@@ -2195,22 +2197,30 @@ fn queue_create(
     );
     // A key naming a row the server answered sends no tier, since the server
     // leaves that row's tier as it stands (`items/tier-upsert`) and one sent
-    // would move it. A key naming a create still waiting sends that create's
+    // would move it. A key naming a create still waiting takes that create's
     // tier: if the create is refused, this one makes the row, and left out the
-    // tier would be the credential's default.
+    // tier would be the credential's default. A key naming no row the copy
+    // holds from the server may name one at a tier the slice leaves out, so
+    // the drain asks the server before it sends the tier chosen here
+    // (`queue-and-verdicts/keyed-create-lookup`).
     let keyed_tier = target.as_ref().and_then(|held| held.tier);
+    let mut chosen = None;
     if draft.tier.is_none() && unresolved {
         draft.tier = keyed_tier;
+        chosen = keyed_tier;
     }
     if draft.tier.is_none() && (unresolved || keyed_tier.is_none()) {
-        draft.tier = Some(match store::slice(tx)? {
+        let tier = match store::slice(tx)? {
             Some((_, tier)) => tier.create_tier(),
             // Nothing has named a tier yet, so the copy saves at the one an
             // app is reading unless it says otherwise.
             None if store::never_synced(tx)? => Tier::Library,
             None => return Err(CoreError::HydrationIncomplete),
-        });
+        };
+        draft.tier = Some(tier);
+        chosen = Some(tier);
     }
+    let chosen = chosen.filter(|_| draft.source.is_some() && draft.source_id.is_some());
     let draft = &draft;
     let shown_tier = draft.tier.or(keyed_tier);
     let id = draft
@@ -2249,6 +2259,9 @@ fn queue_create(
             depends_on: after,
         },
     )?;
+    if let Some(tier) = chosen {
+        store::choose_tier(tx, &queued.id, tier)?;
+    }
     if let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id) {
         store::follow_row_under_key(tx, &queued, source, source_id)?;
     }

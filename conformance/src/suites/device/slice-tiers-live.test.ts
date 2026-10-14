@@ -233,3 +233,69 @@ it("re-saves a feed row by its natural key in a slice of both without moving it"
   value(await copy.catchUp());
   expect((await shown(copy, [id]))[id]).toBe("feed");
 });
+
+it("re-saves a row moved to the feed by its natural key from a copy of the library without moving it", async () => {
+  const key = `slice-tiers-moved-${ctx.runId}`;
+  const copy = device("slice-tiers-library-keyed");
+  value(await copy.hydrate(["core.note"], "library"));
+  const keyed = (body: string) => ({
+    type: "core.note",
+    source: ctx.source,
+    sourceId: key,
+    properties: { title: "synced", body },
+  });
+
+  // A new key: the server holds no row under it, so the create goes at the
+  // library and the copy shows it there.
+  const first = value(await copy.create(keyed("first")));
+  expect(value(await copy.get(first.item_id ?? "")).tier).toBe("library");
+  expect(
+    value(await copy.drain()).verdicts.map((verdict) => verdict.verdict),
+  ).toEqual(["accepted"]);
+  const found = await client.rawRequest("/items/lookup", {
+    method: "POST",
+    body: { type: "core.note", source: ctx.source, source_ids: [key] },
+  });
+  expect(found.ok, JSON.stringify(found.error)).toBe(true);
+  const rows = (found.data as { data: Array<{ id: string }> }).data;
+  expect(rows).toHaveLength(1);
+  const id = rows[0]!.id;
+  trackItem(ctx, id);
+  expect(
+    (await onServer(id)).tier,
+    "a new key from a copy of the library was created at another tier",
+  ).toBe("library");
+  value(await copy.catchUp());
+  expect((await shown(copy, [id]))[id]).toBe("library");
+
+  // A person moves it to the feed, which the copy no longer holds.
+  const moved = await client.updateItem(id, {
+    version: (await onServer(id)).version,
+    tier: "feed",
+  });
+  expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+  value(await copy.catchUp());
+  expect((await shown(copy, [id]))[id]).toBe(null);
+
+  // The copy re-saves the key naming no tier, offline, and shows it at the
+  // tier its slice holds until the server answers.
+  const offline = copy.reopen({ url: undefined, key: undefined });
+  const again = value(await offline.create(keyed("synced again")));
+  expect(value(await offline.get(again.item_id ?? "")).tier).toBe("library");
+  expect(
+    value(await copy.drain()).verdicts.map((verdict) => verdict.verdict),
+  ).toEqual(["accepted"]);
+  const read = await client.getItem(id);
+  expect(read.ok, JSON.stringify(read.error)).toBe(true);
+  expect(read.data.item.properties.body).toBe("synced again");
+  expect(
+    read.data.item.tier,
+    "a re-save naming no tier from a copy of the library moved a row a person moved to the feed",
+  ).toBe("feed");
+  // Answered at the feed, the row leaves a copy of the library.
+  value(await copy.catchUp());
+  expect(await shown(copy, [id, again.item_id ?? ""])).toEqual({
+    [id]: null,
+    [again.item_id ?? ""]: null,
+  });
+});

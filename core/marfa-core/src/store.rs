@@ -1112,6 +1112,41 @@ fn effect_key(id: &str) -> String {
     format!("dead_effect/{id}")
 }
 
+fn chosen_tier_key(id: &str) -> String {
+    format!("chosen_tier/{id}")
+}
+
+/// The tier a keyed create naming none was given by the copy's slice, which
+/// the drain sends only where the server holds no row under its key.
+pub fn choose_tier(conn: &Connection, id: &str, tier: Tier) -> Result<(), CoreError> {
+    meta_set(conn, &chosen_tier_key(id), tier.as_str())
+}
+
+pub fn chosen_tier(conn: &Connection, id: &str) -> Result<Option<Tier>, CoreError> {
+    meta_get(conn, &chosen_tier_key(id))?
+        .map(|tier| tier.parse())
+        .transpose()
+}
+
+pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        == Some(0))
+}
+
+/// Only before the write is first sent: the body sent is the one every
+/// retry under its key sends again.
+pub fn set_unsent_payload(conn: &Connection, id: &str, payload: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET payload = ?2 WHERE id = ?1 AND sent = 0",
+        params![id, payload],
+    )?;
+    Ok(())
+}
+
 fn dead_effect(conn: &Connection, row: &QueuedWrite) -> Result<DeadEffect, CoreError> {
     let saved: DeadEffect = meta_get(conn, &effect_key(&row.id))?
         .map(|json| serde_json::from_str(&json))
@@ -2874,6 +2909,7 @@ fn take_out(
     }
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
+    meta_delete(conn, &chosen_tier_key(&row.id))?;
     put_back(conn, row)
 }
 
@@ -2894,7 +2930,9 @@ fn forget_answered_inner(conn: &Connection, clean_effects: bool) -> Result<usize
         let pass = forget_answered_once(conn)?;
         if pass == 0 {
             if clean_effects {
-                conn.execute("DELETE FROM main.meta WHERE key LIKE 'dead_effect/%' AND substr(key, length('dead_effect/') + 1) NOT IN (SELECT id FROM main.queue)", [])?;
+                for prefix in ["dead_effect/", "chosen_tier/"] {
+                    conn.execute("DELETE FROM main.meta WHERE key LIKE ?1 || '%' AND substr(key, length(?1) + 1) NOT IN (SELECT id FROM main.queue)", [prefix])?;
+                }
             }
             return Ok(cleared);
         }
@@ -2996,6 +3034,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         }
         conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
         meta_delete(conn, &effect_key(id))?;
+        meta_delete(conn, &chosen_tier_key(id))?;
         return Ok(true);
     };
     take_out(conn, &row, &held, "discarded")?;

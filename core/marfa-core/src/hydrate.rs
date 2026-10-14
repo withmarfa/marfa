@@ -299,12 +299,17 @@ pub(crate) fn lay_queue_over(
                 if !store::item_held(conn, &id)? {
                     let mut wire = draft.wire(&id);
                     // A keyed create sent with no tier lands on the row its
-                    // key names, at that row's tier.
+                    // key names, at that row's tier, and is shown until the
+                    // answer at the tier the slice chose where the copy does
+                    // not hold that row.
                     if draft.tier.is_none()
                         && let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id)
-                        && let Some(held) = store::item_under_key(conn, source, source_id)?
                     {
-                        wire.tier = held.tier.map(|tier| tier.as_str().into());
+                        if let Some(held) = store::item_under_key(conn, source, source_id)? {
+                            wire.tier = held.tier.map(|tier| tier.as_str().into());
+                        } else if let Some(tier) = store::chosen_tier(conn, &row.id)? {
+                            wire.tier = Some(tier.as_str().into());
+                        }
                     }
                     if draft.occurred_at.is_none() {
                         wire.occurred_at.clone_from(&row.queued_at);

@@ -650,6 +650,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // behind one waits for the next pass: once sent under its key, a body
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
+    let mut keys_held = KeysHeld::new();
 
     for row in &all {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -753,9 +754,37 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             Readiness::Ready => {}
         }
 
-        let payload = {
-            let conn = core.conn()?;
-            store::payload_of(&conn, &row.id)?
+        let payload = match payload_to_send(core, http, row, &all, &mut keys_held)? {
+            Ok(payload) => payload,
+            Err(CoreError::Unauthorized { .. }) => {
+                let conn = core.conn()?;
+                let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
+                report.stopped = Some(format!(
+                    "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
+                ));
+                break;
+            }
+            Err(error) => {
+                report.unavailable = Some(format!(
+                    "the server could not say whether a row holds the natural key the create {} carries, so nothing more was sent: {}",
+                    row.id,
+                    unavailable_by(&error).unwrap_or_else(|| error.to_string())
+                ));
+                waited(&mut report, error.retry_after().map(|wait| wait.as_secs()));
+                waiting.insert(row.id.clone());
+                report.undelivered += 1;
+                continue;
+            }
+        };
+        // Read again where the body was decided, so the answer is taken as
+        // the answer to the body sent.
+        let decided;
+        let row = if serde_json::from_str::<serde_json::Value>(&payload)? == row.body {
+            row
+        } else {
+            decided = store::queued_write(&*core.conn()?, &row.id)?
+                .ok_or_else(|| CoreError::Store(format!("the queued write {} is gone", row.id)))?;
+            &decided
         };
         // Opened before anything is marked sent, so missing bytes settle as
         // refused rather than failing the pass.
@@ -814,6 +843,9 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
             Sendable::Upload { bytes, mime_type } => (upload(http, bytes, &mime_type), Shape::Blob),
         };
+        if row.kind == WriteKind::CreateItem {
+            keys_held.forget(&row.body);
+        }
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
         let answer = match answer {
@@ -939,6 +971,153 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;
     Ok(report)
+}
+
+/// Whether a natural key names a row on the server, as a lookup this pass
+/// answered, by type, source and `source_id`.
+struct KeysHeld(HashMap<(String, String, String), bool>);
+
+impl KeysHeld {
+    fn new() -> KeysHeld {
+        KeysHeld(HashMap::new())
+    }
+
+    /// A create sent under the key can have made the row since it was asked.
+    fn forget(&mut self, body: &serde_json::Value) {
+        let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
+        if let (Some(source), Some(source_id)) = (text("source"), text("source_id")) {
+            self.0.retain(|(_, held_source, held_id), _| {
+                (held_source.as_str(), held_id.as_str()) != (source, source_id)
+            });
+        }
+    }
+}
+
+/// The body a write goes with. A create whose tier the copy's slice chose
+/// (`store::choose_tier`) is decided before its first send: with no `tier`
+/// where its natural key names a row on the server, which keeps its tier as
+/// it stands (`items/tier-upsert`), and with the chosen one where it names
+/// none. The body decided is saved before the send, so every retry under the
+/// write's key sends it again. The inner error is a lookup that did not
+/// answer whether the key names a row.
+fn payload_to_send(
+    core: &Core,
+    http: &Http,
+    row: &QueuedWrite,
+    all: &[QueuedWrite],
+    keys: &mut KeysHeld,
+) -> Result<std::result::Result<String, CoreError>> {
+    let payload = store::payload_of(&*core.conn()?, &row.id)?;
+    if row.kind != WriteKind::CreateItem {
+        return Ok(Ok(payload));
+    }
+    let tier = {
+        let conn = core.conn()?;
+        match store::chosen_tier(&conn, &row.id)? {
+            Some(tier) if store::unsent(&conn, &row.id)? => tier,
+            _ => return Ok(Ok(payload)),
+        }
+    };
+    let mut body: serde_json::Value = serde_json::from_str(&payload)?;
+    let Some(key) = natural_key(&body) else {
+        return Ok(Ok(payload));
+    };
+    if !keys.0.contains_key(&key) {
+        let asked = keys_to_ask(core, all, &key, keys)?;
+        match http.keys_held(&key.0, &key.1, &asked) {
+            Ok(held) => {
+                for source_id in asked {
+                    let found = held.contains(&source_id);
+                    keys.0
+                        .insert((key.0.clone(), key.1.clone(), source_id), found);
+                }
+            }
+            Err(
+                error @ (CoreError::Redirected { .. }
+                | CoreError::ContractMismatch { .. }
+                | CoreError::SignedOut { .. }
+                | CoreError::NoKeychain(_)
+                | CoreError::StorageFull(_)
+                | CoreError::CopyExpired { .. }
+                | CoreError::StreamIncomplete { .. }
+                | CoreError::Store(_)),
+            ) => return Err(error),
+            Err(error @ CoreError::RenewalFailed(_)) if !error.is_environmental() => {
+                return Err(error);
+            }
+            // A credential that may not read the type cannot learn whether
+            // the key names a row, so the create goes at the tier the slice
+            // chose, as it would without asking.
+            Err(
+                CoreError::Forbidden { .. }
+                | CoreError::Validation { .. }
+                | CoreError::UnknownType { .. }
+                | CoreError::NotFound { .. },
+            ) => {
+                for source_id in asked {
+                    keys.0
+                        .insert((key.0.clone(), key.1.clone(), source_id), false);
+                }
+            }
+            Err(error) => return Ok(Err(error)),
+        }
+    }
+    let Some(object) = body.as_object_mut() else {
+        return Ok(Ok(payload));
+    };
+    if keys.0.get(&key).copied().unwrap_or(false) {
+        object.shift_remove("tier");
+    } else {
+        object.insert("tier".into(), tier.as_str().into());
+    }
+    let decided = body.to_string();
+    if decided != payload {
+        store::set_unsent_payload(&*core.conn()?, &row.id, &decided)?;
+    }
+    Ok(Ok(decided))
+}
+
+fn natural_key(body: &serde_json::Value) -> Option<(String, String, String)> {
+    let text = |key: &str| {
+        body.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    Some((text("type")?, text("source")?, text("source_id")?))
+}
+
+/// `key`'s `source_id`, and those of the other unsent creates of its type
+/// and source whose tier the slice chose, up to the most one lookup takes.
+fn keys_to_ask(
+    core: &Core,
+    all: &[QueuedWrite],
+    key: &(String, String, String),
+    keys: &KeysHeld,
+) -> Result<Vec<String>> {
+    let (r#type, source, source_id) = key;
+    let mut asked = vec![source_id.clone()];
+    let conn = core.conn()?;
+    for other in all {
+        if asked.len() == crate::http::LOOKUP_LIMIT {
+            break;
+        }
+        if other.kind != WriteKind::CreateItem {
+            continue;
+        }
+        let Some(named) = natural_key(&other.body) else {
+            continue;
+        };
+        if (&named.0, &named.1) != (r#type, source)
+            || asked.contains(&named.2)
+            || keys.0.contains_key(&named)
+            || store::chosen_tier(&conn, &other.id)?.is_none()
+            || !store::unsent(&conn, &other.id)?
+        {
+            continue;
+        }
+        asked.push(named.2);
+    }
+    Ok(asked)
 }
 
 /// A store that fails, or is full, as the answer to the write named is taken.

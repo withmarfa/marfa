@@ -2005,6 +2005,61 @@ describe("the scripted answers match the server's", () => {
     expect(at(unclosed.error, "error.code")).toBe("validation_error");
   });
 
+  it("matches the lookup a create naming no tier asks about its natural key", async () => {
+    const key = `lookup-${uuidv7()}`;
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: key,
+      properties: { title: "keyed", body: "keyed" },
+    });
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    const lookup = await client.rawRequest("/items/lookup", {
+      method: "POST",
+      body: {
+        type: "core.note",
+        source: ctx.source,
+        source_ids: [key, `${key}-unheld`],
+      },
+    });
+    expect(lookup.ok, JSON.stringify(lookup.error)).toBe(true);
+    expect(
+      (lookup.data as { data: Array<{ id: string }> }).data.map(
+        (row) => row.id,
+      ),
+      "the lookup did not answer exactly the row its key names",
+    ).toEqual([created.data.item.id]);
+    expectFidelity(
+      "the natural-key lookup",
+      { status: lookup.status, body: lookup.data },
+      answers.lookup([
+        wireItem({
+          id: created.data.item.id,
+          source: ctx.source,
+          source_id: key,
+        }),
+      ]),
+      {
+        same: ["tombstones"],
+        shape: [
+          "data.0.id",
+          "data.0.type",
+          "data.0.properties",
+          "data.0.state",
+          "data.0.tier",
+          "data.0.version",
+          "data.0.schema_version",
+          "data.0.source",
+          "data.0.source_id",
+          "data.0.occurred_at",
+          "data.0.created_at",
+          "data.0.updated_at",
+        ],
+      },
+    );
+  });
+
   it("matches the refusal of a second parent, a parent moved in one step, and each refusal of a move", async () => {
     const first = await note({ title: "first parent", body: "first" });
     const second = await note({ title: "second parent", body: "second" });

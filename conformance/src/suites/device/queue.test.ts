@@ -41,6 +41,11 @@ import {
 } from "./harness.js";
 import type { Harness } from "./harness.js";
 
+/** A request that writes: not a read, nor the lookup a keyed create waits on
+ *  (`queue-and-verdicts/keyed-create-lookup`). */
+const isWrite = (request: { method: string; pathname: string }): boolean =>
+  request.method !== "GET" && request.pathname !== "/items/lookup";
+
 let harness: Harness | undefined;
 
 afterEach(async () => {
@@ -321,7 +326,7 @@ describe("every write names the version it read", () => {
     expect((await harness.device.drain()).ok).toBe(true);
 
     const bodies = harness.server.requests
-      .filter((request) => request.method === "POST")
+      .filter((request) => request.method === "POST" && isWrite(request))
       .map((request) => JSON.parse(request.body) as { version?: number });
     expect(
       bodies[0]?.version,
@@ -2930,7 +2935,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       "accepted",
     );
 
-    const sent = server.requests.filter((request) => request.method !== "GET");
+    const sent = server.requests.filter(isWrite);
     expect(
       sent
         .filter(
@@ -3254,7 +3259,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toEqual(["accepted", "refused", "accepted"]);
     expect(
       server.requests
-        .filter((request) => request.method !== "GET")
+        .filter(isWrite)
         .map((request) => `${request.method} ${request.pathname}`),
     ).toEqual(["POST /items", `POST /items/${theirs}/tags`, "POST /edges"]);
     const edge = server.requests.find(
@@ -3283,7 +3288,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     };
     const writesSent = () =>
       server.requests
-        .filter((request) => request.method !== "GET")
+        .filter(isWrite)
         .map((request) => `${request.method} ${request.pathname}`);
     const readsOfTheirs = () =>
       server.requests.filter(
@@ -3713,7 +3718,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     // Only the tag and the edge went out after the create.
     expect(
       server.requests
-        .filter((request) => request.method !== "GET")
+        .filter(isWrite)
         .map((request) => `${request.method} ${request.pathname}`),
     ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`, "POST /edges"]);
     // And the copy holds the other device's row as it is, not deleted.
@@ -3843,7 +3848,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect((await device.get(local)).ok).toBe(false);
     expect(
       server.requests
-        .filter((request) => request.method === "POST")
+        .filter((request) => request.method === "POST" && isWrite(request))
         .map((request) => request.pathname),
       "the tag waiting on the create did not follow it onto the row it landed on",
     ).toEqual(["/items", `/items/${LANDED}/tags`]);
@@ -7911,7 +7916,7 @@ async function heldBehindUnfoundLanding(name: string, pinned = false) {
   if (!second.ok) throw new Error(JSON.stringify(second));
   expect(
     server.requests
-      .filter((request) => request.method !== "GET")
+      .filter(isWrite)
       .map((request) => `${request.method} ${request.pathname}`),
     "a write to the row a refused create made went to an id the server never held",
   ).toEqual(["POST /items"]);
@@ -8187,9 +8192,11 @@ describe("a create the slice does not hold", () => {
   });
 
   /** Answers every create under the id it names, or one it mints, and every
-   *  read of a row it made. */
-  function keyedCreateDoor(server: ScriptedServer) {
-    const rows = new Map<string, ReturnType<typeof wireItem>>();
+   *  read of a row it made, which `rows` then holds. */
+  function keyedCreateDoor(
+    server: ScriptedServer,
+    rows = new Map<string, ReturnType<typeof wireItem>>(),
+  ) {
     let minted = 0;
     server.copyAnswer("GET", /^\/items\/[^/]+$/, (request) => {
       const row = rows.get(request.pathname.split("/").at(-1) ?? "");
@@ -8213,6 +8220,31 @@ describe("a create the slice does not hold", () => {
       return answers.created(row);
     };
   }
+
+  /** Answers a lookup by natural key with the rows `rows` holds under it. */
+  function lookupDoor(rows: Map<string, ReturnType<typeof wireItem>>) {
+    return (request: { body: string }) => {
+      const asked = JSON.parse(request.body) as {
+        source: string;
+        source_ids: string[];
+      };
+      return answers.lookup(
+        asked.source_ids.flatMap((key) =>
+          [...rows.values()].filter(
+            (row) => row.source === asked.source && row.source_id === key,
+          ),
+        ),
+      );
+    };
+  }
+
+  const lookups = (server: ScriptedServer) =>
+    server.requests
+      .filter(
+        (request) =>
+          request.method === "POST" && request.pathname === "/items/lookup",
+      )
+      .map((request) => JSON.parse(request.body) as unknown);
 
   const sentTiers = (server: ScriptedServer) =>
     server.requests
@@ -8285,13 +8317,117 @@ describe("a create the slice does not hold", () => {
       shown.ok && shown.value.tier,
       "the second create was not shown at the tier of the create it follows",
     ).toBe("library");
-    const door = keyedCreateDoor(server);
-    scriptWrites(server, { create: [door, door] });
+    // The first is refused, so the second makes the row, and no row holds
+    // the key when the device asks.
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    const door = keyedCreateDoor(server, rows);
+    scriptWrites(server, {
+      create: [refusal(400, "validation_error", "Refused"), door],
+      lookup: [lookupDoor(rows)],
+    });
     expect((await device.drain()).ok).toBe(true);
     expect(
+      lookups(server),
+      "the create naming no tier went without asking whether a row holds its key",
+    ).toEqual([
+      { type: "core.note", source: "notes", source_ids: ["twice.md"] },
+    ]);
+    expect(
       sentTiers(server),
-      "a create naming no tier whose key names a create still waiting went at another tier, so were the first refused it would make the row at the key's default",
+      "a create naming no tier whose key names a create still waiting went at another tier, so with the first refused it made the row at the key's default",
     ).toEqual(["library", "library"]);
+  });
+
+  it("asks the server about a create's natural key before it sends it, and sends no tier where a row holds the key", async () => {
+    harness = await feedSlice("queue-keyed-create-lookup");
+    const { device, server } = harness;
+    // A row a person moved to the library, which a copy of the feed does
+    // not hold.
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    const moved = wireItem({
+      id: "01a00000-0000-7000-8000-0000000000f7",
+      tier: "library",
+      source: "notes",
+      source_id: "moved.md",
+    });
+    rows.set(String(moved.id), moved);
+    const ids: string[] = [];
+    for (const key of ["moved.md", "fresh.md"]) {
+      const created = await device.create({
+        type: "core.note",
+        properties: { title: key, body: key },
+        source: "notes",
+        sourceId: key,
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+      ids.push(created.value.item_id ?? "");
+    }
+    for (const id of ids) {
+      const shown = await device.get(id);
+      expect(
+        shown.ok && shown.value.tier,
+        "a create naming no tier was not shown at the slice's tier",
+      ).toBe("feed");
+    }
+    const door = keyedCreateDoor(server, rows);
+    scriptWrites(server, { create: [door, door], lookup: [lookupDoor(rows)] });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.answered, JSON.stringify(drained)).toBe(
+      2,
+    );
+    expect(
+      lookups(server),
+      "the creates of one type and source were not asked about in one lookup",
+    ).toEqual([
+      {
+        type: "core.note",
+        source: "notes",
+        source_ids: ["moved.md", "fresh.md"],
+      },
+    ]);
+    expect(
+      sentTiers(server),
+      "a create whose key names a row the server holds named a tier, which moves that row, or a new key went without one and took the key's default",
+    ).toEqual(["none", "feed"]);
+  });
+
+  it("holds a create whose natural key the server cannot look up, and sends one whose lookup it refuses at the slice's tier", async () => {
+    harness = await feedSlice("queue-keyed-create-lookup-fails");
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "later", body: "later" },
+      source: "notes",
+      sourceId: "later.md",
+    });
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    scriptWrites(server, {
+      create: [keyedCreateDoor(server)],
+      lookup: [
+        refusal(503, "unavailable", "restarting"),
+        answers.forbidden("type_not_permitted"),
+      ],
+    });
+    const held = await device.drain();
+    if (!held.ok) throw new Error(JSON.stringify(held));
+    expect(held.value.unavailable).toContain("natural key");
+    expect([held.value.answered, held.value.undelivered]).toEqual([0, 1]);
+    expect(
+      sentTiers(server),
+      "a create went before the server said whether a row holds its key",
+    ).toEqual([]);
+    const queued = await device.queue();
+    expect(
+      queued.ok && queued.value.map((row) => [row.verdict, row.refusals]),
+      "a lookup the server could not answer was counted against the create",
+    ).toEqual([[null, 0]]);
+
+    // Refused, the lookup says nothing of the key, and the create goes as
+    // it would have without asking.
+    const sent = await device.drain();
+    expect(sent.ok && sent.value.answered).toBe(1);
+    expect(sentTiers(server)).toEqual(["feed"]);
+    expect(lookups(server)).toHaveLength(2);
   });
 
   it("moves the pin of a create the slice does not hold onto the row a refusal names its natural key under", async () => {

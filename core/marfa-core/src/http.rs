@@ -24,6 +24,10 @@ pub const PAGE_LIMIT: u32 = 200;
 /// (`items/bulk-get-cap`).
 pub const BULK_GET_LIMIT: usize = 100;
 
+/// The most values `POST /items/lookup` takes in one request
+/// (`search-and-filters/lookup-values-cap`).
+pub const LOOKUP_LIMIT: usize = 500;
+
 /// How long a server may take to begin an answer, and to send the body of
 /// one read whole.
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
@@ -915,6 +919,46 @@ impl Http {
             });
         }
         Ok(rows)
+    }
+
+    /// Which of `source_ids` under `source` name a row on the server, in any
+    /// state, by `POST /items/lookup`. A row of a type the credential may not
+    /// read, and a `system.*` row, are left out of the answer
+    /// (`search-and-filters/lookup-unreadable-left-out`).
+    pub(crate) fn keys_held(
+        &self,
+        r#type: &str,
+        source: &str,
+        source_ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Found {
+            source: Option<String>,
+            source_id: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            data: Vec<Found>,
+        }
+        if source_ids.len() > LOOKUP_LIMIT {
+            return Err(CoreError::Invalid(format!(
+                "a lookup takes at most {LOOKUP_LIMIT} keys, not {}",
+                source_ids.len()
+            )));
+        }
+        let body = serde_json::json!({
+            "type": r#type,
+            "source": source,
+            "source_ids": source_ids,
+        })
+        .to_string();
+        let answer: Answer = self.read_json(&["items", "lookup"], &[], Some(&body))?;
+        Ok(answer
+            .data
+            .into_iter()
+            .filter(|found| found.source.as_deref() == Some(source))
+            .filter_map(|found| found.source_id)
+            .collect())
     }
 
     /// Redirects, contract mismatches and transport or renewal failures are

@@ -2162,7 +2162,10 @@ describe("the contract the working copy was built for", () => {
     ).toEqual([["refused", 0]]);
     expect((await device.drain()).ok).toBe(true);
     expect(
-      scripted.requests.filter((request) => request.method === "POST"),
+      scripted.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname !== "/items/lookup",
+      ),
     ).toHaveLength(1);
   });
 
@@ -2213,7 +2216,10 @@ describe("the contract the working copy was built for", () => {
     ).toBe(false);
     if (!drained.ok) expect(drained.refusal.code).toBe("contract_mismatch");
     expect(
-      scripted.requests.filter((request) => request.method === "POST").length,
+      scripted.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname !== "/items/lookup",
+      ).length,
       "the pass went on past an answer on another contract",
     ).toBe(1);
     const queue = await device.queue();
@@ -2227,7 +2233,10 @@ describe("the contract the working copy was built for", () => {
     const retry = await device.drain();
     expect(retry.ok ? null : retry.refusal.code).toBe("contract_mismatch");
     expect(
-      scripted.requests.filter((request) => request.method === "POST"),
+      scripted.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname !== "/items/lookup",
+      ),
     ).toHaveLength(1);
   });
 
