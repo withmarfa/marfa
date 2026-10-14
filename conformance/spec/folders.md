@@ -2416,11 +2416,17 @@ When a device gives way from moves of an `in-folder` edge that the server answer
 
 **Tests:** `device/folders-placement.test.ts › keeps a move made after the one it gives way from`.
 
-### `folders/placement-give-way-watch-throttled`
+### `folders/placement-give-way-watch`
 
 While a watch holds a placement write whose give-way read failed, a device MUST read for it again at most once a minute.
 
-**Reason:** a watch drains every second, and a read refused for good, made again at each drain, would spend the key's rate limit.
+**Reason:** a watch drains every second, and a read refused for good, made again at each drain, would spend the key's rate limit. The exact threshold needs a fixture-controlled clock.
+
+**Tests:** waiting on #1890.
+
+### `folders/placement-give-way-watch-throttled`
+
+While a watch holds a placement write whose give-way read failed, a device MUST suppress repeated reads for it across successive passes.
 
 **Tests:** `device/folders-placement.test.ts › reads for a placement it could not give way from again at most once a minute while watching`.
 
