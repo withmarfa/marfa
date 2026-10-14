@@ -4572,11 +4572,11 @@ If a device refuses a path because a symbolic link now stands in the path at whi
 
 ### `folders/listed-link-refusal-no-redirect`
 
-If a device refuses a path that passes through a symbolic link, and a path at which the machine’s folder registry lists a folder reaches some directory only through a symbolic link, then a device MUST NOT give that directory in the refusal's message as the one to name instead.
+If a device refuses a path because the path's own directory entry, or one that a later `..` climbs back out of, is a symbolic link, and a path at which the machine’s folder registry lists a folder reaches some directory only through a symbolic link, then a device MUST NOT give that directory, or a directory inside it, in the refusal's message as the one to name instead.
 
-**Reason:** Where a link has replaced the listed folder's directory or a directory above it, the listed path, and any link or chain of links the person made to it, can lead to another folder's directory. A person following the advice would then work on that folder, such as by removing its state.
+**Reason:** Where a link has replaced the listed folder's directory or a directory above it, the listed path, and any link or chain of links the person made to it or to a directory inside it, can lead to another folder's directory. A person following the advice would then work on that folder, such as by removing its state.
 
-**Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`, `cli/folder.test.ts › never offers the directory a relinked listing now leads to when refusing a link to that listing`.
+**Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`, `cli/folder.test.ts › never offers the directory a relinked listing now leads to when refusing a link to that listing`, `cli/folder.test.ts › never offers a folder inside the directory a relinked listing now leads to when refusing a link into that listing`.
 
 ### `folders/root-link-refused-invalid`
 

@@ -758,6 +758,45 @@ describe("a folder round trip", () => {
     );
   });
 
+  it("never offers a folder inside the directory a relinked listing now leads to when refusing a link into that listing", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    const third = await addNotes("c");
+    const store = join(second, ".marfa", "core.sqlite");
+    // A link the person made to a plain directory inside the first folder,
+    // then the first folder's directory relinked to the directory that holds
+    // the second folder, so the link now reaches the second.
+    mkdirSync(join(first, "notes"));
+    symlinkSync(join(first, "notes"), join(dir, "into"));
+    renameSync(first, join(dir, "a", "notes-moved"));
+    symlinkSync(join(dir, "b"), first);
+    for (const command of ["status", "push", "remove"]) {
+      const refused = await c.cli.refused([
+        "folders",
+        command,
+        join(dir, "into"),
+      ]);
+      const said = `folders ${command} into`;
+      expect(refused.envelope.error.code, said).toBe("invalid");
+      expect(refused.envelope.error.message, said).toContain(
+        "name the directory itself",
+      );
+      expect(refused.envelope.error.message, said).not.toContain(second);
+    }
+    expect(existsSync(store)).toBe(true);
+    // The witness: a link to a folder that no relinked listing reaches is
+    // refused naming the directory it points to.
+    symlinkSync(third, join(dir, "to-third"));
+    const offered = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "to-third"),
+    ]);
+    expect(offered.envelope.error.message).toContain(
+      `name the directory it points to, ${third}`,
+    );
+  });
+
   // The default macOS volume folds letter case; Linux volumes do not.
   describe.runIf(process.platform === "darwin")(
     "on a volume that folds letter case",

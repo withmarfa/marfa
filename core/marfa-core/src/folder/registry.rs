@@ -528,13 +528,13 @@ impl Refusal {
                 {
                     return refused;
                 }
-                // A directory that a listed path reaches only through a link
-                // is not offered, since any link to that listing, or a chain
-                // of them, reaches it too, and the folder meant may be the
-                // listed one. Past a climbed link, a path can also read as
-                // one directory and reach another.
+                // A directory that a listed path reaches only through a link,
+                // or one inside it, is not offered, since a link to that
+                // listing or into it, or a chain of them, reaches it too, and
+                // the folder meant may be the listed one. Past a climbed link,
+                // a path can also read as one directory and reach another.
                 let reached = reached.ok().filter(|target| {
-                    !reached_through_link(target, &listed)
+                    !behind_relinked_listing(target, &listed)
                         && (own || same_directory(target, &resolved(&as_written(&named))))
                 });
                 through_link(&link, reached.as_deref(), own)
@@ -671,13 +671,19 @@ fn replaced(link: &Path, listed: &[Registered]) -> Option<Registered> {
         .cloned()
 }
 
-/// Whether a listed folder's path reaches `target` only through a symbolic
-/// link.
-fn reached_through_link(target: &Path, listed: &[Registered]) -> bool {
-    Directory::open(target).is_ok_and(|target| {
-        listed
-            .iter()
-            .any(|entry| leads_to(&entry.dir, &target) && !stands_at(&entry.dir, &target))
+/// Whether `target` is, or lies inside, a directory that a listed folder's
+/// path now reaches only through a symbolic link.
+fn behind_relinked_listing(target: &Path, listed: &[Registered]) -> bool {
+    let Ok(target) = Directory::open(target) else {
+        return false;
+    };
+    listed.iter().any(|entry| {
+        let Ok(lead) = std::fs::canonicalize(&entry.dir).and_then(|path| Directory::open(&path))
+        else {
+            return false;
+        };
+        !stands_at(&entry.dir, &lead)
+            && (lead.same(&target).unwrap_or(false) || within(&target, &lead) == Some(true))
     })
 }
 
@@ -1397,6 +1403,60 @@ mod tests {
             ));
             assert!(stores(), "{name}");
         }
+
+        // The witness: a link to a folder that no relinked listing reaches is
+        // refused naming the directory it points to.
+        std::os::unix::fs::symlink(third, base.join("to-third")).unwrap();
+        assert!(matches!(
+            Folder::status_of(base.join("to-third")).err(),
+            Some(CoreError::Invalid(message))
+                if message.ends_with(&format!("name the directory it points to, {}", third.display()))
+        ));
+    }
+
+    #[test]
+    fn a_link_into_a_relinked_listing_is_never_told_to_name_the_folder_it_now_reaches() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let folders = [("a", 1), ("b", 2), ("c", 3)].map(|(name, n)| {
+            let dir = base.join(name).join("notes");
+            bound_folder(&dir, &format!("01a00000-0000-7000-8000-00000000020{n}"));
+            drop(Folder::open(&dir, None).unwrap());
+            dir
+        });
+        let [first, second, third] = &folders;
+        // A link the person made to a plain directory inside the first
+        // folder, then the first folder's directory relinked to the directory
+        // that holds the second folder, so the link now reaches the second.
+        std::fs::create_dir(first.join("notes")).unwrap();
+        std::os::unix::fs::symlink(first.join("notes"), base.join("into")).unwrap();
+        std::fs::rename(first, base.join("a/notes-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("b"), first).unwrap();
+        let server = Some(crate::Server {
+            url: "http://127.0.0.1:9".into(),
+            key: "fixture".into(),
+        });
+        let withheld = |error: Option<CoreError>| match error {
+            Some(CoreError::Invalid(message)) => {
+                message.ends_with("name the directory itself")
+                    && !message.contains(&second.display().to_string())
+            }
+            _ => false,
+        };
+
+        let into = base.join("into");
+        assert!(withheld(Folder::open(&into, None).err()));
+        assert!(withheld(Folder::status_of(&into).err()));
+        assert!(withheld(Folder::remove_at(&into).err()));
+        assert!(withheld(
+            Folder::add(&into, "01a00000-0000-7000-8000-000000000204", server, None).err()
+        ));
+        assert!(
+            [base.join("a/notes-moved"), second.clone(), third.clone()]
+                .iter()
+                .all(|dir| dir.join(STATE_DIR).join("core.sqlite").exists())
+        );
 
         // The witness: a link to a folder that no relinked listing reaches is
         // refused naming the directory it points to.
