@@ -1063,6 +1063,8 @@ describe("where a file sits", () => {
       `a read the server could not answer failed the drain: ${JSON.stringify(failed)}`,
     ).toBe(true);
     if (!failed.ok) return;
+    // The drain reached the server, so the read it gives way from was made.
+    expect(failed.value.drain.unavailable).toBeNull();
     expect(failed.value.drain.gave_way).toBe(0);
     const stale = await blockedMoves(second!);
     expect(stale, "the server did not answer the move as stale").toHaveLength(
@@ -1132,7 +1134,7 @@ describe("where a file sits", () => {
     },
   );
 
-  it("keeps a move made after the one it gives way from, unsent when it gives way", async () => {
+  it("keeps a move made after the one it gives way from", async () => {
     const id = "01a00000-0000-7000-8000-0000000016t1";
     const placed = await movedApart("placement-give-way-newer", id);
     placed.edges.failListings = 1000;
@@ -1140,7 +1142,7 @@ describe("where a file sits", () => {
     expect(await blockedMoves(second!)).toHaveLength(1);
     placed.edges.failListings = 0;
 
-    // Moved again, and the server cannot take that move when it is sent.
+    // Moved again, and the server refuses that move when it is sent.
     mkdirSync(join(second!.dir, "Third"));
     renameSync(
       join(second!.dir, "Second", "Plan.md"),
@@ -1148,27 +1150,50 @@ describe("where a file sits", () => {
     );
     placed.edges.placing = (edge) =>
       edge.properties?.path === "Third/Plan.md"
-        ? refusal(503, "unavailable", "Try again")
+        ? refusal(422, "validation_error", "Refused")
         : undefined;
-    const unsent = await second!.folder.push();
-    expect(unsent.ok, JSON.stringify(unsent)).toBe(true);
-    if (!unsent.ok) return;
-    // The witness: the move was sent, and the server could not take it.
-    expect(unsent.value.drain.unavailable).toBeTruthy();
-    expect(unsent.value.drain.gave_way).toBe(1);
+    const pushed = await second!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.drain.gave_way).toBe(1);
     const queued = await second!.folder.device().queue();
     expect(
-      queued.ok && queued.value.map((row) => row.verdict),
+      queued.ok && queued.value.map((row) => [row.verdict, row.reason]),
       "giving way took the move made after the one the server answered",
-    ).toEqual([null]);
-    expect(idIn(second!, "Third/Plan.md")).toBe(id);
-
-    placed.edges.placing = undefined;
-    expect((await second!.folder.push()).ok).toBe(true);
+    ).toEqual([["refused", "validation_error"]]);
     expect(placed.edges.placements(harness!.settings.id).get(id)).toBe(
-      "Third/Plan.md",
+      "First/Plan.md",
     );
-    expect(idIn(second!, "Third/Plan.md")).toBe(id);
+  });
+
+  it("reads for a placement it could not give way from again at most once a minute while watching", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016u1";
+    const placed = await movedApart("placement-give-way-watch", id);
+    const listings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${id}/edges`,
+      ).length;
+    placed.edges.listing = (source) =>
+      source === id ? refusal(404, "item_not_found", "Refused") : undefined;
+    const before = listings();
+    const watching = second!.folder.watchText();
+    try {
+      // The witness: the watch read for the stale move, and was refused.
+      await vi.waitFor(() => expect(listings()).toBeGreaterThan(before), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      const first = listings();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      expect(
+        listings() - first,
+        "a watch read again at every pass for a placement it could not give way from",
+      ).toBe(0);
+    } finally {
+      await watching.stop();
+    }
+    expect(await blockedMoves(second!)).toHaveLength(1);
   });
 
   it("follows a move it heard of after the read it gives way from", async () => {
@@ -1251,11 +1276,29 @@ describe("where a file sits", () => {
       idIn(second, "Kept/Idea.md"),
       "a Mac followed its own waiting placement over the older one another Mac made",
     ).toBe(id);
-    // The drain's own read of the edges fails; giving way reads them again.
+    // The drain's own read of the edge fails, so it reads nothing to give
+    // way; the next drain gives way.
     placed.edges.failListings = 1;
+    const listings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${id}/edges`,
+      ).length;
+    const before = listings();
+    const failed = await second.folder.push();
+    expect(failed.ok, JSON.stringify(failed)).toBe(true);
+    if (!failed.ok) return;
+    expect(failed.value.drain.unavailable).toBeTruthy();
+    expect(failed.value.drain.gave_way).toBe(0);
+    expect(
+      listings() - before,
+      "a drain that could not reach the server read again to give way",
+    ).toBe(0);
     const late = await second.folder.push();
     expect(late.ok, JSON.stringify(late)).toBe(true);
     if (!late.ok) return;
+    // The witness: giving way reads the item's edges.
+    expect(listings()).toBeGreaterThan(before);
     // The witness: the server refused the second Mac's placement as one it
     // already holds.
     expect(

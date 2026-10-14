@@ -1962,7 +1962,7 @@ When a folder gives way to another machine's placement of a file (`folders/place
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 
-**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`, `› keeps a move made after the one it gives way from, unsent when it gives way`.
+**Tests:** `device/folders-placement.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`, `› keeps a move made after the one it gives way from`.
 
 ## A restore of a row the copy does not hold
 

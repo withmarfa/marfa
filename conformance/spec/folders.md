@@ -2386,11 +2386,11 @@ When a device gives way to another device's placement, a device MUST remove its 
 
 ### `folders/placement-give-way-later`
 
-When a folder drains while its queue holds one of its placement writes that the server answered as stale or refused as a duplicate, a device MUST give way to the server's placement in that drain, whichever drain the answer came in, unless a read made to give way from that write failed in the same process less than a minute before.
+When a folder drains while its queue holds one of its placement writes that the server answered as stale or refused as a duplicate, a device MUST give way to the server's placement in that drain, whichever drain the answer came in, unless that drain found the server unable to answer or was stopped by a refused credential, an earlier give-way read in that drain met an environmental failure, or a watch waits to read for that write again (`folders/placement-give-way-watch-throttled`).
 
-**Reason:** a give-way whose read failed is finished by a later drain that can read the server, so the copy does not keep showing a move the server answered as stale. A watch drains every second, and a read refused for good, read again at each of them, would spend the key's rate limit.
+**Reason:** a give-way whose read failed is finished by a later drain that can read the server, so the copy does not keep showing a move the server answered as stale. Against a server that is failing, each further read would wait out its own timeout.
 
-**Tests:** `device/folders-placement.test.ts › finishes giving way at a later drain when the read it gives way from fails`, `› keeps a move it cannot give way from while the read is refused %i, and fails no drain`.
+**Tests:** `device/folders-placement.test.ts › finishes giving way at a later drain when the read it gives way from fails`, `› keeps a move it cannot give way from while the read is refused %i, and fails no drain`, `› follows the placement another Mac made first, and leaves no refusal behind`.
 
 ### `folders/placement-give-way-read-fails`
 
@@ -2414,7 +2414,15 @@ When a device gives way from moves of an `in-folder` edge that the server answer
 
 **Reason:** a move made after the copy heard of the other machine's placement is based on it, and is the person's latest word on where the file goes.
 
-**Tests:** `device/folders-placement.test.ts › keeps a move made after the one it gives way from, unsent when it gives way`.
+**Tests:** `device/folders-placement.test.ts › keeps a move made after the one it gives way from`.
+
+### `folders/placement-give-way-watch-throttled`
+
+While a watch holds a placement write whose give-way read failed, a device MUST read for it again at most once a minute.
+
+**Reason:** a watch drains every second, and a read refused for good, made again at each drain, would spend the key's rate limit.
+
+**Tests:** `device/folders-placement.test.ts › reads for a placement it could not give way from again at most once a minute while watching`.
 
 ### `folders/placement-newer-copy`
 
