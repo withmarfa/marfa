@@ -66,7 +66,8 @@ security import "$work/identity.p12" -k "$keychain" -P "$APPLE_DEVELOPER_ID_P12_
   -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
 security list-keychains -d user -s "$keychain" ${searched[@]+"${searched[@]}"}
-if ! security find-identity -v -p codesigning "$keychain" | grep -q "Developer ID Application"; then
+identities=$(security find-identity -v -p codesigning "$keychain")
+if ! grep -q "Developer ID Application" <<<"$identities"; then
   echo "::error::The keychain holds no valid Developer ID Application identity:"
   security find-identity -p codesigning "$keychain" || true
   exit 1
