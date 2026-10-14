@@ -372,11 +372,19 @@ When the CLI prints the queue as text and exactly one of the writes a write depe
 
 ### `queue-and-verdicts/command-queue-not-waiting`
 
-When the CLI prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, or is `dead`, and none is a create refused onto a row that no read has found yet, the CLI MUST NOT print `waiting on` for it.
+When the CLI prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, is `dead`, or is no longer in the queue, and none is a create refused onto a row that no read has found yet, the CLI MUST NOT print `waiting on` for it.
 
-**Reason:** a dependency with such a verdict no longer holds the write, though `depends_on` still names it.
+**Reason:** a dependency with such a verdict, or one withdrawn or discarded, no longer holds the write, though `depends_on` still names it.
 
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
+**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› discards a refused create no read can land, refusing unsent the writes waiting on it`.
+
+### `queue-and-verdicts/command-queue-unlanded`
+
+When the CLI prints the queue as text, the CLI MUST print on the line of each create refused onto a row its natural key names that no read has found yet `its natural key names <id>, which no read has found; discard it to refuse the writes waiting on it`, with that row's id for `<id>`.
+
+**Reason:** nothing but a read that finds the row or a discard (`queue-and-verdicts/discard-unlanded-takes-out`) takes such a create, or the writes waiting on it, out of the queue.
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
 
 ### `queue-and-verdicts/command-queue-after`
 
@@ -1070,7 +1078,7 @@ When a caller releases by its id a write `blocked` with the reason `awaiting_dep
 
 ### `queue-and-verdicts/release-unsent-refused`
 
-When a caller releases a write the drain refused without sending it, other than one refused because a write it waited for was withdrawn, a device MUST take it back to no verdict so the next drain sends it.
+When a caller releases a write the drain refused without sending it, other than one refused because a write it waited for was withdrawn or discarded, a device MUST take it back to no verdict so the next drain sends it.
 
 **Tests:** `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`.
 
@@ -1142,11 +1150,11 @@ When a caller withdraws a create, a device MUST refuse without sending every wri
 
 ### `queue-and-verdicts/withdrawn-never-released`
 
-If a caller releases a write refused because a write it waited for was withdrawn, then a device MUST answer that nothing was released.
+If a caller releases a write refused because a write it waited for was withdrawn or discarded, then a device MUST answer that nothing was released.
 
 **Reason:** released, it would wait on a write the queue no longer holds.
 
-**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`.
+**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
 
 ### `queue-and-verdicts/withdraw-keeps-caught-up`
 
@@ -1192,7 +1200,7 @@ A device MUST report in the queue the body each write carries, as it was or will
 
 ### `queue-and-verdicts/discard-refused`
 
-When a caller discards a `refused` write that no unsent write with no verdict, or `blocked`, depends on, other than one whose read after its answer has failed or, for a create refused onto a row its natural key names, has not yet found that row, a device MUST take it out of the queue, changing nothing in the copy.
+When a caller discards a `refused` write that no unsent write with no verdict, or `blocked`, depends on, other than one whose read after its answer has failed or a create refused onto a row its natural key names that no read has found yet (`queue-and-verdicts/discard-unlanded-takes-out`), a device MUST take it out of the queue, changing nothing in the copy.
 
 **Reason:** the refusal already put the copy back.
 
@@ -1206,11 +1214,51 @@ If a caller discards a write that is not `refused`, then a device MUST answer th
 
 ### `queue-and-verdicts/discard-waited-kept`
 
-If a caller discards a `refused` write that an unsent write with no verdict, or `blocked`, depends on, then a device MUST answer that nothing was discarded and keep the write.
+If a caller discards a `refused` write that an unsent write with no verdict, or `blocked`, depends on, other than a create refused onto a row its natural key names that no read has found yet, then a device MUST answer that nothing was discarded and keep the write.
 
-**Reason:** discarded, it would leave that write waiting on a write the queue no longer holds.
+**Reason:** discarded, it would leave that write waiting on a write the queue no longer holds. Such a create refuses what waits on it instead (`queue-and-verdicts/discard-unlanded-refuses-held`).
 
 **Tests:** `device/queue.test.ts › keeps a refused write a write still waiting depends on through a discard`.
+
+### `queue-and-verdicts/discard-unlanded-takes-out`
+
+When a caller discards a create refused onto a row its natural key names that no read has found yet, a device MUST take the create out of the queue, whatever waits on it.
+
+**Reason:** a discard is the way a refused write leaves the queue, and until a read finds that row, which may never happen (`queue-and-verdicts/landed-absent-goes-on`), nothing else would take the create, or the writes waiting on it, out of the queue.
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
+
+### `queue-and-verdicts/discard-unlanded-refuses-held`
+
+When a caller discards a create refused onto a row its natural key names that no read has found yet, a device MUST refuse without sending every write that has no verdict or is `blocked` and waits for the create, and every such write that waits for one of those in turn, with the reason `the <kind> it waits for was discarded`.
+
+**Reason:** each names a row under an id the server never held, so sent it could only be refused, which is what a drain does to a write behind an ordinary refused create (`queue-and-verdicts/dependency-refused`). Refused, each stays in the queue with what it carries until it is discarded in turn (`queue-and-verdicts/clear-keeps-content`).
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
+
+### `queue-and-verdicts/discard-unlanded-forgets-row`
+
+When a caller discards a create refused onto a row its natural key names that no read has found yet, a device MUST let go of the row under the id it minted for the create, with every edge to or from that row.
+
+**Reason:** the server never held that id, and no write waiting to be sent names it any more.
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
+
+### `queue-and-verdicts/discard-unlanded-not-read`
+
+While no queued write names the row the natural key of a discarded create named and the copy holds no row under that id, a device MUST NOT read that row at a later drain.
+
+**Reason:** the read was owed only to land the create, which is gone.
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
+
+### `queue-and-verdicts/discard-unlanded-pin-read`
+
+Where the row under the id a device minted for a create refused onto a row its natural key names that no read has found yet is pinned, when a caller discards the create, a device MUST let the pin go at the first later drain whose read finds no row under the minted id.
+
+**Reason:** a pin goes only on a read that says the server holds no such row (`device/pin-refused-create`), and with the create discarded nothing else would read it, so the pin would have every hydration ask for a row the server never held.
+
+**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
 
 ## Offline, reconnect and hydrating again
 
@@ -1614,7 +1662,7 @@ When a create carrying a natural key is refused `409 ancestor_unavailable` namin
 
 ### `queue-and-verdicts/landed-target-unreadable`
 
-When the read of the row a refused create's natural key names finds no row the key reads, a device MUST keep the refusal, the row under the minted id and the writes waiting on the create as they are, reading the row again at each later drain.
+When the read of the row a refused create's natural key names finds no row the key reads, a device MUST keep the refusal, the row under the minted id and the writes waiting on the create as they are, reading the row again at each later drain until a caller discards the create (`queue-and-verdicts/discard-unlanded-takes-out`).
 
 **Reason:** whether what waits on the create goes to that row or is refused is not known until a read finds the row.
 

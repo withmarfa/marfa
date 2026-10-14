@@ -1058,7 +1058,7 @@ pub fn untaken_creates_for_item(
     .into_iter()
     .filter(|row| {
         matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead))
-            || landing.contains(&row.id)
+            || landing.contains_key(&row.id)
     })
     .map(|row| row.id)
     .collect())
@@ -2643,16 +2643,19 @@ fn record_verdict_inner(
 }
 
 /// The refused creates whose move onto the row their natural key names waits
-/// for a read that finds the row.
-pub fn pending_landings(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+/// for a read that finds the row, each with the id of that row.
+pub fn pending_landings(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT substr(key, length('receipt_pending/') + 1) FROM meta
+        "SELECT substr(key, length('receipt_pending/') + 1), substr(value, length('land:') + 1)
+           FROM meta
           WHERE key LIKE 'receipt_pending/%' AND value LIKE 'land:%'",
     )?;
-    let ids = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<Result<HashSet<_>, _>>()?;
-    Ok(ids)
+    let landings = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    Ok(landings)
 }
 
 pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
@@ -2854,7 +2857,18 @@ pub fn withdraw(
     row: &QueuedWrite,
     held: &[QueuedWrite],
 ) -> Result<(), CoreError> {
-    let reason = format!("the {} it waits for was withdrawn", row.kind);
+    take_out(conn, row, held, "withdrawn")
+}
+
+/// `row` leaves the queue, with each of `held` refused unsent for it and the
+/// copy put back as it was beneath every one of them.
+fn take_out(
+    conn: &Connection,
+    row: &QueuedWrite,
+    held: &[QueuedWrite],
+    taken: &str,
+) -> Result<(), CoreError> {
+    let reason = format!("the {} it waits for was {taken}", row.kind);
     for dependant in held {
         record_refusal(conn, dependant, &reason, None, false)?;
     }
@@ -2952,7 +2966,10 @@ fn content_kinds() -> String {
 
 /// Takes a refused write out of the queue, the one way a refused write that
 /// carried content leaves it. Answers `false` for a row not refused, or one a
-/// write still waits on, which would then wait on nothing.
+/// write still waits on, which would then wait on nothing. A create refused
+/// onto a row no read has found goes all the same, and the writes waiting on
+/// it are refused unsent: each names a row the server never held. Call in a
+/// transaction.
 pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some(row) = queued_write(conn, id)? else {
         return Err(CoreError::NotFound {
@@ -2960,15 +2977,63 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             message: format!("{id} is not a write this queue holds"),
         });
     };
-    if meta_get(conn, &format!("receipt_pending/{id}"))?.is_some() {
+    if row.verdict != Some(Verdict::Refused) {
         return Ok(false);
     }
-    if row.verdict != Some(Verdict::Refused) || !held_for(conn, id)?.is_empty() {
-        return Ok(false);
+    let receipt = format!("receipt_pending/{id}");
+    let landing = match meta_get(conn, &receipt)? {
+        None => None,
+        Some(shape) if row.kind == WriteKind::CreateItem => match shape.strip_prefix("land:") {
+            Some(target) => Some(target.to_string()),
+            None => return Ok(false),
+        },
+        Some(_) => return Ok(false),
+    };
+    let held = held_for(conn, id)?;
+    let Some(target) = landing else {
+        if !held.is_empty() {
+            return Ok(false);
+        }
+        conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
+        meta_delete(conn, &effect_key(id))?;
+        return Ok(true);
+    };
+    take_out(conn, &row, &held, "discarded")?;
+    meta_delete(conn, &receipt)?;
+    if !read_of_row_owed_elsewhere(conn, &target)? {
+        settle_read_back(conn, Subject::Item, &target)?;
     }
-    conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
-    meta_delete(conn, &effect_key(id))?;
+    // Only a read can say the server holds no such row, which is what lets a
+    // pin go (`device/pin-refused-create`).
+    if let Some(minted) = row.item_id.as_deref()
+        && pinned(conn, minted)?
+    {
+        owe_read_back(
+            conn,
+            &Owed {
+                subject: Subject::Item,
+                id: minted.into(),
+                source_id: None,
+                edge_type: None,
+                moved: false,
+            },
+        )?;
+    }
     Ok(true)
+}
+
+/// The debt of a read carries no owner, so it stays wherever another write
+/// could have owed it: one that names the row, another create landing on it,
+/// or the copy's own row under that id, which a refusal may have put back.
+fn read_of_row_owed_elsewhere(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(item_held(conn, id)?
+        || conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM queue WHERE item_id = ?1 OR target_id = ?1)
+                 OR EXISTS (SELECT 1 FROM meta
+                             WHERE key LIKE 'receipt_pending/%' AND value = 'land:' || ?1)",
+            [id],
+            |row| row.get(0),
+        )?)
 }
 
 /// Every write to the edge not accepted, refused ones included, leaves the

@@ -2549,7 +2549,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Take a refused write out of the queue, with the content it carried.
 
-The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it.
+The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it, but for a create refused onto a row its natural key names that no read has found: discarded, that create takes its row out of the copy, and the writes waiting on it are refused unsent, each kept with its content.
 
 ```text
 marfa device discard [OPTIONS] <ID>

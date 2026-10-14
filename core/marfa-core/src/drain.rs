@@ -275,7 +275,7 @@ fn readiness(
     rows: &HashMap<&str, &QueuedWrite>,
     verdicts: &HashMap<String, Option<Verdict>>,
     waiting: &HashSet<String>,
-    landing: &HashSet<String>,
+    landing: &HashMap<String, String>,
 ) -> Readiness {
     // Ordering before dependencies, so a write that would be refused does
     // not let the writes behind it past the one ahead.
@@ -293,7 +293,7 @@ fn readiness(
         };
         // Refused onto a row no read can find yet: whether what waits on it
         // goes to that row or is refused is not known until a read finds it.
-        if landing.contains(dependency) {
+        if landing.contains_key(dependency) {
             return Readiness::Held;
         }
         match verdict {
@@ -867,10 +867,10 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         waited(&mut report, settled.retry_after_seconds);
         answers.insert(row.id.clone(), settled.verdict);
         if row.kind == WriteKind::CreateItem
-            && store::meta_get(&*core.conn()?, &receipt_key(&row.id))?
-                .is_some_and(|receipt| receipt.starts_with("land:"))
+            && let Some(target) = store::meta_get(&*core.conn()?, &receipt_key(&row.id))?
+                .and_then(|receipt| receipt.strip_prefix("land:").map(str::to_string))
         {
-            landing.insert(row.id.clone());
+            landing.insert(row.id.clone(), target);
         }
         // A credential refusal can hide a receipt for a committed write.
         // Its followers must keep their bodies unsent until that receipt arrives.
@@ -2877,13 +2877,16 @@ mod tests {
         assert!(settled.unavailable.is_none());
         {
             let conn = core.conn().unwrap();
-            assert!(store::pending_landings(&conn).unwrap().contains(&create.id));
+            assert!(
+                store::pending_landings(&conn)
+                    .unwrap()
+                    .contains_key(&create.id)
+            );
             assert_eq!(
                 store::queued_write(&conn, &dependant.id).unwrap().unwrap(),
                 dependant
             );
             assert!(store::item_held(&conn, "local").unwrap());
-            assert!(!store::discard(&conn, &create.id).unwrap());
             read_view::advance_generation(&conn).unwrap();
         }
         let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
@@ -2916,6 +2919,205 @@ mod tests {
             store::meta_get(&conn, &receipt_key(&create.id))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    /// A create refused onto `server`, which no read finds, with an edit and
+    /// a tag of its row waiting on it and an edit waiting on that edit.
+    fn unfound_landing(
+        server: &crate::scripted::Scripted,
+        pinned: bool,
+    ) -> (tempfile::TempDir, Core, QueuedWrite, Vec<QueuedWrite>) {
+        let (dir, core) = deleting(server, &[]);
+        let (create, waiting) = {
+            let conn = core.conn().unwrap();
+            let local = store::testing::note("local", "draft", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &local, None, &Default::default()).unwrap();
+            if pinned {
+                store::pin(&conn, "local").unwrap();
+            }
+            let create = store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap();
+            store::mark_sent(&conn, &create.id).unwrap();
+            let mut tag = write(
+                WriteKind::AddTag,
+                "local",
+                None,
+                None,
+                std::slice::from_ref(&create.id),
+            );
+            tag.tag = Some("kept");
+            let tag = store::enqueue(&conn, &tag).unwrap();
+            let mut edit = write(
+                WriteKind::UpdateItem,
+                "local",
+                None,
+                Some(0),
+                std::slice::from_ref(&create.id),
+            );
+            edit.payload = r#"{"properties":{"title":"mine"}}"#;
+            let edit = store::enqueue(&conn, &edit).unwrap();
+            let mut later = write(
+                WriteKind::UpdateItem,
+                "local",
+                None,
+                Some(0),
+                std::slice::from_ref(&edit.id),
+            );
+            later.payload = r#"{"properties":{"title":"later"}}"#;
+            let later = store::enqueue(&conn, &later).unwrap();
+            (create, vec![tag, edit, later])
+        };
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+        )
+        .unwrap();
+        assert!(
+            store::pending_landings(&core.conn().unwrap())
+                .unwrap()
+                .contains_key(&create.id)
+        );
+        (dir, core, create, waiting)
+    }
+
+    #[test]
+    fn a_discarded_create_no_read_can_land_refuses_unsent_what_waits_on_it() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core, create, waiting) = unfound_landing(&server, false);
+        assert!(core.discard(&create.id).unwrap());
+        {
+            let conn = core.conn().unwrap();
+            assert!(store::queued_write(&conn, &create.id).unwrap().is_none());
+            for before in &waiting {
+                let after = store::queued_write(&conn, &before.id).unwrap().unwrap();
+                assert_eq!(after.verdict, Some(Verdict::Refused));
+                assert_eq!(
+                    after.reason.as_deref(),
+                    Some("the create_item it waits for was discarded")
+                );
+                assert_eq!(after.body, before.body);
+                assert_eq!(after.idempotency_key, before.idempotency_key);
+            }
+            assert!(!store::item_held(&conn, "local").unwrap());
+            assert!(store::pending_landings(&conn).unwrap().is_empty());
+            assert!(
+                store::meta_get(&conn, &receipt_key(&create.id))
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store::owed_read_backs(&conn).unwrap().is_empty(),
+                "the copy still owes a read of the row only the discarded create named"
+            );
+        }
+        for each in &waiting {
+            assert!(!core.release(&each.id).unwrap());
+        }
+        let reads = server.seen("/items/server").len();
+        assert!(reads > 0);
+        assert!(
+            read_owed_backs(&core, &AtomicBool::new(false))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            server.seen("/items/server").len(),
+            reads,
+            "a drain after the discard read the row the discarded create's key names"
+        );
+        for each in waiting.iter().rev() {
+            assert!(core.discard(&each.id).unwrap());
+        }
+        assert!(core.queue().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_discard_of_a_create_no_read_can_land_waits_for_a_running_drain() {
+        use std::time::Duration;
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core, create, _) = unfound_landing(&server, false);
+        let running = core.one_drain();
+        let (sent, received) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| sent.send(core.discard(&create.id)).unwrap());
+            assert!(
+                received.recv_timeout(Duration::from_millis(250)).is_err(),
+                "the discard refused writes a running drain had read as waiting"
+            );
+            assert!(
+                store::queued_write(&core.conn().unwrap(), &create.id)
+                    .unwrap()
+                    .is_some()
+            );
+            drop(running);
+            assert_eq!(
+                received.recv_timeout(Duration::from_secs(5)).unwrap(),
+                Ok(true)
+            );
+        });
+    }
+
+    #[test]
+    fn a_discarded_landing_keeps_a_read_another_write_owes_for_its_row() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core, create, _) = unfound_landing(&server, false);
+        {
+            let conn = core.conn().unwrap();
+            let theirs = store::testing::note("server", "theirs", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &theirs, None, &Default::default()).unwrap();
+        }
+        assert!(core.discard(&create.id).unwrap());
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::owed_read_backs(&conn)
+                .unwrap()
+                .into_iter()
+                .map(|owed| owed.id)
+                .collect::<Vec<_>>(),
+            vec!["server".to_string()],
+            "a discard dropped a read of a row the copy holds"
+        );
+    }
+
+    #[test]
+    fn a_discarded_landing_reads_its_pinned_row_before_the_pin_goes() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core, create, _) = unfound_landing(&server, true);
+        assert!(core.discard(&create.id).unwrap());
+        let conn = core.conn().unwrap();
+        assert!(!store::item_held(&conn, "local").unwrap());
+        assert!(store::pinned(&conn, "local").unwrap());
+        assert_eq!(
+            store::owed_read_backs(&conn)
+                .unwrap()
+                .into_iter()
+                .map(|owed| owed.id)
+                .collect::<Vec<_>>(),
+            vec!["local".to_string()],
+            "no read will say whether the server holds the pinned row"
         );
     }
 
