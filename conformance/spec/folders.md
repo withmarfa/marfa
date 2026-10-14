@@ -3474,6 +3474,14 @@ When adding a folder would enclose or fall inside another listed folder, a devic
 
 **Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`.
 
+### `folders/nested-folder-refused-any-spelling`
+
+When adding a folder would enclose or fall inside another listed folder, a device MUST refuse the add however either folder's path is spelled, including in another letter case on a case-insensitive volume.
+
+**Reason:** More than one spelling can reach one directory, so only the directories themselves show whether two folders would hold one another's files.
+
+**Tests:** `cli/folder.test.ts › refuses a folder that holds a listed folder, or lies inside one, when its path is spelled in another case`.
+
 ### `folders/nested-folder-not-scanned`
 
 When a folder scan encounters a directory holding another folder’s `.marfa/core.sqlite` state, a device MUST exclude that directory’s contents from admission.
@@ -3508,7 +3516,7 @@ When a confirmed folder has unanswered or blocked queued writes, a device MUST r
 
 When the same admitted directory is registered through an equivalent absolute spelling or for another `system.folder`, a device MUST retain only its current registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `cli/folder.test.ts › lists a folder added again under another letter case once, in place of its old entry`.
 
 ### `folders/remove-listed-acts-where-listed`
 
@@ -3555,6 +3563,12 @@ When a removal deletes a folder's state, the CLI MUST report `removed` as `true`
 When a removal takes a registry entry off without deleting folder state, the CLI MUST report `removed` as `false` with the reason.
 
 **Tests:** `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`, `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
+
+### `folders/remove-unlisted-names-other`
+
+When a removal takes a listed entry off without deleting folder state because the state at the entry's directory has the store identity that the machine’s folder registry lists for another entry, the CLI MUST name that other entry's listed path in the reason.
+
+**Tests:** `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
 ### `folders/registry-removed-state`
 
@@ -4547,6 +4561,22 @@ If a command other than an add or a removal names a folder by a path that the ma
 If a symbolic link now stands in the path at which the machine’s folder registry lists a folder, then a device MUST refuse every command other than an add or a removal that names the folder by that path with `invalid`.
 
 **Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
+
+### `folders/listed-link-refusal-names-other`
+
+If a device refuses a path because a symbolic link now stands in the path at which the machine’s folder registry lists a folder, and that listed path now leads to the directory of another listed folder, then a device MUST name the other folder's listed path in the refusal's message.
+
+**Reason:** The person can then tell that the directory the link leads to holds another folder, not the one the path names.
+
+**Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`.
+
+### `folders/listed-link-refusal-no-redirect`
+
+If a device refuses a path because the path's own directory entry, or one that a later `..` climbs back out of, is a symbolic link, and a path at which the machine’s folder registry lists a folder reaches some directory only through a symbolic link, then a device MUST NOT give that directory, or a directory inside it, in the refusal's message as the one to name instead.
+
+**Reason:** Where a link has replaced the listed folder's directory or a directory above it, the listed path, and any link or chain of links the person made to it or to a directory inside it, can lead to another folder's directory. A person following the advice would then work on that folder, such as by removing its state.
+
+**Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`, `cli/folder.test.ts › never offers the directory a relinked listing now leads to when refusing a link to that listing`, `cli/folder.test.ts › never offers a folder inside the directory a relinked listing now leads to when refusing a link into that listing`.
 
 ### `folders/root-link-refused-invalid`
 

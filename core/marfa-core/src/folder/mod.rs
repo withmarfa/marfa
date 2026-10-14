@@ -324,7 +324,7 @@ impl Folder {
         // Unlisted, its moves would read as deletes to the others.
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
-            registry.add(&added.root, folder, Some(&store))?;
+            registry.add(&added.root, &added.root_dir, folder, Some(&store))?;
             elsewhere::listed_in(&added.core, &registry);
         }
         Ok(added)

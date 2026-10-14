@@ -63,6 +63,12 @@ impl Directory {
     pub(crate) fn child(&self, _: &Path, _: bool) -> io::Result<Self> {
         unsupported()
     }
+    pub(crate) fn up(&self) -> io::Result<Self> {
+        unsupported()
+    }
+    pub(crate) fn link_identity(&self, _: &Path) -> io::Result<(u64, u64)> {
+        unsupported()
+    }
     pub(crate) fn file(&self) -> &File {
         &self.file
     }

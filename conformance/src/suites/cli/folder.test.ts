@@ -600,6 +600,9 @@ describe("a folder round trip", () => {
       }
       const atListed = await c.cli.refused(["folders", "status", first]);
       expect(atListed.envelope.error.code).toBe("invalid");
+      expect(atListed.envelope.error.message).toContain(
+        `${first} now leads to ${second}, another listed folder`,
+      );
       // With the registry lost, a removal follows no link, even once a
       // pass through the path has listed the folder it leads to.
       const lost = c.cli.withEnv({
@@ -635,6 +638,264 @@ describe("a folder round trip", () => {
     }
   });
 
+  it("names the listed folder a link has replaced, and the other folder it leads to, when refusing its path", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    renameSync(first, join(dir, "a", "notes-moved"));
+    symlinkSync(second, first);
+    // A link above the folder, as `/tmp` and `/var` are on macOS.
+    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-cli-alias-"));
+    symlinkSync(dir, join(elsewhere, "base"));
+    const through = join(elsewhere, "base", "a", "notes");
+    const store = join(second, ".marfa", "core.sqlite");
+    // Templates keep the spellings that path.join would normalize. Only a
+    // volume that folds letter case reaches the link by the last.
+    const spellings = [
+      through,
+      `${dir}/a/notes/../notes`,
+      `${dir}/x/../a/notes`,
+      ...[join(dir, "a", "NOTES")].filter((folded) => existsSync(folded)),
+    ];
+    mkdirSync(join(dir, "x"));
+    try {
+      for (const command of [
+        ["folders", "status", first],
+        ...spellings.flatMap((spelling) => [
+          ["folders", "status", spelling],
+          ["folders", "push", spelling],
+          ["folders", "remove", spelling],
+        ]),
+      ]) {
+        const refused = await c.cli.refused(command);
+        const said = command.join(" ");
+        expect(refused.envelope.error.code, said).toBe("invalid");
+        expect(refused.envelope.error.message, said).toContain(
+          `${first} now leads to ${second}, another listed folder`,
+        );
+        expect(refused.envelope.error.message, said).toContain(
+          `\`folders remove ${first}\` only takes it off the list`,
+        );
+        expect(refused.envelope.error.message, said).not.toContain(
+          "name the directory",
+        );
+      }
+      expect(existsSync(store)).toBe(true);
+      // The witness: a link to a folder that no relinked listing reaches is
+      // refused naming the directory it points to.
+      const third = await addNotes("c");
+      symlinkSync(third, join(dir, "unlisted"));
+      const unlisted = await c.cli.refused([
+        "folders",
+        "status",
+        join(dir, "unlisted"),
+      ]);
+      expect(unlisted.envelope.error.message).toContain(
+        `name the directory it points to, ${third}`,
+      );
+      // The listed path takes the folder off the list and leaves the folder
+      // the link leads to.
+      const removed = await c.cli.json<{ removed: boolean }>([
+        "folders",
+        "remove",
+        first,
+      ]);
+      expect(removed.removed).toBe(false);
+      expect(existsSync(store)).toBe(true);
+      expect(await listed()).toContain(second);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("never offers the directory a relinked listing now leads to when refusing a link to that listing", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    const fourth = await addNotes("d");
+    const fifth = await addNotes("e");
+    const third = await addNotes("c");
+    const stores = [first, second, fourth, fifth, third].map((folder) =>
+      join(folder, ".marfa", "core.sqlite"),
+    );
+    // Links the person made to listed folders, then the listings relinked:
+    // the first folder's own directory to the second folder, and the
+    // directory above the fourth folder to the one holding the fifth.
+    symlinkSync(first, join(dir, "alias"));
+    symlinkSync(join(dir, "alias"), join(dir, "chain"));
+    symlinkSync(fourth, join(dir, "ln"));
+    renameSync(first, join(dir, "a", "notes-moved"));
+    symlinkSync(second, first);
+    renameSync(join(dir, "d"), join(dir, "d-moved"));
+    symlinkSync(join(dir, "e"), join(dir, "d"));
+    for (const name of ["alias", "chain", "ln"]) {
+      for (const command of ["status", "push", "remove"]) {
+        const refused = await c.cli.refused([
+          "folders",
+          command,
+          join(dir, name),
+        ]);
+        const said = `folders ${command} ${name}`;
+        expect(refused.envelope.error.code, said).toBe("invalid");
+        expect(refused.envelope.error.message, said).toContain(
+          "name the directory itself",
+        );
+        expect(refused.envelope.error.message, said).not.toContain(second);
+        expect(refused.envelope.error.message, said).not.toContain(fifth);
+      }
+    }
+    expect(stores.map((store) => existsSync(store))).toEqual(
+      stores.map(() => true),
+    );
+    // The witness: a link to a folder that no relinked listing reaches is
+    // refused naming the directory it points to.
+    symlinkSync(third, join(dir, "to-third"));
+    const offered = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "to-third"),
+    ]);
+    expect(offered.envelope.error.message).toContain(
+      `name the directory it points to, ${third}`,
+    );
+  });
+
+  it("never offers a folder inside the directory a relinked listing now leads to when refusing a link into that listing", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    const third = await addNotes("c");
+    const store = join(second, ".marfa", "core.sqlite");
+    // A link the person made to a plain directory inside the first folder,
+    // then the first folder's directory relinked to the directory that holds
+    // the second folder, so the link now reaches the second.
+    mkdirSync(join(first, "notes"));
+    symlinkSync(join(first, "notes"), join(dir, "into"));
+    renameSync(first, join(dir, "a", "notes-moved"));
+    symlinkSync(join(dir, "b"), first);
+    for (const command of ["status", "push", "remove"]) {
+      const refused = await c.cli.refused([
+        "folders",
+        command,
+        join(dir, "into"),
+      ]);
+      const said = `folders ${command} into`;
+      expect(refused.envelope.error.code, said).toBe("invalid");
+      expect(refused.envelope.error.message, said).toContain(
+        "name the directory itself",
+      );
+      expect(refused.envelope.error.message, said).not.toContain(second);
+    }
+    expect(existsSync(store)).toBe(true);
+    // The witness: a link to a folder that no relinked listing reaches is
+    // refused naming the directory it points to.
+    symlinkSync(third, join(dir, "to-third"));
+    const offered = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "to-third"),
+    ]);
+    expect(offered.envelope.error.message).toContain(
+      `name the directory it points to, ${third}`,
+    );
+  });
+
+  // The default macOS volume folds letter case; Linux volumes do not.
+  describe.runIf(process.platform === "darwin")(
+    "on a volume that folds letter case",
+    () => {
+      it("refuses a folder that holds a listed folder, or lies inside one, when its path is spelled in another case", async () => {
+        mkdirSync(join(dir, "a", "notes", "inner"), { recursive: true });
+        // The witness that the volume folds letter case, as the default macOS
+        // one does.
+        expect(existsSync(join(dir, "A", "NOTES", "INNER"))).toBe(true);
+        const folder = async (title: string) => {
+          const settings = await c.cli.json<ItemEnvelope>([
+            "folders",
+            "create",
+            "--title",
+            unique(title),
+            "--search",
+            JSON.stringify({ types: ["core.note"] }),
+          ]);
+          trackFolder(c.ctx, settings.item.id);
+          return settings.item.id;
+        };
+        const add = (spelling: string, id: string) => [
+          "folders",
+          "add",
+          spelling,
+          "--folder",
+          id,
+          "--yes",
+        ];
+        // Listed as typed, in another case than the directory on disk.
+        const first = (
+          await c.cli.json<{ dir: string }>(
+            add(join(dir, "a", "NOTES"), await folder("listed-folded")),
+          )
+        ).dir;
+        expect(first).toBe(join(realpathSync(dir), "a", "NOTES"));
+        const other = await folder("folded");
+        for (const spelling of [
+          join(dir, "A"),
+          join(dir, "a", "notes", "inner"),
+        ]) {
+          const refused = await c.cli.refused(add(spelling, other));
+          expect(refused.code, spelling).toBe(1);
+          expect(refused.envelope.error.code, spelling).toBe("invalid");
+          expect(refused.envelope.error.message, spelling).toContain(
+            "would hold one another's files",
+          );
+        }
+        expect(existsSync(join(dir, "a", ".marfa", "core.sqlite"))).toBe(false);
+        expect(
+          existsSync(join(dir, "a", "notes", "inner", ".marfa", "core.sqlite")),
+        ).toBe(false);
+        expect(existsSync(join(first, ".marfa", "core.sqlite"))).toBe(true);
+        // The witness: once the listed folder is removed, both spellings are
+        // added.
+        await c.cli.json(["folders", "remove", first]);
+        const inner = await c.cli.json<{ dir: string }>(
+          add(join(dir, "a", "notes", "inner"), other),
+        );
+        expect(await listed()).toContain(inner.dir);
+        await c.cli.json(["folders", "remove", inner.dir]);
+        const holding = await c.cli.json<{ dir: string }>(
+          add(join(dir, "A"), other),
+        );
+        expect(await listed()).toContain(holding.dir);
+      });
+
+      it("lists a folder added again under another letter case once, in place of its old entry", async () => {
+        const first = await addNotes("a");
+        // The witness that the volume folds letter case, and that the first
+        // spelling is listed.
+        expect(existsSync(join(dir, "A", "NOTES"))).toBe(true);
+        expect(await listed()).toContain(first);
+        rmSync(join(first, ".marfa"), { recursive: true });
+        const settings = await c.cli.json<ItemEnvelope>([
+          "folders",
+          "create",
+          "--title",
+          unique("refolded"),
+          "--search",
+          JSON.stringify({ types: ["core.note"] }),
+        ]);
+        trackFolder(c.ctx, settings.item.id);
+        const added = await c.cli.json<{ dir: string }>([
+          "folders",
+          "add",
+          join(dir, "a", "NOTES"),
+          "--folder",
+          settings.item.id,
+          "--yes",
+        ]);
+        expect(added.dir).not.toBe(first);
+        const after = await listed();
+        expect(after).toContain(added.dir);
+        expect(after, "the old spelling stayed listed").not.toContain(first);
+      });
+    },
+  );
+
   it("takes a listed folder off the list without removing a folder moved into its place", async () => {
     const first = await addNotes("a");
     const second = await addNotes("b");
@@ -648,6 +909,9 @@ describe("a folder round trip", () => {
     ]);
     expect(unlisted.removed).toBe(false);
     expect(unlisted.reason).toContain("not the one the registry lists");
+    expect(unlisted.reason).toContain(
+      `it is the state of the folder listed at ${second}`,
+    );
     expect(
       existsSync(join(first, ".marfa", "core.sqlite")),
       "removing the first folder removed the folder moved into its place",
