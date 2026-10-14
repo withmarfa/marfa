@@ -4,34 +4,34 @@ Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generat
 
 ## Layout
 
-- `core/*.json` — the core type schemas
-- `core/edges/*.json` — the core edge types
-- `core/system/*.json` — the `system.*` types, the platform's own records
-- `scripts/validate.ts` — JSON shape validator (runs in CI)
-- `scripts/generate.ts` — codegen: JSON → the two registries below
-- `generated/type-registry.ts` — auto-generated; do not edit
-- `generated/edge-type-registry.ts` — auto-generated; do not edit
-- `src/schema-types.ts` — schema-shape interfaces (`TypeSchema`, `FieldDefinition`, `ItemState`, `VersionPolicy`)
-- `src/index.ts` — package entry: re-exports the schema interfaces, `ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES`, `ALL_TYPE_IDS` and `PlatformTypeId`
+- `core/*.json`: the core type schemas
+- `core/edges/*.json`: the core edge types
+- `core/system/*.json`: the `system.*` types, the platform's own records
+- `scripts/validate.ts`: JSON shape validator (runs in CI)
+- `scripts/generate.ts`: codegen that turns the JSON into the two registries below
+- `generated/type-registry.ts`: auto-generated; do not edit
+- `generated/edge-type-registry.ts`: auto-generated; do not edit
+- `src/schema-types.ts`: schema-shape interfaces (`TypeSchema`, `FieldDefinition`, `ItemState`, `VersionPolicy`)
+- `src/index.ts`: the package entry, which re-exports the schema interfaces, `ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES`, `ALL_TYPE_IDS` and `PlatformTypeId`
 
 ## Schema format
 
 Each type is a JSON file with:
 
-- **`id`** — type identifier (e.g. `core.note`, `core.media.book`)
-- **`parent`** — parent type ID, if a subtype
-- **`description`** — what this type represents
-- **`version`** — schema version, a non-negative integer; every shipped type is at 0 until the first public release
-- **`fields`** — field name → definition map
-- **`required`** — array of required field names
+- **`id`**: type identifier (e.g. `core.note`, `core.media.book`)
+- **`parent`**: parent type ID, if a subtype
+- **`description`**: what this type represents
+- **`version`**: schema version, a non-negative integer; every shipped type is at 0 until the first public release
+- **`fields`**: field name → definition map
+- **`required`**: array of required field names
 
 Field definitions:
 
-- **`type`** — one of `FIELD_TYPES` (`src/schema-validation.ts`): `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `array`, `object`, `thumbnail`. A `thumbnail` is a small image the writer supplies as a `data:` URI of a PNG, JPEG or WebP, at most 16 KiB decoded; a type carries at most one, never named `title`, `body`, `description` or `name`.
-- **`description`** — what the field is
-- **`format`** — optional, one of `FIELD_FORMATS`: `url`, `email`, `datetime`, `date` and `thumbnail` normalize into `type`; `bcp47` and `iso3166` annotate a `string` and survive as `format`
-- **`enum_values`** — required for `enum` type
-- **`items_type`** — required for `array` type
+- **`type`**: one of `FIELD_TYPES` (`src/schema-validation.ts`), namely `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `array`, `object`, `thumbnail`. A `thumbnail` is a small image the writer supplies as a `data:` URI of a PNG, JPEG or WebP, at most 16 KiB decoded; a type carries at most one, never named `title`, `body`, `description` or `name`.
+- **`description`**: what the field is
+- **`format`**: optional, one of `FIELD_FORMATS`. The formats `url`, `email`, `datetime`, `date` and `thumbnail` normalize into `type`; `bcp47` and `iso3166` annotate a `string` and survive as `format`
+- **`enum_values`**: required for `enum` type
+- **`items_type`**: required for `array` type
 
 Subtypes only declare fields they add. They inherit all parent fields and **may not redefine them** (enforced at registration).
 

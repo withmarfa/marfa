@@ -32,13 +32,13 @@ the endpoint refuses at all. `serverSideMerge` decides on a status too, and
 refused. Read the probe rather than counting them.
 
 **An idempotent operation has three answers, not two.** A repeat under a key is
-_honored_, _ignored_, or _reuse-refused_. The refusal — `422
-idempotency_key_reused` to a key sent with a different request — is the
+_honored_, _ignored_, or _reuse-refused_. The refusal (`422
+idempotency_key_reused` to a key sent with a different request) is the
 cleanest evidence available, because the confounders cannot reach it: a
 natural-key match and a content dedupe both collapse writes that are _the
 same_, and this refusal fires on writes that _differ_. So `idempotencyKeys`
 sends a different-bodied pair, checks the replay half with a byte-identical
-repeat, and sends the same content under a fresh key as a third leg — if that
+repeat, and sends the same content under a fresh key as a third leg. If that
 collapses, the operation dedupes on content and the probe throws rather than
 reporting a rule it could not see. A server that reads keys and does not
 refuse the reuse still reports `present`, with the deviation named in the
@@ -87,7 +87,7 @@ Everything in the repository's contributing rules, plus these.
   out is asserting nothing. Write the control first.
 - **A wait is on a frame the server sends either way.** Waiting on the frame
   that may never arrive means the runner's budget expires and reports
-  `Test timed out` — the file, and nothing else. Wait on the control the
+  `Test timed out` and the file, and nothing else. Wait on the control the
   subscription delivers regardless, drain what follows, then assert.
 - **An absence is settled by a later frame, never by a quiet window.** A fixed
   window cannot tell "nothing more is coming" from "not yet". Write a sentinel

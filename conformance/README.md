@@ -11,8 +11,8 @@ workspace package.
 
 **The device's half** is `src/suites/device/`, and it gates the `marfa` binary
 rather than the server. A device holds a working copy and a queue, and the
-verdicts it has to reach include failures the real server cannot be asked for
-— a dropped connection, a server at rest, a spent credential, a refusal
+verdicts it has to reach include failures the real server cannot be asked for:
+a dropped connection, a server at rest, a spent credential, a refusal
 repeated until a ceiling. So those fixtures drive a server the fixture scripts
 (`src/device/scripted-server.ts`), and `device/fidelity.test.ts` holds every
 scripted answer against the real server's for the cases the real server can
@@ -99,8 +99,8 @@ The server runs with enrichment, OCR and general request rate limiting switched 
 Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot
-spend the allowance on the key operations — the tightest cap the server has, set
-in `packages/server/src/app.ts`. `marfa:up` says so outright rather than
+spend the allowance on the key operations (the tightest cap the server has, set
+in `packages/server/src/app.ts`). `marfa:up` says so outright rather than
 leaving it to the boot script's default, so an ambient variable cannot flip
 the instance every file shares. What that allowance is, and what a caller
 past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
