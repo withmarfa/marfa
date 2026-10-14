@@ -42034,7 +42034,7 @@
                     },
                     "client_uri": {
                       "type": "string",
-                      "description": "Name of the OAuth2 application"
+                      "description": "The app's home page URL, as registered. Absent if none was sent."
                     },
                     "logo_uri": {
                       "type": "string",
@@ -42166,7 +42166,7 @@
                     },
                     "user_id": {
                       "type": "string",
-                      "description": "ID of the user who registered the client, null if registered anonymously"
+                      "description": "The ID of the user who registered the client. Absent for anonymous registration."
                     },
                     "client_id_issued_at": {
                       "type": "number",

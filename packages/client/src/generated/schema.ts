@@ -21677,7 +21677,7 @@ export interface operations {
                         scope?: string;
                         /** @description The app's name, as registered. */
                         client_name?: string;
-                        /** @description Name of the OAuth2 application */
+                        /** @description The app's home page URL, as registered. Absent if none was sent. */
                         client_uri?: string;
                         /** @description Icon URL for the application */
                         logo_uri?: string;
@@ -21733,7 +21733,7 @@ export interface operations {
                         client_secret?: string;
                         /** @description When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't. */
                         client_secret_expires_at?: number;
-                        /** @description ID of the user who registered the client, null if registered anonymously */
+                        /** @description The ID of the user who registered the client. Absent for anonymous registration. */
                         user_id?: string;
                         /** @description When the client was registered, in seconds since the Unix epoch. */
                         client_id_issued_at?: number;

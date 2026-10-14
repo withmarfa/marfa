@@ -42,6 +42,10 @@ const REQUEST_TEXT: Record<string, string> = {
 };
 const RESPONSE_TEXT: Record<string, string> = {
   client_id: "Unique identifier for the client.",
+  client_uri:
+    "The app's home page URL, as registered. Absent if none was sent.",
+  user_id:
+    "The ID of the user who registered the client. Absent for anonymous registration.",
   client_secret:
     "The secret the client proves itself with at the token endpoint. Absent for a public client.",
   client_id_issued_at:
