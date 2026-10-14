@@ -108,11 +108,13 @@ pub fn nothing_queued(json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-/// `landing` names the refused creates whose row no read has found yet, which
-/// still hold the writes that depend on them, each with the row its natural
-/// key names.
+/// `writes` are printed against `queue`, the whole queue, so a write they
+/// depend on is read where it stands even when it is not among them. `landing`
+/// names the refused creates whose row no read has found yet, which still hold
+/// the writes that depend on them, each with the row its natural key names.
 pub fn queued(
     writes: &[QueuedWrite],
+    queue: &[QueuedWrite],
     landing: &std::collections::HashMap<String, String>,
     json: bool,
 ) -> Result<(), CliError> {
@@ -121,7 +123,7 @@ pub fn queued(
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
         return Ok(());
     }
-    let verdicts: std::collections::HashMap<_, _> = writes
+    let verdicts: std::collections::HashMap<_, _> = queue
         .iter()
         .map(|write| (write.id.as_str(), write.verdict))
         .collect();
@@ -146,8 +148,8 @@ pub fn queued(
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
-        // One the queue no longer holds was withdrawn or discarded, and holds
-        // nothing.
+        // One missing from the whole queue was withdrawn or discarded, and
+        // holds nothing.
         let pending: Vec<_> = write
             .depends_on
             .iter()

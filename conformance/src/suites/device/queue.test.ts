@@ -7153,6 +7153,57 @@ describe("an edit behind an edit of the same row", () => {
     ).toBe("theirs");
   });
 
+  it("says in words what the writes of an attached or added file wait on, counting writes queued before them", async () => {
+    harness = await hydratedHarness("queue-text-attach", { rows: rows() });
+    const { device } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "made here", body: "made here" },
+    });
+    expect(note.ok, JSON.stringify(note)).toBe(true);
+    if (!note.ok) return;
+    const attached = await device.text([
+      "items",
+      "attach",
+      note.value.item_id ?? "n",
+      fileOf("scan.txt", "scanned\n"),
+    ]);
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    if (!attached.ok) return;
+    // The witness: the edge waits on the note's create, which the attach did
+    // not queue, and on the file's.
+    const edge = (await queueOf(device)).find(
+      (row) => row.kind === "create_edge",
+    );
+    expect(edge?.depends_on).toHaveLength(2);
+    expect(edge?.depends_on).toContain(note.value.id);
+    expect(
+      attached.value.split("\n").find((text) => text.startsWith("create_edge")),
+      "the attach did not count the create queued before it among what its edge waits on",
+    ).toContain("waiting on 2 writes");
+    const before = new Set((await queueOf(device)).map((row) => row.id));
+    const added = await device.text([
+      "items",
+      "add",
+      fileOf("loose.txt", "loose\n"),
+    ]);
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    if (!added.ok) return;
+    const loose = (await queueOf(device)).find(
+      (row) => row.kind === "create_item" && !before.has(row.id),
+    );
+    expect(loose?.depends_on, JSON.stringify(loose)).toHaveLength(1);
+    const lines = added.value.split("\n");
+    expect(
+      lines.find((text) => text.startsWith("upload_blob")),
+      added.value,
+    ).not.toContain("waiting on");
+    expect(
+      lines.find((text) => text.startsWith("create_item")),
+      added.value,
+    ).toContain(`waiting on ${loose?.depends_on[0] ?? "the upload"}`);
+  });
+
   it("says in words which writes hold a queued write", async () => {
     harness = await hydratedHarness("queue-text", { rows: rows() });
     const { device } = harness;
