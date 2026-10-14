@@ -15,7 +15,7 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { DEFAULT_CONNECTOR_HOLD_MS } from "../config.js";
 import type { AppConfig } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { mayReadType, requireAuth, authorityId } from "../middleware/auth.js";
+import { mayReadType, authorityId } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -485,9 +485,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   const holdMs = config.connectorHoldMs ?? DEFAULT_CONNECTOR_HOLD_MS;
 
   router.openapi(holdRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), HoldInputSchema);
     const { process } = c.req.valid("json");
     const hold = await storage.connectors.takeHold(
@@ -509,9 +508,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(releaseHoldRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     await storage.connectors.releaseHold(
       connector.id,
       c.req.valid("query").process,
@@ -520,16 +518,14 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(getStateRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireOwnKey(connector.key_id, c);
     return c.json(await storage.connectorState.getState(connector.source), 200);
   });
 
   router.openapi(putStateRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    const key = requireOwnKey(connector.key_id, c);
     const sent = await c.req.json<{
       state: Record<string, unknown>;
       problems?: Record<string, string>;
@@ -588,9 +584,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(writeAgreementsRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    const key = requireOwnKey(connector.key_id, c);
     const body = c.req.valid("json");
     const sent = await c.req.json<{
       set?: { record: Record<string, unknown> }[];
@@ -629,9 +624,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(lookupAgreementsRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    const key = requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), FindInputSchema);
     const { item_ids } = c.req.valid("json");
     return c.json(
@@ -647,9 +641,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   });
 
   router.openapi(listAgreementsRoute, async (c) => {
-    const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    const key = requireOwnKey(connector.key_id, c);
     const { waiting, limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.connectorState.listAgreements(

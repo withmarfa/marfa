@@ -608,7 +608,7 @@ If `GET /connectors/{id}/deliveries` names a query key the operation does not de
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `GET /connectors/{id}/deliveries`, `GET /connectors/{id}/deliveries/{delivery_id}/body` or `POST /connectors/{id}/deliveries/handled`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › reads and marks to the connector's own key alone`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
+**Tests:** `compliance/inbound-webhooks.test.ts › reads and marks to the connector's own key alone`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
 
 ### `inbound-webhooks/deliveries-other-keeps`
 
