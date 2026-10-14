@@ -2235,7 +2235,10 @@ impl MarfaCore {
 
     /// Takes a refused write out of the queue, with the content it carried.
     /// Answers whether the row was one a discard takes: refused, and with no
-    /// write still waiting on it.
+    /// write still waiting on it, or a create refused onto a row its natural
+    /// key names that no read has found, whose waiting writes it refuses
+    /// unsent. A create's discard first waits for a drain already running to
+    /// end.
     #[napi]
     pub fn discard(&self, env: Env, id: String) -> Result<bool> {
         self.inner.discard(&id).map_err(|error| failure(env, error))

@@ -868,9 +868,10 @@ impl Core {
     }
 
     /// The refused creates whose move onto the row their natural key names
-    /// waits for a read that finds it. Each still holds the writes that depend
-    /// on it, whatever its verdict says.
-    pub fn pending_landings(&self) -> Result<std::collections::HashSet<String>> {
+    /// waits for a read that finds it, each with the id of that row. Each
+    /// still holds the writes that depend on it, whatever its verdict says,
+    /// until it is discarded.
+    pub fn pending_landings(&self) -> Result<std::collections::HashMap<String, String>> {
         store::pending_landings(&*self.conn()?)
     }
 
@@ -1901,11 +1902,23 @@ impl Core {
     }
 
     /// Takes a refused write out of the queue, with what it carried. Answers
-    /// `false` for a row that is not refused, or one a write still waits on.
+    /// `false` for a row that is not refused, or one a write still waits on,
+    /// unless it is a create refused onto a row no read has found: the writes
+    /// waiting on that one are refused unsent. A create's discard first waits
+    /// for a drain already running to end.
     pub fn discard(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        let conn = self.conn()?;
-        store::discard(&conn, id)
+        // Only a create's discard refuses other writes, and a running drain
+        // can make any create one whose landing waits for a read, so each
+        // waits for the drain to end. The kind is all that cannot change.
+        let create = store::queued_write(&*self.conn()?, id)?
+            .is_some_and(|row| row.kind == WriteKind::CreateItem);
+        let _one = create.then(|| self.one_drain());
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let discarded = store::discard(&tx, id)?;
+        tx.commit()?;
+        Ok(discarded)
     }
 
     pub fn status(&self) -> Result<Status> {

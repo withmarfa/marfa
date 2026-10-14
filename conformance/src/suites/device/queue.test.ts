@@ -3218,84 +3218,24 @@ describe("an answer the device applies keeps what it has not had answered", () =
   });
 
   it("holds a write made to a refused create's row until a read finds the row its natural key names", async () => {
-    const THEIRS = "01a00000-0000-7000-8000-0000000000cb";
-    harness = await hydratedHarness("queue-landed-absent-later-write", {
-      rows: held(),
-    });
-    const { device, server } = harness;
-    const created = await device.create({
-      type: "core.note",
-      properties: { title: "mine", body: "mine" },
-      source: "notes",
-      sourceId: "hidden.md",
-      version: 0,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const local = created.value.item_id ?? "";
-    const theirs = {
-      id: THEIRS,
-      version: 2,
-      properties: { title: "theirs", body: "theirs" },
-      tier: "library" as const,
-      occurred_at: "2026-01-01T00:00:00.000Z",
-      source_id: "hidden.md",
-      type: "core.note",
-    };
-    let readable = false;
-    scriptWrites(server, {
-      create: [answers.ancestorUnavailable(theirs, 0)],
-      read: [
-        () =>
-          readable
-            ? answers.updated(
-                wireItem({
-                  id: THEIRS,
-                  version: 2,
-                  properties: theirs.properties,
-                  source: "notes",
-                  source_id: "hidden.md",
-                }),
-              )
-            : refusal(404, "item_not_found", "Item not found"),
-      ],
-      tags: [{ kind: "json", status: 200, body: {} }],
-      edges: [edgeCreateDoor(server)],
-    });
-    const first = await device.drain();
-    expect(first.ok, JSON.stringify(first)).toBe(true);
-    // Made after the refusal, against the row the copy still shows under the
-    // id it minted.
-    const tagged = await device.addTag(local, "later");
-    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
-    const edited = await device.update(local, {
-      properties: { title: "later" },
-      version: 0,
-    });
-    expect(edited.ok, JSON.stringify(edited)).toBe(true);
-    const linked = await device.createEdge({
-      source: HELD.id,
-      target: local,
-      type: "references",
-    });
-    expect(linked.ok, JSON.stringify(linked)).toBe(true);
-    if (!tagged.ok || !edited.ok || !linked.ok) return;
-    const second = await device.drain();
-    expect(second.ok, JSON.stringify(second)).toBe(true);
-    expect(
-      server.requests
-        .filter((request) => request.method !== "GET")
-        .map((request) => `${request.method} ${request.pathname}`),
-      "a write to the row a refused create made went to an id the server never held",
-    ).toEqual(["POST /items"]);
+    const {
+      device,
+      server,
+      created,
+      tagged,
+      edited,
+      linked,
+      theirs,
+      readable,
+    } = await heldBehindUnfoundLanding("queue-landed-absent-later-write");
     let queue = await queueOf(device);
     const of = (id: string) => queue.find((row) => row.id === id);
-    for (const write of [tagged.value.id, edited.value.id, linked.value.id]) {
+    for (const write of [tagged.id, edited.id, linked.id]) {
       expect([
         of(write)?.verdict,
         of(write)?.reason,
         of(write)?.depends_on,
-      ]).toEqual(["blocked", "awaiting_dependency", [created.value.id]]);
+      ]).toEqual(["blocked", "awaiting_dependency", [created.id]]);
     }
     const listed = await device.text(["queue"]);
     expect(listed.ok, JSON.stringify(listed)).toBe(true);
@@ -3303,28 +3243,160 @@ describe("an answer the device applies keeps what it has not had answered", () =
     const heldLine = listed.value
       .split("\n")
       .find((text) => text.startsWith("update_item"));
-    expect(heldLine, listed.value).toContain(`waiting on ${created.value.id}`);
-    readable = true;
+    expect(heldLine, listed.value).toContain(`waiting on ${created.id}`);
+    readable();
     const third = await device.drain();
     expect(third.ok, JSON.stringify(third)).toBe(true);
     queue = await queueOf(device);
     expect(
-      [
-        of(tagged.value.id)?.verdict,
-        of(edited.value.id)?.verdict,
-        of(linked.value.id)?.verdict,
-      ],
+      [of(tagged.id)?.verdict, of(edited.id)?.verdict, of(linked.id)?.verdict],
       "once the row was found, the tag or the edge did not go to it, or the edit made against the row this device created did",
     ).toEqual(["accepted", "refused", "accepted"]);
     expect(
       server.requests
         .filter((request) => request.method !== "GET")
         .map((request) => `${request.method} ${request.pathname}`),
-    ).toEqual(["POST /items", `POST /items/${THEIRS}/tags`, "POST /edges"]);
+    ).toEqual(["POST /items", `POST /items/${theirs}/tags`, "POST /edges"]);
     const edge = server.requests.find(
       (request) => request.method === "POST" && request.pathname === "/edges",
     );
-    expect(JSON.parse(edge?.body ?? "{}").target_id).toBe(THEIRS);
+    expect(JSON.parse(edge?.body ?? "{}").target_id).toBe(theirs);
+  });
+
+  it("discards a refused create no read can land, refusing unsent the writes waiting on it", async () => {
+    const { device, server, created, local, tagged, edited, linked, theirs } =
+      await heldBehindUnfoundLanding("queue-landed-absent-discard", true);
+    // Waits on the edge's create, not on the create discarded, so it is
+    // refused in turn.
+    const annotated = await device.updateEdge(linked.edge_id ?? "", {
+      properties: { note: "waits on the edge" },
+      version: 0,
+    });
+    if (!annotated.ok || annotated.value === null)
+      throw new Error(JSON.stringify(annotated));
+    const annotation = annotated.value;
+    expect(annotation.depends_on).toEqual([linked.id]);
+    const pins = async () => {
+      const status = await device.status();
+      if (!status.ok) throw new Error(JSON.stringify(status));
+      return status.value.pinned;
+    };
+    const writesSent = () =>
+      server.requests
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`);
+    const readsOfTheirs = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${theirs}`,
+      ).length;
+    const lineOf = (text: string, kind: string) =>
+      text.split("\n").find((line) => line.startsWith(kind));
+
+    const before = await device.text(["queue"]);
+    expect(before.ok, JSON.stringify(before)).toBe(true);
+    if (!before.ok) return;
+    expect(
+      lineOf(before.value, "create_item"),
+      "the queue did not say what a person can do about a create no read can land",
+    ).toContain(
+      `its natural key names ${theirs}, which no read has found; discard it to refuse the writes waiting on it`,
+    );
+    // The witnesses: the minted row and the edge made to it are in the copy,
+    // the edit's line says what it waits on, and every drain so far read the
+    // row the create's natural key names.
+    expect(lineOf(before.value, "update_item")).toContain(
+      `waiting on ${created.id}`,
+    );
+    expect((await device.get(local)).ok).toBe(true);
+    const listedBefore = await device.list();
+    expect(
+      listedBefore.ok && listedBefore.value.map((item) => item.id),
+    ).toContain(local);
+    const edgesBefore = await device.edgesTo(local);
+    expect(edgesBefore.ok && edgesBefore.value.map((edge) => edge.id)).toEqual([
+      linked.edge_id,
+    ]);
+    const readsBefore = readsOfTheirs();
+    expect(readsBefore).toBeGreaterThan(0);
+
+    const discarded = await device.discard(created.id);
+    expect(discarded.ok && discarded.value, JSON.stringify(discarded)).toBe(
+      true,
+    );
+    let queue = await queueOf(device);
+    expect(
+      queue.find((row) => row.id === created.id),
+      "the discarded create stayed in the queue",
+    ).toBeUndefined();
+    for (const write of [tagged, edited, linked, annotation]) {
+      const row = queue.find((each) => each.id === write.id);
+      expect(
+        [row?.verdict, row?.reason, row?.body],
+        "a write waiting on the discarded create was not refused unsent with what it carried",
+      ).toEqual([
+        "refused",
+        "the create_item it waits for was discarded",
+        write.body,
+      ]);
+    }
+    expect(
+      (await device.get(local)).ok,
+      "the copy kept the row the discarded create minted, which the server never held",
+    ).toBe(false);
+    const listedAfter = await device.list();
+    expect(listedAfter.ok, JSON.stringify(listedAfter)).toBe(true);
+    expect(
+      listedAfter.ok && listedAfter.value.map((item) => item.id),
+    ).not.toContain(local);
+    expect(
+      listedAfter.ok && listedAfter.value.map((item) => item.id),
+    ).toContain(HELD.id);
+    expect(
+      await pins(),
+      "the pin of the discarded create's row went before a read said the server holds no such row",
+    ).toContain(local);
+    const edgesAfter = await device.edgesFrom(HELD.id);
+    expect(
+      edgesAfter.ok && edgesAfter.value.map((edge) => edge.id),
+      "the copy kept the edge made to the discarded create's row",
+    ).not.toContain(linked.edge_id);
+    const after = await device.text(["queue"]);
+    expect(after.ok, JSON.stringify(after)).toBe(true);
+    if (!after.ok) return;
+    expect(
+      lineOf(after.value, "update_item"),
+      "a refused write said it waits on a create the queue no longer holds",
+    ).not.toContain("waiting on");
+
+    const released = await device.release({ id: edited.id });
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    expect(
+      released.ok && released.value,
+      "a write refused for a discarded create was released, and it then waits for a write the queue no longer holds",
+    ).toBe(0);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      writesSent(),
+      "a write refused for a discarded create was sent",
+    ).toEqual(["POST /items"]);
+    expect(
+      readsOfTheirs(),
+      "a drain after the discard read the row the discarded create's natural key names",
+    ).toBe(readsBefore);
+    expect(
+      await pins(),
+      "the pin of the discarded create's row stayed after a read found no such row",
+    ).not.toContain(local);
+
+    for (const write of [tagged, edited, linked, annotation]) {
+      const taken = await device.discard(write.id);
+      expect(taken.ok && taken.value, JSON.stringify(taken)).toBe(true);
+    }
+    queue = await queueOf(device);
+    expect(queue, "the queue did not empty").toEqual([]);
+    expect((await device.drain()).ok).toBe(true);
+    expect(writesSent()).toEqual(["POST /items"]);
   });
 
   it("reads the row a create landed on again after a failure that clears on its own", async () => {
@@ -7091,6 +7163,57 @@ describe("an edit behind an edit of the same row", () => {
     ).toBe("theirs");
   });
 
+  it("says in words what the writes of an attached or added file wait on, counting writes queued before them", async () => {
+    harness = await hydratedHarness("queue-text-attach", { rows: rows() });
+    const { device } = harness;
+    const note = await device.create({
+      type: "core.note",
+      properties: { title: "made here", body: "made here" },
+    });
+    expect(note.ok, JSON.stringify(note)).toBe(true);
+    if (!note.ok) return;
+    const attached = await device.text([
+      "items",
+      "attach",
+      note.value.item_id ?? "n",
+      fileOf("scan.txt", "scanned\n"),
+    ]);
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    if (!attached.ok) return;
+    // The witness: the edge waits on the note's create, which the attach did
+    // not queue, and on the file's.
+    const edge = (await queueOf(device)).find(
+      (row) => row.kind === "create_edge",
+    );
+    expect(edge?.depends_on).toHaveLength(2);
+    expect(edge?.depends_on).toContain(note.value.id);
+    expect(
+      attached.value.split("\n").find((text) => text.startsWith("create_edge")),
+      "the attach did not count the create queued before it among what its edge waits on",
+    ).toContain("waiting on 2 writes");
+    const before = new Set((await queueOf(device)).map((row) => row.id));
+    const added = await device.text([
+      "items",
+      "add",
+      fileOf("loose.txt", "loose\n"),
+    ]);
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    if (!added.ok) return;
+    const loose = (await queueOf(device)).find(
+      (row) => row.kind === "create_item" && !before.has(row.id),
+    );
+    expect(loose?.depends_on, JSON.stringify(loose)).toHaveLength(1);
+    const lines = added.value.split("\n");
+    expect(
+      lines.find((text) => text.startsWith("upload_blob")),
+      added.value,
+    ).not.toContain("waiting on");
+    expect(
+      lines.find((text) => text.startsWith("create_item")),
+      added.value,
+    ).toContain(`waiting on ${loose?.depends_on[0] ?? "the upload"}`);
+  });
+
   it("says in words which writes hold a queued write", async () => {
     harness = await hydratedHarness("queue-text", { rows: rows() });
     const { device } = harness;
@@ -7715,6 +7838,97 @@ describe("an edit behind an edit of the same row", () => {
     });
   });
 });
+
+/**
+ * A create refused onto a row its natural key names that no read finds, with
+ * a tag, an edit and an edge made to the create's row after the refusal, each
+ * held for it. `readable` lets the next read find the row. With `pinned`, the
+ * create's row is pinned before the create is sent.
+ */
+async function heldBehindUnfoundLanding(name: string, pinned = false) {
+  const theirs = "01a00000-0000-7000-8000-0000000000cb";
+  harness = await hydratedHarness(name, { rows: held() });
+  const { device, server } = harness;
+  const created = await device.create({
+    type: "core.note",
+    properties: { title: "mine", body: "mine" },
+    source: "notes",
+    sourceId: "hidden.md",
+    version: 0,
+  });
+  if (!created.ok) throw new Error(JSON.stringify(created));
+  const local = created.value.item_id ?? "";
+  const row = {
+    id: theirs,
+    version: 2,
+    properties: { title: "theirs", body: "theirs" },
+    tier: "library" as const,
+    occurred_at: "2026-01-01T00:00:00.000Z",
+    source_id: "hidden.md",
+    type: "core.note",
+  };
+  let found = false;
+  scriptWrites(server, {
+    create: [answers.ancestorUnavailable(row, 0)],
+    read: [
+      () =>
+        found
+          ? answers.updated(
+              wireItem({
+                id: theirs,
+                version: 2,
+                properties: row.properties,
+                source: "notes",
+                source_id: "hidden.md",
+              }),
+            )
+          : refusal(404, "item_not_found", "Item not found"),
+    ],
+    tags: [{ kind: "json", status: 200, body: {} }],
+    edges: [edgeCreateDoor(server)],
+  });
+  if (pinned) {
+    const pin = await device.pin(local);
+    if (!pin.ok || !pin.value.pinned) throw new Error(JSON.stringify(pin));
+  }
+  const first = await device.drain();
+  if (!first.ok) throw new Error(JSON.stringify(first));
+  // Made after the refusal, against the row the copy still shows under the
+  // id it minted.
+  const tagged = await device.addTag(local, "later");
+  const edited = await device.update(local, {
+    properties: { title: "later" },
+    version: 0,
+  });
+  const linked = await device.createEdge({
+    source: HELD.id,
+    target: local,
+    type: "references",
+  });
+  if (!tagged.ok || !edited.ok || !linked.ok)
+    throw new Error(JSON.stringify([tagged, edited, linked]));
+  const second = await device.drain();
+  if (!second.ok) throw new Error(JSON.stringify(second));
+  expect(
+    server.requests
+      .filter((request) => request.method !== "GET")
+      .map((request) => `${request.method} ${request.pathname}`),
+    "a write to the row a refused create made went to an id the server never held",
+  ).toEqual(["POST /items"]);
+  return {
+    device,
+    server,
+    theirs,
+    local,
+    created: created.value,
+    tagged: tagged.value,
+    edited: edited.value,
+    linked: linked.value,
+    readable: () => {
+      found = true;
+    },
+  };
+}
 
 function edgeCreateDoor(
   server: ScriptedServer,

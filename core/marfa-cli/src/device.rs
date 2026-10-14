@@ -144,7 +144,10 @@ pub enum DeviceCommand {
     /// Take a refused write out of the queue, with the content it carried.
     ///
     /// The one way a refused create, edit, metadata, extension or edge
-    /// write leaves the queue. A write still waiting on it keeps it.
+    /// write leaves the queue. A write still waiting on it keeps it, but for
+    /// a create refused onto a row its natural key names that no read has
+    /// found: discarded, that create takes its row out of the copy, and the
+    /// writes waiting on it are refused unsent, each kept with its content.
     Discard {
         /// The refused write to discard.
         #[arg(value_name = "ID")]
@@ -990,7 +993,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         tier: args.tier.map(Into::into),
                     };
                     let added = core.add_file(&args.file, &attachment, &args.tags)?;
-                    output::queued(&[added.upload, added.item], &Default::default(), json)
+                    output::queued(
+                        &[added.upload, added.item],
+                        &core.queue()?,
+                        &core.pending_landings()?,
+                        json,
+                    )
                 }
                 ItemsCommand::Attach(args) => {
                     let attachment = Attachment {
@@ -1005,7 +1013,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     }
                     output::queued(
                         &[attached.upload, attached.item, attached.edge],
-                        &Default::default(),
+                        &core.queue()?,
+                        &core.pending_landings()?,
                         json,
                     )?;
                     if let Some(embed) = &attached.embed {
@@ -1207,7 +1216,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::Queue => {
             let core = store.open(None)?;
-            output::queued(&core.queue()?, &core.pending_landings()?, json)
+            let queue = core.queue()?;
+            output::queued(&queue, &queue, &core.pending_landings()?, json)
         }
         DeviceCommand::Forget => {
             let cleared = store.open(None)?.forget_answered()?;

@@ -108,11 +108,14 @@ pub fn nothing_queued(json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-/// `landing` names the refused creates whose row no read has found yet, which
-/// still hold the writes that depend on them.
+/// `writes` are printed against `queue`, the whole queue, so a write they
+/// depend on is read where it stands even when it is not among them. `landing`
+/// names the refused creates whose row no read has found yet, which still hold
+/// the writes that depend on them, each with the row its natural key names.
 pub fn queued(
     writes: &[QueuedWrite],
-    landing: &std::collections::HashSet<String>,
+    queue: &[QueuedWrite],
+    landing: &std::collections::HashMap<String, String>,
     json: bool,
 ) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
@@ -120,7 +123,7 @@ pub fn queued(
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
         return Ok(());
     }
-    let verdicts: std::collections::HashMap<_, _> = writes
+    let verdicts: std::collections::HashMap<_, _> = queue
         .iter()
         .map(|write| (write.id.as_str(), write.verdict))
         .collect();
@@ -145,20 +148,16 @@ pub fn queued(
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
+        // One missing from the whole queue was withdrawn or discarded, and
+        // holds nothing.
         let pending: Vec<_> = write
             .depends_on
             .iter()
             .filter(|id| {
-                landing.contains(id.as_str())
-                    || !matches!(
+                landing.contains_key(id.as_str())
+                    || matches!(
                         verdicts.get(id.as_str()),
-                        Some(Some(
-                            marfa_core::Verdict::Accepted
-                                | marfa_core::Verdict::Merged
-                                | marfa_core::Verdict::Conflicted
-                                | marfa_core::Verdict::Refused
-                                | marfa_core::Verdict::Dead
-                        ))
+                        Some(None | Some(marfa_core::Verdict::Blocked))
                     )
             })
             .collect();
@@ -172,10 +171,17 @@ pub fn queued(
             Some(ahead) => format!("  after {ahead}"),
             None => String::new(),
         };
+        let unlanded = match landing.get(&write.id) {
+            Some(target) => format!(
+                "  its natural key names {target}, which no read has found; \
+                 discard it to refuse the writes waiting on it"
+            ),
+            None => String::new(),
+        };
         writeln!(
             out,
-            "{}  {}  {}{}{}{}{}{}",
-            write.kind, subject, verdict, reason, refusal, refusals, held, after
+            "{}  {}  {}{}{}{}{}{}{}",
+            write.kind, subject, verdict, reason, refusal, refusals, held, after, unlanded
         )?;
     }
     if writes.is_empty() {
