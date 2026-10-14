@@ -293,7 +293,7 @@ impl Folder {
             return Ok(());
         }
         let generation = health.lock().expect("follow health lock").generation;
-        let drain = self.drain()?;
+        let drain = self.drain_in(true)?;
         let reached = match &drain.report.unavailable {
             Some(why) => telling.reach(Some(why.clone())),
             None if drain.report.answered > 0 => telling.reach(None),
