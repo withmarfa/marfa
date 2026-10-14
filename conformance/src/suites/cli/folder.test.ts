@@ -680,16 +680,17 @@ describe("a folder round trip", () => {
         );
       }
       expect(existsSync(store)).toBe(true);
-      // The witness: a link that took no listed folder's place is refused
-      // naming the directory it points to.
-      symlinkSync(second, join(dir, "unlisted"));
+      // The witness: a link to a folder that no relinked listing reaches is
+      // refused naming the directory it points to.
+      const third = await addNotes("c");
+      symlinkSync(third, join(dir, "unlisted"));
       const unlisted = await c.cli.refused([
         "folders",
         "status",
         join(dir, "unlisted"),
       ]);
       expect(unlisted.envelope.error.message).toContain(
-        `name the directory it points to, ${second}`,
+        `name the directory it points to, ${third}`,
       );
       // The listed path takes the folder off the list and leaves the folder
       // the link leads to.
@@ -704,6 +705,57 @@ describe("a folder round trip", () => {
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
     }
+  });
+
+  it("never offers the directory a relinked listing now leads to when refusing a link to that listing", async () => {
+    const first = await addNotes("a");
+    const second = await addNotes("b");
+    const fourth = await addNotes("d");
+    const fifth = await addNotes("e");
+    const third = await addNotes("c");
+    const stores = [first, second, fourth, fifth, third].map((folder) =>
+      join(folder, ".marfa", "core.sqlite"),
+    );
+    // Links the person made to listed folders, then the listings relinked:
+    // the first folder's own directory to the second folder, and the
+    // directory above the fourth folder to the one holding the fifth.
+    symlinkSync(first, join(dir, "alias"));
+    symlinkSync(join(dir, "alias"), join(dir, "chain"));
+    symlinkSync(fourth, join(dir, "ln"));
+    renameSync(first, join(dir, "a", "notes-moved"));
+    symlinkSync(second, first);
+    renameSync(join(dir, "d"), join(dir, "d-moved"));
+    symlinkSync(join(dir, "e"), join(dir, "d"));
+    for (const name of ["alias", "chain", "ln"]) {
+      for (const command of ["status", "push", "remove"]) {
+        const refused = await c.cli.refused([
+          "folders",
+          command,
+          join(dir, name),
+        ]);
+        const said = `folders ${command} ${name}`;
+        expect(refused.envelope.error.code, said).toBe("invalid");
+        expect(refused.envelope.error.message, said).toContain(
+          "name the directory itself",
+        );
+        expect(refused.envelope.error.message, said).not.toContain(second);
+        expect(refused.envelope.error.message, said).not.toContain(fifth);
+      }
+    }
+    expect(stores.map((store) => existsSync(store))).toEqual(
+      stores.map(() => true),
+    );
+    // The witness: a link to a folder that no relinked listing reaches is
+    // refused naming the directory it points to.
+    symlinkSync(third, join(dir, "to-third"));
+    const offered = await c.cli.refused([
+      "folders",
+      "status",
+      join(dir, "to-third"),
+    ]);
+    expect(offered.envelope.error.message).toContain(
+      `name the directory it points to, ${third}`,
+    );
   });
 
   // The default macOS volume folds letter case; Linux volumes do not.

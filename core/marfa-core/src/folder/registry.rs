@@ -528,12 +528,14 @@ impl Refusal {
                 {
                     return refused;
                 }
-                // Past a climbed link, a path can read as one directory and
-                // reach another, and a listed path that reaches it through a
-                // link could be the folder meant.
+                // A directory that a listed path reaches only through a link
+                // is not offered, since any link to that listing, or a chain
+                // of them, reaches it too, and the folder meant may be the
+                // listed one. Past a climbed link, a path can also read as
+                // one directory and reach another.
                 let reached = reached.ok().filter(|target| {
-                    own || (same_directory(target, &resolved(&as_written(&named)))
-                        && !reached_through_link(target, &listed))
+                    !reached_through_link(target, &listed)
+                        && (own || same_directory(target, &resolved(&as_written(&named))))
                 });
                 through_link(&link, reached.as_deref(), own)
             }
@@ -1318,20 +1320,92 @@ mod tests {
                 if message.ends_with("name the folder by a path without it")
         ));
 
-        // The witness: a link that took no listed folder's place is refused
-        // naming the directory it points to.
+        // The witness: a link to a folder that no relinked listing reaches is
+        // refused naming the directory it points to.
+        let third = base.join("g/notes");
+        bound_folder(&third, "01a00000-0000-7000-8000-000000000007");
+        drop(Folder::open(&third, None).unwrap());
         let unlisted = base.join("unlisted");
-        std::os::unix::fs::symlink(&second, &unlisted).unwrap();
+        std::os::unix::fs::symlink(&third, &unlisted).unwrap();
         assert!(matches!(
             Folder::status_of(&unlisted).err(),
             Some(CoreError::Invalid(message))
-                if message.ends_with(&format!("name the directory it points to, {}", second.display()))
+                if message.ends_with(&format!("name the directory it points to, {}", third.display()))
         ));
         assert!(matches!(
             Folder::remove_at(&first).unwrap(),
             crate::folder::Removal::Unlisted { .. }
         ));
         assert!(second.join(STATE_DIR).join("core.sqlite").exists());
+    }
+
+    #[test]
+    fn a_link_to_a_relinked_listing_is_never_told_to_name_where_the_listing_now_leads() {
+        use crate::folder::Folder;
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let folders = [("a", 1), ("b", 2), ("d", 4), ("e", 5), ("c", 3)].map(|(name, n)| {
+            let dir = base.join(name).join("notes");
+            bound_folder(&dir, &format!("01a00000-0000-7000-8000-00000000010{n}"));
+            drop(Folder::open(&dir, None).unwrap());
+            dir
+        });
+        let [first, second, fourth, fifth, third] = &folders;
+        let stores = || {
+            folders
+                .iter()
+                .all(|dir| dir.join(STATE_DIR).join("core.sqlite").exists())
+        };
+        // Links the person made to listed folders, then the listings relinked:
+        // the first folder's own directory to the second folder, and the
+        // directory above the fourth folder to the one holding the fifth.
+        std::os::unix::fs::symlink(first, base.join("alias")).unwrap();
+        std::os::unix::fs::symlink(base.join("alias"), base.join("chain")).unwrap();
+        std::os::unix::fs::symlink(fourth, base.join("ln")).unwrap();
+        std::fs::rename(first, base.join("a/notes-moved")).unwrap();
+        std::os::unix::fs::symlink(second, first).unwrap();
+        std::fs::rename(base.join("d"), base.join("d-moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("e"), base.join("d")).unwrap();
+        let server = || {
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            })
+        };
+        let withheld = |error: Option<CoreError>| match error {
+            Some(CoreError::Invalid(message)) => {
+                message.ends_with("name the directory itself")
+                    && !message.contains(&second.display().to_string())
+                    && !message.contains(&fifth.display().to_string())
+            }
+            _ => false,
+        };
+
+        for name in ["alias", "chain", "ln"] {
+            let link = base.join(name);
+            assert!(withheld(Folder::open(&link, None).err()), "{name}");
+            assert!(withheld(Folder::status_of(&link).err()), "{name}");
+            assert!(withheld(Folder::remove_at(&link).err()), "{name}");
+            assert!(withheld(
+                Folder::add(
+                    &link,
+                    "01a00000-0000-7000-8000-000000000101",
+                    server(),
+                    None
+                )
+                .err()
+            ));
+            assert!(stores(), "{name}");
+        }
+
+        // The witness: a link to a folder that no relinked listing reaches is
+        // refused naming the directory it points to.
+        std::os::unix::fs::symlink(third, base.join("to-third")).unwrap();
+        assert!(matches!(
+            Folder::status_of(base.join("to-third")).err(),
+            Some(CoreError::Invalid(message))
+                if message.ends_with(&format!("name the directory it points to, {}", third.display()))
+        ));
     }
 
     #[test]

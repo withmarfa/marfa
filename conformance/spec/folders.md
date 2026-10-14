@@ -4572,11 +4572,11 @@ If a device refuses a path because a symbolic link now stands in the path at whi
 
 ### `folders/listed-link-refusal-no-redirect`
 
-If a device refuses a path because the path's own directory entry, or one that a later `..` climbs back out of, is a symbolic link that now stands at the directory entry where the machine’s folder registry lists a folder, however the path spells that entry, then a device MUST NOT give the directory the link leads to in the refusal's message as the one to name instead.
+If a device refuses a path that passes through a symbolic link, and a path at which the machine’s folder registry lists a folder reaches some directory only through a symbolic link, then a device MUST NOT give that directory in the refusal's message as the one to name instead.
 
-**Reason:** That directory can hold another listed folder, which a person following the advice would then work on, such as by removing its state.
+**Reason:** A link at the listed folder's own directory entry or in a directory above it, or a link or chain of links the person made to the listed folder, can lead to a directory that holds another folder. A person following the advice would then work on that folder, such as by removing its state.
 
-**Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`.
+**Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`, `cli/folder.test.ts › never offers the directory a relinked listing now leads to when refusing a link to that listing`.
 
 ### `folders/root-link-refused-invalid`
 
