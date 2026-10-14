@@ -862,14 +862,6 @@ When a catch-up ends on its live marker, a device MUST report how many events it
 
 **Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› skips an event at the version it holds that was stamped before the row it holds`, `› reports what a catch-up carried, and refuses one that stopped short`, `› moves the cursor past the rows the stream withheld, and resumes from there`.
 
-### `device/catch-up-report-only`
-
-When a catch-up ends on its live marker, a device MUST NOT report anything beyond how many events it applied, how many it skipped, the cursor it reached and whether it changed the catalog the copy holds (`device/catch-up-catalog-told`).
-
-**Reason:** a catch-up that stops short of the head ends `stream_incomplete` (`device/catch-up-incomplete`) instead of returning a report, so a field saying the head was reached would be true of every report.
-
-**Tests:** `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
-
 ### `device/cursor-zero`
 
 When a device hydrates an instance whose log is empty, a device MUST store the cursor `0`.
