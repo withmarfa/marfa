@@ -10,6 +10,9 @@ use rusqlite::Connection;
 
 use crate::error::CoreError;
 
+/// The lock's file in a folder's state directory, beside the store.
+pub(crate) const DIRECTORY_LOCK: &str = "core.sqlite.writer-lock";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handle {
     Writer,
@@ -43,7 +46,7 @@ impl WriterLock {
         vfs: &crate::directory_vfs::DirectoryVfs,
     ) -> Result<Self, CoreError> {
         Self::claim_connection(vfs.open(
-            "core.sqlite.writer-lock",
+            DIRECTORY_LOCK,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,

@@ -1,5 +1,6 @@
 use rustix::fs::{self, AtFlags};
 pub(crate) use rustix::fs::{FileType, Mode, OFlags};
+use rustix::io::Errno;
 use std::{
     ffi::OsString,
     fs::{File, Metadata},
@@ -14,16 +15,40 @@ pub(crate) struct Directory {
     file: Arc<File>,
 }
 
+/// A directory a call made, held with the directory it was made in, so it
+/// can be taken back by its name without following a link.
+#[derive(Debug)]
+pub(crate) struct MadeDirectory {
+    parent: Directory,
+    name: OsString,
+    directory: Directory,
+}
+
+impl MadeDirectory {
+    /// Removes the directory where it still stands, empty, at its name.
+    /// Answers whether it was removed.
+    pub(crate) fn take_back(&self) -> io::Result<bool> {
+        self.parent
+            .remove_dir(Path::new(&self.name), &self.directory)
+    }
+}
+
 impl Directory {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
-        Self::open_with(path, false)
+        Self::open_with(path, None)
     }
 
     pub(crate) fn create(path: &Path) -> io::Result<Self> {
-        Self::open_with(path, true)
+        Self::open_with(path, Some(&mut Vec::new()))
     }
 
-    fn open_with(path: &Path, create: bool) -> io::Result<Self> {
+    /// `create`, recording in `made` each directory this call made, first
+    /// made first.
+    pub(crate) fn create_recorded(path: &Path, made: &mut Vec<MadeDirectory>) -> io::Result<Self> {
+        Self::open_with(path, Some(made))
+    }
+
+    fn open_with(path: &Path, mut made: Option<&mut Vec<MadeDirectory>>) -> io::Result<Self> {
         if !cfg!(any(target_vendor = "apple", target_os = "linux")) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -47,7 +72,9 @@ impl Directory {
         };
         for part in components {
             match part {
-                Component::Normal(name) => directory = directory.child(Path::new(name), create)?,
+                Component::Normal(name) => {
+                    directory = directory.reach(Path::new(name), made.as_deref_mut())?;
+                }
                 Component::CurDir => {}
                 Component::ParentDir => directory = directory.up()?,
                 _ => return Err(invalid_path()),
@@ -81,24 +108,52 @@ impl Directory {
     }
 
     pub(crate) fn child(&self, relative: &Path, create: bool) -> io::Result<Self> {
+        let mut made = Vec::new();
+        self.reach(relative, create.then_some(&mut made))
+    }
+
+    /// `child`, making each missing directory and recording in `made` the
+    /// ones this call made, first made first.
+    pub(crate) fn child_recorded(
+        &self,
+        relative: &Path,
+        made: &mut Vec<MadeDirectory>,
+    ) -> io::Result<Self> {
+        self.reach(relative, Some(made))
+    }
+
+    /// Walks `relative`, making each missing directory where `made` is
+    /// given and recording there the ones made.
+    fn reach(
+        &self,
+        relative: &Path,
+        mut made: Option<&mut Vec<MadeDirectory>>,
+    ) -> io::Result<Self> {
         let mut directory = self.clone();
         for part in relative.components() {
             let Component::Normal(name) = part else {
                 return Err(invalid_path());
             };
-            if create {
-                match fs::mkdirat(directory.file(), name, Mode::from_raw_mode(0o700)) {
-                    Ok(()) => {}
-                    Err(rustix::io::Errno::EXIST) => {}
+            let created = made.is_some()
+                && match fs::mkdirat(directory.file(), name, Mode::from_raw_mode(0o700)) {
+                    Ok(()) => true,
+                    Err(Errno::EXIST) => false,
                     Err(error) => return Err(error.into()),
-                }
-            }
-            directory = Self::from_fd(fs::openat(
+                };
+            let child = Self::from_fd(fs::openat(
                 directory.file(),
                 name,
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )?);
+            if created && let Some(made) = made.as_deref_mut() {
+                made.push(MadeDirectory {
+                    parent: directory,
+                    name: name.to_owned(),
+                    directory: child.clone(),
+                });
+            }
+            directory = child;
         }
         Ok(directory)
     }
@@ -163,18 +218,6 @@ impl Directory {
             }));
         #[cfg(not(target_vendor = "apple"))]
         Ok(None)
-    }
-
-    pub(crate) fn contains_no_files(&self) -> io::Result<bool> {
-        for name in self.entries()? {
-            let name = Path::new(&name);
-            if self.entry_kind(name)? != fs::FileType::Directory
-                || !self.child(name, false)?.contains_no_files()?
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     pub(crate) fn read(&self, relative: &Path) -> io::Result<Vec<u8>> {
@@ -249,6 +292,36 @@ impl Directory {
     pub(crate) fn unlink(&self, relative: &Path) -> io::Result<()> {
         let (parent, name) = self.parent(relative, false)?;
         fs::unlinkat(parent.file(), &name, AtFlags::empty()).map_err(Into::into)
+    }
+
+    /// Removes the directory at `relative` where it is `expected` and empty,
+    /// following no link. Answers whether it was removed: a directory that
+    /// holds anything, or any other entry at that name, stays.
+    pub(crate) fn remove_dir(&self, relative: &Path, expected: &Self) -> io::Result<bool> {
+        let (parent, name) = self.parent(relative, false)?;
+        let standing = match parent.child(Path::new(&name), false) {
+            Ok(standing) => standing,
+            Err(error)
+                if matches!(
+                    error.raw_os_error().map(Errno::from_raw_os_error),
+                    Some(Errno::NOENT | Errno::LOOP | Errno::NOTDIR)
+                ) =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        if !standing.same(expected)? {
+            return Ok(false);
+        }
+        // Another empty directory can take the name between the check and
+        // the removal. The removal takes only an empty directory, so no
+        // entry anyone put anywhere is lost.
+        match fs::unlinkat(parent.file(), &name, AtFlags::REMOVEDIR) {
+            Ok(()) => Ok(true),
+            Err(Errno::NOTEMPTY | Errno::EXIST | Errno::NOENT | Errno::NOTDIR) => Ok(false),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub(crate) fn rename(
@@ -361,16 +434,78 @@ mod tests {
                 Mode::from_raw_mode(0o600),
             )
             .unwrap();
-        assert!(!owned.contains_no_files().unwrap());
+        assert_eq!(owned.entries().unwrap(), ["proof"]);
         std::fs::rename(path.join("child"), path.join("original")).unwrap();
         std::fs::create_dir_all(path.join("child/nested")).unwrap();
         std::fs::write(path.join("child/nested/proof"), b"replacement").unwrap();
         owned.clear().unwrap();
-        assert!(owned.contains_no_files().unwrap());
+        assert!(owned.entries().unwrap().is_empty());
         assert!(path.join("original/nested").is_dir());
         assert_eq!(
             std::fs::read(path.join("child/nested/proof")).unwrap(),
             b"replacement"
+        );
+    }
+
+    #[test]
+    fn a_made_directory_is_taken_back_only_while_it_stands_empty_at_its_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap();
+        let root = Directory::open(&path).unwrap();
+        std::fs::create_dir(path.join("before")).unwrap();
+        let mut made = Vec::new();
+        root.child_recorded(Path::new("before/one/two"), &mut made)
+            .unwrap();
+        assert_eq!(
+            made.len(),
+            2,
+            "a directory there before was recorded as made"
+        );
+
+        // Holding a file, it stays.
+        std::fs::write(path.join("before/one/two/kept"), b"kept").unwrap();
+        assert!(!made[1].take_back().unwrap());
+        assert_eq!(
+            std::fs::read(path.join("before/one/two/kept")).unwrap(),
+            b"kept"
+        );
+        std::fs::remove_file(path.join("before/one/two/kept")).unwrap();
+
+        // Another empty directory, or a link, at its name stays, and so does
+        // the directory the link leads to.
+        std::fs::rename(path.join("before/one/two"), path.join("moved")).unwrap();
+        std::fs::create_dir(path.join("before/one/two")).unwrap();
+        assert!(!made[1].take_back().unwrap());
+        assert!(path.join("before/one/two").is_dir());
+        std::fs::remove_dir(path.join("before/one/two")).unwrap();
+        std::os::unix::fs::symlink(path.join("moved"), path.join("before/one/two")).unwrap();
+        assert!(!made[1].take_back().unwrap());
+        assert!(path.join("moved").is_dir());
+        assert!(
+            std::fs::symlink_metadata(path.join("before/one/two"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        std::fs::remove_file(path.join("before/one/two")).unwrap();
+        std::fs::rename(path.join("moved"), path.join("before/one/two")).unwrap();
+
+        // The witness: standing empty where it was made, each is taken back,
+        // last made first, and the directory there before stays.
+        assert!(
+            !made[0].take_back().unwrap(),
+            "a directory holding another was removed"
+        );
+        for made in made.iter().rev() {
+            assert!(made.take_back().unwrap());
+        }
+        assert_eq!(root.entries().unwrap(), ["before"]);
+        assert!(
+            root.child(Path::new("before"), false)
+                .unwrap()
+                .entries()
+                .unwrap()
+                .is_empty()
         );
     }
 
