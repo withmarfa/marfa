@@ -28,6 +28,11 @@ pub const BULK_GET_LIMIT: usize = 100;
 /// (`search-and-filters/lookup-values-cap`).
 pub const LOOKUP_LIMIT: usize = 500;
 
+/// The most bytes one lookup's body carries, well under the server's default
+/// cap on a JSON body; a server that caps lower answers `413`, and the keys
+/// are asked again in halves.
+pub const LOOKUP_BODY_BYTES: usize = 256 * 1024;
+
 /// How long a server may take to begin an answer, and to send the body of
 /// one read whole.
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);

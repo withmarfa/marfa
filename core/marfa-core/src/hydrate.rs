@@ -303,9 +303,13 @@ pub(crate) fn lay_queue_over(
                     // answer at the tier the slice chose where the copy does
                     // not hold that row.
                     if draft.tier.is_none()
-                        && let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id)
+                        && let Some(source_id) = &draft.source_id
                     {
-                        if let Some(held) = store::item_under_key(conn, source, source_id)? {
+                        let held = match store::source_of(conn, draft.source.as_deref())? {
+                            Some(source) => store::item_under_key(conn, &source, source_id)?,
+                            None => None,
+                        };
+                        if let Some(held) = held {
                             wire.tier = held.tier.map(|tier| tier.as_str().into());
                         } else if let Some(tier) = store::chosen_tier(conn, &row.id)? {
                             wire.tier = Some(tier.as_str().into());

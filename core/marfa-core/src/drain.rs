@@ -7,6 +7,7 @@ use std::fs::File;
 use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
+use sha2::Digest;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
@@ -650,7 +651,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // behind one waits for the next pass: once sent under its key, a body
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
-    let mut keys_held = KeysHeld::new();
+    let mut lookups = Lookups::new();
 
     for row in &all {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -754,7 +755,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             Readiness::Ready => {}
         }
 
-        let payload = match payload_to_send(core, http, row, &all, &mut keys_held)? {
+        let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(payload) => payload,
             Err(CoreError::Unauthorized { .. }) => {
                 let conn = core.conn()?;
@@ -844,7 +845,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             Sendable::Upload { bytes, mime_type } => (upload(http, bytes, &mime_type), Shape::Blob),
         };
         if row.kind == WriteKind::CreateItem {
-            keys_held.forget(&row.body);
+            lookups.forget(&row.body);
         }
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
@@ -973,39 +974,94 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     Ok(report)
 }
 
-/// Whether a natural key names a row on the server, as a lookup this pass
-/// answered, by type, source and `source_id`.
-struct KeysHeld(HashMap<(String, String, String), bool>);
+/// What a lookup this pass said of a natural key.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Known {
+    Held,
+    Unheld,
+    /// The lookup was refused for good, or the key is one no lookup takes.
+    Unknown,
+}
 
-impl KeysHeld {
-    fn new() -> KeysHeld {
-        KeysHeld(HashMap::new())
+/// What lookups this pass answered, by type, source and `source_id`, and the
+/// source a create naming none falls under, once learned.
+struct Lookups {
+    keys: HashMap<(String, String, String), Known>,
+    own: Option<Option<String>>,
+}
+
+impl Lookups {
+    fn new() -> Lookups {
+        Lookups {
+            keys: HashMap::new(),
+            own: None,
+        }
+    }
+
+    fn source(&self, body: &serde_json::Value) -> Option<String> {
+        match body.get("source").and_then(serde_json::Value::as_str) {
+            Some(source) => Some(source.into()),
+            None => self.own.clone().flatten(),
+        }
     }
 
     /// A create sent under the key can have made the row since it was asked.
     fn forget(&mut self, body: &serde_json::Value) {
-        let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
-        if let (Some(source), Some(source_id)) = (text("source"), text("source_id")) {
-            self.0.retain(|(_, held_source, held_id), _| {
-                (held_source.as_str(), held_id.as_str()) != (source, source_id)
+        let source_id = body.get("source_id").and_then(serde_json::Value::as_str);
+        if let (Some(source), Some(source_id)) = (self.source(body), source_id) {
+            self.keys.retain(|(_, held_source, held_id), _| {
+                (held_source.as_str(), held_id.as_str()) != (source.as_str(), source_id)
             });
         }
     }
 }
 
+/// How a request the drain makes on a write's behalf failed.
+enum Failed {
+    /// Ends the drain, as it would on the write itself.
+    Fatal(CoreError),
+    /// Says nothing yet: the write waits, or the queue parks on a `401`.
+    Unanswered(CoreError),
+    /// For good. `true` where a smaller request might be answered.
+    Refused(bool),
+}
+
+fn failed(error: CoreError) -> Failed {
+    match error {
+        CoreError::Redirected { .. }
+        | CoreError::ContractMismatch { .. }
+        | CoreError::SignedOut { .. }
+        | CoreError::NoKeychain(_)
+        | CoreError::StorageFull(_)
+        | CoreError::CopyExpired { .. }
+        | CoreError::StreamIncomplete { .. }
+        | CoreError::Store(_) => Failed::Fatal(error),
+        CoreError::RenewalFailed(_) if !error.is_environmental() => Failed::Fatal(error),
+        CoreError::Unauthorized { .. } => Failed::Unanswered(error),
+        error if error.is_environmental() || unavailable_by(&error).is_some() => {
+            Failed::Unanswered(error)
+        }
+        CoreError::Validation { .. } | CoreError::Server { status: 413, .. } => {
+            Failed::Refused(true)
+        }
+        _ => Failed::Refused(false),
+    }
+}
+
 /// The body a write goes with. A create whose tier the copy's slice chose
-/// (`store::choose_tier`) is decided before its first send: with no `tier`
-/// where its natural key names a row on the server, which keeps its tier as
-/// it stands (`items/tier-upsert`), and with the chosen one where it names
-/// none. The body decided is saved before the send, so every retry under the
-/// write's key sends it again. The inner error is a lookup that did not
-/// answer whether the key names a row.
+/// (`store::choose_tier`) is decided before its first send: with the chosen
+/// tier where a lookup answers that no row holds its natural key, and with
+/// no `tier` otherwise, so a row a person placed keeps its tier as it stands
+/// (`items/tier-upsert`) whether the lookup found it or could not say. The
+/// body decided is saved before the send, so every retry under the write's
+/// key sends it again. The inner error is a lookup that has not answered
+/// yet, which holds the write.
 fn payload_to_send(
     core: &Core,
     http: &Http,
     row: &QueuedWrite,
     all: &[QueuedWrite],
-    keys: &mut KeysHeld,
+    lookups: &mut Lookups,
 ) -> Result<std::result::Result<String, CoreError>> {
     let payload = store::payload_of(&*core.conn()?, &row.id)?;
     if row.kind != WriteKind::CreateItem {
@@ -1019,56 +1075,40 @@ fn payload_to_send(
         }
     };
     let mut body: serde_json::Value = serde_json::from_str(&payload)?;
-    let Some(key) = natural_key(&body) else {
+    let text = |key: &str| {
+        body.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let (Some(r#type), Some(source_id)) = (text("type"), text("source_id")) else {
         return Ok(Ok(payload));
     };
-    if !keys.0.contains_key(&key) {
-        let asked = keys_to_ask(core, all, &key, keys)?;
-        match http.keys_held(&key.0, &key.1, &asked) {
-            Ok(held) => {
-                for source_id in asked {
-                    let found = held.contains(&source_id);
-                    keys.0
-                        .insert((key.0.clone(), key.1.clone(), source_id), found);
-                }
-            }
-            Err(
-                error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
-                | CoreError::SignedOut { .. }
-                | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)
-                | CoreError::CopyExpired { .. }
-                | CoreError::StreamIncomplete { .. }
-                | CoreError::Store(_)),
-            ) => return Err(error),
-            Err(error @ CoreError::RenewalFailed(_)) if !error.is_environmental() => {
-                return Err(error);
-            }
-            // A credential that may not read the type cannot learn whether
-            // the key names a row, so the create goes at the tier the slice
-            // chose, as it would without asking.
-            Err(
-                CoreError::Forbidden { .. }
-                | CoreError::Validation { .. }
-                | CoreError::UnknownType { .. }
-                | CoreError::NotFound { .. },
-            ) => {
-                for source_id in asked {
-                    keys.0
-                        .insert((key.0.clone(), key.1.clone(), source_id), false);
-                }
-            }
-            Err(error) => return Ok(Err(error)),
-        }
+    if text("source").is_none()
+        && let Err(error) = own_source(core, http, lookups)?
+    {
+        return Ok(Err(error));
     }
+    let known = match lookups.source(&body) {
+        // The lookup's schema refuses an empty value.
+        Some(source) if !source.is_empty() && !source_id.is_empty() => {
+            let key = (r#type, source, source_id);
+            if !lookups.keys.contains_key(&key) {
+                let asked = keys_to_ask(core, all, &key, lookups)?;
+                if let Err(error) = ask(http, &key.0, &key.1, &asked, &mut lookups.keys)? {
+                    return Ok(Err(error));
+                }
+            }
+            lookups.keys.get(&key).copied().unwrap_or(Known::Unknown)
+        }
+        _ => Known::Unknown,
+    };
     let Some(object) = body.as_object_mut() else {
         return Ok(Ok(payload));
     };
-    if keys.0.get(&key).copied().unwrap_or(false) {
-        object.shift_remove("tier");
-    } else {
+    if known == Known::Unheld {
         object.insert("tier".into(), tier.as_str().into());
+    } else {
+        object.shift_remove("tier");
     }
     let decided = body.to_string();
     if decided != payload {
@@ -1077,45 +1117,147 @@ fn payload_to_send(
     Ok(Ok(decided))
 }
 
-fn natural_key(body: &serde_json::Value) -> Option<(String, String, String)> {
-    let text = |key: &str| {
-        body.get(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
+/// The credential's own source, which the server stamps a write naming none
+/// with (`items/source-own`), as `GET /keys/current` answers it, kept for the
+/// credential it was learned for. `None` where that door will not say.
+fn own_source(
+    core: &Core,
+    http: &Http,
+    lookups: &mut Lookups,
+) -> Result<std::result::Result<(), CoreError>> {
+    if lookups.own.is_some() {
+        return Ok(Ok(()));
+    }
+    let credential = hex::encode(sha2::Sha256::digest(http.authorization().as_bytes()));
+    if let Some(learned) = store::learned_source(&*core.conn()?, &credential)? {
+        lookups.own = Some(learned);
+        return Ok(Ok(()));
+    }
+    let learned = match http.current_key() {
+        Ok(key) => {
+            let learned = key.and_then(|key| {
+                key.get("source")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+            store::learn_source(&*core.conn()?, &credential, learned.as_deref())?;
+            learned
+        }
+        Err(error) => match failed(error) {
+            Failed::Fatal(error) => return Err(error),
+            Failed::Unanswered(error) => return Ok(Err(error)),
+            Failed::Refused(_) => None,
+        },
     };
-    Some((text("type")?, text("source")?, text("source_id")?))
+    lookups.own = Some(learned);
+    Ok(Ok(()))
+}
+
+/// Asks in requests no larger than one lookup takes, by its keys and by its
+/// bytes.
+fn ask(
+    http: &Http,
+    r#type: &str,
+    source: &str,
+    asked: &[String],
+    keys: &mut HashMap<(String, String, String), Known>,
+) -> Result<std::result::Result<(), CoreError>> {
+    let mut start = 0;
+    while start < asked.len() {
+        let mut end = start;
+        let mut bytes = serde_json::json!({ "type": r#type, "source": source, "source_ids": [] })
+            .to_string()
+            .len();
+        while end < asked.len() && end - start < crate::http::LOOKUP_LIMIT {
+            let more = serde_json::Value::from(asked[end].as_str())
+                .to_string()
+                .len()
+                + 1;
+            if end > start && bytes + more > crate::http::LOOKUP_BODY_BYTES {
+                break;
+            }
+            bytes += more;
+            end += 1;
+        }
+        if let Err(error) = ask_batch(http, r#type, source, &asked[start..end], keys)? {
+            return Ok(Err(error));
+        }
+        start = end;
+    }
+    Ok(Ok(()))
+}
+
+/// A batch refused for one key in it, or for its size, is asked again in
+/// halves, so a key refused for good is told apart from the keys beside it.
+fn ask_batch(
+    http: &Http,
+    r#type: &str,
+    source: &str,
+    batch: &[String],
+    keys: &mut HashMap<(String, String, String), Known>,
+) -> Result<std::result::Result<(), CoreError>> {
+    let known = match http.keys_held(r#type, source, batch) {
+        Ok(held) => Some(held),
+        Err(error) => match failed(error) {
+            Failed::Fatal(error) => return Err(error),
+            Failed::Unanswered(error) => return Ok(Err(error)),
+            Failed::Refused(true) if batch.len() > 1 => {
+                let (first, second) = batch.split_at(batch.len() / 2);
+                if let Err(error) = ask_batch(http, r#type, source, first, keys)? {
+                    return Ok(Err(error));
+                }
+                return ask_batch(http, r#type, source, second, keys);
+            }
+            Failed::Refused(_) => None,
+        },
+    };
+    for source_id in batch {
+        let answer = match &known {
+            Some(held) if held.contains(source_id) => Known::Held,
+            Some(_) => Known::Unheld,
+            None => Known::Unknown,
+        };
+        keys.insert((r#type.into(), source.into(), source_id.clone()), answer);
+    }
+    Ok(Ok(()))
 }
 
 /// `key`'s `source_id`, and those of the other unsent creates of its type
-/// and source whose tier the slice chose, up to the most one lookup takes.
+/// and source whose tier the slice chose.
 fn keys_to_ask(
     core: &Core,
     all: &[QueuedWrite],
     key: &(String, String, String),
-    keys: &KeysHeld,
+    lookups: &Lookups,
 ) -> Result<Vec<String>> {
     let (r#type, source, source_id) = key;
     let mut asked = vec![source_id.clone()];
     let conn = core.conn()?;
     for other in all {
-        if asked.len() == crate::http::LOOKUP_LIMIT {
-            break;
-        }
-        if other.kind != WriteKind::CreateItem {
+        if other.kind != WriteKind::CreateItem
+            || other.body.get("type").and_then(serde_json::Value::as_str) != Some(r#type)
+            || lookups.source(&other.body).as_ref() != Some(source)
+        {
             continue;
         }
-        let Some(named) = natural_key(&other.body) else {
+        let Some(named) = other
+            .body
+            .get("source_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|named| !named.is_empty())
+        else {
             continue;
         };
-        if (&named.0, &named.1) != (r#type, source)
-            || asked.contains(&named.2)
-            || keys.0.contains_key(&named)
+        if asked.iter().any(|asked| asked == named)
+            || lookups
+                .keys
+                .contains_key(&(r#type.clone(), source.clone(), named.to_string()))
             || store::chosen_tier(&conn, &other.id)?.is_none()
             || !store::unsent(&conn, &other.id)?
         {
             continue;
         }
-        asked.push(named.2);
+        asked.push(named.to_string());
     }
     Ok(asked)
 }

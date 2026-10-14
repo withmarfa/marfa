@@ -8391,22 +8391,32 @@ describe("a create the slice does not hold", () => {
     ).toEqual(["none", "feed"]);
   });
 
-  it("holds a create whose natural key the server cannot look up, and sends one whose lookup it refuses at the slice's tier", async () => {
+  /** Queues one keyed create naming no tier per key, under `source`, or
+   *  naming none where it is `null`. */
+  async function keyedCreates(
+    device: Harness["device"],
+    keys: string[],
+    source: string | null = "notes",
+  ): Promise<void> {
+    for (const key of keys) {
+      const created = await device.create({
+        type: "core.note",
+        properties: { title: key, body: key },
+        ...(source === null ? {} : { source }),
+        sourceId: key,
+      });
+      if (!created.ok) throw new Error(JSON.stringify(created));
+    }
+  }
+
+  it("holds a create whose natural key the server cannot look up now, and sends it once a lookup answers", async () => {
     harness = await feedSlice("queue-keyed-create-lookup-fails");
     const { device, server } = harness;
-    const created = await device.create({
-      type: "core.note",
-      properties: { title: "later", body: "later" },
-      source: "notes",
-      sourceId: "later.md",
-    });
-    if (!created.ok) throw new Error(JSON.stringify(created));
+    await keyedCreates(device, ["later.md"]);
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
-      create: [keyedCreateDoor(server)],
-      lookup: [
-        refusal(503, "unavailable", "restarting"),
-        answers.forbidden("type_not_permitted"),
-      ],
+      create: [keyedCreateDoor(server, rows)],
+      lookup: [refusal(503, "unavailable", "restarting"), lookupDoor(rows)],
     });
     const held = await device.drain();
     if (!held.ok) throw new Error(JSON.stringify(held));
@@ -8422,12 +8432,134 @@ describe("a create the slice does not hold", () => {
       "a lookup the server could not answer was counted against the create",
     ).toEqual([[null, 0]]);
 
-    // Refused, the lookup says nothing of the key, and the create goes as
-    // it would have without asking.
+    // The witness: answered, the same lookup sends it.
     const sent = await device.drain();
     expect(sent.ok && sent.value.answered).toBe(1);
     expect(sentTiers(server)).toEqual(["feed"]);
     expect(lookups(server)).toHaveLength(2);
+  });
+
+  it("sends a create with no tier where a lookup cannot say whether a row holds its key", async () => {
+    for (const [why, answer] of [
+      ["403", answers.forbidden("type_not_permitted")],
+      ["404", refusal(404, "not_found", "No such door")],
+      ["400 unknown_type", refusal(400, "unknown_type", "No such type")],
+      ["405", refusal(405, "method_not_allowed", "Not here")],
+    ] as const) {
+      harness = await feedSlice(
+        `queue-keyed-create-lookup-${why.split(" ")[0]}`,
+      );
+      const { device, server } = harness;
+      await keyedCreates(device, ["unsaid.md"]);
+      scriptWrites(server, {
+        create: [keyedCreateDoor(server)],
+        lookup: [answer],
+      });
+      const drained = await device.drain();
+      expect(drained.ok && drained.value.answered, why).toBe(1);
+      expect(
+        sentTiers(server),
+        `a lookup refused ${why} sent the slice's tier, which moves a row a person placed`,
+      ).toEqual(["none"]);
+      await harness.stop();
+      harness = undefined;
+    }
+  });
+
+  it("asks again in halves when a lookup of several keys is refused, and sends a key refused alone with no tier", async () => {
+    harness = await feedSlice("queue-keyed-create-lookup-halves");
+    const { device, server } = harness;
+    await keyedCreates(device, ["a.md", "refused.md", "c.md"]);
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    const door = keyedCreateDoor(server, rows);
+    scriptWrites(server, {
+      create: [door, door, door],
+      lookup: [
+        refusal(413, "request_too_large", "Too large"),
+        lookupDoor(rows),
+        refusal(400, "validation_error", "Refused"),
+        refusal(400, "validation_error", "Refused"),
+        lookupDoor(rows),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.answered).toBe(3);
+    expect(
+      lookups(server).map(
+        (body) => (body as { source_ids: string[] }).source_ids,
+      ),
+      "a lookup refused for its size, or for one key, was not asked again in halves",
+    ).toEqual([
+      ["a.md", "refused.md", "c.md"],
+      ["a.md"],
+      ["refused.md", "c.md"],
+      ["refused.md"],
+      ["c.md"],
+    ]);
+    expect(
+      sentTiers(server),
+      "one key the lookup refused decided the tier of the keys asked beside it",
+    ).toEqual(["feed", "none", "feed"]);
+  });
+
+  it("parks the queue when the lookup of a create's natural key refuses the credential", async () => {
+    harness = await feedSlice("queue-keyed-create-lookup-401");
+    const { device, server } = harness;
+    await keyedCreates(device, ["refused-key.md"]);
+    scriptWrites(server, {
+      create: [keyedCreateDoor(server)],
+      lookup: [answers.unauthorized()],
+    });
+    const drained = await device.drain();
+    if (!drained.ok) throw new Error(JSON.stringify(drained));
+    expect(drained.value.stopped).toContain("credential");
+    expect(
+      sentTiers(server),
+      "a create went after its lookup was refused the credential",
+    ).toEqual([]);
+    const queued = await device.queue();
+    expect(
+      queued.ok && queued.value.map((row) => [row.verdict, row.reason]),
+    ).toEqual([["blocked", "credential_refused"]]);
+  });
+
+  it("looks a create naming no source up under its credential's own, and sends it with no tier where that cannot be learned", async () => {
+    harness = await feedSlice("queue-keyed-create-own-source");
+    const { device, server } = harness;
+    await keyedCreates(device, ["own.md"], null);
+    const rows = new Map<string, ReturnType<typeof wireItem>>();
+    scriptWrites(server, {
+      create: [keyedCreateDoor(server, rows)],
+      lookup: [lookupDoor(rows)],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      lookups(server),
+      "a create naming no source was not looked up under the source the server stamps it with",
+    ).toEqual([
+      { type: "core.note", source: SERVED_SOURCE, source_ids: ["own.md"] },
+    ]);
+    expect(sentTiers(server)).toEqual(["feed"]);
+
+    // A signed-in app's token: the door that names the source refuses it.
+    const app = await startHarness("queue-keyed-create-no-source");
+    try {
+      scriptHydration(app.server, {
+        head: "10",
+        key: [answers.forbidden("forbidden")],
+      });
+      expect((await app.device.hydrate(["core.note"], "feed")).ok).toBe(true);
+      await keyedCreates(app.device, ["app.md"], null);
+      scriptWrites(app.server, { create: [keyedCreateDoor(app.server)] });
+      expect((await app.device.drain()).ok).toBe(true);
+      expect(lookups(app.server)).toEqual([]);
+      expect(
+        sentTiers(app.server),
+        "a create whose source could not be learned went at the slice's tier, which moves a row a person placed",
+      ).toEqual(["none"]);
+    } finally {
+      await app.stop();
+    }
   });
 
   it("moves the pin of a create the slice does not hold onto the row a refusal names its natural key under", async () => {

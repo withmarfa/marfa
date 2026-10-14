@@ -169,11 +169,10 @@ fn a_keyed_create_whose_key_names_no_server_row_goes_at_the_slices_tier() {
 }
 
 #[test]
-fn a_lookup_the_server_cannot_answer_holds_the_create_and_a_refused_one_sends_the_slices_tier() {
-    for (answer, unavailable) in [
-        (scripted::refusal(503, "unavailable"), true),
-        (scripted::refusal(429, "rate_limited"), true),
-        (scripted::refusal(403, "type_not_permitted"), false),
+fn a_lookup_the_server_cannot_answer_now_holds_the_create() {
+    for answer in [
+        scripted::refusal(503, "unavailable"),
+        scripted::refusal(429, "rate_limited"),
     ] {
         let server = Scripted::start();
         let dir = tempfile::tempdir().unwrap();
@@ -182,36 +181,231 @@ fn a_lookup_the_server_cannot_answer_holds_the_create_and_a_refused_one_sends_th
 
         server.on("/items/lookup", vec![answer]);
         let report = core.drain().unwrap();
+        let queued = core.queue().unwrap();
+        assert!(
+            store::unsent(&core.conn().unwrap(), &queued[0].id).unwrap(),
+            "a create whose key could not be looked up was marked sent"
+        );
+        assert!(
+            report
+                .unavailable
+                .as_deref()
+                .is_some_and(|why| why.contains("natural key")),
+            "{report:?}"
+        );
+        assert_eq!((report.answered, report.undelivered), (0, 1));
+        assert!(
+            bodies(&server, "/items").is_empty(),
+            "a create went before its key was looked up"
+        );
+        // The witness: the next pass, answered, sends it.
+        server.on("/items/lookup", vec![found(&["article-1"])]);
+        core.drain().unwrap();
         let sent = bodies(&server, "/items");
-        if unavailable {
-            let queued = core.queue().unwrap();
-            assert!(
-                store::unsent(&core.conn().unwrap(), &queued[0].id).unwrap(),
-                "a create whose key could not be looked up was marked sent"
-            );
-            assert!(
-                report
-                    .unavailable
-                    .as_deref()
-                    .is_some_and(|why| why.contains("natural key")),
-                "{report:?}"
-            );
-            assert_eq!((report.answered, report.undelivered), (0, 1));
-            assert!(
-                sent.is_empty(),
-                "a create went before its key was looked up"
-            );
-            // The witness: the next pass, answered, sends it.
-            server.on("/items/lookup", vec![found(&["article-1"])]);
-            core.drain().unwrap();
-            let sent = bodies(&server, "/items");
-            assert_eq!(sent.len(), 1);
-            assert_eq!(sent[0].get("tier"), None);
-        } else {
-            assert_eq!(sent.len(), 1, "{report:?}");
-            assert_eq!(sent[0]["tier"], "library");
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].get("tier"), None);
+    }
+}
+
+#[test]
+fn a_lookup_refused_for_good_sends_the_create_with_no_tier() {
+    for (answer, why) in [
+        (scripted::refusal(403, "type_not_permitted"), "403"),
+        (scripted::refusal(404, "not_found"), "404"),
+        (scripted::refusal(400, "unknown_type"), "400 unknown_type"),
+        (scripted::refusal(400, "validation_error"), "400"),
+        (scripted::refusal(405, "method_not_allowed"), "405"),
+        (scripted::refusal(413, "request_too_large"), "413"),
+        (scripted::json(200, "{}"), "an answer it cannot read"),
+    ] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = library_copy(&server, dir.path());
+        core.create_item(&keyed("article-1", None)).unwrap();
+        server.on("/items/lookup", vec![answer]);
+        let report = core.drain().unwrap();
+        let sent = bodies(&server, "/items");
+        assert_eq!(sent.len(), 1, "{why}: {report:?}");
+        assert_eq!(
+            sent[0].get("tier"),
+            None,
+            "{why}: a lookup that could not say whether a row holds the key sent a tier that could move it"
+        );
+    }
+}
+
+#[test]
+fn a_lookup_refused_for_several_keys_asks_again_in_halves_down_to_one() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    for key in ["article-a", "article-bad", "article-c"] {
+        core.create_item(&keyed(key, None)).unwrap();
+    }
+    // Each create is counted and left unanswered, so the drain goes on to
+    // the next.
+    server.on(
+        "/items",
+        vec![scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    server.on(
+        "/items/lookup",
+        vec![
+            scripted::refusal(400, "validation_error"),
+            found(&["article-a"]),
+            scripted::refusal(413, "request_too_large"),
+            scripted::refusal(400, "validation_error"),
+            found(&[]),
+        ],
+    );
+    core.drain().unwrap();
+    let asked: Vec<Value> = bodies(&server, "/items/lookup")
+        .into_iter()
+        .map(|body| body["source_ids"].clone())
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            json!(["article-a", "article-bad", "article-c"]),
+            json!(["article-a"]),
+            json!(["article-bad", "article-c"]),
+            json!(["article-bad"]),
+            json!(["article-c"]),
+        ]
+    );
+    let tiers: Vec<Option<Value>> = bodies(&server, "/items")
+        .iter()
+        .map(|body| body.get("tier").cloned())
+        .collect();
+    assert_eq!(
+        tiers,
+        [None, None, Some(json!("library"))],
+        "one key refused decided the tier of the keys asked beside it"
+    );
+}
+
+#[test]
+fn a_lookup_is_sized_by_its_bytes_as_well_as_its_keys() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    let long = |at: usize| format!("{at}-{}", "k".repeat(100_000));
+    for at in 0..6 {
+        core.create_item(&keyed(&long(at), None)).unwrap();
+    }
+    server.on("/items/lookup", vec![found(&[])]);
+    core.drain().unwrap();
+    let seen = server.seen("/items/lookup");
+    let mut asked = Vec::new();
+    for request in &seen {
+        assert!(
+            request.body.len() <= crate::http::LOOKUP_BODY_BYTES,
+            "a lookup of {} bytes was sent",
+            request.body.len()
+        );
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        for key in body["source_ids"].as_array().unwrap() {
+            asked.push(key.as_str().unwrap().to_string());
         }
     }
+    assert!(seen.len() > 1);
+    assert_eq!(asked, (0..6).map(long).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_keyed_create_naming_no_source_is_looked_up_under_its_credentials_own() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    let unsourced = |source_id: &str| Draft {
+        source: None,
+        ..keyed(source_id, None)
+    };
+    server.on(
+        "/items",
+        vec![scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    let first = core.create_item(&unsourced("article-1")).unwrap();
+    assert_eq!(
+        store::chosen_tier(&core.conn().unwrap(), &first.id).unwrap(),
+        Some(Tier::Library),
+        "a create carrying a source_id and no source was not taken as keyed"
+    );
+    server.on(
+        "/keys/current",
+        vec![scripted::json(
+            200,
+            &json!({ "id": "key", "source": "reader" }).to_string(),
+        )],
+    );
+    server.on("/items/lookup", vec![found(&["article-1"])]);
+    core.drain().unwrap();
+    assert_eq!(
+        bodies(&server, "/items/lookup"),
+        [json!({ "type": "core.note", "source": "reader", "source_ids": ["article-1"] })]
+    );
+    let sent = bodies(&server, "/items");
+    assert_eq!(sent[0].get("tier"), None);
+    assert_eq!(
+        sent[0].get("source"),
+        None,
+        "the device named a source the caller did not"
+    );
+
+    // Learned once for the credential: the next create asks the lookup alone.
+    core.create_item(&unsourced("article-2")).unwrap();
+    server.on("/items/lookup", vec![found(&[])]);
+    core.drain().unwrap();
+    assert_eq!(server.seen("/keys/current").len(), 1);
+    assert_eq!(bodies(&server, "/items/lookup")[1]["source"], "reader");
+
+    // A row the copy holds under the learned source is the row the key names.
+    {
+        let conn = core.conn().unwrap();
+        let mut held = store::testing::note("held", "server", "body", "2026-01-01T00:00:00Z");
+        held.version = 2;
+        held.tier = Some("feed".into());
+        held.source = "reader".into();
+        held.source_id = Some("held-1".into());
+        store::put_server_item(&conn, &held, Some(&[]), &catalog::Indexing::default()).unwrap();
+    }
+    let resaved = core.create_item(&unsourced("held-1")).unwrap();
+    assert_eq!(
+        store::chosen_tier(&core.conn().unwrap(), &resaved.id).unwrap(),
+        None
+    );
+    assert_eq!(shown_tier(&core, &resaved), Some(Tier::Feed));
+}
+
+#[test]
+fn a_keyed_create_whose_source_cannot_be_learned_goes_with_no_tier() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    core.create_item(&Draft {
+        source: None,
+        ..keyed("article-1", None)
+    })
+    .unwrap();
+    // A signed-in app's token, which that door refuses.
+    server.on("/keys/current", vec![scripted::refusal(403, "forbidden")]);
+    core.drain().unwrap();
+    assert!(server.seen("/items/lookup").is_empty());
+    let sent = bodies(&server, "/items");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].get("tier"), None);
+}
+
+#[test]
+fn a_key_no_lookup_can_take_goes_with_no_tier_unasked() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    core.create_item(&keyed("", None)).unwrap();
+    server.on("/items/lookup", vec![found(&[])]);
+    core.drain().unwrap();
+    assert!(server.seen("/items/lookup").is_empty());
+    assert_eq!(bodies(&server, "/items")[0].get("tier"), None);
 }
 
 #[test]

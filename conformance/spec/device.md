@@ -2386,7 +2386,7 @@ When a copy that has never hydrated hydrates against a server, a device MUST kee
 
 ### `device/create-slice-tier`
 
-When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds or a row the server answers a lookup with (`queue-and-verdicts/keyed-create-lookup-found`).
+When a create names no tier, a device MUST send it at the slice's tier, at `library` in a slice of both, unless its natural key names a row the copy holds, or a lookup of it does not answer that no row on the server holds it (`queue-and-verdicts/keyed-create-lookup-found` and `queue-and-verdicts/keyed-create-lookup-unknown`).
 
 **Reason:** a create sent with no tier would land at the key's default tier, which may not be where the copy showed it.
 

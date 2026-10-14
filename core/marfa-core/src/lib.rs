@@ -2158,7 +2158,13 @@ fn queue_create(
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
-    let target = match (&draft.source, &draft.source_id) {
+    // A key naming no source is under the credential's own
+    // (`items/source-own`), as last learned.
+    let key_source = match &draft.source_id {
+        Some(_) => store::source_of(tx, draft.source.as_deref())?,
+        None => None,
+    };
+    let target = match (&key_source, &draft.source_id) {
         (Some(source), Some(source_id)) => store::item_under_key(tx, source, source_id)?,
         _ => None,
     };
@@ -2220,7 +2226,7 @@ fn queue_create(
         draft.tier = Some(tier);
         chosen = Some(tier);
     }
-    let chosen = chosen.filter(|_| draft.source.is_some() && draft.source_id.is_some());
+    let chosen = chosen.filter(|_| draft.source_id.is_some());
     let draft = &draft;
     let shown_tier = draft.tier.or(keyed_tier);
     let id = draft
@@ -2262,7 +2268,7 @@ fn queue_create(
     if let Some(tier) = chosen {
         store::choose_tier(tx, &queued.id, tier)?;
     }
-    if let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id) {
+    if let (Some(source), Some(source_id)) = (&key_source, &draft.source_id) {
         store::follow_row_under_key(tx, &queued, source, source_id)?;
     }
     // Queued in the same transaction, so a create never drops its tags.

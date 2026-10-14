@@ -1128,6 +1128,59 @@ pub fn chosen_tier(conn: &Connection, id: &str) -> Result<Option<Tier>, CoreErro
         .transpose()
 }
 
+const META_CREDENTIAL_SOURCE: &str = "credential_source";
+
+/// The source the server stamps a write naming none with: the credential's
+/// own (`items/source-own`), as `GET /keys/current` last answered it for the
+/// credential `credential` names, a digest of it. `None` where that door
+/// would not say, as for a signed-in app's token.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CredentialSource {
+    credential: String,
+    source: Option<String>,
+}
+
+pub fn learn_source(
+    conn: &Connection,
+    credential: &str,
+    source: Option<&str>,
+) -> Result<(), CoreError> {
+    meta_set(
+        conn,
+        META_CREDENTIAL_SOURCE,
+        &serde_json::to_string(&CredentialSource {
+            credential: credential.into(),
+            source: source.map(str::to_string),
+        })?,
+    )
+}
+
+/// What was learned for `credential`, and `None` where nothing was.
+pub fn learned_source(
+    conn: &Connection,
+    credential: &str,
+) -> Result<Option<Option<String>>, CoreError> {
+    Ok(meta_get(conn, META_CREDENTIAL_SOURCE)?
+        .map(|text| serde_json::from_str::<CredentialSource>(&text))
+        .transpose()?
+        .filter(|learned| learned.credential == credential)
+        .map(|learned| learned.source))
+}
+
+/// The source a write naming `named`, or none, falls under, as last learned
+/// for whichever credential the copy last sent with. A copy offline cannot
+/// ask which credential it will send with; the drain asks again where the
+/// credential has changed.
+pub fn source_of(conn: &Connection, named: Option<&str>) -> Result<Option<String>, CoreError> {
+    if let Some(named) = named {
+        return Ok(Some(named.into()));
+    }
+    Ok(meta_get(conn, META_CREDENTIAL_SOURCE)?
+        .map(|text| serde_json::from_str::<CredentialSource>(&text))
+        .transpose()?
+        .and_then(|learned| learned.source))
+}
+
 pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn
         .query_row("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
