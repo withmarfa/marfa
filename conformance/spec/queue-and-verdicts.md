@@ -652,11 +652,11 @@ If the read after a refusal meets an environmental failure, then a device MUST k
 
 ### `queue-and-verdicts/refused-row-absent`
 
-When the read after a refusal is answered `403`, `404` or `400 invalid_id`, a device MUST let go of the row or edge, where nothing wrote it in the copy while the read was out.
+When the read after a refusal is answered `403` or `400 invalid_id`, or `404` for an edge or for a row the server's bin does not answer either, a device MUST let go of the row or edge, where nothing wrote it in the copy while the read was out.
 
-**Reason:** the server holds no such row, as a create the server refused leaves it.
+**Reason:** the server holds no such row, as a create the server refused leaves it. A row the bin answers is held (`device/read-back-trashed-held`).
 
-**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`, `› refused: lets the row go where the read-back is answered %s`.
+**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`, `› refused: lets the row go where the read-back is answered %s`, `device/bin-live.test.ts › lets go of a row neither a read by id nor the bin holds after its refused edit`.
 
 ### `queue-and-verdicts/absent-read-keeps-written`
 

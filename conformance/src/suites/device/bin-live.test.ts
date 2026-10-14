@@ -12,7 +12,8 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * The bin through a working copy (`device/bin-read`, `device/bin-unheld`, `device/bin-offline` and `device/pin-trashed`,
+ * The bin through a working copy (`device/bin-read`, `device/bin-unheld`, `device/bin-offline`, `device/pin-trashed`,
+ * `device/read-back-trashed-held`, `device/read-back-trashed-pin`, `queue-and-verdicts/refused-row-absent` and
  * `queue-and-verdicts/restore-by-id`), against a real server and the real binary.
  * Each device command is a process of its own, so every step here is also a
  * device started again.
@@ -197,6 +198,114 @@ it("keeps a row it holds in the bin when a pin of it is refused", async () => {
     "a refused pin let go of a row the slice takes, so the copy no longer shows the bin it holds",
   ).toContain(trashed.id);
   expect(value(await copy.status()).pinned).not.toContain(trashed.id);
+});
+
+async function heldNote(title: string) {
+  const created = await client.createItem({
+    type: "core.note",
+    source: ctx.source,
+    tier: "library",
+    properties: { title, body: title },
+  });
+  expect(created.ok, JSON.stringify(created.error)).toBe(true);
+  trackItem(ctx, created.data.item.id);
+  return created.data.item;
+}
+
+/** The row of `id` the copy holds in the bin, if it holds one. */
+async function heldInBin(copy: CliDevice, id: string): Promise<Item[]> {
+  return value(
+    await copy.list({
+      state: "trashed",
+      tier: "library",
+      filter: `id eq "${id}"`,
+    }),
+  );
+}
+
+it("keeps a row another client trashed when the read after its refused edit finds it gone by id", async () => {
+  const note = await heldNote("edited here, trashed there");
+  const copy = await device("refused-edit", "library");
+  value(
+    await copy.update(note.id, {
+      properties: { title: "edited here" },
+      version: note.version,
+    }),
+  );
+  expect((await client.deleteItem(note.id)).ok).toBe(true);
+  value(await copy.catchUp());
+  // The witness: the catch-up brought the row into the copy's bin.
+  expect((await heldInBin(copy, note.id)).map((row) => row.id)).toEqual([
+    note.id,
+  ]);
+
+  const report = value(await copy.drain());
+  expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
+    "refused",
+  ]);
+  expect(
+    (await heldInBin(copy, note.id)).map((row) => row.id),
+    "the read after the refusal let go of a row the server holds in the bin",
+  ).toEqual([note.id]);
+});
+
+it("keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered", async () => {
+  const note = await heldNote("trashed here");
+  // A copy of the feed, so only the pin holds the library's note.
+  const copy = await device("own-delete", "feed");
+  value(await copy.pin(note.id));
+  value(await copy.deleteItem(note.id));
+  // The witness: the copy shows its own delete in the bin while it waits.
+  expect((await heldInBin(copy, note.id)).map((row) => row.id)).toEqual([
+    note.id,
+  ]);
+
+  const report = value(await copy.drain());
+  expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
+    "accepted",
+  ]);
+  const server = (await findInBin(copy, [note.id])).found.get(note.id);
+  expect(server, "the server's bin does not hold the row").toBeDefined();
+  const held = await heldInBin(copy, note.id);
+  expect(
+    held.map((row) => row.id),
+    "the read after the answer let go of the row the device trashed",
+  ).toEqual([note.id]);
+  expect(held[0]!.version).toBe(server!.version);
+  expect(held[0]!.updated_at).toBe(server!.updated_at);
+  expect(value(await copy.status()).pinned).toContain(note.id);
+
+  // Named with no version, a purge goes only to a row the copy holds.
+  expect(value(await copy.purgeItem(note.id)).purged).toBe(true);
+  expect((await findInBin(copy, [note.id])).found.has(note.id)).toBe(false);
+});
+
+it("lets go of a row neither a read by id nor the bin holds after its refused edit", async () => {
+  const note = await heldNote("edited here, purged there");
+  const copy = await device("purged", "library");
+  value(
+    await copy.update(note.id, {
+      properties: { title: "edited here" },
+      version: note.version,
+    }),
+  );
+  expect((await client.deleteItem(note.id)).ok).toBe(true);
+  expect((await client.purgeItem(note.id)).ok).toBe(true);
+  // The witness: no catch-up, so the copy still holds the row.
+  expect(
+    value(
+      await copy.list({ allStates: true, filter: `id eq "${note.id}"` }),
+    ).map((row) => row.id),
+  ).toEqual([note.id]);
+
+  const report = value(await copy.drain());
+  expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
+    "refused",
+  ]);
+  expect(
+    value(await copy.list({ allStates: true, filter: `id eq "${note.id}"` })),
+    "the copy kept a row the server holds nowhere",
+  ).toEqual([]);
 });
 
 it("restores a row read from the bin that the copy does not hold", async () => {

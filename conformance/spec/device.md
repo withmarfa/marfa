@@ -106,7 +106,7 @@ When a pinned create is answered with the id of another row, a device MUST move 
 
 ### `device/pin-create-lasts`
 
-When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the row (`device/purge-accepted`), the read after an answer to a write of the row finds no such row, the read after a discard of the row's create finds no such row (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the row was purged, or a folder that binds a file to the row lets the row go once no file or line of the folder needs it (`folders/edge-pin-release`).
+When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the row (`device/purge-accepted`), the read after an answer to a write of the row finds no such row, in the server's bin or out of it, the read after a discard of the row's create finds no such row (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the row was purged, or a folder that binds a file to the row lets the row go once no file or line of the folder needs it (`folders/edge-pin-release`).
 
 **Reason:** a device cannot tell when an app stops showing a row it created, so the pin ends only on the caller's word, on the server's word that the row is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the row. A pin that a body's link (`device/body-pin`) or a folder's line (`folders/edge-pin-held`) made on a row before a create was answered with that row becomes the create's, so the link's or the line's release leaves it. The pin moves with the row (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of a row its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
 
@@ -2973,6 +2973,20 @@ If a caller pins a row the server holds in the bin, of a type the key may not re
 **Reason:** the server answers a row of a type the key may not read as a missing one, in the bin too (`keys-and-oauth/unreadable-as-missing`), so the copy tells the key nothing more of it.
 
 **Tests:** `device/bin-live.test.ts › refuses a pin of a row in the bin of a type the key may not read as one that is gone`.
+
+### `device/read-back-trashed-held`
+
+When the read of a row after the server answers or refuses a write to it is answered `404` and the server's bin holds the row, a device MUST hold the row in the bin, as the bin answers it, where the copy's slice or a pin takes it.
+
+**Reason:** a read by id answers a row in the bin as one that is gone (`items/get-missing`), so the device asks the bin which it is. A slice holds its rows in the bin as in any other state, and a copy that has already taken the row's `item.deleted` event, or that trashed the row itself, gets no later event that brings the row back.
+
+**Tests:** `device/bin-live.test.ts › keeps a row another client trashed when the read after its refused edit finds it gone by id`, `› keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered`.
+
+### `device/read-back-trashed-pin`
+
+When the read of a row after the server answers or refuses a write to it finds the row in the server's bin, a device MUST keep the pin the row holds.
+
+**Tests:** `device/bin-live.test.ts › keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered`.
 
 ## A slice of both tiers
 
