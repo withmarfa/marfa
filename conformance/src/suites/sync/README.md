@@ -87,7 +87,7 @@ Everything in the repository's contributing rules, plus these.
   out is asserting nothing. Write the control first.
 - **A wait is on a frame the server sends either way.** Waiting on the frame
   that may never arrive means the runner's budget expires and reports
-  `Test timed out` and the file, and nothing else. Wait on the control the
+  `Test timed out` for the file, and nothing else. Wait on the control the
   subscription delivers regardless, drain what follows, then assert.
 - **An absence is settled by a later frame, never by a quiet window.** A fixed
   window cannot tell "nothing more is coming" from "not yet". Write a sentinel
