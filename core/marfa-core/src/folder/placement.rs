@@ -951,7 +951,7 @@ mod tests {
         let refusals = [
             (503, "unavailable"),
             (404, "item_not_found"),
-            (403, "edge_permission_denied"),
+            (403, "type_not_permitted"),
         ];
         for (status, code) in refusals {
             let server = crate::scripted::Scripted::start();
