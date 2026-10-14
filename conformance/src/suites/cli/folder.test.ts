@@ -1358,10 +1358,12 @@ describe("a folder round trip", () => {
 
     // The change comes back to the folder: the working copy catches up,
     // then the pull writes the file.
-    const caughtUp = await c.cli.json<{
-      applied: number;
-      reached_head: boolean;
-    }>(["device", "--db", store, "catch-up"]);
+    const caughtUp = await c.cli.json<{ applied: number }>([
+      "device",
+      "--db",
+      store,
+      "catch-up",
+    ]);
     expect(caughtUp.applied).toBeGreaterThanOrEqual(1);
     const pulled = await c.cli.json<{ rewritten: number }>([
       "folders",
