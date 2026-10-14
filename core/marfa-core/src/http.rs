@@ -924,7 +924,8 @@ impl Http {
     /// Which of `source_ids` under `source` name a row on the server, in any
     /// state, by `POST /items/lookup`. A row of a type the credential may not
     /// read, and a `system.*` row, are left out of the answer
-    /// (`search-and-filters/lookup-unreadable-left-out`).
+    /// (`search-and-filters/lookup-unreadable-left-out` and
+    /// `search-and-filters/lookup-system-left-out`).
     pub(crate) fn keys_held(
         &self,
         r#type: &str,

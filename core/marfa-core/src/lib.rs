@@ -2186,10 +2186,10 @@ fn queue_create(
         &properties,
         current.is_some() || draft.source_id.is_none(),
     )?;
-    // Sent with the slice's tier: left out, the server takes the key's
-    // default, and a row shown at one tier would come back at another. Held
-    // and sent in the order the server answers, so the copy shows one order
-    // before the answer and after it.
+    // A tier is chosen where none is named: left out, the server gives a new
+    // row the key's default, and a row shown at one tier would come back at
+    // another. Held and sent in the order the server answers, so the copy
+    // shows one order before the answer and after it.
     let mut draft = draft.clone();
     draft.properties = catalog.in_answer_order(
         &draft.r#type,
@@ -3348,9 +3348,10 @@ mod tests {
                 ..Default::default()
             };
             let resynced = core.create_item(&keyed("article-1")).unwrap();
-            // The witness: a key naming no held row is sent the slice's tier.
+            // The witness: a key naming no held row is queued at the slice's
+            // tier, which the drain sends where a lookup finds no row.
             let fresh = core.create_item(&keyed("article-2")).unwrap();
-            // A key naming a create still waiting is sent that create's tier,
+            // A key naming a create still waiting is queued at that create's tier,
             // which it lands at whether or not the first is refused.
             let again = core.create_item(&keyed("article-2")).unwrap();
             let shown = |write: &QueuedWrite| {
