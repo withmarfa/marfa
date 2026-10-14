@@ -1635,7 +1635,7 @@ describe("catch-up replays from the cursor", () => {
     ).toMatchObject({ applied: 1, skipped: 0, cursor: "12" });
     expect(
       complete.ok ? Object.keys(complete.value).sort() : undefined,
-      "the report carried a field beyond what a catch-up learned, so a caller reads a claim that is true of every report",
+      "the report carried a field beyond the counts, the cursor and the catalog flag, which a caller would read as a promise the contract does not make",
     ).toEqual(["applied", "catalog_changed", "cursor", "skipped"]);
   });
 });
@@ -3710,8 +3710,8 @@ describe("a cursor the log no longer holds", () => {
  * A server restored from a backup holds a log that ends behind the copy's
  * cursor, and another instance started at the same address holds another
  * log altogether. Either way the copy holds rows the server does not, and
- * misses rows it does; a catch-up that answered "reached the head" would
- * leave it reporting itself current for good.
+ * misses rows it does; a catch-up that ended cleanly would leave it
+ * reporting itself current for good.
  */
 describe("a server that is not the one the copy followed", () => {
   const OTHER_INSTANCE = "00000000-0000-7000-8000-0000000000ff";
