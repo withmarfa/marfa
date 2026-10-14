@@ -25,7 +25,7 @@
   <text x="358.0" y="206" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">the command-line tool</text>
   <rect x="36" y="236" width="480" height="56" rx="8" fill="#e9ddff" stroke="#a475f9" stroke-width="1.5"/>
   <text x="276.0" y="260" font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">Rust core</text>
-  <text x="276.0" y="280" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">its HTTP client, a local working copy and a queue of writes</text>
+  <text x="276.0" y="280" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">an HTTP client, a local working copy and a queue of writes</text>
   <line x1="112.0" y1="144" x2="112.0" y2="162" stroke="#59636e" stroke-width="1.5" marker-end="url(#head)"/>
   <line x1="276.0" y1="144" x2="276.0" y2="162" stroke="#59636e" stroke-width="1.5" marker-end="url(#head)"/>
   <line x1="440.0" y1="144" x2="440.0" y2="162" stroke="#59636e" stroke-width="1.5" marker-end="url(#head)"/>
