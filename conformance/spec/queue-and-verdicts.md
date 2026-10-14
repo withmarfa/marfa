@@ -1784,7 +1784,7 @@ When a device first sends a create that a caller made naming no tier, carrying a
 
 When a device looks up the natural key of a create that names no `source`, a device MUST look it up under the `source` that `GET /keys/current` answers for the credential it sends with.
 
-**Reason:** the server stamps a create naming no source with its credential's own (`items/source-own`), so that is the source its natural key falls under.
+**Reason:** the server stamps a create naming no source with its credential's own (`items/source-own`), so that is the source its natural key falls under. A source is known only for the credential it was read for, at a hydration or a drain, so a create made under another credential is looked up rather than matched to a row held under the first one's source.
 
 **Tests:** `device/queue.test.ts › looks a create naming no source up under its credential's own, and sends it with no tier where that cannot be learned`.
 
@@ -1806,7 +1806,7 @@ When the lookup of a create's natural key answers no row, a device MUST send the
 
 ### `queue-and-verdicts/keyed-create-lookup-unknown`
 
-If the server refuses the lookup of a create's natural key with a status no retry clears, `400`, `403`, `404` and `413` among them, but for a `400` or `413` to a lookup of more than one key (`queue-and-verdicts/keyed-create-lookup-halves`), or the key names an empty `source` or `source_id`, or `GET /keys/current` will not name the source of a create naming none, then a device MUST send the create with no `tier`.
+If the server refuses the lookup of a create's natural key with a status no retry clears, `400`, `403`, `404` and `413` among them, but for a `400` or `413` to a lookup of more than one key (`queue-and-verdicts/keyed-create-lookup-halves`), or answers it in a shape the device cannot read, or the key names an empty `source` or `source_id`, or `GET /keys/current` will not name the source of a create naming none, then a device MUST send the create with no `tier`.
 
 **Reason:** the copy cannot say whether a row holds the key. Sent with no tier, a row a person placed keeps its tier as it stands (`items/tier-upsert`), and a new row takes the credential's `default_tier`; moving a row a person placed is the harm, and a new row at another tier the lesser one. A refusal that no retry clears would otherwise hold the queue for good.
 

@@ -173,6 +173,7 @@ fn a_lookup_the_server_cannot_answer_now_holds_the_create() {
     for answer in [
         scripted::refusal(503, "unavailable"),
         scripted::refusal(429, "rate_limited"),
+        scripted::refusal(425, "too_early"),
     ] {
         let server = Scripted::start();
         let dir = tempfile::tempdir().unwrap();
@@ -489,4 +490,61 @@ fn a_lookup_refusing_the_credential_parks_the_queue_and_sends_nothing() {
     assert_eq!(row.reason.as_deref(), Some("credential_refused"));
     // Released, it is decided again, since it never went.
     assert!(store::unsent(&core.conn().unwrap(), &queued.id).unwrap());
+}
+
+#[test]
+fn a_source_learned_for_another_credential_is_not_taken_for_the_one_in_use() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    server.on(
+        "/items",
+        vec![scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    server.on(
+        "/keys/current",
+        vec![scripted::json(
+            200,
+            &json!({ "id": "key", "source": "reader" }).to_string(),
+        )],
+    );
+    server.on("/items/lookup", vec![found(&[])]);
+    let unsourced = |source_id: &str| Draft {
+        source: None,
+        ..keyed(source_id, None)
+    };
+    {
+        let core = library_copy(&server, dir.path());
+        core.create_item(&unsourced("article-1")).unwrap();
+        core.drain().unwrap();
+        let conn = core.conn().unwrap();
+        let mut held = store::testing::note("held", "server", "body", "2026-01-01T00:00:00Z");
+        held.version = 2;
+        held.tier = Some("feed".into());
+        held.source = "reader".into();
+        held.source_id = Some("held-1".into());
+        store::put_server_item(&conn, &held, Some(&[]), &catalog::Indexing::default()).unwrap();
+    }
+    // The same copy with another key, whose own source is not yet known.
+    let core = Core::open(
+        dir.path().join("core.sqlite"),
+        Some(Server {
+            url: server.url(),
+            key: "another".into(),
+        }),
+    )
+    .unwrap();
+    let resaved = core.create_item(&unsourced("held-1")).unwrap();
+    assert_eq!(
+        store::chosen_tier(&core.conn().unwrap(), &resaved.id).unwrap(),
+        Some(Tier::Library),
+        "a create under a new credential was matched to a row under the old credential's source, so the drain will not decide its tier"
+    );
+    // The witness: under the credential it was learned for, the row is matched.
+    drop(core);
+    let core = open(&server, dir.path());
+    let matched = core.create_item(&unsourced("held-1")).unwrap();
+    assert_eq!(
+        store::chosen_tier(&core.conn().unwrap(), &matched.id).unwrap(),
+        None
+    );
 }

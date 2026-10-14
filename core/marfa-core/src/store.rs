@@ -1167,18 +1167,29 @@ pub fn learned_source(
         .map(|learned| learned.source))
 }
 
-/// The source a write naming `named`, or none, falls under, as last learned
-/// for whichever credential the copy last sent with. A copy offline cannot
-/// ask which credential it will send with; the drain asks again where the
-/// credential has changed.
-pub fn source_of(conn: &Connection, named: Option<&str>) -> Result<Option<String>, CoreError> {
+/// What a credential is known by in the copy: a digest of what it sends,
+/// never the credential itself.
+pub fn credential_digest(authorization: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(authorization.as_bytes()))
+}
+
+/// The source a write naming `named`, or none, falls under: `named`, or the
+/// source learned for `credential`, a digest of the credential the copy
+/// sends with. `None` where nothing was learned for that credential, or the
+/// copy has no credential to send with, so a drain asks.
+pub fn source_of(
+    conn: &Connection,
+    named: Option<&str>,
+    credential: Option<&str>,
+) -> Result<Option<String>, CoreError> {
     if let Some(named) = named {
         return Ok(Some(named.into()));
     }
-    Ok(meta_get(conn, META_CREDENTIAL_SOURCE)?
-        .map(|text| serde_json::from_str::<CredentialSource>(&text))
-        .transpose()?
-        .and_then(|learned| learned.source))
+    let Some(credential) = credential else {
+        return Ok(None);
+    };
+    Ok(learned_source(conn, credential)?.flatten())
 }
 
 pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {

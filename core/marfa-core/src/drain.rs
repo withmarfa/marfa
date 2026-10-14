@@ -7,7 +7,6 @@ use std::fs::File;
 use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
-use sha2::Digest;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
@@ -1038,6 +1037,7 @@ fn failed(error: CoreError) -> Failed {
         | CoreError::Store(_) => Failed::Fatal(error),
         CoreError::RenewalFailed(_) if !error.is_environmental() => Failed::Fatal(error),
         CoreError::Unauthorized { .. } => Failed::Unanswered(error),
+        CoreError::Server { status, .. } if retried(status) => Failed::Unanswered(error),
         error if error.is_environmental() || unavailable_by(&error).is_some() => {
             Failed::Unanswered(error)
         }
@@ -1128,7 +1128,7 @@ fn own_source(
     if lookups.own.is_some() {
         return Ok(Ok(()));
     }
-    let credential = hex::encode(sha2::Sha256::digest(http.authorization().as_bytes()));
+    let credential = store::credential_digest(&http.authorization());
     if let Some(learned) = store::learned_source(&*core.conn()?, &credential)? {
         lookups.own = Some(learned);
         return Ok(Ok(()));
@@ -1302,7 +1302,7 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
                     .map(|wait| format!(" and asked for {wait}s before the next"))
                     .unwrap_or_default()
             )),
-            408 | 425 | 500..=599 => Some(format!(
+            status if retried(status) => Some(format!(
                 "the server could not take the write now ({}{})",
                 answer.status,
                 if answer.code.is_empty() {
@@ -1314,6 +1314,13 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
             _ => None,
         },
     }
+}
+
+/// A status the same request may be answered past: `408` is a proxy's
+/// about the network, `425` asks for the same request again, and a `5xx`
+/// is the server's own trouble.
+fn retried(status: u16) -> bool {
+    matches!(status, 408 | 425 | 500..=599)
 }
 
 fn unavailable_by(error: &CoreError) -> Option<String> {

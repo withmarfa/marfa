@@ -927,6 +927,7 @@ impl Core {
                 &tx,
                 &catalog::Catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
+                self.credential().as_deref(),
             )?;
         }
         tx.commit()?;
@@ -955,6 +956,7 @@ impl Core {
                 &tx,
                 &catalog::Catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
+                self.credential().as_deref(),
             )?;
         }
         // One transaction: a release part-way through would leave some rows
@@ -1029,6 +1031,7 @@ impl Core {
             &tx,
             &catalog::Catalog::load(&tx)?,
             &store::whole_edge_types(&tx)?,
+            self.credential().as_deref(),
         )?;
         tx.commit()?;
         Ok(true)
@@ -1062,7 +1065,7 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
-        let queued = queue_create(&tx, &catalog, draft, &[])?;
+        let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
         if body == Body::Read
             && let Some(item) = queued
                 .item_id
@@ -1585,6 +1588,7 @@ impl Core {
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
+        let credential = self.credential();
         self.with_upload_reader(path, reader, &mime_type, |tx, catalog, upload, taken| {
             let mut draft = draft.clone();
             name_bytes(
@@ -1594,7 +1598,13 @@ impl Core {
                 taken,
                 &mime_type,
             );
-            queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))
+            queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )
         })
     }
 
@@ -1728,6 +1738,7 @@ impl Core {
         }
         let (mime_type, mut draft) = file_draft(path, attachment, &[]);
         self.refuse_unwritable_type(&draft.r#type)?;
+        let credential = self.credential();
         self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             name_bytes(
                 &mut draft.properties,
@@ -1744,7 +1755,13 @@ impl Core {
                 let title = body::rule::unique_title(tx, catalog, target, &title)?;
                 draft.properties.insert("title".into(), title.into());
             }
-            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let item = queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )?;
             let file = item.item_id.clone().unwrap_or_default();
             let edge = queue_edge(
                 tx,
@@ -1771,6 +1788,7 @@ impl Core {
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unwritable_type(&draft.r#type)?;
+        let credential = self.credential();
         self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             name_bytes(
                 &mut draft.properties,
@@ -1779,7 +1797,13 @@ impl Core {
                 taken,
                 &mime_type,
             );
-            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let item = queue_create(
+                tx,
+                catalog,
+                &draft,
+                std::slice::from_ref(&upload.id),
+                credential.as_deref(),
+            )?;
             Ok(Added {
                 upload: upload.clone(),
                 item,
@@ -1998,6 +2022,13 @@ impl Core {
         catalog::served(&listed)
     }
 
+    /// A digest of the credential this copy sends with, where it has one.
+    fn credential(&self) -> Option<String> {
+        self.http()
+            .ok()
+            .map(|http| store::credential_digest(&http.authorization()))
+    }
+
     fn http(&self) -> Result<&http::Http> {
         self.http.as_deref().ok_or(CoreError::NoServer)
     }
@@ -2147,6 +2178,7 @@ fn queue_create(
     catalog: &catalog::Catalog,
     draft: &Draft,
     after: &[String],
+    credential: Option<&str>,
 ) -> Result<QueuedWrite> {
     refuse_invalid_names(&draft.tags, &draft.properties)?;
     if let Some(id) = &draft.id {
@@ -2159,9 +2191,10 @@ fn queue_create(
         });
     }
     // A key naming no source is under the credential's own
-    // (`items/source-own`), as last learned.
+    // (`items/source-own`), as learned for the credential in use; where it
+    // is not known, the tier is chosen here and the drain asks.
     let key_source = match &draft.source_id {
-        Some(_) => store::source_of(tx, draft.source.as_deref())?,
+        Some(_) => store::source_of(tx, draft.source.as_deref(), credential)?,
         None => None,
     };
     let target = match (&key_source, &draft.source_id) {
@@ -3400,7 +3433,7 @@ mod tests {
                 .unwrap();
             assert!(!store::item_held(&conn, &resynced_id).unwrap());
             let catalog = catalog::Catalog::load(&conn).unwrap();
-            hydrate::lay_queue_over(&conn, &catalog, &[]).unwrap();
+            hydrate::lay_queue_over(&conn, &catalog, &[], None).unwrap();
             assert_eq!(
                 store::items_by_ids(&conn, std::slice::from_ref(&resynced_id))
                     .unwrap()
