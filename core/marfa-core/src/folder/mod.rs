@@ -258,10 +258,13 @@ impl Folder {
         let state_dir = root_dir
             .child_recorded(Path::new(STATE_DIR), &mut made.directories)
             .map_err(io_error)?;
-        made.holding(&state_dir);
         swap_root(&root, "replace-root-before-store-open");
+        let lock_there = state_dir
+            .entry_kind(Path::new(crate::lock::DIRECTORY_LOCK))
+            .is_ok();
         let lock = Arc::new(Core::claim_directory(&state_dir)?);
         made.lock = Some(Arc::clone(&lock));
+        made.holding(&state_dir, lock_there);
         let core = working(Core::open_claimed(
             &state_dir,
             &root.join(STATE_DIR).join("core.sqlite"),

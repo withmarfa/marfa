@@ -22,13 +22,19 @@ pub(super) struct Made {
 impl Made {
     /// Notes what `state` holds before the add puts a store in it. A store
     /// already there is the folder's, with files only SQLite can account
-    /// for, so a failed add removes nothing from it.
-    pub(super) fn holding(&mut self, state: &Directory) {
+    /// for, so a failed add removes nothing from it. Called once the add holds
+    /// the store's writer lock, so no other add can make a store between
+    /// this look and the take-back; `lock_there` says whether the lock's
+    /// own file existed before the add claimed it.
+    pub(super) fn holding(&mut self, state: &Directory, lock_there: bool) {
         let store = state.entry_kind(Path::new("core.sqlite"));
         if !matches!(&store, Err(error) if error.kind() == std::io::ErrorKind::NotFound) {
             return;
         }
-        if let Ok(held) = inventory(state) {
+        if let Ok(mut held) = inventory(state) {
+            if !lock_there {
+                held.remove(Path::new(DIRECTORY_LOCK));
+            }
             self.state = Some((state.clone(), held));
         }
     }
@@ -110,7 +116,7 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         let state = Directory::open(&path).unwrap();
         let mut made = Made::default();
-        made.holding(&state);
+        made.holding(&state, false);
         // Another add makes its store here after this one looked, and holds
         // it while this one fails.
         let holder = crate::Core::open_directory(&state, &path.join("core.sqlite"), None).unwrap();
@@ -131,5 +137,22 @@ mod tests {
         assert_eq!(made.lock.as_ref().unwrap().handle(), Handle::Writer);
         made.take_back();
         assert!(state.entries().unwrap().is_empty(), "{:?}", state.entries());
+    }
+
+    #[test]
+    fn a_store_another_add_made_and_released_first_is_not_taken_back() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let path = temp.path().join(super::super::STATE_DIR);
+        std::fs::create_dir(&path).unwrap();
+        let state = Directory::open(&path).unwrap();
+        // Another add makes its store here and lets it go before this one
+        // claims the lock; this one is then refused.
+        drop(crate::Core::open_directory(&state, &path.join("core.sqlite"), None).unwrap());
+        let mut made = Made::default();
+        let lock_there = state.entry_kind(Path::new(DIRECTORY_LOCK)).is_ok();
+        made.lock = Some(Arc::new(crate::Core::claim_directory(&state).unwrap()));
+        made.holding(&state, lock_there);
+        made.take_back();
+        assert!(path.join("core.sqlite").exists());
     }
 }
