@@ -1092,7 +1092,7 @@ describe("where a file sits", () => {
 
   it.each([
     [404, "item_not_found"],
-    [403, "edge_permission_denied"],
+    [403, "type_not_permitted"],
   ])(
     "keeps a move it cannot give way from while the read is refused %i, and fails no drain",
     async (status, code) => {
