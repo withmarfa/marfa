@@ -44,8 +44,8 @@ const files = readdirSync(WORKFLOWS).filter((file) => /\.ya?ml$/.test(file));
  * The workflows that start on a pull request. `ci.yml` is the gate, and
  * `Pull request description` is required by its own name. CodeQL and the
  * control socket's check are not required checks, so a merge does not wait
- * for them. A workflow added here that runs the project's tests needs to be a
- * job of `ci.yml` instead.
+ * for them, though the control socket's check runs tests. Any other workflow
+ * that runs the project's tests needs to be a job of `ci.yml` instead.
  */
 const ON_PULL_REQUEST = [
   "ci.yml",

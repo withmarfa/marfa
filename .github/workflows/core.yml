@@ -3,9 +3,9 @@ name: Core
 # The core's live checks, `core-live.yml`, on a push to `main`, the nightly
 # and a dispatch. A pull request runs them as the `core` job of `ci.yml`,
 # which `Full CI` waits for, when `scripts/ci-required.ts` says the change can
-# affect them; a draft runs none of it. A push to `main` also runs it for the
-# server the live tests boot, so a server pull request does not hold a macOS
-# runner. Push paths omit changes the live tests do not read.
+# affect them; a draft runs none of them. A push to `main` also runs them for
+# the server the live tests boot, so a server pull request does not hold a
+# macOS runner. Push paths omit changes the live tests do not read.
 on:
   push:
     branches: [main]

@@ -5,9 +5,9 @@
  * otherwise, and a skipped job satisfies a required check where a workflow
  * filtered out by `paths` would leave it pending. `core` is the job that
  * calls `core-live.yml`. `Full CI`, the gate job of `ci.yml`, waits for the
- * rest and is what a ruleset requires. The nightly and a dispatch answer `true` for every job, and so
- * does a change that could not be read, so a skip only ever comes from a diff
- * that was read and classified.
+ * rest and is what a ruleset requires. The nightly and a dispatch answer
+ * `true` for every job, and so does a change that could not be read, so a
+ * skip only ever comes from a diff that was read and classified.
  *
  * A push to `main` runs every job too, unless `forPush` finds that it
  * changes only what no job but the format check reads and that this
