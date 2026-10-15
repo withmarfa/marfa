@@ -1,9 +1,15 @@
 import { rememberEdgeSubject } from "../middleware/replay-requirements.js";
-import { edgePermissionCovers, parseFilter } from "@withmarfa/shared";
+import {
+  edgePermissionCovers,
+  parseFilter,
+  resolveEnforcement,
+} from "@withmarfa/shared";
 import type { ApiKey, Edge } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { mayReadType, requireEdgePermission } from "../middleware/auth.js";
+import type { SourceFilterSettings } from "../storage/filter-sql.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
@@ -67,6 +73,23 @@ function sourceTypeReadable(
   sourceType: string | undefined,
 ): boolean {
   return sourceType === undefined || mayReadType(key, sourceType);
+}
+
+/**
+ * The source filter that applies to the key, for the store to decide an
+ * edge listing or an edge block with.
+ *
+ * It is handed to the store, not applied to the rows it returns, so the
+ * filter is part of the query that cuts the page or the block. An edge is
+ * decided by its source item alone: an edge is a statement its source makes
+ * about its target, so the target's source has no say.
+ */
+export async function edgeListingSourceFilter(
+  storage: Storage,
+  key: ApiKey,
+): Promise<SourceFilterSettings | undefined> {
+  return resolveEnforcement(await readInstanceConfig(storage.settings), key)
+    .source_filter;
 }
 
 /**

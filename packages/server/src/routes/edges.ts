@@ -41,6 +41,7 @@ import {
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import {
   edgeKindReadable,
+  edgeListingSourceFilter,
   edgeReadable,
   readableEdges,
   sourceTypesFor,
@@ -227,7 +228,7 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions.",
+    "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear: `GET /events` reports deletions. Nor does an edge whose source item `source_filter` leaves out.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -599,18 +600,21 @@ export function edgeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listEdgesRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
 
     // The same question every other data-plane listing asks. Its answer
     // is not a store filter here, because an edge's readability is its
     // source item's rather than its own and no column carries that; the
     // call refuses a credential whose map reaches no type at all, which
-    // `GET /edges/{id}` beside it already refuses.
+    // `GET /edges/{id}` beside it already refuses. The source filter is
+    // decided by the source item's row, which the query can reach, so the
+    // store applies it before the page is cut.
     getTypeFilter(c);
 
     const q = c.req.valid("query");
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
+      source_filter: await edgeListingSourceFilter(storage, key),
       updated_after: q.updated_after,
       updated_before: q.updated_before,
       limit: q.limit,
@@ -622,7 +626,6 @@ export function edgeRoutes(storage: Storage) {
     // cursor is the store's and is untouched, so a page can come back
     // short — empty, even, with a cursor still to follow — and paging still
     // walks the whole listing.
-    const key = requireAuth(c);
     const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
   });
@@ -940,7 +943,7 @@ const listFromSourceRoute = createRoute({
   tags: ["Edges"],
   summary: "List outbound edges",
   description:
-    "Returns the edges that start at an item. An item in the trash still lists its edges. `GET /items/{id}/backrefs` lists the edges that point at it.",
+    "Returns the edges that start at an item. An item in the trash still lists its edges. If `source_filter` leaves the item out, none of its edges appear here. `GET /items/{id}/backrefs` lists the edges that point at it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1003,7 +1006,7 @@ const listBackrefsRoute = createRoute({
   tags: ["Edges"],
   summary: "List inbound edges",
   description:
-    "Returns the edges that point at an item. An item in the trash still lists its edges. `GET /items/{id}/edges` lists the edges that start at it.",
+    "Returns the edges that point at an item. An item in the trash still lists its edges. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of this item. `GET /items/{id}/edges` lists the edges that start at it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1093,6 +1096,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
+      source_filter: await edgeListingSourceFilter(storage, key),
       limit: q.limit,
       cursor: q.cursor,
     });
@@ -1136,6 +1140,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
+      source_filter: await edgeListingSourceFilter(storage, key),
       limit: q.limit,
       cursor: q.cursor,
     });

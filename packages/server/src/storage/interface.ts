@@ -2362,6 +2362,10 @@ export interface EdgeListFilters {
   edge_type?: string | string[];
   limit?: number;
   cursor?: string;
+  /** The `source_filter` lever in force for the reader. An edge is left out,
+   *  before the page is cut, when the lever refuses its source item: the
+   *  item's own type and source decide, whatever the target's. */
+  source_filter?: SourceFilterSettings;
   /** Inclusive lower bound on `updated_at`, the edge's modification
    *  time. The edge half of the catch-up read; same inclusivity and same
    *  reasoning as {@link ItemFilters.updated_after}.
@@ -2537,6 +2541,7 @@ export interface EdgeStore {
   listFromSourcesBatched(
     sourceIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>>;
   /**
    * Batched inbound-by-types fetch for hydration on item reads — the mirror of
@@ -2544,10 +2549,15 @@ export interface EdgeStore {
    * `(target_id, edge_type)` bucket at `perTypeLimit` so a hot item with many
    * inbound edges of one type can't return an unbounded set. Used to hydrate
    * the `backrefs` block on the single-item read.
+   *
+   * `source_filter` leaves out an edge whose source item the lever refuses
+   * before each bucket is cut at `perTypeLimit`, as `EdgeListFilters` does
+   * for a page, so a block holds as many admitted edges as the cap allows.
    */
   listToTargetsBatched(
     targetIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>>;
 }
 

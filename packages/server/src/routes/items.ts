@@ -55,7 +55,11 @@ import {
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
-import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
+import {
+  assertFilterEdgeTermsReadable,
+  edgeListingSourceFilter,
+} from "./_edge-visibility.js";
+import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -1501,7 +1505,7 @@ export function itemRoutes(storage: Storage) {
     // decided there too, so two sends of one key land on one row. What the
     // answer reads is read inside it as well, so a write that committed is
     // never answered with a failure.
-    const { result, hydrated } = await runAuditedTransaction(
+    const { result, hydrated, sourceFilter } = await runAuditedTransaction(
       storage,
       async () => {
         const result = await writeItem(
@@ -1537,6 +1541,10 @@ export function itemRoutes(storage: Storage) {
           hydrated:
             result.outcome === "updated"
               ? await hydrateEdgesForItem(storage, key, result.item.id)
+              : undefined,
+          sourceFilter:
+            result.outcome === "created"
+              ? await edgeListingSourceFilter(storage, key)
               : undefined,
         };
       },
@@ -1608,13 +1616,14 @@ export function itemRoutes(storage: Storage) {
       (a, b) =>
         b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
     );
+    // The new item is the source of every edge it was created with, so the
+    // source filter decides them all at once, as it does for the same block
+    // on a read.
     const itemWithEdges = {
       ...item,
-      edges: groupAndCap(
-        orderedEdges,
-        HYDRATE_PER_TYPE_CAP,
-        ITEM_EDGES_CURSOR_KEY,
-      ),
+      edges: sourceFilterIncludesItem(sourceFilter, item)
+        ? groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP, ITEM_EDGES_CURSOR_KEY)
+        : {},
     };
 
     return c.json(

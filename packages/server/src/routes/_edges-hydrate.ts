@@ -5,7 +5,7 @@ import {
   ITEM_EDGES_CURSOR_KEY,
   encodeKeyedCursor,
 } from "../storage/interface.js";
-import { readableEdges } from "./_edge-visibility.js";
+import { edgeListingSourceFilter, readableEdges } from "./_edge-visibility.js";
 
 /** The most edges of one type an item response carries inline; a block
  *  cut here carries a `next_cursor` for the rest. */
@@ -65,14 +65,20 @@ function applyVisibility(
 
 /** An item's outbound edges grouped by type, each block cut at the cap
  *  with a cursor `GET /items/{id}/edges?edge_type=X` continues, and held
- *  to the same two permissions the edge doors ask for. */
+ *  to the same two permissions the edge doors ask for. The source filter is
+ *  asked of the item itself, since it is every edge's source, and is part
+ *  of the query that cuts the block, as it is for that listing. */
 export async function hydrateEdgesForItem(
   storage: Storage,
   key: ApiKey,
   itemId: string,
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<HydratedEdges> {
-  const batched = await storage.edges.listFromSourcesBatched([itemId], cap + 1);
+  const batched = await storage.edges.listFromSourcesBatched(
+    [itemId],
+    cap + 1,
+    { source_filter: await edgeListingSourceFilter(storage, key) },
+  );
   const blocks = groupAndCap(
     batched.get(itemId) ?? [],
     cap,
@@ -96,7 +102,9 @@ export async function hydrateEdgesForItems(
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<Map<string, HydratedEdges>> {
   if (itemIds.length === 0) return new Map();
-  const batched = await storage.edges.listFromSourcesBatched(itemIds, cap + 1);
+  const batched = await storage.edges.listFromSourcesBatched(itemIds, cap + 1, {
+    source_filter: await edgeListingSourceFilter(storage, key),
+  });
   const capped = new Map<string, HydratedEdges>();
   const all: Edge[] = [];
   for (const id of itemIds) {
@@ -121,14 +129,17 @@ export async function hydrateEdgesForItems(
  *
  *  The direction that needs both questions rather than one: the anchor
  *  here is the **target**, and an edge's readability is its source
- *  item's — a row the caller of this hydration never authorized. */
+ *  item's — a row the caller of this hydration never authorized. The
+ *  source filter is part of the query that cuts the block. */
 export async function hydrateBackrefsForItem(
   storage: Storage,
   key: ApiKey,
   itemId: string,
   cap = HYDRATE_PER_TYPE_CAP,
 ): Promise<HydratedEdges> {
-  const batched = await storage.edges.listToTargetsBatched([itemId], cap + 1);
+  const batched = await storage.edges.listToTargetsBatched([itemId], cap + 1, {
+    source_filter: await edgeListingSourceFilter(storage, key),
+  });
   const blocks = groupAndCap(
     batched.get(itemId) ?? [],
     cap,

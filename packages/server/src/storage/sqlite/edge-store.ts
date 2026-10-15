@@ -37,7 +37,9 @@ import {
 import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
-import { edges, edgeTypes } from "./schema.js";
+import { edges, edgeTypes, items } from "./schema.js";
+import { sourceFilterToSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncEdgeBlobReferences } from "./blob-references.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -48,6 +50,27 @@ const MAX_LIMIT = 500;
 function clampLimit(n: number | undefined): number {
   if (!n || n <= 0) return DEFAULT_LIMIT;
   return Math.min(n, MAX_LIMIT);
+}
+
+/**
+ * The source filter as a predicate on an edge, decided by the row of the
+ * edge's source item and never the target's.
+ *
+ * Phrased as the absence of a source item the filter refuses, not the
+ * presence of one it admits, so an edge whose source row is gone keeps the
+ * reading the route gives it (`sourceTypeReadable`). The source item's state
+ * does not enter: an item in the bin is judged by its source like any other.
+ *
+ * An item with no `source` in a covered type is refused, as the item listing
+ * refuses it: the predicate is NULL for it, and `COALESCE` reads NULL as
+ * refused so `NOT` does not turn it into admitted.
+ */
+function sourceFilterCondition(
+  filter: SourceFilterSettings | undefined,
+): SQL | undefined {
+  const admitted = sourceFilterToSql(filter, items.type, items.source);
+  if (!admitted) return undefined;
+  return sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.id} = ${edges.source_id} AND NOT COALESCE(${admitted}, 0))`;
 }
 
 function typeFilter(value: string | string[] | undefined) {
@@ -149,6 +172,8 @@ export class SqliteEdgeStore implements EdgeStore {
     const conditions = [eq(keyColumn, value)];
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
+    const sourceAdmitted = sourceFilterCondition(filters?.source_filter);
+    if (sourceAdmitted) conditions.push(sourceAdmitted);
 
     if (filters?.cursor) {
       const { v, id } = decodeKeyedCursor(filters.cursor, cursorKey);
@@ -236,6 +261,8 @@ export class SqliteEdgeStore implements EdgeStore {
     const conditions = [];
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
+    const sourceAdmitted = sourceFilterCondition(filters?.source_filter);
+    if (sourceAdmitted) conditions.push(sourceAdmitted);
     if (updatedAfter !== undefined) {
       conditions.push(gte(edges.updated_at, updatedAfter));
     }
@@ -568,8 +595,10 @@ export class SqliteEdgeStore implements EdgeStore {
   async listFromSourcesBatched(
     sourceIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>> {
     if (sourceIds.length === 0) return new Map();
+    const sourceAdmitted = sourceFilterCondition(opts?.source_filter);
     // ROW_NUMBER() caps each (source_id, edge_type) bucket in one query;
     // raw SQL because Drizzle has no windowed query builder. The outer
     // ORDER BY is what the hydrated block's cursor rests on: the block is
@@ -596,6 +625,7 @@ export class SqliteEdgeStore implements EdgeStore {
                  ) AS rn
           FROM edges
           WHERE source_id IN ${sourceIds}
+          ${sourceAdmitted ? sql`AND ${sourceAdmitted}` : sql``}
         )
         WHERE rn <= ${perTypeLimit}
         ORDER BY source_id, edge_type, rn
@@ -612,8 +642,10 @@ export class SqliteEdgeStore implements EdgeStore {
   async listToTargetsBatched(
     targetIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>> {
     if (targetIds.length === 0) return new Map();
+    const sourceAdmitted = sourceFilterCondition(opts?.source_filter);
     // The inbound mirror of `listFromSourcesBatched`, ordered for the same
     // reason: the block's cursor is continued by `listToTarget`.
     const rows = await this.db.all<{
@@ -636,6 +668,7 @@ export class SqliteEdgeStore implements EdgeStore {
                  ) AS rn
           FROM edges
           WHERE target_id IN ${targetIds}
+          ${sourceAdmitted ? sql`AND ${sourceAdmitted}` : sql``}
         )
         WHERE rn <= ${perTypeLimit}
         ORDER BY target_id, edge_type, rn

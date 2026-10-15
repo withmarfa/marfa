@@ -357,7 +357,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePage"
             },
-            "description": "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`."
+            "description": "The item's outbound edges you can read, by edge type, each the first page that `GET /items/{id}/edges` continues. Empty if `source_filter` leaves the item out. Absent where an operation doesn't return edges, such as a listing without `include=edges`."
           },
           "extensions": {
             "type": "object",
@@ -1478,7 +1478,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePage"
             },
-            "description": "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`."
+            "description": "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. An edge whose source item `source_filter` leaves out doesn't appear. Present with `include=backrefs`."
           },
           "listed": {
             "type": "boolean",
@@ -17989,7 +17989,7 @@
           "Edges"
         ],
         "summary": "List outbound edges",
-        "description": "Returns the edges that start at an item. An item in the trash still lists its edges. `GET /items/{id}/backrefs` lists the edges that point at it.",
+        "description": "Returns the edges that start at an item. An item in the trash still lists its edges. If `source_filter` leaves the item out, none of its edges appear here. `GET /items/{id}/backrefs` lists the edges that point at it.",
         "security": [
           {
             "bearerAuth": []
@@ -18371,7 +18371,7 @@
           "Edges"
         ],
         "summary": "List inbound edges",
-        "description": "Returns the edges that point at an item. An item in the trash still lists its edges. `GET /items/{id}/edges` lists the edges that start at it.",
+        "description": "Returns the edges that point at an item. An item in the trash still lists its edges. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of this item. `GET /items/{id}/edges` lists the edges that start at it.",
         "security": [
           {
             "bearerAuth": []
@@ -18702,7 +18702,7 @@
           "Edges"
         ],
         "summary": "List edges",
-        "description": "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions.",
+        "description": "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear: `GET /events` reports deletions. Nor does an edge whose source item `source_filter` leaves out.",
         "security": [
           {
             "bearerAuth": []
