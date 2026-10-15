@@ -119,6 +119,40 @@ impl Named {
         })
     }
 
+    /// The session for a folder whose copy records the server `origin`: this
+    /// command's own where it names that server, and otherwise the credential
+    /// the keychain keeps for `origin`, so a key named for one server is never
+    /// sent to another. A copy that records none takes this command's.
+    pub fn session_for(&self, origin: Option<&str>) -> Result<Session, CliError> {
+        let Some(origin) = origin else {
+            return self.session();
+        };
+        match Remote::url_named(self) {
+            Ok(url) if marfa_core::http::origin_of(&url)? == origin => return self.session(),
+            Ok(_) | Err(CliError::NoServerNamed) => {}
+            Err(error) => return Err(error),
+        }
+        let kept =
+            auth::resolve_credential(origin, false)?.ok_or_else(|| CliError::NoCredential {
+                origin: origin.to_string(),
+            })?;
+        let bearer = kept.bearer().to_string();
+        let remote = Remote::keeping(
+            origin,
+            origin.to_string(),
+            Some(CredentialSource::Keychain),
+            Some(bearer.clone()),
+            Some(kept),
+        )?;
+        Ok(Session {
+            server: Server {
+                url: remote.url().to_string(),
+                key: bearer,
+            },
+            renew: renewal(&remote),
+        })
+    }
+
     pub fn session_if_named(&self) -> Result<Option<Session>, CliError> {
         match self.session() {
             Ok(session) => Ok(Some(session)),

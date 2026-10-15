@@ -3258,15 +3258,15 @@ marfa folders revoke [OPTIONS] <ID>
 
 ### marfa folders watch
 
-Watch a folder and keep it in step.
+Watch a folder and keep it in step, or every folder on this machine.
 
 ```text
-marfa folders watch [OPTIONS] <DIR>
+marfa folders watch [OPTIONS] [DIR]
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The directory to watch, recursively. |
+| `[DIR]` | The directory to watch, recursively. Without one, the command watches every folder the folder registry lists, in one process. Each folder uses the server its copy came from, and each line names its folder. A folder added or removed while the watch runs joins or leaves it. A folder that can't be watched is reported once and tried again. |
 
 | Option | Description |
 | --- | --- |
