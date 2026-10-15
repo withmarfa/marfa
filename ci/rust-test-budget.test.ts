@@ -232,6 +232,9 @@ describe("every workflow job has a timeout", () => {
     ).jobs;
     expect(Object.keys(jobs).length).toBeGreaterThan(0);
     for (const [job, config] of Object.entries(jobs)) {
+      // A job that calls a workflow takes no timeout, which GitHub refuses
+      // there; the jobs of the workflow it calls are checked in its file.
+      if (config.uses !== undefined) continue;
       expect(
         typeof config["timeout-minutes"],
         `${file}: ${job} runs until GitHub's six-hour default`,

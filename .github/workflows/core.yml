@@ -1,10 +1,11 @@
 name: Core
 
-# A pull request runs it when `scripts/ci-required.ts` says the change can
-# affect it. A push to `main` also runs it for the server the live tests
-# boot, so a server pull request does not hold a macOS runner. Push paths
-# omit changes the live tests do not read. A draft pull request runs none of
-# it; marking it ready for review, and every push after, does.
+# The core's live checks, `core-live.yml`, on a push to `main`, the nightly
+# and a dispatch. A pull request runs them as the `core` job of `ci.yml`,
+# which `Full CI` waits for, when `scripts/ci-required.ts` says the change can
+# affect them; a draft runs none of it. A push to `main` also runs it for the
+# server the live tests boot, so a server pull request does not hold a macOS
+# runner. Push paths omit changes the live tests do not read.
 on:
   push:
     branches: [main]
@@ -19,10 +20,8 @@ on:
       - "pnpm-workspace.yaml"
       - "tsconfig.base.json"
       - ".github/workflows/core.yml"
+      - ".github/workflows/core-live.yml"
       - "!**/*.md"
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "47 3 * * *"
   workflow_dispatch:
@@ -33,126 +32,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_BUILD_JOBS: 2
-  CARGO_PROFILE_DEV_DEBUG: 0
-  CARGO_PROFILE_TEST_DEBUG: 0
-
 permissions:
   contents: read
 
 jobs:
-  changes:
-    name: Classify changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      core: ${{ steps.classify.outputs.core }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - id: classify
-        run: node scripts/ci-required.ts
-
   core:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
-    name: Core (Rust, bindings, live)
-    timeout-minutes: 90
-    runs-on: macos-26
-    env:
-      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
-    steps:
-      - uses: actions/checkout@v7
-      - name: Check Xcode
-        run: xcodebuild -version
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-          targets: aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: nextest@0.9
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - run: pnpm install --frozen-lockfile
-      # tsx resolves @withmarfa/shared through its dist.
-      - run: pnpm --filter "@withmarfa/server..." build
-
-      - name: Verify local server keys survive a restart
-        run: core/scripts/server-keys.test.sh
-
-      - name: Live tests against a booted server
-        working-directory: core
-        run: |
-          set -euo pipefail
-          # Named and trapped before the boot, so a boot that fails partway is
-          # still stopped. `|| true`: a failing EXIT trap command would become
-          # the step's status.
-          export MARFA_SERVER_ENV="${RUNNER_TEMP:-/tmp}/marfa-core-proof.env"
-          trap 'scripts/server-down.sh "${MARFA_SERVER_ENV}" || true' EXIT
-          # Assigned first: `eval "$(…)"` of a failed boot's empty output succeeds.
-          server_env="$(scripts/server-up.sh)"
-          eval "${server_env}"
-          cargo nextest run --locked --workspace --run-ignored only
-          (cd bindings/swift && cargo nextest run --locked --run-ignored only)
-
-      # marfa-swift builds the framework itself, at the commit it pins. The
-      # systems come from `build.sh`, as `check-targets.sh` reads them, so the
-      # C this build compiles targets the same oldest systems the shipped
-      # framework does.
-      - name: Build the Swift FFI crate
-        working-directory: core/bindings/swift
-        run: |
-          macos="$(sed -n 's/^macos=//p' build.sh)"
-          ios="$(sed -n 's/^ios=//p' build.sh)"
-          if [[ -z "${macos}" || -z "${ios}" ]]; then
-            echo "build.sh names no macos= or ios= target" >&2
-            exit 1
-          fi
-          export MACOSX_DEPLOYMENT_TARGET="${macos}.0"
-          export IPHONEOS_DEPLOYMENT_TARGET="${ios}.0"
-          cargo build --locked --release \
-            --target aarch64-apple-darwin \
-            --target aarch64-apple-ios \
-            --target aarch64-apple-ios-sim
-
-      # Outside the pnpm workspace, so every call carries the flag.
-      - name: Build, check and test the Node module
-        working-directory: core/bindings/node
-        run: |
-          pnpm --ignore-workspace install --frozen-lockfile
-          pnpm --ignore-workspace run build
-          pnpm --ignore-workspace run check
-          pnpm --ignore-workspace run test
-
-      - name: Prove the Node binding against a booted server
-        working-directory: core
-        run: |
-          cargo build -p marfa-cli
-          scripts/binding-proof.sh
+    name: Core
+    uses: ./.github/workflows/core-live.yml
 
   # A failed nightly run opens an issue, or comments on the one that is open.
   # Only a schedule reports, so no pull request run can open an issue.
   report-failure:
     name: Report a failed scheduled run
-    needs: [changes, core]
+    needs: core
     if: ${{ failure() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
