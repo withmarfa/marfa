@@ -5838,6 +5838,11 @@ export interface operations {
                     retype?: boolean;
                     /** @description The version of the item you read, which this update is based on. */
                     version: number;
+                    /**
+                     * @description `exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields.
+                     * @enum {string}
+                     */
+                    version_match?: "exact";
                     tier?: components["schemas"]["Tier"] & unknown;
                     /** @description When the item occurred, as an ISO 8601 time. */
                     occurred_at?: string;
@@ -5953,11 +5958,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.
-             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.
-             *     - `source_id_conflict`: another item under the source holds this `source_id`.
-             *     - `link_taken`: another item of the type holds this link.
-             *     - `type_mismatch`: `type` differs and `retype` isn't `true`.
+             * @description - `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.
+             *     - `ancestor_unavailable`: no readable snapshot of `version`.
+             *     - `source_id_conflict`: another item under the source holds `source_id`.
+             *     - `link_taken`: another item of the type holds the link.
+             *     - `type_mismatch`: `type` differs without `retype: true`.
              */
             409: {
                 headers: {

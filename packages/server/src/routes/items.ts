@@ -844,6 +844,12 @@ const updateItemRoute = createRoute({
             /** Toggle the tier (`library` ↔ `feed`). Compared against the
              *  version named like a property, so a stale flip collides with
              *  one made since. */
+            version_match: z
+              .literal("exact")
+              .optional()
+              .describe(
+                "`exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields.",
+              ),
             tier: TierEnum.optional().describe(
               "Moves the item between `library` and `feed`.",
             ),
@@ -961,7 +967,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
+        "- `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.\n- `ancestor_unavailable`: no readable snapshot of `version`.\n- `source_id_conflict`: another item under the source holds `source_id`.\n- `link_taken`: another item of the type holds the link.\n- `type_mismatch`: `type` differs without `retype: true`.",
     },
   },
 });
@@ -2100,6 +2106,9 @@ export function itemRoutes(storage: Storage) {
             ...(hasSourceId && { source_id: body.source_id }),
             ...(hasEdges && { edges: body.edges }),
             version: body.version,
+            ...(body.version_match !== undefined && {
+              version_match: body.version_match,
+            }),
             ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
             // The key that makes a re-executed write produce one keep-both
             // sibling rather than two.

@@ -103,6 +103,7 @@ interface RowChange {
   source_id?: string;
   /** The version the caller read; absent writes over whatever stands. */
   version?: number;
+  version_match?: "exact";
   conflict_mode?: ConflictMode;
   idempotency_key?: string;
   /** Replaces the row's tags. */
@@ -767,6 +768,32 @@ async function changeRow(
     }
     await assertEdgeTargets(storage, writer, change.edges);
 
+    if (change.version_match === "exact") {
+      if (!getTypeSchema(row.type)) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${row.type}`,
+        );
+      }
+      if (change.version !== row.version) {
+        return {
+          outcome: "stale",
+          id: row.id,
+          conflict: staleVersion(
+            row.version,
+            row.properties,
+            change.version ?? 0,
+            {
+              id: row.id,
+              tier: row.tier ?? "library",
+              occurred_at: row.occurred_at,
+              source_id: row.source_id ?? null,
+              type: row.type,
+            },
+          ),
+        };
+      }
+    }
     const writesRow =
       upsert ||
       change.properties !== undefined ||
