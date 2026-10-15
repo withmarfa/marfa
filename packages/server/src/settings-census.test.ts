@@ -37,6 +37,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/passkeys-browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
+  "routes/web-page-browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "refused-database-exit.test.ts":
     "starts the server as a child process, which needs the test's own environment to run",
   "production-bundle.test.ts":

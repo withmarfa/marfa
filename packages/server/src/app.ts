@@ -74,6 +74,7 @@ import {
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
 import { isApprovedWebOrigin } from "./auth/web-origins.js";
+import { OPEN_TO_EVERY_ORIGIN, openMethodsFor } from "./routes/_open-origin.js";
 import { renderHttpErrorPage, prefersHtml } from "./routes/http-error-page.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -286,6 +287,10 @@ export function createApp(
   // can't be coerced into echoing an attacker-controlled
   // `http://localhost:<port>`.
   //
+  // The discovery documents and registration answer every origin
+  // (`routes/_open-origin.ts`), so a page that is not yet approved can find
+  // the endpoints and register before it opens the approval window.
+  //
   // A refused origin gets no `Access-Control-Allow-Origin` at all. A request
   // with no `Origin` is no browser's cross-origin request and skips the layer,
   // but its answer still says it varies by `Origin`, so a cache never hands
@@ -314,12 +319,28 @@ export function createApp(
     exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
     origin: allowedOrigin,
   });
+  const openLayer = cors({
+    exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
+    origin: "*",
+    allowMethods: (_origin, c) => [
+      ...(OPEN_TO_EVERY_ORIGIN.get(c.req.path) ?? []),
+    ],
+    allowHeaders: ["Content-Type"],
+  });
   app.use(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
-      if (c.req.header("origin") !== undefined) return corsLayer(c, next);
-      await next();
-      c.header("Vary", "Origin", { append: true });
+      if (c.req.header("origin") === undefined) {
+        await next();
+        c.header("Vary", "Origin", { append: true });
+        return;
+      }
+      const open = openMethodsFor(
+        c.req.method,
+        c.req.path,
+        c.req.header("access-control-request-method"),
+      );
+      return open === undefined ? corsLayer(c, next) : openLayer(c, next);
     }),
   );
 
@@ -807,9 +828,18 @@ export function createApp(
       // any other door.
       if (c.req.method === "POST" && c.req.path === "/auth/oauth2/register") {
         refuseUndeclaredKeysOf(c.req.url, []);
+        // Any origin may register, so a browser session's cookie, which a
+        // page on another origin can send along, must not reach the library:
+        // with one it would refuse the post for its origin, or register the
+        // client to the signed-in person with what that unlocks.
+        const headers = new Headers(c.req.raw.headers);
+        headers.delete("cookie");
         return withPreparedHeaders(
           c,
-          await authInstance.handler(c.req.raw, c.var.clientIp ?? null),
+          await authInstance.handler(
+            new Request(c.req.raw, { headers }),
+            c.var.clientIp ?? null,
+          ),
         );
       }
       return authInstance.handler(c.req.raw, c.var.clientIp ?? null);

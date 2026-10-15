@@ -965,6 +965,38 @@ If a registration names a redirect URI that does not parse, then the server MUST
 
 **Tests:** `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
 
+### `keys-and-oauth/register-session-ignored`
+
+When a registration at `POST /auth/oauth2/register` carries the owner's browser session cookie, from any origin, the server MUST register the client as it registers the same metadata sent without one.
+
+**Reason:** Registration answers every origin, so a page the owner visits can send the owner's cookie along; the cookie must neither refuse the registration nor give the client anything the owner did not approve.
+
+**Tests:** `compliance/web-page-register.test.ts › registers a client sent with the owner's session cookie as it registers one sent without`.
+
+### `keys-and-oauth/register-idle-removed`
+
+When the `dcr-client-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `MARFA_DCR_CLIENT_RETENTION_DAYS`.
+
+**Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
+
+**Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`, `compliance/oauth-refusals.test.ts › answers 400 invalid_client for a pending code whose client is no longer registered`.
+
+### `keys-and-oauth/register-granted-kept`
+
+While a grant names a registered client, live or revoked, the server MUST keep the client registered.
+
+**Reason:** A revoked grant is kept, with the client it names, until the revoked-grant purge removes it after `MARFA_REVOKED_GRANT_RETENTION_DAYS`, so it never names a client that is gone.
+
+**Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
+
+### `keys-and-oauth/register-offered-kept`
+
+When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `MARFA_DCR_CLIENT_RETENTION_DAYS` from then, however long ago it registered.
+
+**Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
+
+**Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
+
 ### `keys-and-oauth/no-backchannel-registered`
 
 When a registration names a `backchannel_logout_uri` or `backchannel_logout_session_required`, the server MUST register the client without either and leave both out of its answer.
@@ -1367,15 +1399,15 @@ While `GET /auth/grants` lists a grant to a web client, the server MUST answer e
 
 **Reason:** The address is the one the page registered and the approval page showed, never the `Origin` a browser reports, because registration takes no credential and only the owner's approval makes an address trusted. It lasts as long as some listed grant names it, so two pages on one address keep it until the last is disconnected.
 
-**Tests:** `compliance/web-page-origin.test.ts › allows a page's origin once the owner approves it, on a preflight and on a request`, `› lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`, `› allows each origin of a page registered on two, once the owner approves it`, `› keeps allowing the page on a reload, which a standing consent answers with a code`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› names the page's origin on the device approval page, and allows it once approved there`.
+**Tests:** `compliance/web-page-origin.test.ts › allows a page's origin once the owner approves it, on a preflight and on a request`, `› lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`, `› allows each origin of a page registered on two, once the owner approves it`, `› keeps allowing the page on a reload, which a standing consent answers with a code`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› names the page's origin on the device approval page, and allows it once approved there`, `compliance/web-page-register.test.ts › completes the flow from a page that was never registered: discover, register, approve, exchange and read`.
 
 ### `keys-and-oauth/page-origin-refused`
 
-If a request carries an `Origin` that is off the loopback, that `CORS_ORIGINS` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
+If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `CORS_ORIGINS` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
 
 **Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
 
-**Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› names the page's origin on the device approval page, and allows it once approved there`.
+**Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› names the page's origin on the device approval page, and allows it once approved there`, `compliance/web-page-register.test.ts › still refuses that origin on a data operation and at the token endpoint before approval`.
 
 ### `keys-and-oauth/origin-no-credentials`
 
@@ -1384,6 +1416,28 @@ The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
 **Reason:** A page on an allowed origin reads only what the credential it sends reaches, never an answer to a request the owner's cookie rode on.
 
 **Tests:** `compliance/web-page-origin.test.ts › lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`.
+
+### `keys-and-oauth/discovery-every-origin`
+
+When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /.well-known/openid-configuration/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /auth/.well-known/openid-configuration` and `GET /.well-known/oauth-protected-resource` with `Access-Control-Allow-Origin: *`.
+
+**Reason:** A page that is not yet approved has to find the endpoints before it can ask for approval, and these documents take no credential and say nothing that belongs to the owner.
+
+**Tests:** `compliance/web-page-register.test.ts › answers the discovery documents and registration to any origin, with every origin allowed and no credentials`, `› completes the flow from a page that was never registered: discover, register, approve, exchange and read`.
+
+### `keys-and-oauth/register-every-origin`
+
+When a request to `POST /auth/oauth2/register` carries an `Origin`, the server MUST answer it with `Access-Control-Allow-Origin: *`.
+
+**Reason:** A page registers itself from the browser before it opens the approval window, so registration answers every origin; a browser never sends credentials on a request answered with `*`.
+
+**Tests:** `compliance/web-page-register.test.ts › answers the discovery documents and registration to any origin, with every origin allowed and no credentials`, `› completes the flow from a page that was never registered: discover, register, approve, exchange and read`.
+
+### `keys-and-oauth/register-preflight`
+
+When a preflight from any origin asks to send `POST` to `/auth/oauth2/register`, the server MUST answer it with `Access-Control-Allow-Origin: *`, `POST` as the only allowed method and `Content-Type` as the only allowed header.
+
+**Tests:** `compliance/web-page-register.test.ts › allows a preflight for registration with POST and Content-Type, and nothing more`.
 
 ### `keys-and-oauth/page-origin-serialized`
 

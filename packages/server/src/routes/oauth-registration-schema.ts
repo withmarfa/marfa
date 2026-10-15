@@ -167,7 +167,7 @@ export function oauthRegistrationRoute(
     tags: ["Access"],
     summary: "Register an OAuth client",
     description:
-      "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
+      "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential; a web page can call it from a browser on any origin. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
     request: {
       body: {
         required: true,

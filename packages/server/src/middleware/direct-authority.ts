@@ -31,7 +31,14 @@ export function directAuthorityMiddleware(
       !c.req.header("authorization") &&
       auth &&
       !c.req.path.startsWith("/setup") &&
-      !["/auth/sign-in", "/auth/sign-in/email"].includes(c.req.path)
+      // Registration answers every origin and takes no authority, so a
+      // session cookie a page on another origin sends along is not read as
+      // the owner's request; `app.ts` keeps it from the library too.
+      ![
+        "/auth/sign-in",
+        "/auth/sign-in/email",
+        "/auth/oauth2/register",
+      ].includes(c.req.path)
     ) {
       const owner = await storage.owner?.find();
       const session = owner
