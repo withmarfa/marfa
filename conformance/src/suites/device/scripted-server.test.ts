@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   answers,
@@ -26,6 +26,7 @@ let server: ScriptedServer | undefined;
 afterEach(async () => {
   await server?.stop();
   server = undefined;
+  vi.restoreAllMocks();
 });
 
 async function read(url: string, init?: RequestInit): Promise<Response> {
@@ -287,4 +288,56 @@ describe("the script is the whole of what the server does", () => {
     ).toEqual(["0 /types", "1 /items"]);
     expect(server.requests[1].query.get("type")).toBe("core.note");
   });
+});
+
+describe("delayed frames on a held stream", () => {
+  it("sends initial frames before the delayed frames", async () => {
+    server = await ScriptedServer.start();
+    server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      quiet: true,
+      frames: [{ comment: "initial" }],
+      delayedFrames: [{ afterMs: 100, frames: [{ comment: "later" }] }],
+    });
+    const response = await read(`${server.url}/events`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe(": initial\n\n");
+    const later = await reader.read();
+    expect(new TextDecoder().decode(later.value)).toBe(": later\n\n");
+    await reader.cancel();
+  });
+
+  it.each(["disconnect", "stop"])(
+    "cancels delayed frames and keepalives on %s",
+    async (action) => {
+      const schedule = vi.spyOn(globalThis, "setTimeout");
+      const cancel = vi.spyOn(globalThis, "clearTimeout");
+      const scheduleInterval = vi.spyOn(globalThis, "setInterval");
+      const cancelInterval = vi.spyOn(globalThis, "clearInterval");
+      server = await ScriptedServer.start();
+      server.answer("GET", "/events", {
+        kind: "sse",
+        hold: true,
+        frames: [{ comment: "initial" }],
+        delayedFrames: [{ afterMs: 60_123, frames: [{ comment: "never" }] }],
+      });
+      const controller = new AbortController();
+      await read(`${server.url}/events`, { signal: controller.signal });
+      const index = schedule.mock.calls.findIndex((call) => call[1] === 60_123);
+      expect(index).toBeGreaterThanOrEqual(0);
+      const delayed = schedule.mock.results[index].value as NodeJS.Timeout;
+      const keepalive = scheduleInterval.mock.results.at(-1)!
+        .value as NodeJS.Timeout;
+      if (action === "stop") await server.stop();
+      else controller.abort();
+      await vi.waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith(delayed);
+        expect(cancelInterval).toHaveBeenCalledWith(keepalive);
+      });
+    },
+  );
 });

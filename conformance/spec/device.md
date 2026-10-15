@@ -834,7 +834,7 @@ If a catch-up's stream ends before its live marker, then a device MUST keep its 
 
 If a catch-up's stream sends nothing at all for its idle wait before its live marker, then a device MUST end the catch-up `stream_incomplete` at the last event it took.
 
-**Tests:** `device/catch-up.test.ts › ends a catch-up on silence before the marker, at the last event it took`.
+**Tests:** `device/catch-up.test.ts › counts keepalive comments as activity before a delayed live marker (quiet=%s)`.
 
 ### `device/catch-up-ends-on-marker`
 
