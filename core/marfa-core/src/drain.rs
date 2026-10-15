@@ -480,8 +480,7 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
 }
 
 /// Whether a failed request ends the drain, as an error, rather than leaving
-/// its write for the next pass. A renewal that failed for the environment's
-/// sake is carried on past; any other renewal failure is not.
+/// its write for the next pass.
 fn ends_the_drain(error: &CoreError) -> bool {
     match error {
         CoreError::RenewalFailed(_) => !error.is_environmental(),
