@@ -283,7 +283,11 @@ describe("an attempt's outcome", () => {
     const http = recorder(() => outcome);
     await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
     expect(http.posts).toHaveLength(1);
-    return row(deliveryId);
+    const settled = await row(deliveryId);
+    // A retried delivery falls due again a second later, and the next
+    // attempt in the same test would send it too.
+    await ctx.storage.outboundWebhooks.delete(webhook.id);
+    return settled;
   }
 
   it("settles a 2xx as delivered", async () => {
