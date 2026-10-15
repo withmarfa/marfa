@@ -2358,7 +2358,7 @@ When a checked-out document is first bound, a device MUST place its item where t
 
 When a file moves to another directory under the same name, compared as `folders/name-comparison` says, without a content change, a device MUST send only its placement change.
 
-**Tests:** `device/folders-placement.test.ts › sends only the placement for a rename`.
+**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`.
 
 ### `folders/placement-not-document`
 

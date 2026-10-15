@@ -256,7 +256,7 @@ describe("where a file sits", () => {
     );
   });
 
-  it("sends only the placement for a rename", async () => {
+  it("sends only the placement for a move under the same name", async () => {
     harness = await folderHarness("placement-rename");
     const edges = new EdgeDoor();
     scriptFolderWrites(harness, { edges });
