@@ -28,6 +28,7 @@ mod storage;
 mod sync;
 mod transfer;
 mod watch;
+mod watch_record;
 pub use every::{Every, EveryFolder, Unwatched, watch_every};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
@@ -36,6 +37,7 @@ pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use unmatched::{Unmatched, UnmatchedRemoved};
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
+pub use watch_record::WatchRecord;
 pub mod state;
 
 use std::cell::{OnceCell, RefCell};

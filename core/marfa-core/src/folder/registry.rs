@@ -382,7 +382,7 @@ fn within(inner: &Directory, outer: &Directory) -> Option<bool> {
 /// Opens the registry's lock file, making it where it is missing. macOS can
 /// answer that the file does not exist to one of several processes making it
 /// at the same moment, so that answer is asked again a few times.
-fn open_lock(directory: &Directory, name: &Path) -> std::io::Result<std::fs::File> {
+pub(super) fn open_lock(directory: &Directory, name: &Path) -> std::io::Result<std::fs::File> {
     let mut asked = 0;
     loop {
         match directory.open_file(

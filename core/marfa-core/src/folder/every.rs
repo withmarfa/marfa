@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::registry::Registry;
 use super::watch::{WatchError, WatchEvent};
+use super::watch_record::{Observed, WatchRecord};
 use super::{Folder, STATE_DIR, StorageCause, first};
 use crate::directory::Directory;
 use crate::error::CoreError;
@@ -114,6 +115,10 @@ pub enum Every<'a, F = Folder> {
     /// go on as they are; or it reads again, for `None`. Told only when it
     /// changes.
     Registry(Option<&'a str>),
+    /// The record of the watches that other programs on the machine read
+    /// cannot be written, for `reason`, and the watches go on without it.
+    /// Told once.
+    Record { path: &'a Path, reason: &'a str },
 }
 
 /// What [`watch_every`] asks of its caller.
@@ -138,18 +143,31 @@ pub trait EveryFolder: Sync {
 /// with a watch of its own on a thread of its own. The registry is read again
 /// every few seconds: a folder it comes to list is watched, and the watch of
 /// one it no longer lists ends. A folder that cannot be watched is told once
-/// and tried again, and the others go on.
+/// and tried again, and the others go on. What each folder's watch is doing
+/// is kept in `record`, and its watches are marked ended once this returns.
 pub fn watch_every<W: EveryFolder>(
     registry: &Registry,
     stop: &AtomicBool,
     every: &W,
+    record: &WatchRecord,
 ) -> Result<(), W::Error> {
-    supervise(|| read(registry), stop, &Machine(every), Timing::default())
+    supervise(
+        || read(registry),
+        stop,
+        &Machine(every),
+        record,
+        Timing::default(),
+    )
 }
 
 fn read(registry: &Registry) -> Listing {
     match registry.read() {
-        Ok(Some(listed)) => Listing::Listed(listed.into_iter().map(|entry| entry.dir).collect()),
+        Ok(Some(listed)) => Listing::Listed(
+            listed
+                .into_iter()
+                .map(|entry| (entry.dir, entry.folder))
+                .collect(),
+        ),
         Ok(None) => Listing::Absent(format!(
             "the folder registry {} is not there",
             registry.path().display()
@@ -195,7 +213,8 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
 
 #[derive(Clone)]
 enum Listing {
-    Listed(Vec<PathBuf>),
+    /// Each folder's directory and its `system.folder` id.
+    Listed(Vec<(PathBuf, String)>),
     /// There is no registry file, with what to say of it.
     Absent(String),
     Unread(String),
@@ -223,7 +242,7 @@ impl Default for Timing {
 }
 
 /// A folder as the supervisor runs it, apart from how it is opened.
-trait Watched: Sync {
+trait Watched: Observed {
     fn watch<E>(
         &self,
         stop: &AtomicBool,
@@ -326,9 +345,18 @@ fn supervise<S: Supervised>(
     mut list: impl FnMut() -> Listing,
     stop: &AtomicBool,
     every: &S,
+    record: &WatchRecord,
     timing: Timing,
 ) -> Result<(), S::Error> {
     std::thread::scope(|scope| {
+        scope.spawn(|| {
+            record.keep(|reason| {
+                let _ = every.tell(Every::Record {
+                    path: record.path(),
+                    reason,
+                });
+            });
+        });
         let mut entries: BTreeMap<PathBuf, Entry<'_, S::Error>> = BTreeMap::new();
         let mut unread: Option<String> = None;
         let mut none_said = false;
@@ -337,17 +365,24 @@ fn supervise<S: Supervised>(
             if stop.load(Ordering::SeqCst) {
                 break Ok(());
             }
-            if let Err(error) = reap(&mut entries, every, stop, timing) {
+            if let Err(error) = reap(&mut entries, every, stop, record, timing) {
                 break Err(error);
             }
             if Instant::now() >= next_read {
                 next_read = Instant::now() + timing.reread;
-                let read = reconcile(list(), &mut entries, every, &mut unread, &mut none_said);
+                let read = reconcile(
+                    list(),
+                    &mut entries,
+                    every,
+                    record,
+                    &mut unread,
+                    &mut none_said,
+                );
                 if let Err(error) = read {
                     break Err(error);
                 }
             }
-            if let Err(error) = start_due(scope, &mut entries, every, timing) {
+            if let Err(error) = start_due(scope, &mut entries, every, record, timing) {
                 break Err(error);
             }
             std::thread::sleep(timing.poll);
@@ -364,6 +399,7 @@ fn supervise<S: Supervised>(
                 let _ = handle.join();
             }
         }
+        record.finish();
         watched
     })
 }
@@ -373,6 +409,7 @@ fn reap<S: Supervised>(
     entries: &mut BTreeMap<PathBuf, Entry<'_, S::Error>>,
     every: &S,
     stop: &AtomicBool,
+    record: &WatchRecord,
     timing: Timing,
 ) -> Result<(), S::Error> {
     let finished: Vec<PathBuf> = entries
@@ -404,6 +441,7 @@ fn reap<S: Supervised>(
         }
         if entry.leaving {
             entries.remove(&dir);
+            record.left(&dir);
             every.tell(Every::Left { dir: &dir })?;
             continue;
         }
@@ -411,6 +449,7 @@ fn reap<S: Supervised>(
             // Raised for a folder the registry lists again since: it starts
             // again at once.
             Outcome::Stopped if own.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst) => {
+                record.unwatched(&dir, None);
                 continue;
             }
             Outcome::Stopped => (
@@ -428,6 +467,7 @@ fn reap<S: Supervised>(
             Outcome::Told(_) => unreachable!("a failed tell ended the watch above"),
         };
         entry.run = Run::Waiting { until: now + wait };
+        record.unwatched(&dir, Some(&reason.code));
         if entry.told.as_ref() != Some(&reason) {
             every.tell(Every::Unwatched {
                 dir: &dir,
@@ -444,6 +484,7 @@ fn reconcile<S: Supervised>(
     listing: Listing,
     entries: &mut BTreeMap<PathBuf, Entry<'_, S::Error>>,
     every: &S,
+    record: &WatchRecord,
     unread: &mut Option<String>,
     none_said: &mut bool,
 ) -> Result<(), S::Error> {
@@ -463,7 +504,8 @@ fn reconcile<S: Supervised>(
         every.tell(Every::Registry(None))?;
     }
     let now = Instant::now();
-    for dir in &listed {
+    for (dir, folder) in &listed {
+        record.listed(dir, folder);
         entries
             .entry(dir.clone())
             .and_modify(|entry| entry.leaving = false)
@@ -475,7 +517,7 @@ fn reconcile<S: Supervised>(
     }
     let unlisted: Vec<PathBuf> = entries
         .keys()
-        .filter(|dir| !listed.contains(dir))
+        .filter(|dir| !listed.iter().any(|(listed, _)| listed == *dir))
         .cloned()
         .collect();
     for dir in unlisted {
@@ -487,6 +529,7 @@ fn reconcile<S: Supervised>(
             }
             Run::Waiting { .. } => {
                 entries.remove(&dir);
+                record.left(&dir);
                 every.tell(Every::Left { dir: &dir })?;
             }
         }
@@ -508,6 +551,7 @@ fn start_due<'scope, 'env, S: Supervised>(
     scope: &'scope Scope<'scope, 'env>,
     entries: &mut BTreeMap<PathBuf, Entry<'scope, S::Error>>,
     every: &'env S,
+    record: &'env WatchRecord,
     timing: Timing,
 ) -> Result<(), S::Error> {
     let now = Instant::now();
@@ -521,7 +565,7 @@ fn start_due<'scope, 'env, S: Supervised>(
                 }));
                 let handle = {
                     let (dir, stop, start) = (dir.clone(), Arc::clone(&stop), Arc::clone(&start));
-                    scope.spawn(move || run(every, &dir, &stop, &start))
+                    scope.spawn(move || run(every, record, &dir, &stop, &start))
                 };
                 entry.run = Run::Watching {
                     stop,
@@ -547,6 +591,7 @@ fn start_due<'scope, 'env, S: Supervised>(
 /// One folder's watch, on its own thread.
 fn run<S: Supervised>(
     every: &S,
+    record: &WatchRecord,
     dir: &Path,
     stop: &AtomicBool,
     start: &Mutex<Start>,
@@ -555,30 +600,33 @@ fn run<S: Supervised>(
         Ok(folder) => folder,
         Err(reason) => return Outcome::Unopened(reason),
     };
-    let watched = folder.watch(stop, |event| {
-        {
-            let mut start = lock(start);
-            if let WatchEvent::Watching { storage, .. } = &event {
-                if let Some(cause) = storage {
-                    every.tell(Every::Storage { dir, cause })?;
-                }
-                if start.quiet {
-                    start.said = Said::Held(Instant::now());
+    let watched = record.beating(dir, &folder, || {
+        folder.watch(stop, |event| {
+            {
+                let mut start = lock(start);
+                if let WatchEvent::Watching { storage, .. } = &event {
+                    if let Some(cause) = storage {
+                        every.tell(Every::Storage { dir, cause })?;
+                    }
+                    record.watching(dir);
+                    if start.quiet {
+                        start.said = Said::Held(Instant::now());
+                        return Ok(());
+                    }
+                    every.tell(Every::Watching { dir })?;
+                    start.said = Said::Told;
                     return Ok(());
                 }
-                every.tell(Every::Watching { dir })?;
-                start.said = Said::Told;
-                return Ok(());
+                if matches!(start.said, Said::Held(_)) {
+                    every.tell(Every::Watching { dir })?;
+                    start.said = Said::Told;
+                }
             }
-            if matches!(start.said, Said::Held(_)) {
-                every.tell(Every::Watching { dir })?;
-                start.said = Said::Told;
-            }
-        }
-        every.tell(Every::Folder {
-            dir,
-            folder: &folder,
-            event,
+            every.tell(Every::Folder {
+                dir,
+                folder: &folder,
+                event,
+            })
         })
     });
     match watched {
@@ -594,6 +642,7 @@ fn run<S: Supervised>(
 mod tests {
     use std::collections::{HashMap, VecDeque};
 
+    use super::super::health::Snapshot;
     use super::*;
 
     /// How a fake folder's watch goes once it is open.
@@ -614,6 +663,13 @@ mod tests {
 
     struct Fake {
         goes: Goes,
+    }
+
+    impl Observed for Fake {
+        fn observed(&self) -> Option<Snapshot> {
+            matches!(self.goes, Goes::Passes)
+                .then(|| Snapshot::succeeded("2026-04-04T00:00:00.000Z"))
+        }
     }
 
     impl Watched for Fake {
@@ -714,6 +770,7 @@ mod tests {
                 Every::Left { dir } => format!("left {}", dir.display()),
                 Every::NoFolders => "no folders".into(),
                 Every::Registry(reason) => format!("registry {reason:?}"),
+                Every::Record { reason, .. } => format!("record {reason}"),
             };
             lock(&self.told).push(said);
             Ok(())
@@ -755,10 +812,21 @@ mod tests {
         listed: &Mutex<Listing>,
         until: impl Fn(&Machine) -> bool,
     ) -> Result<(), String> {
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        supervised_with(machine, listed, &record, until)
+    }
+
+    fn supervised_with(
+        machine: &Machine,
+        listed: &Mutex<Listing>,
+        record: &WatchRecord,
+        until: impl Fn(&Machine) -> bool,
+    ) -> Result<(), String> {
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let running =
-                scope.spawn(|| supervise(|| lock(listed).clone(), &stop, machine, quick()));
+                scope.spawn(|| supervise(|| lock(listed).clone(), &stop, machine, record, quick()));
             let bound = Instant::now() + Duration::from_secs(10);
             while !until(machine) && !running.is_finished() {
                 assert!(
@@ -773,8 +841,16 @@ mod tests {
         })
     }
 
+    fn listing_of(dirs: &[&str]) -> Listing {
+        Listing::Listed(
+            dirs.iter()
+                .map(|dir| (PathBuf::from(dir), format!("id{dir}")))
+                .collect(),
+        )
+    }
+
     fn listed(dirs: &[&str]) -> Mutex<Listing> {
-        Mutex::new(Listing::Listed(dirs.iter().map(PathBuf::from).collect()))
+        Mutex::new(listing_of(dirs))
     }
 
     fn count(machine: &Machine, line: &str) -> usize {
@@ -919,10 +995,10 @@ mod tests {
         // the registry and listed again.
         supervised(&machine, &listing, |machine| {
             if count(machine, "/a reach") == 1 && !stop_first.swap(true, Ordering::SeqCst) {
-                *lock(&listing) = Listing::Listed(Vec::new());
+                *lock(&listing) = listing_of(&[]);
             }
             if count(machine, "left /a") == 1 {
-                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+                *lock(&listing) = listing_of(&["/a"]);
             }
             count(machine, "unwatched /a io") == 2
         })
@@ -949,7 +1025,7 @@ mod tests {
             if told.contains(&"watching /a".to_string())
                 && told.contains(&"unwatched /c io".to_string())
             {
-                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/b")]);
+                *lock(&listing) = listing_of(&["/b"]);
             }
             count(machine, "watching /b") == 1
                 && count(machine, "left /a") == 1
@@ -979,7 +1055,7 @@ mod tests {
                 *lock(&listing) = Listing::Absent("not there".into());
             }
             if told.len() == 3 && reads.fetch_add(1, Ordering::SeqCst) == 40 {
-                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+                *lock(&listing) = listing_of(&["/a"]);
             }
             told.len() == 4
         })
@@ -1008,7 +1084,7 @@ mod tests {
         let polls = std::sync::atomic::AtomicUsize::new(0);
         supervised(&machine, &listing, |machine| {
             if polls.fetch_add(1, Ordering::SeqCst) == 50 {
-                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+                *lock(&listing) = listing_of(&["/a"]);
             }
             count(machine, "watching /a") == 1
         })
@@ -1023,15 +1099,17 @@ mod tests {
         machine.opens("/b", vec![Ok(Goes::Lasts)]);
         let listing = listed(&["/a", "/b"]);
         let stop = AtomicBool::new(false);
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
         let ended = std::thread::scope(|scope| {
-            let running =
-                scope.spawn(|| supervise(|| lock(&listing).clone(), &stop, &machine, quick()));
+            let running = scope
+                .spawn(|| supervise(|| lock(&listing).clone(), &stop, &machine, &record, quick()));
             while machine.told().len() < 2 {
                 std::thread::sleep(Duration::from_millis(2));
             }
             machine.refuse_telling.store(true, Ordering::SeqCst);
             // Telling that the folder left meets the closed output.
-            *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+            *lock(&listing) = listing_of(&["/a"]);
             running.join().unwrap()
         });
         assert_eq!(ended, Err("the output closed".to_string()));
@@ -1090,8 +1168,7 @@ mod tests {
         let at_release = Mutex::new(Vec::new());
         let result = supervised(&machine, &listing, |machine| {
             if count(machine, "watching /a") == 1 {
-                *lock(&listing) =
-                    Listing::Listed(vec![PathBuf::from("/hung"), PathBuf::from("/b")]);
+                *lock(&listing) = listing_of(&["/hung", "/b"]);
             }
             let done = count(machine, "watching /b") == 1 && count(machine, "left /a") == 1;
             if done {
@@ -1106,6 +1183,84 @@ mod tests {
         let told = lock(&at_release).clone();
         assert!(!told.is_empty());
         assert!(told.iter().all(|told| !told.contains("/hung")), "{told:?}");
+    }
+
+    fn kept(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    fn folder_of<'a>(kept: &'a serde_json::Value, dir: &str) -> Option<&'a serde_json::Value> {
+        kept["processes"][0]["folders"]
+            .as_array()?
+            .iter()
+            .find(|folder| folder["dir"] == dir)
+    }
+
+    #[test]
+    fn the_record_holds_each_listed_folder_watched_or_not_with_its_reason_and_ends_with_the_stop() {
+        let machine = Machine::default();
+        machine.opens("/a", vec![Ok(Goes::Lasts)]);
+        machine.opens("/b", vec![Err(reason("unauthorized"))]);
+        machine.opens("/c", vec![Ok(Goes::Passes)]);
+        machine.opens("/d", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/a", "/b", "/c", "/d"]);
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("record.json");
+        let record = WatchRecord::at(path.clone(), 7, Duration::from_millis(100));
+        supervised_with(&machine, &listing, &record, |machine| {
+            if count(machine, "left /d") == 0 && count(machine, "watching /d") == 1 {
+                *lock(&listing) = listing_of(&["/a", "/b", "/c"]);
+            }
+            let held = path.exists() && {
+                let kept = kept(&path);
+                folder_of(&kept, "/a").is_some_and(|a| a["watching"] == true)
+                    && folder_of(&kept, "/b").is_some_and(|b| b["reason"] == "unauthorized")
+                    && folder_of(&kept, "/c").is_some_and(|c| c["last_success_at"].is_string())
+                    && folder_of(&kept, "/d").is_none()
+            };
+            held && count(machine, "left /d") == 1
+        })
+        .unwrap();
+        let kept = kept(&path);
+        let process = &kept["processes"][0];
+        assert_eq!(process["pid"], 7);
+        assert!(process["ended_at"].is_string(), "{kept}");
+        // The witness that the folders were watched before the stop.
+        assert_eq!(count(&machine, "watching /a"), 1);
+        for dir in ["/a", "/c"] {
+            assert_eq!(folder_of(&kept, dir).unwrap()["watching"], false, "{kept}");
+        }
+        let b = folder_of(&kept, "/b").unwrap();
+        assert_eq!(
+            (b["watching"].clone(), b["folder"].clone()),
+            (false.into(), "id/b".into())
+        );
+        assert_eq!(folder_of(&kept, "/a").unwrap()["folder"], "id/a");
+    }
+
+    #[test]
+    fn a_record_that_cannot_be_written_is_told_once_and_the_watches_go_on() {
+        let machine = Machine::default();
+        machine.opens("/a", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/a"]);
+        let temp = tempfile::tempdir().unwrap();
+        let blocked = temp.path().join("blocked");
+        std::fs::write(&blocked, b"in the way").unwrap();
+        let record = WatchRecord::at(blocked.join("record.json"), 7, Duration::from_millis(50));
+        supervised_with(&machine, &listing, &record, |machine| {
+            std::thread::sleep(Duration::from_millis(300));
+            count(machine, "watching /a") == 1
+        })
+        .unwrap();
+        let told = machine.told();
+        assert_eq!(
+            told.iter()
+                .filter(|told| told.starts_with("record "))
+                .count(),
+            1,
+            "{told:?}"
+        );
+        assert_eq!(count(&machine, "watching /a"), 1);
     }
 
     #[test]
