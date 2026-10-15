@@ -11092,6 +11092,17 @@
             "in": "path"
           },
           {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The item version you read. If it differs, nothing moves. Leave it out to move the item as it is."
+            },
+            "required": false,
+            "description": "The item version you read. If it differs, nothing moves. Leave it out to move the item as it is.",
+            "name": "version",
+            "in": "query"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -11284,11 +11295,18 @@
             }
           },
           "409": {
-            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
+            "description": "`version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -19076,6 +19094,29 @@
             "bearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is."
+            },
+            "required": false,
+            "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
+            "name": "source_version",
+            "in": "query"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -19324,11 +19365,14 @@
             }
           },
           "409": {
-            "description": "`id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set.",
+            "description": "- `version_conflict`: `source_version` differs; `current` is the source now.\n- `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
                     {
                       "$ref": "#/components/schemas/IdReusedRefusal"
                     },
@@ -19552,19 +19596,7 @@
               }
             }
           }
-        },
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
-          }
-        ]
+        }
       }
     },
     "/edges/{id}": {
@@ -20396,6 +20428,17 @@
             "in": "path"
           },
           {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is."
+            },
+            "required": false,
+            "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
+            "name": "source_version",
+            "in": "query"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -20564,11 +20607,18 @@
             }
           },
           "409": {
-            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
+            "description": "`version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },

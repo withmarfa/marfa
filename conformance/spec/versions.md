@@ -366,6 +366,36 @@ When two otherwise valid `PATCH /items/{id}` writes name `version_match: exact` 
 
 **Tests:** `compliance/version-exact.test.ts › admits only one concurrent exact write to different fields`.
 
+## Exact preconditions for lifecycle and edge writes
+
+### `versions/transition-exact`
+
+When `POST /items/{id}/transition` names a `version` query parameter other than the item's current version, the server MUST answer `409 version_conflict` before moving the item or anything its lifecycle move would take with it.
+
+**Reason:** a lifecycle decision can depend on the properties the caller read; the optional precondition is checked in the same transaction as the move.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/edge-source-exact`
+
+When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
+
+**Reason:** apps can own some rows and observe others under the same type; replacing a whole edge set to check row ownership would risk unrelated edges.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/source-exact-envelope`
+
+When a lifecycle or edge write refuses a `version` or `source_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/source-exact-current`
+
+When an otherwise valid lifecycle or edge write names the current item version in its `version` or `source_version` query parameter, the server MUST apply that individual write.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
 ## A stale write that collides
 
 The stale merge and collision rules below apply when `version_match` is absent. An exact precondition does not need an ancestor snapshot and cannot select a conflict resolution strategy instead of satisfying the precondition.

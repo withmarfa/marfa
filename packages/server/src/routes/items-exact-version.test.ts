@@ -119,3 +119,86 @@ it("replays an accepted exact write without reevaluating its now stale version",
   expect(await replay.json()).toEqual(await first.json());
   expect((await ctx.storage.items.get(id))?.version).toBe(2);
 });
+
+it("conditions lifecycle transitions on the exact item version", async () => {
+  const id = await note();
+  expect(
+    (await patch(id, { version: 1, properties: { body: "Adopted" } })).status,
+  ).toBe(200);
+  const before = await ctx.storage.items.get(id);
+  const refused = await request(
+    ctx.app,
+    "POST",
+    `/items/${id}/transition?version=1`,
+    { key: ctx.workingKey, body: { state: "archived" } },
+  );
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    error: { code: "version_conflict" },
+    current: { id, version: 2 },
+  });
+  expect(await ctx.storage.items.get(id)).toEqual(before);
+  const accepted = await request(
+    ctx.app,
+    "POST",
+    `/items/${id}/transition?version=2`,
+    { key: ctx.workingKey, body: { state: "archived" } },
+  );
+  expect(accepted.status).toBe(200);
+  expect((await ctx.storage.items.get(id))?.state).toBe("archived");
+  expect((await ctx.storage.items.get(id))?.version).toBe(2);
+});
+
+it("conditions edge additions and deletions on the exact source version", async () => {
+  const source = await note(),
+    target = await note(),
+    other = await note();
+  expect(
+    (await patch(source, { version: 1, properties: { body: "Adopted" } }))
+      .status,
+  ).toBe(200);
+  const edgeBody = {
+    source_id: source,
+    target_id: target,
+    edge_type: "references",
+  };
+  const refused = await request(ctx.app, "POST", "/edges?source_version=1", {
+    key: ctx.workingKey,
+    body: edgeBody,
+  });
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    error: { code: "version_conflict" },
+    current: { id: source, version: 2 },
+  });
+  const accepted = await request(ctx.app, "POST", "/edges?source_version=2", {
+    key: ctx.workingKey,
+    body: edgeBody,
+  });
+  expect(accepted.status).toBe(201);
+  const { edge } = (await accepted.json()) as { edge: { id: string } };
+  const unrelated = await request(ctx.app, "POST", "/edges", {
+    key: ctx.workingKey,
+    body: { ...edgeBody, target_id: other },
+  });
+  expect(unrelated.status).toBe(201);
+  const { edge: kept } = (await unrelated.json()) as { edge: { id: string } };
+  const denied = await request(
+    ctx.app,
+    "DELETE",
+    `/edges/${edge.id}?source_version=1`,
+    { key: ctx.workingKey },
+  );
+  expect(denied.status).toBe(409);
+  expect(await ctx.storage.edges.get(edge.id)).not.toBeNull();
+  const deleted = await request(
+    ctx.app,
+    "DELETE",
+    `/edges/${edge.id}?source_version=2`,
+    { key: ctx.workingKey },
+  );
+  expect(deleted.status).toBe(200);
+  expect(await ctx.storage.edges.get(edge.id)).toBeNull();
+  expect(await ctx.storage.edges.get(kept.id)).not.toBeNull();
+  expect((await ctx.storage.items.get(source))?.version).toBe(2);
+});

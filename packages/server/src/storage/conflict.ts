@@ -591,3 +591,15 @@ export function attachResolution(
       siblingEdges.length > 0 && { conflict_sibling_edges: siblingEdges }),
   };
 }
+
+/** A source decision can depend on properties outside the requested write. */
+export function exactItemVersion(row: Item, version: number | undefined) {
+  if (version === undefined || version === row.version) return undefined;
+  return staleVersion(row.version, row.properties, version, {
+    id: row.id,
+    type: row.type,
+    tier: row.tier ?? "library",
+    occurred_at: row.occurred_at,
+    source_id: row.source_id ?? null,
+  });
+}

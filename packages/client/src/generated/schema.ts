@@ -6289,7 +6289,10 @@ export interface operations {
     };
     transitionItem: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The item version you read. If it differs, nothing moves. Leave it out to move the item as it is. */
+                version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -6398,7 +6401,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
+            /** @description `version_conflict`: `version` differs from the item. `current` is the item now; nothing moved. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6411,7 +6414,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -10219,7 +10222,10 @@ export interface operations {
     };
     createEdge: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                source_version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -10353,7 +10359,10 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set. */
+            /**
+             * @description - `version_conflict`: `source_version` differs; `current` is the source now.
+             *     - `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10366,7 +10375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdReusedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdReusedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -10639,7 +10648,10 @@ export interface operations {
     };
     deleteEdge: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                source_version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -10732,7 +10744,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
+            /** @description `version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10745,7 +10757,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */

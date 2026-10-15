@@ -115,3 +115,73 @@ it("admits only one concurrent exact write to different fields", async () => {
   expect(current.status).toBe(200);
   expect(current.data.item.version).toBe(2);
 });
+
+it("conditions lifecycle and edge writes on the source version without replacing other edges", async () => {
+  const source = await note(),
+    target = await note(),
+    other = await note();
+  expect(
+    (
+      await client.updateItem(source, {
+        version: 1,
+        properties: { title: "Adopted" },
+      })
+    ).status,
+  ).toBe(200);
+  const transition = (version: number, state: string) =>
+    client.rawRequest<unknown>(
+      `/items/${source}/transition?version=${version}`,
+      { method: "POST", body: { state } },
+    );
+  const before = await client.getItem(source);
+  expect(before.status).toBe(200);
+  const refused = await transition(1, "archived");
+  expect(refused.status).toBe(409);
+  expect(refused.error).toMatchObject({
+    error: { code: "version_conflict" },
+    current: { id: source, version: 2 },
+  });
+  const unchanged = await client.getItem(source);
+  expect(unchanged.status).toBe(200);
+  expect(unchanged.data.item).toEqual(before.data.item);
+  expect((await transition(2, "archived")).status).toBe(200);
+  expect((await transition(2, "active")).status).toBe(200);
+  const create = (version: number, targetId: string) =>
+    client.rawRequest<{ edge: { id: string } }>(
+      `/edges?source_version=${version}`,
+      {
+        method: "POST",
+        body: {
+          source_id: source,
+          target_id: targetId,
+          edge_type: "references",
+        },
+      },
+    );
+  const denied = await create(1, target);
+  expect(denied.status).toBe(409);
+  expect(denied.error).toMatchObject({
+    error: { code: "version_conflict" },
+    current: { id: source, version: 2 },
+  });
+  const made = await create(2, target),
+    kept = await create(2, other);
+  expect(made.status).toBe(201);
+  expect(kept.status).toBe(201);
+  const remove = (version: number) =>
+    client.rawRequest<unknown>(
+      `/edges/${made.data.edge.id}?source_version=${version}`,
+      { method: "DELETE" },
+    );
+  expect((await remove(1)).status).toBe(409);
+  expect((await client.rawRequest(`/edges/${made.data.edge.id}`)).status).toBe(
+    200,
+  );
+  expect((await remove(2)).status).toBe(200);
+  expect((await client.rawRequest(`/edges/${made.data.edge.id}`)).status).toBe(
+    404,
+  );
+  expect((await client.rawRequest(`/edges/${kept.data.edge.id}`)).status).toBe(
+    200,
+  );
+});
