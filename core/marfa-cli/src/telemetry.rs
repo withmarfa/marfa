@@ -7,9 +7,11 @@
 //! A run is one trace. Its root span is named for the command path
 //! (`marfa items create`), the core's spans hang beneath it, and a failure
 //! adds an `error` event with the CLI's error code and the exit code. What
-//! leaves the process is the allowlist in `layer`: the command path, exit and
-//! error codes, counts, outcomes and durations. Never an argument, a
-//! credential, an address, an item's content or an error's message.
+//! leaves the process is the allowlist in `layer` and the event `posthog`
+//! builds: the command path, exit and error codes, counts, outcomes and
+//! durations, and PostHog's project token in its own field. Never an
+//! argument, another credential, an address, an item's content or an error's
+//! message.
 //!
 //! This module and its children are the only files in the binary that name
 //! `tracing`.
