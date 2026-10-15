@@ -30,7 +30,7 @@ beforeAll(async () => {
     return ((await res.json()) as { item: { id: string } }).item.id;
   };
   source = await note();
-  for (let i = 0; i < 15; i += 1) targets.push(await note());
+  for (let i = 0; i < 19; i += 1) targets.push(await note());
 });
 
 afterAll(async () => {
@@ -254,4 +254,69 @@ it("keys inside `properties` are the edge type's, not the door's", async () => {
     edge: { properties: Record<string, unknown> };
   };
   expect(edge.properties.weight).toBe(5);
+});
+
+describe("the order POST /edges/bulk judges an undeclared key in", () => {
+  const page = (second: string, third: string, undeclared: boolean) => [
+    { edge_type: "about", source_id: "not-an-id", target_id: source },
+    {
+      edge_type: "about",
+      source_id: source,
+      target_id: second,
+      ...(undeclared && { weight: 1 }),
+    },
+    { edge_type: "about", source_id: source, target_id: third },
+  ];
+
+  it("under `atomic`, answers a later entry's undeclared key before an earlier entry's malformed id", async () => {
+    const second = target();
+    const third = target();
+    const refused = await send("key", "/edges/bulk", {
+      edges: page(second, third, true),
+    });
+    const body = (await refused.json()) as {
+      error: { code: string; details: { index: number; code: string } };
+    };
+    expect(refused.status, JSON.stringify(body)).toBe(400);
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details.index).toBe(1);
+    expect(body.error.details.code).toBe("validation_error");
+
+    // The witness: without the undeclared key, the earlier entry answers.
+    const alone = await send("key", "/edges/bulk", {
+      edges: page(second, third, false),
+    });
+    const witness = (await alone.json()) as {
+      error: { details: { index: number; code: string } };
+    };
+    expect(alone.status).toBe(400);
+    expect(witness.error.details).toMatchObject({
+      index: 0,
+      code: "invalid_id",
+    });
+    const listed = await aboutTargets();
+    expect(listed).not.toContain(second);
+    expect(listed).not.toContain(third);
+  });
+
+  it("without `atomic`, judges each entry alone", async () => {
+    const second = target();
+    const third = target();
+    const answered = await send("key", "/edges/bulk", {
+      atomic: false,
+      edges: page(second, third, true),
+    });
+    const body = (await answered.json()) as {
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(answered.status, JSON.stringify(body)).toBe(200);
+    expect(body.results.map((r) => [r.outcome, r.error?.code])).toEqual([
+      ["errored", "invalid_id"],
+      ["errored", "validation_error"],
+      ["created", undefined],
+    ]);
+    const listed = await aboutTargets();
+    expect(listed).not.toContain(second);
+    expect(listed).toContain(third);
+  });
 });

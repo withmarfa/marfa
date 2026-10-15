@@ -832,6 +832,60 @@ describe("bulk", () => {
     expect(await listed()).toEqual([kept!.id]);
   });
 
+  it("judges an undeclared key under atomic before any other entry refusal, and each entry alone without it", async () => {
+    const tag = `undeclared-order-${ctx.runId}`;
+    const page = (undeclared: boolean) => [
+      { type: "NOT a valid type", properties: { title: "bad" }, tags: [tag] },
+      {
+        type: "core.note",
+        properties: { title: "second", body: "second" },
+        tags: [tag],
+        ...(undeclared && { data: {} }),
+      },
+      {
+        type: "core.note",
+        properties: { title: "third", body: "third" },
+        tags: [tag],
+      },
+    ];
+    const listed = async (): Promise<string[]> => {
+      const list = await client.listItems({ tags: [tag], tier: "all" });
+      expect(list.ok).toBe(true);
+      return list.data.data.map((i) => i.id);
+    };
+
+    const atomic = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: { items: page(true) },
+    });
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details?.index).toBe(1);
+    expect(JSON.stringify(atomic.error?.error.details)).toContain("data");
+
+    // The witness: without the undeclared key, the earlier entry answers.
+    const alone = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: { items: page(false) },
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.details?.index).toBe(0);
+    expect(await listed()).toEqual([]);
+
+    const best = await client.rawRequest<BulkResponse>("/items/bulk", {
+      method: "POST",
+      body: { atomic: false, items: page(true) },
+    });
+    expect(best.status).toBe(200);
+    expect(best.data.results.map((r) => r.outcome)).toEqual([
+      "errored",
+      "errored",
+      "created",
+    ]);
+    trackItem(ctx, best.data.results[2]!.id!);
+    expect(await listed()).toEqual([best.data.results[2]!.id]);
+  });
+
   it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {
     // The edge step is the last of an entry's writes, and a child syncing
     // before its parent meets it in ordinary use: the entry is reported

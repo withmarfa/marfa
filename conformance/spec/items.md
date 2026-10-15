@@ -1248,9 +1248,17 @@ When the server answers `bulk_atomic_rollback`, the server MUST answer it with t
 
 **Tests:** `compliance/bulk.test.ts › answers a rollback at the status of the refusal inside it`, `compliance/links.test.ts › refuses a bulk entry a link another row holds, on both halves`.
 
+### `items/bulk-atomic-undeclared-first`
+
+When a `POST /items/bulk` page under `atomic: true` holds an entry with a key the operation does not declare, the server MUST answer the rollback for the first such entry before it judges any entry's other fields, types or sources, or looks any entry up.
+
+**Reason:** the shape of a request is judged before anything it names, so a caller fixing a misnamed field is not first sent after a refusal it would meet anyway.
+
+**Tests:** `compliance/bulk.test.ts › judges an undeclared key under atomic before any other entry refusal, and each entry alone without it`.
+
 ### `items/bulk-atomic-gates-first`
 
-When the server reads a `POST /items/bulk` page under `atomic: true`, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
+When the server reads a `POST /items/bulk` page under `atomic: true` that holds no entry with a key the operation does not declare, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
 
 **Reason:** otherwise a stale entry ahead of it answers `409`, and the caller re-reads a row when the cause is a permission it lacks.
 

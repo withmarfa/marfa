@@ -781,9 +781,17 @@ If an entry of a `POST /edges/bulk` page under `atomic: true` is refused, then t
 
 **Tests:** `compliance/edges-bulk.test.ts › atomic=true rolls back the whole batch on validation error`, `› atomic=true rolls back a batch naming an item that does not exist`, `correctness/edges/edges-cycle.test.ts › refuses an atomic page that proposes an edge and its reverse together, and writes neither`.
 
+### `edges/bulk-atomic-undeclared-first`
+
+When a `POST /edges/bulk` page under `atomic: true` holds an entry with a key the operation does not declare, the server MUST answer the rollback for the first such entry before it judges any entry's ids, types or the edges it holds.
+
+**Reason:** the same as `items/bulk-atomic-undeclared-first`: the shape of a request is judged before anything it names.
+
+**Tests:** `compliance/edges-bulk.test.ts › judges an undeclared key under atomic before any other entry refusal, and each entry alone without it`.
+
 ### `edges/bulk-atomic-gates-first`
 
-When a `POST /edges/bulk` page under `atomic: true` holds an entry with a malformed id, or one whose source type or edge type the key may not write, the server MUST answer the rollback for the first such entry before it judges any entry against the edges it holds.
+When a `POST /edges/bulk` page under `atomic: true` holds no entry with a key the operation does not declare, and holds an entry with a malformed id, or one whose source type or edge type the key may not write, the server MUST answer the rollback for the first such entry before it judges any entry against the edges it holds.
 
 **Reason:** the same as `items/bulk-atomic-gates-first`: a page the key may not write is refused whole, whatever else it holds.
 

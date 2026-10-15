@@ -593,19 +593,22 @@ export function edgesBulkRoutes(storage: Storage) {
       // would answer first, as a `409`, and the caller would re-read the edge
       // over a refusal whose cause is a permission it lacks.
       if (atomic) {
+        // The request's shape first, across the whole page, before anything
+        // an entry names (`edges/bulk-atomic-undeclared-first`).
+        const first = undeclared.findIndex((refusal) => refusal !== null);
+        const refusal = undeclared[first];
+        if (refusal) {
+          throw bulkAtomicRollback(
+            first,
+            {
+              code: refusal.code,
+              message: refusal.message,
+              details: refusal.details,
+            },
+            "edge",
+          );
+        }
         for (const [i, raw] of rawEdges.entries()) {
-          const refusal = undeclared[i];
-          if (refusal) {
-            throw bulkAtomicRollback(
-              i,
-              {
-                code: refusal.code,
-                message: refusal.message,
-                details: refusal.details,
-              },
-              "edge",
-            );
-          }
           const shape = !isValidId(raw.source_id)
             ? `Invalid source_id: ${raw.source_id}`
             : !isValidId(raw.target_id)

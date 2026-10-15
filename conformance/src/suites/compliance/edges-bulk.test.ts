@@ -373,6 +373,64 @@ describe("edges.bulk", () => {
     expect(await edgesOf(b.sourceId)).toEqual([]);
   });
 
+  it("judges an undeclared key under atomic before any other entry refusal, and each entry alone without it", async () => {
+    const a = await makePair();
+    const b = await makePair();
+    const page = (undeclared: boolean) => [
+      { source_id: "not-an-id", target_id: a.targetId, edge_type: "about" },
+      {
+        source_id: a.sourceId,
+        target_id: a.targetId,
+        edge_type: "about",
+        ...(undeclared && { weight: 1 }),
+      },
+      { source_id: b.sourceId, target_id: b.targetId, edge_type: "about" },
+    ];
+    const edgesOf = async (id: string): Promise<string[]> => {
+      const list = await client.listItemEdges(id, { edge_type: "about" });
+      expect(list.ok).toBe(true);
+      return list.data.data.map((e) => e.target_id);
+    };
+
+    const atomic = await client.rawRequest<unknown>("/edges/bulk", {
+      method: "POST",
+      body: { edges: page(true) },
+    });
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details).toMatchObject({
+      index: 1,
+      code: "validation_error",
+    });
+
+    // The witness: without the undeclared key, the earlier entry answers.
+    const alone = await client.rawRequest<unknown>("/edges/bulk", {
+      method: "POST",
+      body: { edges: page(false) },
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.details).toMatchObject({
+      index: 0,
+      code: "invalid_id",
+    });
+    expect(await edgesOf(a.sourceId)).toEqual([]);
+    expect(await edgesOf(b.sourceId)).toEqual([]);
+
+    const best = await client.rawRequest<BulkEdgeResponse>("/edges/bulk", {
+      method: "POST",
+      body: { atomic: false, edges: page(true) },
+    });
+    expect(best.status).toBe(200);
+    expect(best.data.results.map((r) => [r.outcome, r.error?.code])).toEqual([
+      ["errored", "invalid_id"],
+      ["errored", "validation_error"],
+      ["created", undefined],
+    ]);
+    trackEdge(ctx, best.data.results[2]!.id!);
+    expect(await edgesOf(a.sourceId)).toEqual([]);
+    expect(await edgesOf(b.sourceId)).toEqual([b.targetId]);
+  });
+
   it("unknown edge_type lands as errored in non-atomic mode", async () => {
     const { sourceId, targetId } = await makePair();
     const res = await client.bulkEdges({

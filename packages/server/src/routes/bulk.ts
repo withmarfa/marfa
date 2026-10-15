@@ -685,19 +685,22 @@ export function bulkRoutes(storage: Storage) {
       // would re-read the row over a refusal whose cause is a permission it
       // lacks (`items/bulk-atomic-gates-first`).
       if (atomic) {
+        // The request's shape first, across the whole page, before anything
+        // an entry names (`items/bulk-atomic-undeclared-first`).
+        const first = undeclared.findIndex((refusal) => refusal !== null);
+        const refusal = undeclared[first];
+        if (refusal) {
+          throw bulkAtomicRollback(first, {
+            code: refusal.code,
+            message: refusal.message,
+            details: refusal.details,
+          });
+        }
         const enforcement = resolveEnforcement(
           await readInstanceConfig(storage.settings),
           key,
         );
         for (const [i, raw] of items.entries()) {
-          const refusal = undeclared[i];
-          if (refusal) {
-            throw bulkAtomicRollback(i, {
-              code: refusal.code,
-              message: refusal.message,
-              details: refusal.details,
-            });
-          }
           if (!isValidTypeIdentifier(raw.type)) {
             throw bulkAtomicRollback(i, {
               code: ErrorCode.VALIDATION_ERROR,

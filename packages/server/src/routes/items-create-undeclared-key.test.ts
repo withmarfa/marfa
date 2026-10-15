@@ -206,3 +206,61 @@ it("keys inside `properties` are the type's, not the door's", async () => {
   };
   expect(item.properties.data).toBe("a property no schema names");
 });
+
+describe("the order POST /items/bulk judges an undeclared key in", () => {
+  const page = (tag: string, undeclared: boolean) => [
+    { type: "NOT a valid type", properties: { body: "bad type" }, tags: [tag] },
+    {
+      type: "core.note",
+      properties: { body: "second" },
+      tags: [tag],
+      ...(undeclared && { data: {} }),
+    },
+    { type: "core.note", properties: { body: "third" }, tags: [tag] },
+  ];
+
+  it("under `atomic`, answers a later entry's undeclared key before an earlier entry's invalid type", async () => {
+    const tag = marker();
+    const refused = await send("key", "/items/bulk", {
+      items: page(tag, true),
+    });
+    const body = (await refused.json()) as {
+      error: { code: string; details: { index: number; code: string } };
+    };
+    expect(refused.status, JSON.stringify(body)).toBe(400);
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details.index).toBe(1);
+    expect(JSON.stringify(body.error.details)).toContain('\\"data\\"');
+
+    // The witness: without the undeclared key, the earlier entry answers.
+    const alone = await send("key", "/items/bulk", {
+      items: page(tag, false),
+    });
+    const witness = (await alone.json()) as {
+      error: { details: { index: number } };
+    };
+    expect(alone.status).toBe(400);
+    expect(witness.error.details.index).toBe(0);
+    expect(await tagged(tag)).toEqual([]);
+  });
+
+  it("without `atomic`, judges each entry alone", async () => {
+    const tag = marker();
+    const answered = await send("key", "/items/bulk", {
+      atomic: false,
+      items: page(tag, true),
+    });
+    const body = (await answered.json()) as {
+      results: { outcome: string; id?: string; error?: { message: string } }[];
+    };
+    expect(answered.status, JSON.stringify(body)).toBe(200);
+    expect(body.results.map((r) => r.outcome)).toEqual([
+      "errored",
+      "errored",
+      "created",
+    ]);
+    expect(body.results[0]?.error?.message).toContain("Invalid type");
+    expect(JSON.stringify(body.results[1])).toContain('\\"data\\"');
+    expect(await tagged(tag)).toEqual([body.results[2]?.id]);
+  });
+});
