@@ -600,18 +600,18 @@ export function edgeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listEdgesRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
 
     // The same question every other data-plane listing asks. Its answer
     // is not a store filter here, because an edge's readability is its
     // source item's rather than its own and no column carries that; the
     // call refuses a credential whose map reaches no type at all, which
-    // `GET /edges/{id}` beside it already refuses. The source filter is the
-    // one half a store can ask, of the source item's row, so it is.
+    // `GET /edges/{id}` beside it already refuses. The source filter is
+    // decided by the source item's row, which the query can reach, so the
+    // store applies it before the page is cut.
     getTypeFilter(c);
 
     const q = c.req.valid("query");
-    const key = requireAuth(c);
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
       source_filter: await edgeListingSourceFilter(storage, key),
