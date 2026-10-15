@@ -212,7 +212,7 @@ impl Exit {
                 "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"
             }
             Exit::Interrupted => {
-                "a long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended any command at once"
+                "a long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended a command that was still stopping"
             }
         }
     }

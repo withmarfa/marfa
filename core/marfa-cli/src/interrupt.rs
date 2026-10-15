@@ -94,9 +94,9 @@ pub fn spawn_apart(
 /// Ctrl-C raises the stop and does not interrupt what the process is doing: a
 /// handler would fail a request in flight with `EINTR`, which reads as the
 /// network failing rather than as a stop. The signal is blocked here, which
-/// every thread made afterwards inherits, and one thread waits for it. That
-/// makes this the first thing a command does, before any thread is made, bar
-/// those that `spawn_apart`.
+/// every thread made afterwards inherits, and one thread waits for it. So a
+/// command calls this before it makes any thread, bar those that
+/// `spawn_apart`.
 ///
 /// A second Ctrl-C ends the process at once, with the status a shell gives
 /// one that died of it.
