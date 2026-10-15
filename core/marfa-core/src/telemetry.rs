@@ -44,6 +44,10 @@ pub(crate) mod live {
     /// the operation is recorded by the operation, once; one it carries on
     /// past is a warning here.
     pub(crate) fn unanswered(span: &tracing::Span, error: &CoreError, ends_operation: bool) {
+        if matches!(error, CoreError::Canceled) {
+            span.record("outcome", "canceled");
+            return;
+        }
         span.record("outcome", "error");
         if !ends_operation {
             degraded(error);
@@ -144,6 +148,37 @@ macro_rules! degraded {
 }
 
 pub(crate) use {degraded, ended, operation, record};
+
+/// The subscriber of the thread that made it, for work it hands to a thread
+/// of its own: a host that installed one for that thread alone would
+/// otherwise hear nothing of the work.
+#[cfg(feature = "telemetry")]
+pub(crate) struct Carried(tracing::Dispatch);
+
+#[cfg(feature = "telemetry")]
+impl Carried {
+    pub(crate) fn here() -> Carried {
+        Carried(tracing::dispatcher::get_default(Clone::clone))
+    }
+
+    pub(crate) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
+        tracing::dispatcher::with_default(&self.0, work)
+    }
+}
+
+#[cfg(not(feature = "telemetry"))]
+pub(crate) struct Carried;
+
+#[cfg(not(feature = "telemetry"))]
+impl Carried {
+    pub(crate) fn here() -> Carried {
+        Carried
+    }
+
+    pub(crate) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
+        work()
+    }
+}
 
 #[cfg(test)]
 mod tests {

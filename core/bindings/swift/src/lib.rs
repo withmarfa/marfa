@@ -192,8 +192,10 @@ pub struct UnregisteredType {
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with `MarfaError.Canceled`. What the call had taken is consistent:
 /// a hydration left unfinished refuses reads, a catch-up keeps the cursor it
-/// reached, and a drain leaves what it had not sent queued. A raised `Stop`
-/// stays raised, so a call given one afterwards ends at once.
+/// reached, and a drain leaves what it had not sent queued, and an upload or
+/// item or edge write it had in flight queued as sent, for the next drain to
+/// send again under the same key. A raised `Stop` stays raised, so a call given one afterwards
+/// ends at once.
 #[derive(uniffi::Object)]
 pub struct Stop {
     flag: Arc<AtomicBool>,
@@ -730,7 +732,7 @@ impl From<marfa_core::BodyName> for BodyName {
 }
 
 /// What became of one write a drain answered, sent or not.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
@@ -745,7 +747,7 @@ pub struct DrainVerdict {
 }
 
 /// What a drain did.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DrainReport {
     /// Writes the server answered this drain, whatever it answered.
     pub answered: u64,
@@ -1432,8 +1434,9 @@ pub struct Thumbnail {
     pub bytes: Vec<u8>,
 }
 
-/// What a held stream changed in the copy, or what became of the server.
-/// `cursor` is the cursor held after it.
+/// What a held stream changed in the copy, what became of the server, or
+/// what became of the queue it drained then. `cursor` is the cursor held
+/// after it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Change {
     /// An event the stream applied, by the event's type, with the item or
@@ -1450,8 +1453,15 @@ pub enum Change {
     /// the failure, such as the network failing, a rate limit, a failing
     /// server or a refusal naming no contract.
     ServerUnreachable { reason: MarfaError, cursor: String },
-    /// A stream is had again, which is when to drain what waited.
+    /// A stream is had again. Where a drain has work queued, the follow
+    /// drains once and tells `QueueDrained` or `QueueNotDrained`.
     ServerReachable { cursor: String },
+    /// The queue was drained once a stream was had again, and what that
+    /// drain did, as `drain` returns it.
+    QueueDrained { report: DrainReport, cursor: String },
+    /// The drain started once a stream was had again ended with `error`.
+    /// The answers it had recorded stay recorded.
+    QueueNotDrained { error: MarfaError, cursor: String },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1470,6 +1480,16 @@ impl From<&marfa_core::Change> for Change {
                 cursor,
             },
             marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
+            marfa_core::ChangeEvent::QueueDrained(report) => match drained(report.clone()) {
+                Ok(report) => Change::QueueDrained { report, cursor },
+                // A report whose verdict cannot be read is told as a drain
+                // that failed with that error.
+                Err(error) => Change::QueueNotDrained { error, cursor },
+            },
+            marfa_core::ChangeEvent::QueueNotDrained(error) => Change::QueueNotDrained {
+                error: error.clone().into(),
+                cursor,
+            },
         }
     }
 }
@@ -1528,7 +1548,10 @@ impl Core {
     /// the server nothing, until a hydration completes; an expired copy is
     /// refused. `told_unreachable` says the app was last told
     /// `ServerUnreachable` by a follow before this one, so this one tells
-    /// `ServerReachable` when it has its first stream.
+    /// `ServerReachable` when it has its first stream. Each time it tells
+    /// `ServerReachable` with work queued for a drain, it drains once, after
+    /// any drain under way, and tells `QueueDrained` or `QueueNotDrained`;
+    /// `ended` follows that drain's end.
     pub fn follow(
         self: Arc<Self>,
         told_unreachable: bool,
@@ -2259,6 +2282,37 @@ mod tests {
             ),
             Change::ServerUnreachable {
                 reason: MarfaError::Network {
+                    message: "network: refused".into()
+                },
+                cursor: "11".into()
+            }
+        );
+        let report = marfa_core::DrainReport {
+            answered: 2,
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        };
+        assert_eq!(
+            change(E::QueueDrained(report.clone()), None),
+            Change::QueueDrained {
+                report: drained(report).unwrap(),
+                cursor: "11".into()
+            }
+        );
+        assert_eq!(
+            change(
+                E::QueueNotDrained(marfa_core::CoreError::Network("refused".into())),
+                None
+            ),
+            Change::QueueNotDrained {
+                error: MarfaError::Network {
                     message: "network: refused".into()
                 },
                 cursor: "11".into()

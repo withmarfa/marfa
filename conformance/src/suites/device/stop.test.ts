@@ -8,6 +8,7 @@ import {
 } from "./harness.js";
 import {
   answers,
+  writeAnswers,
   connected,
   copyHeadRead,
   itemsPage,
@@ -346,7 +347,7 @@ describe("stopping a catch-up", () => {
 });
 
 describe("stopping a drain", () => {
-  it("ends it before the next write is sent, leaving that write queued and unsent", async () => {
+  it("ends it without waiting on the write in flight, which the next drain sends again under its key", async () => {
     harness = await hydratedHarness("stop-drain", { head: "10" });
     const { server, device } = harness;
     for (const title of ["first", "second"]) {
@@ -362,9 +363,19 @@ describe("stopping a drain", () => {
     let release = (): void => {};
     const until = new Promise<void>((resolve) => (release = resolve));
     const taking = accepting(server);
+    // The server's record of the key: the same answer, said to be one.
+    const replaying: Responder = (request) => {
+      const answer = taking(request);
+      return answer.kind === "json"
+        ? { ...answer, headers: { "Idempotency-Replayed": "true" } }
+        : answer;
+    };
     scriptWrites(server, {
       create: [
+        // Answered only once the test ends: a server holding the write, as
+        // one taking an upload can, for longer than anyone waits.
         (request) => ({ kind: "gated", until, then: taking(request) }),
+        replaying,
         taking,
       ],
     });
@@ -376,7 +387,94 @@ describe("stopping a drain", () => {
         },
         { timeout: 10_000, interval: 25 },
       );
+      const stopped = Date.now();
       draining.interrupt();
+      await draining.exited();
+      expect(
+        Date.now() - stopped,
+        "the stopped drain waited on the write in flight",
+      ).toBeLessThan(3_000);
+      expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+    } finally {
+      await draining.stop();
+    }
+    expect(
+      creates(server),
+      "a write was sent after the stop, so it ended no sooner than a drain nobody stopped",
+    ).toBe(1);
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => row.verdict),
+      "the write in flight was given a verdict, or the one behind it was",
+    ).toEqual([null, null]);
+
+    // The witness: the next drain sends the write left in flight again
+    // under its key, takes the server's replay, and sends the one behind it.
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    const posts = server.requests.filter(
+      (request) => request.method === "POST" && request.pathname === "/items",
+    );
+    expect(posts.length).toBe(3);
+    expect(
+      posts[1]?.headers["idempotency-key"],
+      "the write left in flight was sent again under another key, so the server would write it twice",
+    ).toBe(posts[0]?.headers["idempotency-key"]);
+    expect(posts[1]?.body).toBe(posts[0]?.body);
+    expect(drained.value.verdicts.map((verdict) => verdict.replayed)).toEqual([
+      true,
+      false,
+    ]);
+    const settled = await device.queue();
+    expect(settled.ok && settled.value.map((row) => row.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    release();
+  });
+
+  it("waits for a tag write in flight at a stop, and records its answer", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    harness = await hydratedHarness("stop-drain-unkeyed", {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "held", body: "held" } } },
+        ],
+      },
+    });
+    const { server, device } = harness;
+    const tagged = await device.addTag(id, "kept");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    scriptWrites(server, {
+      read: [answers.updated(wireItem({ id }))],
+      tags: [
+        { kind: "gated", until, then: writeAnswers.metadata(id, ["kept"]) },
+      ],
+    });
+    const tags = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname === `/items/${id}/tags`,
+      ).length;
+    const draining = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(tags(), draining.stderr).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      draining.interrupt();
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(
+        draining.exitCode(),
+        "a stop let go of a tag write, which the server would apply again over a newer change",
+      ).toBeNull();
       release();
       await draining.exited();
       expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
@@ -385,24 +483,12 @@ describe("stopping a drain", () => {
       release();
       await draining.stop();
     }
-    expect(
-      creates(server),
-      "a write was sent after the stop, so it ended no sooner than a drain nobody stopped",
-    ).toBe(1);
     const queue = await device.queue();
-    expect(queue.ok && queue.value.map((row) => row.verdict)).toEqual([
-      "accepted",
-      null,
-    ]);
-
-    // The witness: the next drain sends the write the stopped one left.
-    expect((await device.drain()).ok).toBe(true);
-    expect(creates(server)).toBe(2);
-    const settled = await device.queue();
-    expect(settled.ok && settled.value.map((row) => row.verdict)).toEqual([
-      "accepted",
-      "accepted",
-    ]);
+    expect(
+      queue.ok && queue.value.map((row) => row.verdict),
+      "the answer the stopped drain waited for was not recorded",
+    ).toEqual(["accepted"]);
+    expect(tags()).toBe(1);
   });
 });
 

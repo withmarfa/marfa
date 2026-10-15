@@ -1932,7 +1932,7 @@ When the reader of `follow`'s output has gone, the CLI MUST end the follow.
 
 If a held stream cannot be had for a reason that clears on its own, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
 
-**Reason:** an app told nothing would show offline and online alike, and would have to drain on a timer to send what it queued once the server came back.
+**Reason:** an app told nothing would show offline and online alike.
 
 **Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
 
@@ -1964,9 +1964,63 @@ If a held stream cannot be had for a reason that clears on its own, and its call
 
 ### `device/follow-change-kinds`
 
-Where an app follows through a binding, a device MUST tell it `catalog.changed`, `server.unreachable` and `server.reachable` each as a change of its own kind, apart from the events the stream applied.
+Where an app follows through a binding, a device MUST tell it `catalog.changed`, `server.unreachable`, `server.reachable`, `queue.drained` and `queue.not_drained` each as a change of its own kind, apart from the events the stream applied.
 
 **Reason:** an app that told them from events by name would take an event of that name for one of them, and would miss one renamed.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-drains-reachable`
+
+Where an app or the CLI follows a working copy, when a device tells its caller `server.reachable` while the queue holds work a drain would do, such as a write to send or a read-back owed, a device MUST drain the queue once.
+
+**Reason:** an app told only that the server is back would have to drain the queue itself, and one that did not would leave what its person saved unsent. A folder's watch drains in its own pass, which keeps the folder's records, so its stream drains nothing.
+
+**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`.
+
+### `device/follow-drain-told`
+
+When a drain that a held stream started ends other than because the held stream ended, a device MUST tell its caller `queue.drained` with the drain's report, or `queue.not_drained` with the error the drain ended with, naming no item and no edge.
+
+**Reason:** a held stream that ends, by its caller's stop or by an error, ends its drain before the next write, and the caller is told how the held stream ended instead.
+
+**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`, `› tries a refused credential once each time its server is back, and says why it sent nothing`, `› tells the error a drain it started ended with`.
+
+### `device/follow-drain-quiet`
+
+When a device tells its caller `server.reachable` while the queue holds no work a drain would do, a device MUST tell the caller neither `queue.drained` nor `queue.not_drained`.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-drain-only-back`
+
+While a held stream has not told its caller `server.reachable`, a device MUST NOT drain the queue for it.
+
+**Reason:** a server never lost had every write the caller drained, and draining on a timer would send what the caller chose to hold.
+
+**Tests:** `device/catch-up.test.ts › drains nothing for a held stream whose server was never lost`.
+
+### `device/follow-drain-once`
+
+While a held stream's server stays reachable, a device MUST NOT drain the queue for it again, whatever the drain answered.
+
+**Reason:** a drain refused for its credential or its copy would be refused again at once, and a loop would ask the server without end.
+
+**Tests:** `device/catch-up.test.ts › tries a refused credential once each time its server is back, and says why it sent nothing`.
+
+### `device/follow-drain-again`
+
+When a device tells its caller `server.reachable` while the drain it started for an earlier `server.reachable` is under way, a device MUST drain the queue once more after that drain ends, where work a drain would do remains.
+
+**Reason:** the server may have been lost again while that drain sent, leaving writes it could not deliver.
+
+**Tests:** `device/catch-up.test.ts › drains once more when its server is back again while its drain is under way`.
+
+### `device/follow-drain-one`
+
+If a drain the caller started is under way when a device tells its caller `server.reachable`, then a device MUST start the held stream's drain only after that drain ends, and only where work a drain would do remains.
+
+**Reason:** the drain under way may already send what the held stream's would have, or end before it, and a write sent once is not sent again.
 
 **Tests:** waiting on #1890.
 
@@ -2474,13 +2528,13 @@ Where a declared type is left unregistered, a device MUST keep a write to it que
 
 When a stop is raised during a hydration, a catch-up or a drain, a device MUST end the call `canceled` soon after.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/command-stopped-exit`
 
 When a hydration, a catch-up or a drain that the CLI stopped on Ctrl-C ends `canceled`, the CLI MUST exit with status 3.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-hydration-replacing`
 
@@ -2502,21 +2556,45 @@ When a catch-up is stopped, a device MUST keep the cursor of the last event it t
 
 ### `device/stop-drain-in-flight`
 
-When a drain is stopped while a write is in flight, a device MUST settle that write's answer as an unstopped drain would before the drain ends.
+When a drain is stopped while an upload, or a write whose operation takes an idempotency key, is in flight, a device MUST end the drain without waiting for that write's answer.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Reason:** a server can hold a write, an upload above all, for longer than an app that closes a copy or cancels a sync can wait. The server answers a keyed write sent again from its record of the key, and takes an upload's bytes as the same blob, so the next drain sends either again without writing twice; a tag, metadata or extension write sent again would be applied again, over any newer change, so a stopped drain waits for its answer.
+
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+
+### `device/stop-drain-in-flight-kept`
+
+When a drain is stopped while an upload, or a write whose operation takes an idempotency key, is in flight, a device MUST leave that write queued with no verdict, under the idempotency key it was sent with.
+
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+
+### `device/stop-drain-late-answer`
+
+When the answer to a write a stopped drain left in flight arrives after the drain ended, a device MUST NOT record it.
+
+**Reason:** the drain has ended, and the next drain sends the write again and records the server's answer from its record of the key.
+
+**Tests:** waiting on #1890.
+
+### `device/stop-drain-waits-unkeyed`
+
+When a drain is stopped while a write whose operation takes no idempotency key, other than an upload, is in flight, a device MUST record that write's answer before the drain ends.
+
+**Reason:** the server checks no key and no version on a tag, metadata or extension write, so one sent again could overwrite a newer change made on another device.
+
+**Tests:** `device/stop.test.ts › waits for a tag write in flight at a stop, and records its answer`.
 
 ### `device/stop-drain-no-send`
 
 When a drain is stopped, a device MUST send no write after the stop.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-drain-rest-queued`
 
 When a drain is stopped, a device MUST leave every write it had not sent queued for the next drain.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/command-second-ctrl-c`
 

@@ -2143,6 +2143,8 @@ Hold the event stream open and apply each event as it arrives, printing a line f
 
 On a copy never hydrated, or whose hydration was interrupted, it waits for a hydration and asks the server nothing, as an app's follow does. This process holds the store until it ends, so no other can hydrate it meanwhile: hydrate first. An expired copy is refused.
 
+When the server is reachable again after it was lost, it drains the queue once if writes wait, and prints `queue.drained` with what the drain did, or `queue.not_drained` with why it did not.
+
 ```text
 marfa device follow [OPTIONS]
 ```

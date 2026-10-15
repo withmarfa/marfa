@@ -280,6 +280,70 @@ fn a_drain_that_succeeds_records_a_span_with_its_counts_and_no_error() {
 }
 
 #[test]
+fn a_drain_a_follow_starts_when_its_server_is_back_records_its_span_on_the_follows_subscriber() {
+    let server = Scripted::start();
+    let (core, _) = copy_with_a_write(&server, &note(None), "k");
+    server.on(
+        "/items/lookup",
+        vec![scripted::json(200, r#"{"data":[],"tombstones":[]}"#)],
+    );
+    server.on(
+        "/events",
+        vec![
+            scripted::refusal(503, "unavailable"),
+            scripted::stream(
+                vec![scripted::connected()],
+                scripted::Then::Hold {
+                    keepalive: Some(std::time::Duration::from_millis(50)),
+                    lasting: None,
+                },
+            ),
+        ],
+    );
+    let stop = std::sync::atomic::AtomicBool::new(false);
+
+    let (result, log) = recorded(|| {
+        core.follow(&stop, false, |change| {
+            if matches!(change.event, crate::ChangeEvent::QueueDrained(_)) {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        })
+    });
+
+    result.unwrap();
+    let drain = log.one("drain");
+    assert_eq!(drain.fields["outcome"], "ok");
+    assert_eq!(drain.fields["answered"], "1");
+    assert_eq!(log.one("write").fields["kind"], "create_item");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_write_a_stop_leaves_in_flight_ends_its_span_canceled_with_no_event() {
+    let server = Arc::new(Scripted::start());
+    let (core, _) = copy_with_a_write(&server, &note(None), "k");
+    server.on("/items", vec![scripted::Answer::Stall]);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let raiser = {
+        let (server, stop) = (server.clone(), stop.clone());
+        std::thread::spawn(move || {
+            server.wait_for("/items", 1, std::time::Duration::from_secs(5));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+    };
+
+    let (result, log) = recorded(|| core.drain_until(&stop));
+
+    raiser.join().unwrap();
+    assert_eq!(result, Err(CoreError::Canceled));
+    assert_eq!(log.one("write").fields["outcome"], "canceled");
+    assert_eq!(log.one("drain").fields["outcome"], "canceled");
+    assert!(error_events(&log).is_empty(), "{log:?}");
+    assert!(warnings(&log).is_empty(), "{log:?}");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
 fn a_drain_whose_server_cannot_be_reached_ends_its_span_and_records_the_code() {
     let server = Scripted::start();
     let (core, _) = copy_with_a_write(&server, &note(None), "k");

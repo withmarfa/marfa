@@ -77,9 +77,13 @@ export interface Change {
   item_id: string | null;
   edge_id: string | null;
   cursor: string;
-  /** Why the server cannot be reached, on `server.unreachable` alone
-   *  (`device/follow-applies`). */
+  /** Why the server cannot be reached, on `server.unreachable`
+   *  (`device/follow-applies`), or why the queue was not drained, on
+   *  `queue.not_drained` (`device/follow-drain-told`). */
   reason: string | null;
+  /** What the drain did, on `queue.drained` alone
+   *  (`device/follow-drain-told`). */
+  drain: DrainReport | null;
 }
 
 /** What a held stream did before it was stopped. */

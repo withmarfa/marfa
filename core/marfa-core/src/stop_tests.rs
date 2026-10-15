@@ -17,6 +17,23 @@ pub(crate) fn copy_keyed(server: &Scripted, key: &str) -> Arc<Core> {
         key: key.into(),
     }))
     .unwrap();
+    scripted_copy(server, core)
+}
+
+/// On disk, where a blob's bytes can be held.
+fn copy_in(server: &Scripted, dir: &std::path::Path) -> Arc<Core> {
+    let core = Core::open(
+        dir.join("core.sqlite"),
+        Some(Server {
+            url: server.url(),
+            key: "k".into(),
+        }),
+    )
+    .unwrap();
+    scripted_copy(server, core)
+}
+
+fn scripted_copy(server: &Scripted, core: Core) -> Arc<Core> {
     {
         let conn = core.conn().unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -211,55 +228,338 @@ fn a_stopped_catch_up_reports_canceled_after_a_failed_read() {
     }
 }
 
+/// The receipt a create of `id` as `type` is answered with, and the
+/// certified read of the row after it.
+fn created(id: &str, r#type: &str) -> (String, Answer) {
+    let item = serde_json::from_str::<serde_json::Value>(&scripted::item_payload(
+        "item.created",
+        id,
+        r#type,
+        1,
+    ))
+    .unwrap()["item"]
+        .clone();
+    let current = serde_json::json!({ "item": item, "metadata": { "tags": [] }, "listed": true });
+    (
+        serde_json::json!({ "item": item }).to_string(),
+        scripted::certified(scripted::json(200, &current.to_string())),
+    )
+}
+
+fn replayed(status: u16, body: &str) -> Answer {
+    Answer::Json {
+        status,
+        body: body.into(),
+        headers: vec![("Idempotency-Replayed".into(), "true".into())],
+    }
+}
+
+fn sent(core: &Core, id: &str) -> bool {
+    core.conn()
+        .unwrap()
+        .query_row("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+/// Stops a drain while the first request to `path` waits, lets that
+/// request's answer arrive after the drain has ended, then drains again.
+/// The write left in flight must stay sent and unanswered, its late answer
+/// dropped, and the next drain must send it again under the same key and
+/// take the server's replay.
+fn left_in_flight_then_replayed(
+    server: &Scripted,
+    core: Arc<Core>,
+    path: &str,
+    row: &str,
+    late: &AtomicBool,
+) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done, result) = mpsc::channel();
+    {
+        let (core, stop) = (core.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(core.drain_until(&stop));
+        });
+    }
+    server.wait_for(path, 1, WAIT);
+    let raised = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let ended = result
+        .recv_timeout(WAIT)
+        .expect("a stopped drain waited on its write");
+    assert!(
+        raised.elapsed() < Duration::from_secs(1),
+        "a stopped drain waited {:?} on its write",
+        raised.elapsed()
+    );
+    assert_eq!(ended.unwrap_err(), CoreError::Canceled, "{path}");
+    let before = core.queue().unwrap();
+    let left = before.iter().find(|queued| queued.id == row).unwrap();
+    assert_eq!(left.verdict, None, "{path}: {left:?}");
+    assert!(
+        sent(&core, row),
+        "{path}: the write in flight was not kept as sent"
+    );
+    late.store(true, Ordering::Relaxed);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        core.queue().unwrap(),
+        before,
+        "{path}: an answer that arrived after the stop was recorded"
+    );
+
+    let report = core.drain().unwrap();
+    let verdict = report
+        .verdicts
+        .iter()
+        .find(|verdict| verdict.id == row)
+        .unwrap_or_else(|| panic!("{path}: {report:?}"));
+    assert_eq!(
+        verdict.verdict,
+        Some(crate::model::Verdict::Accepted),
+        "{report:?}"
+    );
+    let asked = server.seen(path);
+    assert_eq!(asked.len(), 2, "{path}");
+    // An upload carries no key: the server takes the same bytes as the same
+    // blob, and answers it as one it holds.
+    if path != "/blobs" {
+        assert!(verdict.replayed, "{path}: the replay was not taken as one");
+        assert!(asked[0].idempotency_key.is_some(), "{path}");
+    }
+    assert_eq!(
+        asked[0].idempotency_key, asked[1].idempotency_key,
+        "{path}: sent again under another key"
+    );
+    assert_eq!(asked[0].body, asked[1].body, "{path}: sent again changed");
+}
+
 #[test]
-fn a_stopped_drain_records_the_in_flight_answer_before_ending() {
-    for succeeds in [false, true] {
+fn a_stopped_drain_leaves_its_write_in_flight_for_the_next_drain_to_send_again() {
+    // A create, and one a natural key names, which is looked up only before
+    // its first send.
+    for keyed in [false, true] {
         let server = Scripted::start();
         let core = copy(&server);
-        {
-            let conn = core.conn().unwrap();
-            let note = store::testing::note("a", "a", "", "2026-01-01T00:00:00Z");
-            store::upsert_item(&conn, &note, None, &Default::default()).unwrap();
+        holding_a_catalog(&core);
+        let mut draft = note(None);
+        if keyed {
+            draft.source = Some("notes".into());
+            draft.source_id = Some("a.md".into());
         }
-        core.delete_item("a").unwrap();
+        let queued = core.create_item(&draft).unwrap();
+        let id = queued.item_id.clone().unwrap();
+        let (receipt, read) = created(&id, "core.note");
+        let late = Arc::new(AtomicBool::new(false));
         server.on(
             "/items",
-            vec![scripted::certified(scripted::json(
-                200,
-                r#"{"data":[{"item":{"id":"a","type":"core.note","properties":{"title":"a"},"state":"trashed","tier":"library","version":1,"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"},"metadata":{"tags":[]},"listed":true}],"next_cursor":null}"#,
-            ))],
-        );
-        let answer = if succeeds {
             vec![
-                scripted::json(200, r#"{"ok":true}"#),
-                scripted::certified(scripted::refusal(404, "item_not_found")),
-            ]
-        } else {
-            vec![scripted::refusal(503, "server_unavailable")]
-        };
-        assert_eq!(
-            stopped(&server, "/items/a", answer, core.clone(), Core::drain_until).unwrap_err(),
-            CoreError::Canceled
+                Answer::WaitFor {
+                    ready: late.clone(),
+                    answer: Box::new(scripted::json(201, &receipt)),
+                },
+                replayed(201, &receipt),
+            ],
         );
-        let queue = core.queue().unwrap();
-        assert_eq!(queue.len(), 1);
-        let sent: bool = core
-            .conn()
-            .unwrap()
-            .query_row(
-                "SELECT sent FROM queue WHERE id = ?1",
-                [&queue[0].id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(sent);
-        assert_eq!(queue[0].verdict.is_some(), succeeds);
-        let held = store::items_by_ids(&core.conn().unwrap(), &["a".to_string()])
-            .unwrap()
-            .pop()
-            .expect("an accepted delete leaves the row in the copy, trashed");
-        assert_eq!(held.state, crate::model::ItemState::Trashed);
+        server.on(&format!("/items/{id}"), vec![read]);
+        server.on(
+            "/items/lookup",
+            vec![scripted::json(200, r#"{"data":[],"tombstones":[]}"#)],
+        );
+        left_in_flight_then_replayed(&server, core, "/items", &queued.id, &late);
+        assert_eq!(
+            server.seen("/items/lookup").len(),
+            usize::from(keyed),
+            "a create already sent was looked up again, and could go out under a new body"
+        );
     }
+
+    // An upload, which carries no key: the server takes the same bytes as
+    // the same blob.
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in(&server, dir.path());
+    holding_a_catalog(&core);
+    let file = dir.path().join("bytes.txt");
+    std::fs::write(&file, b"hello").unwrap();
+    let added = core
+        .add_file(&file, &crate::Attachment::default(), &[])
+        .unwrap();
+    let hash = added.upload.blob.clone().unwrap();
+    let blob = format!(r#"{{"hash":"{hash}","size_bytes":5}}"#);
+    let late = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/blobs",
+        vec![
+            Answer::WaitFor {
+                ready: late.clone(),
+                answer: Box::new(scripted::json(201, &blob)),
+            },
+            replayed(200, &blob),
+        ],
+    );
+    let file_id = added.item.item_id.clone().unwrap();
+    let r#type = core.get(&file_id).unwrap().unwrap().r#type;
+    let (receipt, read) = created(&file_id, &r#type);
+    server.on("/items", vec![scripted::json(201, &receipt)]);
+    server.on(&format!("/items/{file_id}"), vec![read]);
+    left_in_flight_then_replayed(&server, core.clone(), "/blobs", &added.upload.id, &late);
+    assert_eq!(
+        core.queue()
+            .unwrap()
+            .iter()
+            .map(|queued| queued.verdict)
+            .collect::<Vec<_>>(),
+        [Some(crate::model::Verdict::Accepted); 2],
+        "the file item behind the upload was not sent once its bytes were taken"
+    );
+}
+
+type Queues = dyn Fn(&Core) -> crate::QueuedWrite;
+
+#[test]
+fn a_stopped_drain_waits_for_a_write_the_server_does_not_answer_by_key() {
+    let tag = |core: &Core| core.add_tag("a", "x").unwrap();
+    let metadata = |core: &Core| {
+        core.write_metadata(
+            "a",
+            &crate::MetadataWrite {
+                tags: vec!["y".into()],
+            },
+            false,
+        )
+        .unwrap()
+    };
+    let extension = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
+    let writes: [(&str, &Queues); 3] = [
+        ("/items/a/tags", &tag),
+        ("/items/a/metadata", &metadata),
+        ("/items/a/extensions/app.cursor", &extension),
+    ];
+    for (path, queue) in writes {
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        {
+            let conn = core.conn().unwrap();
+            let held = store::testing::note("a", "a", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &held, None, &Default::default()).unwrap();
+        }
+        let row = queue(&core).id;
+        let (_, read) = created("a", "core.note");
+        server.on("/items/a", vec![read]);
+        let late = Arc::new(AtomicBool::new(false));
+        server.on(
+            path,
+            vec![Answer::WaitFor {
+                ready: late.clone(),
+                answer: Box::new(scripted::json(200, r#"{"ok":true}"#)),
+            }],
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done, result) = mpsc::channel();
+        {
+            let (core, stop) = (core.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let _ = done.send(core.drain_until(&stop));
+            });
+        }
+        server.wait_for(path, 1, WAIT);
+        stop.store(true, Ordering::Relaxed);
+        assert!(
+            result.recv_timeout(Duration::from_millis(600)).is_err(),
+            "{path}: a stop let go of a write the server would not answer by its key"
+        );
+        late.store(true, Ordering::Relaxed);
+        let ended = result
+            .recv_timeout(WAIT)
+            .expect("the drain did not end once its write was answered");
+        assert_eq!(ended.unwrap_err(), CoreError::Canceled, "{path}");
+        let answered = core.queue().unwrap();
+        let answered = answered.iter().find(|queued| queued.id == row).unwrap();
+        assert!(
+            answered.verdict.is_some(),
+            "{path}: the answer waited for was not recorded: {answered:?}"
+        );
+        assert_eq!(server.seen(path).len(), 1, "{path}");
+    }
+}
+
+type Stoppable = dyn FnOnce(&Core, &AtomicBool) -> Result<()> + Send;
+
+#[test]
+fn a_stop_ends_a_drain_and_a_follow_whose_upload_the_server_never_answers() {
+    let upload = |server: &Scripted, dir: &std::path::Path| {
+        let core = copy_in(server, dir);
+        holding_a_catalog(&core);
+        let file = dir.join("bytes.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let added = core
+            .add_file(&file, &crate::Attachment::default(), &[])
+            .unwrap();
+        server.on("/blobs", vec![Answer::Stall]);
+        (core, added.upload.id)
+    };
+    let ends_soon = |server: &Scripted, core: Arc<Core>, call: Box<Stoppable>| {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done, result) = mpsc::channel();
+        {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let _ = done.send(call(&core, &stop));
+            });
+        }
+        server.wait_for("/blobs", 1, Duration::from_secs(10));
+        let raised = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        let ended = result
+            .recv_timeout(WAIT)
+            .expect("a stop waited on an upload the server never answers");
+        assert!(
+            raised.elapsed() < Duration::from_secs(1),
+            "a stop waited {:?}",
+            raised.elapsed()
+        );
+        ended
+    };
+
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (core, row) = upload(&server, dir.path());
+    let ended = ends_soon(
+        &server,
+        core.clone(),
+        Box::new(|core, stop| core.drain_until(stop).map(|_| ())),
+    );
+    assert_eq!(ended, Err(CoreError::Canceled));
+    assert!(sent(&core, &row));
+
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (core, row) = upload(&server, dir.path());
+    server.on(
+        "/events",
+        vec![
+            scripted::refusal(503, "unavailable"),
+            scripted::stream(
+                vec![scripted::connected()],
+                Then::Hold {
+                    keepalive: Some(Duration::from_millis(50)),
+                    lasting: None,
+                },
+            ),
+        ],
+    );
+    let ended = ends_soon(
+        &server,
+        core.clone(),
+        Box::new(|core, stop| core.follow(stop, false, |_| {}).map(|_| ())),
+    );
+    assert_eq!(ended, Ok(()));
+    assert!(sent(&core, &row));
+    assert_eq!(core.queue().unwrap()[0].verdict, None);
 }
 
 pub(crate) fn note(id: Option<&str>) -> crate::Draft {
@@ -409,7 +709,7 @@ fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
             }
             stop.store(true, Ordering::Relaxed);
         });
-        crate::catch_up::read_unless_stopped(&stop, &http, crate::http::Http::catalog)
+        crate::catch_up::ask_unless_stopped(&stop, &http, crate::http::Http::catalog)
     });
     assert!(matches!(result, Err(CoreError::Canceled)));
     assert!(

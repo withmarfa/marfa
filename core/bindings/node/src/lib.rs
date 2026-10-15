@@ -806,10 +806,16 @@ fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
 }
 
 fn drained(env: Env, report: marfa_core::DrainReport) -> Result<DrainReport> {
+    report_of(report).map_err(|error| failure(env, error))
+}
+
+fn report_of(
+    report: marfa_core::DrainReport,
+) -> std::result::Result<DrainReport, marfa_core::CoreError> {
     let mut verdicts = Vec::with_capacity(report.verdicts.len());
     for entry in report.verdicts {
         verdicts.push(DrainVerdict {
-            verdict: crossed(entry.outcome().map_err(|error| failure(env, error))?).0,
+            verdict: crossed(entry.outcome()?).0,
             id: entry.id,
             kind: entry.kind.into(),
             item_id: entry.item_id,
@@ -1111,8 +1117,9 @@ pub struct Thumbnail {
     pub bytes: Buffer,
 }
 
-/// What a held stream changed in the copy, or what became of the server,
-/// told apart by `kind`. `cursor` is the cursor held after it.
+/// What a held stream changed in the copy, what became of the server, or
+/// what became of the queue it drained then, told apart by `kind`. `cursor`
+/// is the cursor held after it.
 #[napi(discriminant = "kind", discriminant_case = "camelCase")]
 pub enum Change {
     /// An event the stream applied, by the event's type, with the item or
@@ -1127,8 +1134,20 @@ pub enum Change {
     CatalogChanged { cursor: String },
     /// No stream can be had, for `reason`; told once until one is had again.
     ServerUnreachable { reason: String, cursor: String },
-    /// A stream is had again, which is when to drain what waited.
+    /// A stream is had again. Where a drain has work queued, the follow
+    /// drains once and tells `queueDrained` or `queueNotDrained`.
     ServerReachable { cursor: String },
+    /// The queue was drained once a stream was had again, and what that
+    /// drain did, as `drain` returns it.
+    QueueDrained { report: DrainReport, cursor: String },
+    /// The drain started once a stream was had again ended with an error:
+    /// `code` is the same word a thrown error carries, and `reason` its
+    /// message. The answers it had recorded stay recorded.
+    QueueNotDrained {
+        code: String,
+        reason: String,
+        cursor: String,
+    },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1147,7 +1166,22 @@ impl From<&marfa_core::Change> for Change {
                 cursor,
             },
             marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
+            marfa_core::ChangeEvent::QueueDrained(report) => match report_of(report.clone()) {
+                Ok(report) => Change::QueueDrained { report, cursor },
+                // A report whose verdict cannot be read is told as a drain
+                // that failed with that error.
+                Err(error) => not_drained(&error, cursor),
+            },
+            marfa_core::ChangeEvent::QueueNotDrained(error) => not_drained(error, cursor),
         }
+    }
+}
+
+fn not_drained(error: &marfa_core::CoreError, cursor: String) -> Change {
+    Change::QueueNotDrained {
+        code: error.code().to_string(),
+        reason: error.to_string(),
+        cursor,
     }
 }
 
@@ -1190,8 +1224,10 @@ pub struct MarfaCore {
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
 /// after, with an error coded `canceled`. What the call had taken is
 /// consistent: a hydration left unfinished refuses reads, a catch-up keeps
-/// the cursor it reached, and a drain leaves what it had not sent queued. A
-/// raised `Stop` stays raised, so a call given one afterwards ends at once.
+/// the cursor it reached, and a drain leaves what it had not sent queued, and
+/// an upload or item or edge write it had in flight queued as sent, for the
+/// next drain to send again under the same key. A raised `Stop` stays raised, so a call given one
+/// afterwards ends at once.
 #[napi]
 pub struct Stop {
     flag: Arc<AtomicBool>,
@@ -1506,6 +1542,9 @@ impl MarfaCore {
     /// null where it was stopped. Neither callback keeps the process alive. An
     /// `onChange` that throws ends the follow, and `onEnd` is given an error
     /// whose `code` is `listener_threw` and whose message says what it threw.
+    /// Each time it tells `serverReachable` with work queued for a drain, it
+    /// drains once, after any drain under way, and tells `queueDrained` or
+    /// `queueNotDrained`; `onEnd` follows that drain's end.
     #[napi(
         ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
     )]

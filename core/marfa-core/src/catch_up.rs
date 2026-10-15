@@ -1,21 +1,23 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, BufReader};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use crate::catalog::Catalog;
+use crate::drain::DrainReport;
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::read_view::{self, Context};
 use crate::sse::{Frame, Frames};
 use crate::store;
+use crate::telemetry::Carried;
 use crate::wire::{EventPayload, WireCatalog, WireEdge, WireItem};
 use crate::{Core, Result};
 
@@ -117,7 +119,8 @@ fn unexplained(
 /// item or edge it was about, or a catalog that differs from the one held,
 /// naming neither. Or what became of the server: unreachable, with why, once
 /// when a stream cannot be had, and reachable once when one is had again.
-/// `cursor` is the cursor held after it.
+/// Or what became of the queue it drained then. `cursor` is the cursor held
+/// after it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
     pub event: ChangeEvent,
@@ -126,30 +129,38 @@ pub struct Change {
     pub cursor: String,
 }
 
-/// Written as text with the event's name and, for an unreachable server,
-/// why as its sentence.
+/// Written as text with the event's name; for an unreachable server or a
+/// queue not drained, why as its sentence; and for a queue drained, the
+/// drain's report.
 impl Serialize for Change {
     fn serialize<S: serde::Serializer>(
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut change = serializer.serialize_struct("Change", 5)?;
+        let mut change = serializer.serialize_struct("Change", 6)?;
         change.serialize_field("event", self.event.as_str())?;
         change.serialize_field("item_id", &self.item_id)?;
         change.serialize_field("edge_id", &self.edge_id)?;
         change.serialize_field("cursor", &self.cursor)?;
         let reason = match &self.event {
             ChangeEvent::ServerUnreachable(reason) => Some(reason.to_string()),
+            ChangeEvent::QueueNotDrained(error) => Some(error.to_string()),
             _ => None,
         };
         change.serialize_field("reason", &reason)?;
+        let drained = match &self.event {
+            ChangeEvent::QueueDrained(report) => Some(report),
+            _ => None,
+        };
+        change.serialize_field("drain", &drained)?;
         change.end()
     }
 }
 
 /// What a `Change` tells. Written as text by its name: the applied event's
-/// type, or `catalog.changed`, `server.unreachable` or `server.reachable`.
+/// type, or `catalog.changed`, `server.unreachable`, `server.reachable`,
+/// `queue.drained` or `queue.not_drained`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type.
@@ -160,6 +171,12 @@ pub enum ChangeEvent {
     /// limit, a failing server or a refusal naming no contract.
     ServerUnreachable(CoreError),
     ServerReachable,
+    /// The queue was drained once a stream was had again, and what that
+    /// pass did (`device/follow-drains-reachable`).
+    QueueDrained(DrainReport),
+    /// The drain started once a stream was had again ended with this
+    /// error. The answers it had recorded stay recorded.
+    QueueNotDrained(CoreError),
 }
 
 impl ChangeEvent {
@@ -169,6 +186,8 @@ impl ChangeEvent {
             ChangeEvent::CatalogChanged => "catalog.changed",
             ChangeEvent::ServerUnreachable(_) => "server.unreachable",
             ChangeEvent::ServerReachable => "server.reachable",
+            ChangeEvent::QueueDrained(_) => "queue.drained",
+            ChangeEvent::QueueNotDrained(_) => "queue.not_drained",
         }
     }
 }
@@ -414,7 +433,7 @@ pub(crate) fn replay_build(
     catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
-    let catalog = read_unless_stopped(stop, http, Http::catalog)?;
+    let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
@@ -595,17 +614,19 @@ pub(crate) fn refuse_another_instance_until(
         }
         read_view::generation(&conn)?
     };
-    let served = read_unless_stopped(stop, http, Http::instance_id)?;
+    let served = ask_unless_stopped(stop, http, Http::instance_id)?;
     same_instance(core, &served, generation)
 }
 
-/// Runs a read on a thread of its own and ends with `Canceled` as soon as
-/// `stop` is raised, so a call stopped while its first request waits on a
-/// server that does not answer, one still being connected to among them,
-/// ends then rather than when the request gives up. Only for a read: the
-/// request may still reach the server after the call has ended. A credential
-/// renewal the read started is finished first, and none starts after.
-pub(crate) fn read_unless_stopped<T: Send + 'static>(
+/// Runs a request on a thread holding only the transport and ends with
+/// `Canceled` as soon as `stop` is raised, so a call stopped while a request
+/// waits on a server that does not answer, one still being connected to
+/// among them, ends then rather than when the request gives up. The request
+/// may still reach the server after the call has ended, and its answer is
+/// dropped: only for a read, or a write the caller marked sent first that
+/// its idempotency key, or its content, lets it send again. A credential
+/// renewal the request started is finished first, and none starts after.
+pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     stop: &AtomicBool,
     http: &Http,
     read: impl FnOnce(&Http) -> Result<T> + Send + 'static,
@@ -661,11 +682,14 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
 /// stream is being asked for: that request runs on a thread holding only the
 /// transport, so it cannot keep the store once this has returned. The thread
 /// reading the last stream may hold its connection a while longer (`open`).
+/// `drains` says it drains the queue each time it says `server.reachable`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
     told_unreachable: bool,
+    drains: bool,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
 ) -> Result<FollowReport> {
@@ -674,6 +698,7 @@ pub(crate) fn follow(
         http,
         stop,
         told_unreachable,
+        drains,
         on_change,
         on_live,
         &PACE,
@@ -689,6 +714,7 @@ fn follow_paced(
     http: Arc<Http>,
     stop: &AtomicBool,
     told_unreachable: bool,
+    drains: bool,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
     pace: &Pace,
@@ -698,7 +724,22 @@ fn follow_paced(
     let context = Context::capture(&*core.conn()?)?;
     let http = Arc::new(context.http(&http));
     on_live(false);
-    let result = (|| {
+    let asked = Mutex::new(Asked::default());
+    let (told, heard) = mpsc::channel();
+    let result = thread::scope(|scope| -> Result<FollowReport> {
+        // The drains watch the caller's own stop, so none sends a write once
+        // it is raised; raised here too, so a follow that ends on an error
+        // sends no further write either. A folder's watch, which does not
+        // drain, keeps its stop for its own pass.
+        let _halt = drains.then(|| Raise(stop));
+        let recovery = Recovery {
+            scope: drains.then_some(scope),
+            core,
+            stop,
+            asked: &asked,
+            told,
+            heard: &heard,
+        };
         let mut report = FollowReport::default();
         let mut backoff = pace.reconnect_first;
         let mut asked = false;
@@ -713,6 +754,7 @@ fn follow_paced(
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
         while !stop.load(Ordering::Relaxed) {
             on_live(false);
+            recovery.tell(&report.cursor, on_change);
             let (slice, cursor) = start(core)?;
             report.cursor = cursor.clone();
             if asked {
@@ -753,6 +795,7 @@ fn follow_paced(
                     edge_id: None,
                     cursor: report.cursor.clone(),
                 });
+                recovery.reachable();
             }
             reachable = Some(true);
             let mut moved = false;
@@ -778,6 +821,7 @@ fn follow_paced(
                 &Instant::now,
                 &mut report,
                 &mut refreshed,
+                &recovery,
                 on_change,
                 on_live,
             )?;
@@ -791,14 +835,132 @@ fn follow_paced(
             if opened.elapsed() >= pace.reconnect_most {
                 backoff = pace.reconnect_first;
             } else {
+                recovery.tell(&report.cursor, on_change);
                 pause(backoff);
                 backoff = (backoff * 2).min(pace.reconnect_most);
             }
         }
         Ok(report)
-    })();
+    });
     on_live(false);
+    // Every drain it started has ended with the scope.
+    let cursor = match &result {
+        Ok(report) => report.cursor.clone(),
+        Err(_) => core
+            .conn()
+            .ok()
+            .and_then(|conn| {
+                store::meta_get(&conn, store::META_EVENT_CURSOR)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default(),
+    };
+    for event in heard.try_iter() {
+        on_change(&Change {
+            event,
+            item_id: None,
+            edge_id: None,
+            cursor: cursor.clone(),
+        });
+    }
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// Raises its flag when dropped, unwinding included.
+struct Raise<'a>(&'a AtomicBool);
+
+impl Drop for Raise<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Whether a drain a follow started is running, and whether a stream was
+/// had again while it ran.
+#[derive(Default)]
+struct Asked {
+    running: bool,
+    again: bool,
+}
+
+/// The drain a follow starts when its server is reachable again
+/// (`device/follow-drains-reachable`), on a thread of its own: a drain sends
+/// its writes one at a time, each waiting on the server's answer, and the
+/// stream is read meanwhile. It waits for any drain under way to end, so
+/// one runs at a time; a stream had again while the follow's own drain runs
+/// drains once more after it, so each time the server comes back is drained
+/// once and none is lost to a drain that ended before it.
+struct Recovery<'scope, 'env> {
+    /// `None` where the follow does not drain.
+    scope: Option<&'scope thread::Scope<'scope, 'env>>,
+    core: &'env Core,
+    stop: &'env AtomicBool,
+    asked: &'env Mutex<Asked>,
+    told: Sender<ChangeEvent>,
+    heard: &'env Receiver<ChangeEvent>,
+}
+
+impl Recovery<'_, '_> {
+    fn reachable(&self) {
+        let Some(scope) = self.scope else { return };
+        {
+            let mut asked = self.asked.lock().unwrap_or_else(|held| held.into_inner());
+            if asked.running {
+                asked.again = true;
+                return;
+            }
+            asked.running = true;
+        }
+        let (core, stop, asked, told) = (self.core, self.stop, self.asked, self.told.clone());
+        let carried = Carried::here();
+        scope.spawn(move || {
+            carried.run(|| {
+                loop {
+                    let event = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        recover(core, stop)
+                    }))
+                    .unwrap_or_else(|fault| {
+                        Some(ChangeEvent::QueueNotDrained(CoreError::Invalid(format!(
+                            "the drain stopped on a fault in the core: {}",
+                            crate::fault_said(fault.as_ref())
+                        ))))
+                    });
+                    if let Some(event) = event {
+                        let _ = told.send(event);
+                    }
+                    let mut asked = asked.lock().unwrap_or_else(|held| held.into_inner());
+                    if asked.again && !stop.load(Ordering::Relaxed) {
+                        asked.again = false;
+                        continue;
+                    }
+                    *asked = Asked::default();
+                    return;
+                }
+            });
+        });
+    }
+
+    /// What the drains it started have told since it last looked.
+    fn tell(&self, cursor: &str, on_change: &mut dyn FnMut(&Change)) {
+        for event in self.heard.try_iter() {
+            on_change(&Change {
+                event,
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+        }
+    }
+}
+
+/// `None` where no work was left for a drain, or the follow ended first.
+fn recover(core: &Core, stop: &AtomicBool) -> Option<ChangeEvent> {
+    match core.drain_what_remains(stop)? {
+        Ok(report) => Some(ChangeEvent::QueueDrained(report)),
+        Err(CoreError::Canceled) => None,
+        Err(error) => Some(ChangeEvent::QueueNotDrained(error)),
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -822,6 +984,7 @@ fn read_stream(
     now: &dyn Fn() -> Instant,
     report: &mut FollowReport,
     refreshed: &mut HashSet<Unexplained>,
+    recovery: &Recovery,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
 ) -> Result<Ended> {
@@ -833,6 +996,7 @@ fn read_stream(
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
         }
+        recovery.tell(&report.cursor, on_change);
         let frame = match frames.recv_timeout(pace.stop_poll) {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {
@@ -1148,6 +1312,14 @@ mod tests {
         reconnect_most: Duration::from_millis(40),
     };
 
+    /// For a stream the test holds open with no keepalive while it looks at
+    /// what was told: with `QUICK`'s silence, a slow run would end that
+    /// stream on its own and tell the server lost and back again.
+    const STILL: Pace = Pace {
+        silence: Duration::from_secs(60),
+        ..QUICK
+    };
+
     fn hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(
@@ -1235,6 +1407,17 @@ mod tests {
         pace: Pace,
         stop_on_wait: Option<usize>,
         told_unreachable: bool,
+        on_change: impl FnMut(&Change) + Send + 'static,
+    ) -> Run {
+        follow_drains(core, pace, stop_on_wait, told_unreachable, true, on_change)
+    }
+
+    fn follow_drains(
+        core: &Arc<Core>,
+        pace: Pace,
+        stop_on_wait: Option<usize>,
+        told_unreachable: bool,
+        drains: bool,
         mut on_change: impl FnMut(&Change) + Send + 'static,
     ) -> Run {
         let (_, changes) = mpsc::channel();
@@ -1256,6 +1439,7 @@ mod tests {
                 http,
                 &flag,
                 told_unreachable,
+                drains,
                 &mut on_change,
                 &mut |_| {},
                 &pace,
@@ -1293,6 +1477,630 @@ mod tests {
             [ChangeEvent::ServerReachable],
             "a follow started after the server was told unreachable did not say it came back, once"
         );
+    }
+
+    /// Queues a create of a note and answers the read-back its answer
+    /// makes, giving the row's id and the receipt the server sends for it.
+    fn queued_note(core: &Core, server: &Scripted, title: &str) -> (String, Answer) {
+        let created = core
+            .create_item(&crate::Draft {
+                r#type: NOTE.into(),
+                properties: serde_json::json!({ "title": title })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let id = created.item_id.unwrap();
+        let item = serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
+            "item.created",
+            &id,
+            NOTE,
+            1,
+        ))
+        .unwrap()["item"]
+            .clone();
+        let current =
+            serde_json::json!({ "item": item, "metadata": { "tags": [] }, "listed": true });
+        server.on(
+            &format!("/items/{id}"),
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &current.to_string(),
+            ))],
+        );
+        server.on(
+            "/items/lookup",
+            vec![crate::scripted::json(200, r#"{"data":[],"tombstones":[]}"#)],
+        );
+        let receipt = serde_json::json!({ "item": item }).to_string();
+        (id, crate::scripted::json(201, &receipt))
+    }
+
+    fn held_open() -> Answer {
+        stream(vec![connected()], held())
+    }
+
+    /// The bodies of the creates the server was sent, in order.
+    fn creates(server: &Scripted) -> Vec<serde_json::Value> {
+        server
+            .seen("/items")
+            .iter()
+            .map(|seen| serde_json::from_slice(&seen.body).unwrap())
+            .collect()
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(Instant::now() < until, "{what}");
+            thread::sleep(MS(5));
+        }
+    }
+
+    fn drained(run: &Run) -> (Vec<ChangeEvent>, DrainReport) {
+        let mut told = Vec::new();
+        loop {
+            let event = run.change().event;
+            told.push(event.clone());
+            if let ChangeEvent::QueueDrained(report) = event {
+                return (told, report);
+            }
+        }
+    }
+
+    #[test]
+    fn a_follow_drains_what_waited_once_its_server_is_back_and_tells_what_it_answered() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (first, took_first) = queued_note(&core, &server, "first");
+        let (second, took_second) = queued_note(&core, &server, "second");
+        server.on("/items", vec![took_first, took_second]);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let run = follow_on(&core, STILL, None);
+        let (told, report) = drained(&run);
+        assert!(
+            matches!(
+                told.as_slice(),
+                [
+                    ChangeEvent::ServerUnreachable(_),
+                    ChangeEvent::ServerReachable,
+                    ChangeEvent::QueueDrained(_)
+                ]
+            ),
+            "the server's loss and return were not told before the drain: {told:?}"
+        );
+        assert_eq!(
+            (report.answered, report.unavailable, report.stopped),
+            (2, None, None),
+            "the drain did not answer both writes that waited"
+        );
+        let sent: Vec<_> = creates(&server)
+            .iter()
+            .map(|body| body["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            sent,
+            [first.clone(), second.clone()],
+            "each write was not sent once, in order"
+        );
+        let queue = core.queue().unwrap();
+        assert!(
+            queue
+                .iter()
+                .all(|row| row.verdict == Some(crate::model::Verdict::Accepted)),
+            "{queue:?}"
+        );
+        // Nothing more is sent while the stream stays held.
+        thread::sleep(MS(100));
+        assert_eq!(creates(&server).len(), 2);
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_follow_that_has_its_server_at_once_does_not_drain() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (_, took) = queued_note(&core, &server, "waiting");
+        server.on("/items", vec![took]);
+        server.on("/events", vec![held_open()]);
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/events", 1, Duration::from_secs(5));
+        thread::sleep(MS(150));
+        run.stop();
+        run.ended().unwrap();
+        // The witness that a drain would send it is the test above.
+        assert_eq!(
+            creates(&server).len(),
+            0,
+            "a server never lost was drained to"
+        );
+        assert!(run.changes.try_iter().next().is_none());
+    }
+
+    #[test]
+    fn a_follow_with_nothing_queued_says_its_server_is_back_and_nothing_of_a_drain() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let run = follow_on(&core, STILL, None);
+        assert!(matches!(
+            run.change().event,
+            ChangeEvent::ServerUnreachable(_)
+        ));
+        assert_eq!(run.change().event, ChangeEvent::ServerReachable);
+        thread::sleep(MS(150));
+        run.stop();
+        run.ended().unwrap();
+        // The witness, a drain told with writes queued, is the first test.
+        assert!(
+            run.changes.try_iter().next().is_none(),
+            "a queue with nothing to send was told of"
+        );
+    }
+
+    #[test]
+    fn a_follow_that_does_not_drain_sends_nothing_when_its_server_is_back() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (_, took) = queued_note(&core, &server, "waiting");
+        server.on("/items", vec![took]);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let (sent, heard) = mpsc::channel();
+        let run = follow_drains(&core, STILL, None, false, false, move |change| {
+            let _ = sent.send(change.event.clone());
+        });
+        wait_until("the server's return was not told", || {
+            heard
+                .try_iter()
+                .any(|event| event == ChangeEvent::ServerReachable)
+        });
+        thread::sleep(MS(150));
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(
+            creates(&server).len(),
+            0,
+            "a follow that does not drain sent a write"
+        );
+        assert!(heard.try_iter().next().is_none());
+    }
+
+    #[test]
+    fn a_follow_waits_for_a_drain_under_way_then_drains_what_it_left() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (_, took) = queued_note(&core, &server, "waiting");
+        server.on("/items", vec![took]);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let running = core.one_drain();
+        let run = follow_on(&core, STILL, None);
+        assert!(matches!(
+            run.change().event,
+            ChangeEvent::ServerUnreachable(_)
+        ));
+        assert_eq!(run.change().event, ChangeEvent::ServerReachable);
+        thread::sleep(MS(150));
+        assert_eq!(creates(&server).len(), 0, "a second drain was started");
+        assert!(
+            run.changes.try_iter().next().is_none(),
+            "a follow told of a drain it had not run"
+        );
+        drop(running);
+        let (_, report) = drained(&run);
+        assert_eq!(
+            report.answered, 1,
+            "the follow did not drain what the drain under way left"
+        );
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_follow_sends_nothing_a_drain_under_way_answered() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (_, took) = queued_note(&core, &server, "waiting");
+        server.on("/items", vec![took]);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let running = core.one_drain();
+        let run = follow_on(&core, STILL, None);
+        assert!(matches!(
+            run.change().event,
+            ChangeEvent::ServerUnreachable(_)
+        ));
+        assert_eq!(run.change().event, ChangeEvent::ServerReachable);
+        assert_eq!(core.drain_held(&running).unwrap().answered, 1);
+        drop(running);
+        thread::sleep(MS(200));
+        run.stop();
+        run.ended().unwrap();
+        // The witness, a follow that drains what is left once the drain
+        // under way ends, is the test above.
+        assert_eq!(creates(&server).len(), 1, "a write was sent twice");
+        assert!(
+            run.changes.try_iter().next().is_none(),
+            "a follow told of a drain with nothing left to send"
+        );
+    }
+
+    #[test]
+    fn a_follow_that_ends_on_an_error_sends_no_further_write() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (first, took_first) = queued_note(&core, &server, "first");
+        let (_, took_second) = queued_note(&core, &server, "second");
+        let answer = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: Arc::clone(&answer),
+                    answer: Box::new(took_first),
+                },
+                took_second,
+            ],
+        );
+        // The stream ends, and its reopening is refused, only once the
+        // first write is in flight.
+        let in_flight = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                refusal(503, "unavailable"),
+                stream(
+                    vec![connected()],
+                    Then::WaitFor {
+                        entered: Arc::new(AtomicBool::new(false)),
+                        ready: Arc::clone(&in_flight),
+                        then: Box::new(Then::End),
+                    },
+                ),
+                refusal(400, "validation_error"),
+            ],
+        );
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items", 1, Duration::from_secs(5));
+        in_flight.store(true, Ordering::SeqCst);
+        server.wait_for("/events", 3, Duration::from_secs(5));
+        answer.store(true, Ordering::SeqCst);
+        let ended = run.ended();
+        assert!(
+            matches!(ended, Err(CoreError::Validation { .. })),
+            "{ended:?}"
+        );
+        thread::sleep(MS(200));
+        let sent: Vec<_> = creates(&server)
+            .iter()
+            .map(|body| body["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            sent,
+            [first],
+            "a follow that ended on an error went on sending its queue"
+        );
+    }
+
+    #[test]
+    fn a_drain_that_fails_is_told_with_its_error() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        queued_note(&core, &server, "waiting");
+        server.on(
+            "/items",
+            vec![Answer::Json {
+                status: 201,
+                body: "{}".into(),
+                headers: vec![(crate::http::CONTRACT_HEADER.into(), "999".into())],
+            }],
+        );
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let run = follow_on(&core, STILL, None);
+        let told = loop {
+            match run.change().event {
+                ChangeEvent::QueueNotDrained(error) => break error,
+                ChangeEvent::QueueDrained(report) => panic!("{report:?}"),
+                _ => {}
+            }
+        };
+        assert_eq!(told.code(), "contract_mismatch", "{told:?}");
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_queue_of_only_dead_or_blocked_writes_is_not_drained_until_released() {
+        for (verdict, reason) in [
+            (crate::model::Verdict::Dead, None),
+            (crate::model::Verdict::Blocked, Some("conflict_unresolved")),
+            (crate::model::Verdict::Blocked, Some("key_spent")),
+            (crate::model::Verdict::Blocked, Some("ancestor_unavailable")),
+        ] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            let (_dir, core) = hydrated(&server);
+            let (_, took) = queued_note(&core, &server, "stuck");
+            server.on("/items", vec![took]);
+            let row = core.queue().unwrap()[0].id.clone();
+            {
+                let mut conn = core.conn().unwrap();
+                let tx = conn.transaction().unwrap();
+                store::record_verdict(
+                    &tx,
+                    &row,
+                    &store::Answered {
+                        verdict,
+                        reason,
+                        answer: None,
+                        conflicted_copy_id: None,
+                    },
+                )
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            let back_again = Arc::new(AtomicBool::new(false));
+            server.on(
+                "/events",
+                vec![
+                    refusal(503, "unavailable"),
+                    stream(
+                        vec![connected()],
+                        Then::WaitFor {
+                            entered: Arc::new(AtomicBool::new(false)),
+                            ready: Arc::clone(&back_again),
+                            then: Box::new(Then::End),
+                        },
+                    ),
+                    refusal(503, "unavailable"),
+                    held_open(),
+                ],
+            );
+            let run = follow_on(&core, STILL, None);
+            assert!(matches!(
+                run.change().event,
+                ChangeEvent::ServerUnreachable(_)
+            ));
+            assert_eq!(run.change().event, ChangeEvent::ServerReachable);
+            thread::sleep(MS(150));
+            assert_eq!(creates(&server).len(), 0, "{verdict:?} {reason:?} was sent");
+            assert!(
+                run.changes.try_iter().next().is_none(),
+                "a drain of nothing sendable was told for {verdict:?} {reason:?}"
+            );
+            // The witness: released, the same write is drained at the next
+            // return.
+            assert!(core.release(&row).unwrap());
+            back_again.store(true, Ordering::SeqCst);
+            let (_, report) = drained(&run);
+            assert_eq!(report.answered, 1, "{verdict:?} {reason:?}: {report:?}");
+            run.stop();
+            run.ended().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_refused_credential_is_told_and_not_tried_again_while_the_server_stays() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        queued_note(&core, &server, "waiting");
+        server.on("/items", vec![refusal(401, "unauthorized")]);
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let run = follow_on(&core, STILL, None);
+        let (_, report) = drained(&run);
+        assert!(
+            report
+                .stopped
+                .as_deref()
+                .is_some_and(|why| why.contains("credential")),
+            "the drain did not say the credential was refused: {report:?}"
+        );
+        thread::sleep(MS(200));
+        assert_eq!(
+            creates(&server).len(),
+            1,
+            "a refused credential was tried again"
+        );
+        assert!(run.changes.try_iter().next().is_none());
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_server_that_comes_and_goes_is_drained_once_each_time_it_is_back() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (first, took_first) = queued_note(&core, &server, "first");
+        let (second, took_second) = queued_note(&core, &server, "second");
+        // The second write finds the server gone, and goes when it is back.
+        server.on(
+            "/items",
+            vec![took_first, refusal(503, "unavailable"), took_second],
+        );
+        let gone = || refusal(503, "unavailable");
+        let ended = || stream(vec![connected()], Then::End);
+        let second_back = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                gone(),
+                stream(
+                    vec![connected()],
+                    Then::WaitFor {
+                        entered: Arc::new(AtomicBool::new(false)),
+                        ready: Arc::clone(&second_back),
+                        then: Box::new(Then::End),
+                    },
+                ),
+                gone(),
+                ended(),
+                gone(),
+                held_open(),
+            ],
+        );
+        let run = follow_on(&core, STILL, None);
+        let (_, report) = drained(&run);
+        assert_eq!((report.answered, report.undelivered), (1, 1), "{report:?}");
+        second_back.store(true, Ordering::SeqCst);
+        let (_, report) = drained(&run);
+        assert_eq!((report.answered, report.undelivered), (1, 0), "{report:?}");
+        // The third return finds nothing to send.
+        wait_until("the stream was not held a third time", || {
+            server.seen("/events").len() >= 6
+        });
+        thread::sleep(MS(150));
+        run.stop();
+        run.ended().unwrap();
+        let told: Vec<_> = run.changes.try_iter().map(|change| change.event).collect();
+        assert!(
+            !told
+                .iter()
+                .any(|event| matches!(event, ChangeEvent::QueueDrained(_))),
+            "a queue with nothing left to send was drained: {told:?}"
+        );
+        let sent: Vec<_> = creates(&server)
+            .iter()
+            .map(|body| body["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            sent,
+            [first, second.clone(), second],
+            "a write was sent other than once per return, or an answered one again"
+        );
+        let keys: Vec<_> = core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .map(|row| row.verdict)
+            .collect();
+        assert_eq!(keys, [Some(crate::model::Verdict::Accepted); 2]);
+    }
+
+    #[test]
+    fn a_server_back_again_while_its_drain_runs_is_drained_once_more_after_it() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (first, took_first) = queued_note(&core, &server, "first");
+        let (second, took_second) = queued_note(&core, &server, "second");
+        let answer = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: Arc::clone(&answer),
+                    answer: Box::new(took_first),
+                },
+                refusal(503, "unavailable"),
+                took_second,
+            ],
+        );
+        let gone = || refusal(503, "unavailable");
+        // The server is lost again only once the first drain's write is in
+        // flight, so the second return comes while that drain runs.
+        let in_flight = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/events",
+            vec![
+                gone(),
+                stream(
+                    vec![connected()],
+                    Then::WaitFor {
+                        entered: Arc::new(AtomicBool::new(false)),
+                        ready: Arc::clone(&in_flight),
+                        then: Box::new(Then::End),
+                    },
+                ),
+                gone(),
+                held_open(),
+            ],
+        );
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items", 1, Duration::from_secs(5));
+        in_flight.store(true, Ordering::SeqCst);
+        let mut told = Vec::new();
+        while told
+            .iter()
+            .filter(|event| **event == ChangeEvent::ServerReachable)
+            .count()
+            < 2
+        {
+            told.push(run.change().event);
+        }
+        assert_eq!(
+            creates(&server).len(),
+            1,
+            "the first drain was not still under way"
+        );
+        answer.store(true, Ordering::SeqCst);
+        let (_, report) = drained(&run);
+        assert_eq!((report.answered, report.undelivered), (1, 1), "{report:?}");
+        let (_, report) = drained(&run);
+        assert_eq!(
+            (report.answered, report.undelivered),
+            (1, 0),
+            "the server's second return, while the first drain ran, was not drained after it"
+        );
+        let sent: Vec<_> = creates(&server)
+            .iter()
+            .map(|body| body["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(sent, [first, second.clone(), second]);
+        thread::sleep(MS(100));
+        assert_eq!(creates(&server).len(), 3);
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_stop_ends_the_follow_and_its_drain_before_the_next_write() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let (_dir, core) = hydrated(&server);
+        let (_, took_first) = queued_note(&core, &server, "first");
+        let (_, took_second) = queued_note(&core, &server, "second");
+        let answer = Arc::new(AtomicBool::new(false));
+        server.on(
+            "/items",
+            vec![
+                Answer::WaitFor {
+                    ready: Arc::clone(&answer),
+                    answer: Box::new(took_first),
+                },
+                took_second,
+            ],
+        );
+        server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items", 1, Duration::from_secs(5));
+        run.stop();
+        answer.store(true, Ordering::SeqCst);
+        run.ended().unwrap();
+        assert_eq!(
+            creates(&server).len(),
+            1,
+            "a stopped drain sent its next write"
+        );
+        let told: Vec<_> = run.changes.try_iter().map(|change| change.event).collect();
+        assert!(
+            !told
+                .iter()
+                .any(|event| matches!(event, ChangeEvent::QueueNotDrained(_))),
+            "a stop was told as a drain that failed: {told:?}"
+        );
+        // The witness: unstopped, the second write goes.
+        assert_eq!(core.drain().unwrap().answered, 1);
     }
 
     #[test]
@@ -1630,6 +2438,16 @@ mod tests {
         thread::spawn(move || {
             let (slice, _) = start(&core).unwrap();
             let catalog = Catalog::load(&core.conn().unwrap()).unwrap();
+            let (asked, (told, heard)) = (Mutex::new(Asked::default()), mpsc::channel());
+            let still = AtomicBool::new(false);
+            let recovery = Recovery {
+                scope: None,
+                core: &core,
+                stop: &still,
+                asked: &asked,
+                told,
+                heard: &heard,
+            };
             let read = read_stream(
                 &core,
                 &Context::capture(&core.conn().unwrap()).unwrap(),
@@ -1641,6 +2459,7 @@ mod tests {
                 &|| reading.now(),
                 &mut FollowReport::default(),
                 &mut HashSet::new(),
+                &recovery,
                 &mut |_| {},
                 &mut |_| {},
             );
@@ -2035,7 +2854,7 @@ mod tests {
             ],
         );
         let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         assert_eq!(run.change().item_id.as_deref(), Some("n1"));
         assert_eq!(run.change().item_id.as_deref(), Some("n2"));
         run.stop();
@@ -2048,7 +2867,7 @@ mod tests {
         assert_eq!(report.reconnects, 3);
         assert_eq!(
             run.waits(),
-            [QUICK.reconnect_first],
+            [STILL.reconnect_first],
             "a reopen for an image waited as a stream that ended early does"
         );
     }
@@ -2773,6 +3592,7 @@ mod tests {
                 Arc::clone(core.http.as_ref().unwrap()),
                 &stop,
                 false,
+                true,
                 &mut |_| {},
                 &mut |live| observed.push(live),
                 &QUICK,

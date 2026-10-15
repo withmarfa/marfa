@@ -629,6 +629,15 @@ impl Core {
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
     /// it has its first stream (`device/follow-told-reachable`).
+    ///
+    /// Each time it says `server.reachable` with work queued for a drain,
+    /// it drains once, on a thread of its own so the stream is read
+    /// meanwhile, and tells `queue.drained` or `queue.not_drained`
+    /// (`device/follow-drains-reachable`). That drain waits for one under
+    /// way to end, and then does only the work left. That drain watches
+    /// `stop` as `drain_until` does, and the follow raises `stop` itself
+    /// when it ends, however it ends, so no write goes out after either:
+    /// give each follow a flag of its own.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -641,12 +650,21 @@ impl Core {
         let Some(streaming) = self.claim_stream_once_hydrated(stop)? else {
             return Ok(FollowReport::default());
         };
-        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, |_| {})
+        self.follow_claimed(
+            http,
+            streaming,
+            stop,
+            told_unreachable,
+            true,
+            on_change,
+            |_| {},
+        )
     }
 
     /// A folder's watch hydrates its copy on the thread that follows it, so
     /// this refuses a copy that is not hydrated rather than wait for a
-    /// hydration that thread would never run.
+    /// hydration that thread would never run. It never drains: the watch's
+    /// own pass drains, and keeps the folder's books as it does.
     pub(crate) fn follow_observed(
         &self,
         stop: &AtomicBool,
@@ -658,7 +676,15 @@ impl Core {
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
         let _following = self.claim_follow()?;
         let streaming = self.claim_stream(Mover::Follow)?;
-        self.follow_claimed(http, streaming, stop, told_unreachable, on_change, on_live)
+        self.follow_claimed(
+            http,
+            streaming,
+            stop,
+            told_unreachable,
+            false,
+            on_change,
+            on_live,
+        )
     }
 
     /// `None` where `stop` was raised while it waited.
@@ -683,12 +709,14 @@ impl Core {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn follow_claimed(
         &self,
         http: Arc<http::Http>,
         _streaming: StreamClaim<'_>,
         stop: &AtomicBool,
         told_unreachable: bool,
+        drains: bool,
         mut on_change: impl FnMut(&Change),
         mut on_live: impl FnMut(bool),
     ) -> Result<FollowReport> {
@@ -701,6 +729,7 @@ impl Core {
                 http,
                 stop,
                 told_unreachable,
+                drains,
                 &mut on_change,
                 &mut on_live,
             )
@@ -931,21 +960,47 @@ impl Core {
         self.drain_until(&NEVER_STOPPED)
     }
 
-    /// Ended with `Canceled` before the next write is sent once `stop` is
-    /// raised. A write already sent keeps its key and is settled by this or
-    /// a later drain; answers already recorded remain in the queue.
+    /// Ended with `Canceled` soon after `stop` is raised, without waiting on
+    /// an upload in flight, which can take as long as the server takes, or
+    /// a write the server answers by its key: that write stays queued as
+    /// sent, under its key, and the next drain sends it again; an answer to
+    /// it that arrives after the stop is dropped. Any other write in flight
+    /// is waited for, and its answer recorded, since sent again it could
+    /// overwrite a newer change. Answers already recorded remain in the
+    /// queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
-        let _one = loop {
+        let _one = self.wait_to_drain(stop)?;
+        drain::drain(self, stop)
+    }
+
+    /// Waits as `drain_until` does, then drains only where work is left for
+    /// a drain: whatever held the queue meanwhile may have done it. `None`
+    /// where none is left.
+    pub(crate) fn drain_what_remains(&self, stop: &AtomicBool) -> Option<Result<DrainReport>> {
+        let _one = match self.wait_to_drain(stop) {
+            Ok(one) => one,
+            Err(error) => return Some(Err(error)),
+        };
+        match drain::would_send(self) {
+            Ok(false) => None,
+            Ok(true) => Some(drain::drain(self, stop)),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    fn wait_to_drain(&self, stop: &AtomicBool) -> Result<MutexGuard<'_, ()>> {
+        loop {
             catch_up::refuse_if_stopped(stop)?;
             match self.draining.try_lock() {
-                Ok(guard) => break guard,
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    return Ok(poisoned.into_inner());
+                }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
-        };
-        drain::drain(self, stop)
+        }
     }
 
     pub(crate) fn one_drain(&self) -> MutexGuard<'_, ()> {
@@ -2065,7 +2120,7 @@ impl Core {
     /// copy. Refused `NoServer` for a copy with no server, and ended with
     /// `Canceled` as soon as `stop` is raised.
     pub fn server_catalog_until(&self, stop: &AtomicBool) -> Result<ServerCatalog> {
-        let listed = catch_up::read_unless_stopped(stop, self.http()?, http::Http::catalog)?;
+        let listed = catch_up::ask_unless_stopped(stop, self.http()?, http::Http::catalog)?;
         catalog::served(&listed)
     }
 
@@ -2704,12 +2759,18 @@ fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<Queued
 }
 
 fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
-    let said = fault
+    format!(
+        "the follow stopped on a fault in the core: {}",
+        fault_said(fault)
+    )
+}
+
+pub(crate) fn fault_said(fault: &(dyn std::any::Any + Send)) -> String {
+    fault
         .downcast_ref::<&str>()
         .map(|said| (*said).to_string())
         .or_else(|| fault.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "no message".into());
-    format!("the follow stopped on a fault in the core: {said}")
+        .unwrap_or_else(|| "no message".into())
 }
 
 #[cfg(test)]

@@ -3,3 +3,22 @@
 /// The contract version this core was built for: the document's
 /// `info.version`, which every answer names in `X-Marfa-Contract`.
 pub const CONTRACT_VERSION: u64 = 0;
+
+/// The operations that take an `Idempotency-Key`, as method and path
+/// template: the server answers a write sent again under its key from its
+/// record of the first.
+pub const KEYED_WRITES: &[(&str, &str)] = &[
+    ("POST", "/items"),
+    ("PATCH", "/items/{id}"),
+    ("DELETE", "/items/{id}"),
+    ("POST", "/items/{id}/restore"),
+    ("POST", "/items/{id}/transition"),
+    ("POST", "/items/{id}/purge"),
+    ("POST", "/items/bulk-actions"),
+    ("POST", "/edges"),
+    ("PATCH", "/edges/{id}"),
+    ("DELETE", "/edges/{id}"),
+    ("POST", "/folders"),
+    ("PATCH", "/folders/{id}"),
+    ("POST", "/folders/{id}/revoke"),
+];

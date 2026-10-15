@@ -69,6 +69,10 @@ pub enum DeviceCommand {
     /// waits for a hydration and asks the server nothing, as an app's follow
     /// does. This process holds the store until it ends, so no other can
     /// hydrate it meanwhile: hydrate first. An expired copy is refused.
+    ///
+    /// When the server is reachable again after it was lost, it drains the
+    /// queue once if writes wait, and prints `queue.drained` with what the
+    /// drain did, or `queue.not_drained` with why it did not.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -801,6 +805,21 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             marfa_core::ChangeEvent::ServerUnreachable(reason) => {
                                 format!(": {reason}")
                             }
+                            marfa_core::ChangeEvent::QueueNotDrained(error) => {
+                                format!(": {error}")
+                            }
+                            marfa_core::ChangeEvent::QueueDrained(report) => format!(
+                                ": answered {}, held {}, undelivered {}{}",
+                                report.answered,
+                                report.held,
+                                report.undelivered,
+                                report
+                                    .stopped
+                                    .as_deref()
+                                    .or(report.unavailable.as_deref())
+                                    .map(|why| format!("; {why}"))
+                                    .unwrap_or_default()
+                            ),
                             _ => String::new(),
                         }
                     )

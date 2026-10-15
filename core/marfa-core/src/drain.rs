@@ -260,6 +260,37 @@ enum Door<'a> {
     Upload { hash: &'a str, mime_type: String },
 }
 
+/// An `Outgoing` that owns its text, for a request sent from another thread.
+struct Owned {
+    method: Method,
+    segments: Vec<String>,
+    params: Vec<(String, String)>,
+    body: String,
+    idempotency_key: String,
+}
+
+impl Owned {
+    fn of(outgoing: &Outgoing<'_>) -> Owned {
+        Owned {
+            method: outgoing.method,
+            segments: outgoing.segments.clone(),
+            params: outgoing.params.clone(),
+            body: outgoing.body.to_string(),
+            idempotency_key: outgoing.idempotency_key.to_string(),
+        }
+    }
+
+    fn outgoing(&self) -> Outgoing<'_> {
+        Outgoing {
+            method: self.method,
+            segments: self.segments.clone(),
+            params: self.params.clone(),
+            body: &self.body,
+            idempotency_key: &self.idempotency_key,
+        }
+    }
+}
+
 enum Sendable<'a> {
     Json(Outgoing<'a>, Shape),
     Upload { bytes: File, mime_type: String },
@@ -537,6 +568,28 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
+/// Whether a drain now has work: a write with no verdict, one blocked for a
+/// reason a drain clears itself, a read-back owed, a body whose names wait,
+/// or a body's answers still to apply. A dead write, or one blocked until
+/// something outside the queue changes, is no reason to drain.
+pub(crate) fn would_send(core: &Core) -> Result<bool> {
+    let conn = core.conn()?;
+    let sendable = store::waiting_writes(&conn)?
+        .iter()
+        .any(|row| match row.verdict {
+            None => true,
+            Some(Verdict::Blocked) => {
+                row.blocked_reason() == Some(BlockedReason::CredentialRefused)
+                    || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+            }
+            Some(_) => false,
+        });
+    Ok(sendable
+        || !store::owed_read_backs(&conn)?.is_empty()
+        || crate::body::rule::waiting(&conn)?
+        || crate::body::rule::has_answer_work(&conn)?)
+}
+
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
@@ -570,8 +623,8 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // one would send a write and then fail to settle it, on every pass.
     crate::catch_up::refuse_unless_current(&mut *core.conn()?)?;
     let result = drain_inner(core, stop);
-    // A write's answer must be settled before honoring a stop raised during
-    // its request, including when it is the last write in the queue.
+    // An answer that came in is settled before a stop raised during its
+    // request is honored, including for the last write in the queue.
     crate::catch_up::unless_stopped(result, stop)
 }
 
@@ -603,7 +656,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         // A relocation must be admitted before this pass changes local queue
         // verdicts or resolves body dependencies. Same-origin transport has
         // no relocation gate, and an empty pass still makes no request.
-        match crate::catch_up::read_unless_stopped(stop, http, Http::confirm_origin) {
+        match crate::catch_up::ask_unless_stopped(stop, http, Http::confirm_origin) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
@@ -882,10 +935,27 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);
             telemetry::record!(write, kind = row.kind.as_str());
+            // Left behind at a stop where sending it again cannot write twice,
+            // so a server that never answers, as one taking an upload can,
+            // does not hold the drain: the row stays sent under its key, and
+            // the next drain sends it again. Any other write is waited for:
+            // sent again, it could overwrite a newer change made elsewhere.
             let sent = match sendable {
+                Sendable::Json(outgoing, shape)
+                    if crate::http::answered_by_key(outgoing.method, &outgoing.segments) =>
+                {
+                    let owned = Owned::of(&outgoing);
+                    let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+                        http.send(&owned.outgoing())
+                    });
+                    (answer, shape)
+                }
                 Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
                 Sendable::Upload { bytes, mime_type } => {
-                    (upload(http, bytes, &mime_type), Shape::Blob)
+                    let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+                        upload(http, bytes, &mime_type)
+                    });
+                    (answer, Shape::Blob)
                 }
             };
             telemetry::ended!(
@@ -909,7 +979,9 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
         let answer = match answer {
-            Err(error) if ends_the_drain(&error) => return Err(error),
+            Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
+                return Err(error);
+            }
             answer => answer,
         };
         if let Ok(answer) = &answer {
