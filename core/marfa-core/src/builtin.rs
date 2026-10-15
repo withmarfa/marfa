@@ -64,7 +64,7 @@ pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
     list("field_types")
 }
 
-/// The roots no type of an app's may sit under.
+/// The roots the type grammar reserves, which no publisher may take as its own.
 pub(crate) fn reserved_type_roots() -> Result<Vec<String>, CoreError> {
     list("reserved_type_roots")
 }
