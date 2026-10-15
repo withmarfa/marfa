@@ -97,6 +97,10 @@ fn core_error(error: &CoreError) -> &'static str {
     }
 }
 
+pub fn panic() -> &'static str {
+    "the command stopped on an internal fault"
+}
+
 /// For a run that failed with an exit status and no error to describe, as a
 /// drain does after printing its report.
 pub fn exit(status: u8) -> &'static str {

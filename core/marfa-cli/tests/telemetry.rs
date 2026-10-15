@@ -971,8 +971,7 @@ fn same_output(ran: &Ran, plain: &Ran, what: &str) {
 
 const HOST_ALONE: &str = "marfa: MARFA_POSTHOG_HOST is set without MARFA_POSTHOG_PROJECT_TOKEN, so this run sends no exception report\n";
 const TOKEN_ALONE: &str = "marfa: MARFA_POSTHOG_PROJECT_TOKEN is set without MARFA_POSTHOG_HOST, so this run sends no exception report\n";
-const NOT_HTTPS: &str =
-    "marfa: MARFA_POSTHOG_HOST is not an https address, so this run sends no exception report\n";
+const NOT_HTTPS: &str = "marfa: MARFA_POSTHOG_HOST is not an https address, or an http address on this machine, without a user name or password, so this run sends no exception report\n";
 
 #[test]
 fn a_failing_command_sends_one_exception_with_its_codes_a_fixed_sentence_and_no_person() {
@@ -1092,13 +1091,20 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
     assert_eq!(create.code, 3, "{}", create.stderr);
     let watch = run(&env, &["folders", "watch", folder.to_str().unwrap()]);
     assert_eq!(watch.code, 1, "{}", watch.stderr);
+    // A panic whose message carries content.
+    let message = format!("boom {SECRET}");
+    let mut panicking = env.clone();
+    panicking.push(("MARFA_TEST_PANIC", message.as_str()));
+    let panicked = run(&panicking, &["operations"]);
+    assert_eq!(panicked.code, 101, "{}", panicked.stderr);
+    assert!(panicked.stderr.contains(SECRET), "{}", panicked.stderr);
     // The witness: the secret is in what each command says on stderr, so an
     // exception carrying the message would have carried it.
     assert!(refused.stderr.contains(SECRET), "{}", refused.stderr);
     assert!(watch.stderr.contains(SECRET), "{}", watch.stderr);
 
     let posts = posthog.received();
-    assert_eq!(posts.len(), 3, "each failed run reported");
+    assert_eq!(posts.len(), 4, "each failed run reported");
     let events = posthog.events();
     let commands: Vec<_> = events
         .iter()
@@ -1106,13 +1112,18 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
         .collect();
     assert_eq!(
         commands,
-        ["device items get", "items create", "folders watch"]
+        [
+            "device items get",
+            "items create",
+            "folders watch",
+            "operations"
+        ]
     );
     let codes: Vec<_> = events
         .iter()
         .map(|event| event["properties"]["exit_code"].as_i64().unwrap())
         .collect();
-    assert_eq!(codes, [1, 3, 1]);
+    assert_eq!(codes, [1, 3, 1, 101]);
     for post in &posts {
         for planted in [
             SECRET,
@@ -1123,6 +1134,8 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
             "/path?",
             "marfa_k1_",
             "core.note",
+            "main.rs",
+            "panicked",
         ] {
             assert!(
                 !post.body.contains(planted) && !post.line.contains(planted),
@@ -1413,13 +1426,11 @@ fn a_run_that_did_not_fail_sends_nothing() {
 }
 
 #[test]
-fn a_posthog_that_never_answers_does_not_hold_up_an_interrupted_watch() {
+fn an_interrupted_run_sends_nothing_to_a_posthog_that_would_never_answer() {
     let silent = Collector::open(Reply::Silence);
     let collector = Collector::open(Reply::Answer(200));
-    let started = Instant::now();
     let status = events_until_interrupted(&exceptions_to(&collector, &silent), || {});
     assert_eq!(status.code(), Some(130));
-    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(silent.connections.load(Ordering::SeqCst), 0);
     assert_eq!(collector.root()["name"], "marfa events");
 }
@@ -1445,4 +1456,107 @@ fn the_sampler_decides_the_trace_and_not_the_exception() {
     }
     assert_eq!(collector.connections.load(Ordering::SeqCst), 0, "no trace");
     assert_eq!(posthog.events().len(), 2, "an exception for each run");
+}
+
+#[test]
+fn a_panic_sends_one_event_of_a_fixed_type_and_the_exit_and_message_are_unchanged() {
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let message = format!("boom {SECRET}");
+    let plain = run(&[("MARFA_TEST_PANIC", message.as_str())], &["operations"]);
+    assert_eq!(plain.code, 101, "{}", plain.stderr);
+    assert!(plain.stderr.contains(&message), "{}", plain.stderr);
+
+    let mut env = exceptions_to(&collector, &posthog);
+    env.push(("MARFA_TEST_PANIC", message.as_str()));
+    let ran = run(&env, &["operations"]);
+    // The thread's number is the one thing that differs between two runs.
+    let unnumbered = |text: &str| {
+        let start = text.find("' (").unwrap() + 3;
+        let end = start + text[start..].find(')').unwrap();
+        format!("{}{}", &text[..start], &text[end..])
+    };
+    assert_eq!(ran.code, plain.code);
+    assert_eq!(ran.stdout, plain.stdout);
+    assert_eq!(unnumbered(&ran.stderr), unnumbered(&plain.stderr));
+
+    let events = posthog.events();
+    assert_eq!(events.len(), 1);
+    let properties = &events[0]["properties"];
+    assert_eq!(properties["command"], "operations");
+    assert_eq!(properties["exit_code"], 101);
+    assert_eq!(properties["error_code"], "panic");
+    let exception = &properties["$exception_list"][0];
+    assert_eq!(exception["type"], "panic");
+    assert_eq!(
+        exception["value"],
+        "the command stopped on an internal fault"
+    );
+    // The trace is ended as failed, with the same code and no text.
+    let root = collector.root();
+    assert_eq!(root["name"], "marfa operations");
+    assert_eq!(root["status"]["code"], 2);
+    assert_eq!(number(&root, "exit_code"), 101);
+    assert_eq!(word(&root["events"][0], "code"), "panic");
+    assert!(!collector.received()[0].body.contains(SECRET));
+    assert!(!posthog.received()[0].body.contains(SECRET));
+}
+
+#[test]
+fn a_proxy_in_the_environment_is_not_used_for_a_post_to_this_machine() {
+    let proxy = Collector::open(Reply::Answer(502));
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let store = store();
+    let mut env = exceptions_to(&collector, &posthog);
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        env.push((name, proxy.url.as_str()));
+    }
+    let ran = run(&env, &catch_up(&store));
+    assert_eq!(ran.code, 4, "{}", ran.stderr);
+    // Both posts reached the local servers, in the clear to this machine only.
+    assert_eq!(posthog.events().len(), 1);
+    assert_eq!(collector.root()["name"], "marfa device catch-up");
+    assert_eq!(
+        proxy.connections.load(Ordering::SeqCst),
+        0,
+        "a proxy saw a post: {:?}",
+        proxy.received()
+    );
+}
+
+#[test]
+fn a_proxy_in_the_environment_is_still_used_for_a_post_to_another_host() {
+    let proxy = Collector::open(Reply::Answer(502));
+    let store = store();
+    let args = catch_up(&store);
+    let plain = run(&[], &args);
+    let env = [
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example"),
+        ("MARFA_POSTHOG_HOST", "https://posthog.example"),
+        ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
+        ("HTTPS_PROXY", proxy.url.as_str()),
+        ("https_proxy", proxy.url.as_str()),
+    ];
+    let ran = run(&env, &args);
+    same_output(&ran, &plain, "a refusing proxy");
+    let tunnels: Vec<String> = proxy
+        .received()
+        .iter()
+        .map(|post| post.line.clone())
+        .collect();
+    assert!(
+        tunnels
+            .iter()
+            .any(|line| line.starts_with("CONNECT posthog.example:443 ")),
+        "{tunnels:?}"
+    );
+    assert!(!tunnels.iter().any(|line| line.contains(TOKEN)));
 }

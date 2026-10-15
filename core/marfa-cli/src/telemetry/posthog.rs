@@ -29,8 +29,7 @@ const TOKEN: &str = "MARFA_POSTHOG_PROJECT_TOKEN";
 
 const HOST_ALONE: &str = "MARFA_POSTHOG_HOST is set without MARFA_POSTHOG_PROJECT_TOKEN, so this run sends no exception report";
 const TOKEN_ALONE: &str = "MARFA_POSTHOG_PROJECT_TOKEN is set without MARFA_POSTHOG_HOST, so this run sends no exception report";
-const NOT_HTTPS: &str =
-    "MARFA_POSTHOG_HOST is not an https address, so this run sends no exception report";
+const NOT_HTTPS: &str = "MARFA_POSTHOG_HOST is not an https address, or an http address on this machine, without a user name or password, so this run sends no exception report";
 
 #[derive(Debug, PartialEq)]
 pub enum Reading {
@@ -107,6 +106,17 @@ fn capture_url(host: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// What ended the run badly.
+#[derive(Clone, Copy)]
+pub enum Cause<'a> {
+    Error(&'a CliError),
+    /// An exit status and no error, as a drain report gives.
+    Exit,
+    /// The command panicked. Neither its message nor its location is
+    /// kept, since either can carry content.
+    Panic,
+}
+
 pub struct Reporter {
     settings: Settings,
     command: String,
@@ -139,14 +149,14 @@ impl Reporter {
 
     /// Starts the post of a failed run's event. `None` where the thread
     /// cannot be made: the run then sends nothing.
-    pub fn report(self, status: u8, error: Option<&CliError>) -> Option<Pending> {
-        let body = self.event(status, error);
+    pub fn report(self, status: u8, cause: Cause) -> Option<Pending> {
+        let body = self.event(status, cause);
         let Settings { url, timeout, .. } = self.settings;
         let (finished, done) = mpsc::channel();
         crate::interrupt::spawn_apart("posthog", move || {
             // Whatever goes wrong, nothing is said: PostHog's trouble is not
             // the command's. The answer is never read past its status.
-            let _ = otlp::agent(timeout)
+            let _ = otlp::agent(timeout, &url)
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .send(&body);
@@ -159,10 +169,11 @@ impl Reporter {
         })
     }
 
-    fn event(&self, status: u8, error: Option<&CliError>) -> Vec<u8> {
-        let (kind, value) = match error {
-            Some(error) => (error.code(), describe::error(error)),
-            None => ("exit", describe::exit(status)),
+    fn event(&self, status: u8, cause: Cause) -> Vec<u8> {
+        let (kind, value) = match cause {
+            Cause::Error(error) => (error.code(), describe::error(error)),
+            Cause::Exit => ("exit", describe::exit(status)),
+            Cause::Panic => ("panic", describe::panic()),
         };
         let version = env!("CARGO_PKG_VERSION");
         let mut properties = json!({
@@ -183,7 +194,7 @@ impl Reporter {
             "service.name": self.settings.service,
             "service.version": version,
         });
-        if error.is_some() {
+        if !matches!(cause, Cause::Exit) {
             properties["error_code"] = kind.into();
         }
         let event: Value = json!({
@@ -283,7 +294,8 @@ mod tests {
     fn an_event_is_personless_and_carries_the_fixed_sentence_and_the_codes() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa items create");
         let error = CliError::NotHeld("item-secret".into());
-        let event: Value = serde_json::from_slice(&reporter.event(1, Some(&error))).unwrap();
+        let event: Value =
+            serde_json::from_slice(&reporter.event(1, Cause::Error(&error))).unwrap();
         assert_eq!(event["api_key"], "phc_token");
         assert_eq!(event["event"], "$exception");
         assert_eq!(event["distinct_id"].as_str().unwrap().len(), 32);
@@ -305,7 +317,7 @@ mod tests {
     fn each_process_has_a_distinct_id_of_its_own() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa status");
         let id = |reporter: &Reporter| {
-            let event: Value = serde_json::from_slice(&reporter.event(3, None)).unwrap();
+            let event: Value = serde_json::from_slice(&reporter.event(3, Cause::Exit)).unwrap();
             event["distinct_id"].as_str().unwrap().to_string()
         };
         assert_ne!(id(&reporter), id(&reporter));
@@ -314,12 +326,23 @@ mod tests {
     #[test]
     fn a_run_that_failed_with_a_status_alone_is_described_by_the_status() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa device drain");
-        let event: Value = serde_json::from_slice(&reporter.event(5, None)).unwrap();
+        let event: Value = serde_json::from_slice(&reporter.event(5, Cause::Exit)).unwrap();
         let exception = &event["properties"]["$exception_list"][0];
         assert_eq!(exception["type"], "exit");
         assert_eq!(exception["value"], describe::exit(5));
         assert!(event["properties"].get("error_code").is_none());
         assert_eq!(event["properties"]["exit_code"], 5);
+    }
+
+    #[test]
+    fn a_panic_is_a_fixed_type_and_sentence() {
+        let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa items get");
+        let event: Value = serde_json::from_slice(&reporter.event(101, Cause::Panic)).unwrap();
+        let exception = &event["properties"]["$exception_list"][0];
+        assert_eq!(exception["type"], "panic");
+        assert_eq!(exception["value"], describe::panic());
+        assert_eq!(event["properties"]["error_code"], "panic");
+        assert_eq!(event["properties"]["exit_code"], 101);
     }
 
     #[test]
