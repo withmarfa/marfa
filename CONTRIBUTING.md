@@ -87,10 +87,21 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
 ```bash
 pnpm test           # every package, plus the checks over `ci/`
 pnpm test:watch     # watch mode
+pnpm test:changed   # the quick check before a push
 pnpm typecheck      # type-check all packages
 pnpm lint           # lint
 pnpm format:check   # check formatting
 ```
+
+`pnpm test:changed` runs the tests that your diff against `origin/main` selects,
+then the whole-tree tests. Vitest selects a test only when the test or a file
+it imports changed, so a test that reads files by path instead (a census that
+walks the server's source, or a check of `openapi.json` or the workflows) is
+never selected by an edit to what it reads. `scripts/whole-tree-tests.ts` lists
+those tests and the quick check always runs them, in the root project and in
+the conformance suite's offline lane. `pnpm test:whole-tree` runs only those.
+When you add a test whose verdict depends on a file it does not import, add it
+to that list.
 
 `pnpm test` does **not** run the conformance suite's offline lane, which
 checks the specification's citations, the coverage table and the generators

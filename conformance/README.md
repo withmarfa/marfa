@@ -141,6 +141,9 @@ generators, everything under `src/utils/`, and the `*.decision.test.ts`
 verdicts the suites gate on. Among `src/utils/`, `schema-coverage.test.ts`
 reads the specification against itself, and `spec-citations.test.ts` holds
 every reference to it in the repository to a rule that exists, by ID.
+`pnpm test:changed` at the repository root always runs `src/utils/` and the
+`*.decision.test.ts` verdicts from this lane, since they read the tree by path
+and a diff cannot select them; the list is `scripts/whole-tree-tests.ts`.
 `vitest.config.ts` decides which file lands in which project, and the
 `test:conformance` script decides which projects a local run of the gate runs;
 CI runs the same projects as shards.
