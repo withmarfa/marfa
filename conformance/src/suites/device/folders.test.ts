@@ -3625,13 +3625,17 @@ describe("what a folder takes", () => {
   it("says in a watch the file a conflicted copy became, once it is one", async () => {
     const id = "01a00000-0000-7000-8000-0000000055a8";
     let door: FolderDoor | undefined;
+    // The copy reaches the copy only once the watch has said it is not a
+    // file yet: heard sooner, the pass that reports the verdict has already
+    // written it, and names its file at once (`folders/conflict-copy-file`).
+    let told = false;
     harness = await folderHarness("folder-conflict-watch-copy", {
       rows: {
         "core.note": [
           { item: { id, properties: { title: "Note", body: "as read\n" } } },
         ],
       },
-      events: [copiesAsTheyArrive(() => door)],
+      events: [copiesAsTheyArrive(() => (told ? door : undefined))],
     });
     scriptFolderWrites(harness, {
       door: (made) => {
@@ -3647,6 +3651,14 @@ describe("what a folder takes", () => {
     );
     const watching = harness.folder.watchText();
     try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout, watching.stdout).toContain(
+            "it is not a file in this folder yet",
+          ),
+        { timeout: 30_000, interval: 100 },
+      );
+      told = true;
       await vi.waitFor(
         () =>
           expect(watching.stdout, watching.stdout).toContain(

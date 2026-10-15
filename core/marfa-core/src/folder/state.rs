@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -270,6 +272,19 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
         found.push((key[prefix.len()..].to_string(), value));
     }
     Ok(found)
+}
+
+/// One `meta` row per item a pull last moved, naming the path its file left,
+/// where an editor that did not follow the move may save it again.
+const MOVED_FROM: &str = "folder_moved_from:";
+
+pub fn set_moved_from(conn: &Connection, item_id: &str, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_set(conn, &format!("{MOVED_FROM}{item_id}"), path)
+}
+
+/// The path each item's file last left in a pull's move, by item.
+pub fn moved_from(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
+    Ok(under(conn, MOVED_FROM)?.into_iter().collect())
 }
 
 /// The edge ends lines hold, each with whether the folder made its pin.

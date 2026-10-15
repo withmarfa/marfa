@@ -1686,6 +1686,7 @@ impl Folder {
             report.root_gone = Some(gone);
             return Ok(report);
         }
+        let stale = self.fold_stale_saves(&mut files, &snapshot)?;
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().filter(|file| !file.deferred).any(|file| {
@@ -1703,7 +1704,14 @@ impl Folder {
             edge_types = EdgeTypes::load(&conn)?;
         }
         let peers = Peers::of(self, doubt);
-        let (claims, mut waiting) = self.claim(&files, &snapshot, &settings, &catalog, &peers)?;
+        let (mut claims, mut waiting) =
+            self.claim(&files, &snapshot, &settings, &catalog, &peers)?;
+        for (at, file) in files.iter().enumerate() {
+            if let Some(reason) = stale.get(&file.key) {
+                claims[at] = None;
+                waiting.insert(at, reason.clone());
+            }
+        }
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
 
@@ -1731,9 +1739,14 @@ impl Folder {
                         self.unbind_if_still(&bound)?;
                         // The name alone says the title; the unread line is the
                         // pull's to rewrite.
+                        let shown = bound
+                            .presentation
+                            .as_ref()
+                            .and_then(|agreed| line_of(agreed.front()));
                         if let Some(retitle) =
                             self.renamed_title(&bound.item_id, &bound, file, None, &catalog)?
-                            && let Some(id) = self.queue_title(&bound.item_id, &retitle)?
+                            && let Some(id) =
+                                self.queue_title(&bound.item_id, &retitle, &retitle.title, shown)?
                         {
                             writes.queued.push(state::Queued {
                                 id,
@@ -1898,20 +1911,28 @@ impl Folder {
                     } else {
                         report.unchanged += 1;
                     }
-                    self.follow_title_line(&item_id, &bound, file, (&catalog, &lists), &withheld)?;
                 }
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
-                    let retitle = self.renamed_title(
-                        &item_id,
-                        &bound,
-                        file,
-                        Some(&file.document()),
-                        &catalog,
-                    )?;
+                    let document = file.document();
+                    let retitle =
+                        self.renamed_title(&item_id, &bound, file, Some(&document), &catalog)?;
+                    // A title typed in the line in the same pass goes first,
+                    // so the item's history holds it as well as the name's.
+                    let mut bound = bound;
+                    if let Some(retitle) = &retitle
+                        && let Some(typed) = typed_title(&bound, &document, retitle)
+                        && let Some(id) = self.queue_title(&item_id, retitle, &typed, file.line)?
+                    {
+                        bound.writes.queued.push(state::Queued {
+                            id,
+                            save: bound.writes.save + 1,
+                            line: None,
+                        });
+                    }
                     let rewritten = retitle
                         .as_ref()
                         .and_then(|retitle| self.retitle_file(file, retitle));
@@ -2058,6 +2079,101 @@ impl Folder {
         }
         report.root_gone = report.root_gone.or_else(|| self.root_gone());
         Ok(report)
+    }
+
+    /// An editor that did not follow a pull's move of a document saves its old
+    /// buffer where the file was. Such a save, naming the item and a version
+    /// line no newer than the item's, is moved over the item's file, where
+    /// the scan takes it as a save of an old buffer; where that file holds an
+    /// edit of its own, the save waits, keyed by path with why. Never a new
+    /// item.
+    fn fold_stale_saves(
+        &self,
+        files: &mut Vec<Scanned>,
+        snapshot: &[state::Bound],
+    ) -> Result<HashMap<String, String>> {
+        let mut waiting = HashMap::new();
+        let moved = state::moved_from(&*self.core.conn()?)?;
+        if moved.is_empty() {
+            return Ok(waiting);
+        }
+        let mut at = 0;
+        while at < files.len() {
+            let file = &files[at];
+            let folded = (|| -> Result<Option<(String, std::io::Result<()>)>> {
+                let Some(id) = file.id.as_deref() else {
+                    return Ok(None);
+                };
+                if file.deferred
+                    || file.unreadable.is_some()
+                    || !carries_frontmatter(&file.path)
+                    || !moved
+                        .get(id)
+                        .is_some_and(|from| crate::names::same(from, &file.key))
+                {
+                    return Ok(None);
+                }
+                let Some(bound) = snapshot.iter().find(|row| row.item_id == id) else {
+                    return Ok(None);
+                };
+                if bound.path == file.key || bound.identity.is_some() && bound.identity == file.mark
+                {
+                    return Ok(None);
+                }
+                let Some(held) = self.core.get(id)? else {
+                    return Ok(None);
+                };
+                if file.line.is_none_or(|line| line > held.version) {
+                    return Ok(None);
+                }
+                let target = self.root.join(&bound.path);
+                let there = match self.read(&target) {
+                    Ok(found) => Some(state::hash(&found)),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => return Ok(Some((bound.path.clone(), Err(error)))),
+                };
+                if there
+                    .as_ref()
+                    .is_some_and(|there| *there != bound.content_hash)
+                {
+                    return Ok(Some((
+                        bound.path.clone(),
+                        Err(std::io::Error::other(format!(
+                            "it is an old copy of {}, which holds an edit of its own; keep one of the two",
+                            bound.path
+                        ))),
+                    )));
+                }
+                let renamed = self.inside(target.parent()).and_then(|()| {
+                    let (from_dir, from_name) = self.location(&file.path, false)?;
+                    let (to_dir, to_name) = self.location(&target, true)?;
+                    from_dir.rename(
+                        Path::new(&from_name),
+                        &to_dir,
+                        Path::new(&to_name),
+                        there.is_none(),
+                    )
+                });
+                Ok(Some((bound.path.clone(), renamed)))
+            })()?;
+            match folded {
+                None => at += 1,
+                Some((_, Err(error))) => {
+                    waiting.insert(file.key.clone(), error.to_string());
+                    at += 1;
+                }
+                Some((path, Ok(()))) => {
+                    let mut file = files.remove(at);
+                    file.path = self.root.join(&path);
+                    file.key = path;
+                    match files.iter().position(|other| other.key == file.key) {
+                        Some(other) => files[other] = file,
+                        None => files.insert(at, file),
+                    }
+                }
+            }
+        }
+        Ok(waiting)
     }
 
     /// Held ids decide first; then the binding by identity across every file
@@ -2722,6 +2838,14 @@ impl Folder {
             return self.queue_update_file(bound, file, &held, catalog);
         }
         let document = file.document();
+        let named = bound.and_then(|bound| {
+            self.named_title(
+                bound,
+                file,
+                &document,
+                fields::title_field(catalog, &held.r#type),
+            )
+        });
         let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let spent = bound.and_then(state::Bound::spent);
         // Bytes set aside in a conflicted copy against this device's own
@@ -2801,7 +2925,7 @@ impl Folder {
             let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
             flagged.push(Flagged::of(&file.key, &held_for));
             return self
-                .bind_held(file, item_id, bound, held_for)
+                .bind_held(file, item_id, bound, held_for, named.as_ref())
                 .map(|()| false);
         }
         let mut effective_properties = catalog.projected_properties(
@@ -2853,7 +2977,7 @@ impl Folder {
                 let held_for = format!("{prefix}{reason}");
                 flagged.push(Flagged::of(&file.key, &held_for));
                 return self
-                    .bind_held(file, item_id, bound, held_for)
+                    .bind_held(file, item_id, bound, held_for, named.as_ref())
                     .map(|()| false);
             }
             // The tags are checked before the edit is queued, so a tag the
@@ -2875,7 +2999,7 @@ impl Folder {
                 let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                 flagged.push(Flagged::of(&file.key, &held_for));
                 return self
-                    .bind_held(file, item_id, bound, held_for)
+                    .bind_held(file, item_id, bound, held_for, named.as_ref())
                     .map(|()| false);
             }
             // Tags and a state are writes of their own, and need no edit.
@@ -2917,7 +3041,7 @@ impl Folder {
                         let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                         flagged.push(Flagged::of(&file.key, &held_for));
                         return self
-                            .bind_held(file, item_id, bound, held_for)
+                            .bind_held(file, item_id, bound, held_for, named.as_ref())
                             .map(|()| false);
                     }
                     other => other?.id,
@@ -2936,12 +3060,12 @@ impl Folder {
         } else if let Some(retitle) = retitle {
             // Bytes already answered send nothing of their own, so the new
             // name's title goes alone, spending no version line.
-            match self.queue_title(item_id, retitle) {
+            match self.queue_title(item_id, retitle, &retitle.title, file.line) {
                 Err(error) if local_admission_refusal(&error) => {
                     let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                     flagged.push(Flagged::of(&file.key, &held_for));
                     return self
-                        .bind_held(file, item_id, bound, held_for)
+                        .bind_held(file, item_id, bound, held_for, named.as_ref())
                         .map(|()| false);
                 }
                 other => queued.extend(other?.map(|id| (id, None))),
@@ -2980,6 +3104,7 @@ impl Folder {
                 own: own.base,
                 held: None,
                 writes,
+                named,
             },
         )?;
         work.push(self.edge_work(file, item_id, bound));
@@ -2992,6 +3117,7 @@ impl Folder {
         item_id: &str,
         bound: Option<&state::Bound>,
         held: String,
+        named: Option<&(String, Option<Value>)>,
     ) -> Result<()> {
         let links = bound.map(|bound| bound.links.clone()).unwrap_or_default();
         let lines = bound.map(|bound| bound.lines.clone()).unwrap_or_default();
@@ -3000,6 +3126,7 @@ impl Folder {
             own: bound.and_then(|bound| bound.own.clone()),
             held: Some(held),
             writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
+            named: named.cloned(),
         };
         self.bind_scanned(file, item_id, links, lines, kept)
     }
@@ -3087,79 +3214,63 @@ impl Folder {
         })
     }
 
-    /// Queues the rename's title as an edit of that property alone, unless
-    /// the item holds it already. Answers the write's id.
-    fn queue_title(&self, item_id: &str, retitle: &Retitle) -> Result<Option<String>> {
+    /// Queues `title` as an edit of the rename's title property alone, on the
+    /// version the file last showed, `line`, unless the item holds it
+    /// already. Answers the write's id.
+    fn queue_title(
+        &self,
+        item_id: &str,
+        retitle: &Retitle,
+        title: &str,
+        line: Option<i64>,
+    ) -> Result<Option<String>> {
         if retitle
             .held
             .as_ref()
-            .is_some_and(|held| held.as_str() == Some(retitle.title.as_str()))
+            .is_some_and(|held| held.as_str() == Some(title))
         {
             return Ok(None);
         }
         let mut properties = Map::new();
-        properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
+        properties.insert(retitle.field.clone(), Value::String(title.into()));
+        let read_at = line.filter(|line| *line < retitle.version);
         let edit = Edit {
             properties,
-            base_version: Some(retitle.version),
+            base_version: Some(read_at.unwrap_or(retitle.version)),
             ..Edit::default()
         };
-        let written =
+        let written = if read_at.is_some() {
             self.core
-                .write_update(item_id, &edit, crate::Based::OnHeld, crate::Body::Folder)?;
+                .write_update(item_id, &edit, crate::Based::AsRead, crate::Body::Folder)?
+        } else {
+            self.core
+                .write_update(item_id, &edit, crate::Based::OnHeld, crate::Body::Folder)?
+        };
         Ok(Some(written.id))
     }
 
-    /// Where a person's edit of a document's title line leaves its name, which
-    /// was the old title's, behind the new title, the item's placement moves
-    /// to the new title's name, and the pull moves the file there.
-    fn follow_title_line(
+    /// The title a document's agreed presentation goes on showing where the
+    /// person edited its title line away from the title its name was made
+    /// from, so the pull renames the file once the new title is the item's.
+    fn named_title(
         &self,
-        item_id: &str,
         bound: &state::Bound,
         file: &Scanned,
-        (catalog, lists): (&Catalog, &Lists),
-        withheld: &placement::Withheld,
-    ) -> Result<()> {
-        if !carries_frontmatter(Path::new(&file.key)) || withheld.contains_key(item_id) {
-            return Ok(());
+        document: &document::Document,
+        field: &str,
+    ) -> Option<(String, Option<Value>)> {
+        if bound.path != file.key || !carries_frontmatter(Path::new(&file.key)) {
+            return None;
         }
-        let Some(held) = self.core.get(item_id)? else {
-            return Ok(());
-        };
-        if bytes_of(&held, catalog).is_some() {
-            return Ok(());
-        }
-        let field = fields::title_field(catalog, &held.r#type);
-        let document = file.document();
-        let Some(title) = document.front.get(field).and_then(Value::as_str) else {
-            return Ok(());
-        };
-        let Some(agreed) = &bound.presentation else {
-            return Ok(());
-        };
-        let was = match agreed.front().get(field) {
+        let title = document.front.get(field)?.as_str()?;
+        let was = bound.presentation.as_ref()?.front().get(field);
+        let shown = match was {
             Some(Value::String(was)) => Some(was.as_str()),
             Some(Value::Null) | None => None,
-            Some(_) => return Ok(()),
+            Some(_) => return None,
         };
-        if was == Some(title) || !self.follows_title(&bound.path, was, title) {
-            return Ok(());
-        }
-        // A file the scan holds keeps its name until its bytes are taken.
-        if state::bound_at(&*self.core.conn()?, &file.key)?
-            .is_none_or(|now| now.held.is_some() || !now.writes.refused.is_empty())
-        {
-            return Ok(());
-        }
-        let renaming = Renaming {
-            reserved: self.placed_here()?,
-            lists,
-        };
-        if let Some(path) = self.title_path(item_id, &bound.path, title, &renaming) {
-            self.place(item_id, &path, withheld)?;
-        }
-        Ok(())
+        (shown != Some(title) && self.follows_title(&file.key, shown, title))
+            .then(|| (field.to_string(), was.cloned()))
     }
 
     /// Whether a file at `path` takes the name `title` makes, where it was
@@ -3289,10 +3400,13 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: file.mark.clone(),
                 content_hash: file.hash.clone(),
-                presentation: file
-                    .unreadable
-                    .is_none()
-                    .then(|| file.document().presentation()),
+                presentation: file.unreadable.is_none().then(|| {
+                    let presentation = file.document().presentation();
+                    match kept.named {
+                        Some((field, title)) => presentation.with(&field, title),
+                        None => presentation,
+                    }
+                }),
                 written_hash: None,
                 links,
                 lines,
@@ -4257,6 +4371,34 @@ impl Folder {
             Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
             _ => false,
         };
+        // Read before a move queues the placement, which is no edit the
+        // file holds.
+        let waiting: HashSet<String> =
+            crate::store::waiting_writes_for_item(&*self.core.conn()?, &item.id)?
+                .into_iter()
+                .filter(|write| write.verdict != Some(crate::model::Verdict::Dead))
+                .map(|write| write.id)
+                .collect();
+        // A move goes as a rename first, so an editor holding the file
+        // follows it, and only then are new bytes written over it.
+        let moved = match bound {
+            Some(old) if !ours && !self.exists(&path) => {
+                self.move_bound(old, &want, item, (rendering, withheld))?
+            }
+            _ => None,
+        };
+        if let Some((_, placed)) = &moved {
+            report.moved += 1;
+            report.placed += usize::from(*placed);
+        }
+        let moved = moved.map(|(moved, _)| moved);
+        let in_place = match &moved {
+            Some(moved) if moved.content_hash == hash => true,
+            Some(moved) => self.behind_by_its_line_alone(item, moved, rendering)?,
+            None => in_place,
+        };
+        let bound = if moved.is_some() { &moved } else { bound };
+        let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
         // Something at the destination that is not this item's own file,
         // unless it is byte for byte this item's render.
         let occupied = !in_place && !ours && self.exists(&path);
@@ -4315,12 +4457,6 @@ impl Folder {
             .map(|bound| bound.writes.clone())
             .unwrap_or_default();
         let mut edit_line = bound.as_ref().and_then(|bound| bound.edit_line);
-        let waiting: HashSet<String> =
-            crate::store::waiting_writes_for_item(&*self.core.conn()?, &item.id)?
-                .into_iter()
-                .filter(|write| write.verdict != Some(crate::model::Verdict::Dead))
-                .map(|write| write.id)
-                .collect();
         if carries_frontmatter(Path::new(&want)) && !waiting.is_empty() {
             let mut lifted = false;
             for line in writes
@@ -4386,15 +4522,7 @@ impl Folder {
             },
         )?;
         drop(conn);
-        if crate::fault::named("move-folder-before-write").is_some() {
-            let _ = std::fs::rename(
-                &self.root,
-                self.root.with_file_name(format!(
-                    "{}-away",
-                    self.root.file_name().unwrap_or_default().to_string_lossy()
-                )),
-            );
-        }
+        self.move_folder_if_asked();
         // Expiry and rebuild take this same lock. Keep authority stable through
         // the filesystem commit and its binding, not only the preceding check.
         let conn = self.core.conn()?;
@@ -4457,6 +4585,7 @@ impl Folder {
                 });
             }
             rendering.unbind(&conn, &bound.path)?;
+            state::set_moved_from(&conn, &item.id, &bound.path)?;
             if journaled_for(&conn, &bound.path, &item.id)? {
                 report.revived += 1;
             }
@@ -4476,6 +4605,96 @@ impl Folder {
             report.rewritten += 1;
         }
         Ok(PlacementWrite::Done)
+    }
+
+    /// Moves a bound file to `want` by a rename where it still holds the bytes
+    /// it is bound to, and its binding and placement with it, so a crash
+    /// before its new bytes land leaves it there. Answers the new binding and
+    /// whether a placement was queued; `None` where the file is not as bound,
+    /// or the rename is refused, which leaves the file and its binding as
+    /// they were.
+    fn move_bound(
+        &self,
+        bound: &state::Bound,
+        want: &str,
+        item: &Item,
+        (rendering, withheld): (&Rendering<'_>, &placement::Withheld),
+    ) -> Result<Option<(state::Bound, bool)>> {
+        let from = self.root.join(&bound.path);
+        let to = self.root.join(want);
+        if bound.writes.landing.is_some()
+            || !plainly_inside(&self.root_dir, &bound.path)
+            || !self
+                .read(&from)
+                .is_ok_and(|found| state::hash(&found) == bound.content_hash)
+        {
+            return Ok(None);
+        }
+        let moved = state::Bound {
+            path: want.to_string(),
+            ..bound.clone()
+        };
+        // Bound before the rename, as a write is, so a crash in between
+        // leaves the path bound as it was.
+        let conn = self.core.conn()?;
+        rendering.context.borrow().check(&conn)?;
+        refuse_unless_held(&conn, &item.id)?;
+        let before = state::bound_at(&conn, want)?;
+        rendering.bind(
+            &conn,
+            &state::Bound {
+                writes: state::Writes {
+                    landing: Some(state::Landing {
+                        before: before.clone().map(Box::new),
+                    }),
+                    ..moved.writes.clone()
+                },
+                ..moved.clone()
+            },
+        )?;
+        drop(conn);
+        self.move_folder_if_asked();
+        let renamed = self.inside(to.parent()).and_then(|()| {
+            let (from_dir, from_name) = self.location(&from, false)?;
+            let (to_dir, to_name) = self.location(&to, true)?;
+            landing::save_meanwhile(&from_dir, Path::new(&from_name));
+            landing::rename_new_at(
+                &from_dir,
+                Path::new(&from_name),
+                &to_dir,
+                Path::new(&to_name),
+            )
+        });
+        let conn = self.core.conn()?;
+        if renamed.is_err() {
+            match &before {
+                Some(before) => rendering.bind(&conn, before)?,
+                None => rendering.unbind(&conn, want)?,
+            }
+            return Ok(None);
+        }
+        rendering.bind(&conn, &moved)?;
+        rendering.unbind(&conn, &bound.path)?;
+        state::journal_clear(&conn, &bound.path)?;
+        state::journal_clear_for(&conn, want, &item.id)?;
+        state::set_moved_from(&conn, &item.id, &bound.path)?;
+        drop(conn);
+        let placed = self.place(&item.id, want, withheld)?;
+        Ok(Some((moved, placed)))
+    }
+
+    /// The folder moved away between a write's binding and its landing, where
+    /// a debug fixture asks.
+    fn move_folder_if_asked(&self) {
+        if crate::fault::named("move-folder-before-write").is_some() {
+            let _ = std::fs::rename(
+                &self.root,
+                self.root.with_file_name(format!(
+                    "{}-away",
+                    self.root.file_name().unwrap_or_default().to_string_lossy()
+                )),
+            );
+        }
     }
 
     /// A failed move has already decided against this destination. It must not
@@ -4881,6 +5100,15 @@ impl Folder {
         }
         let field = fields::title_field(catalog, &item.r#type);
         let title = item.properties.get(field).and_then(Value::as_str)?;
+        // A title this copy has not heard the server take renames nothing yet.
+        if self
+            .core
+            .conn()
+            .ok()
+            .is_none_or(|conn| crate::store::item_waits(&conn, &item.id).unwrap_or(true))
+        {
+            return None;
+        }
         let was = bound.presentation.as_ref()?.front().get(field);
         let was = match was {
             Some(Value::String(was)) => Some(was.as_str()),
@@ -5131,6 +5359,9 @@ struct Kept {
     own: Option<fields::OwnBase>,
     held: Option<String>,
     writes: state::Writes,
+    /// A title line edited away from the title the file's name was made
+    /// from: the field, and what the agreed presentation goes on showing.
+    named: Option<(String, Option<Value>)>,
 }
 
 #[derive(Debug, Default)]
@@ -5566,6 +5797,23 @@ fn plainly_inside(root: &Directory, relative: &str) -> bool {
         }
     }
     true
+}
+
+/// The title a renamed document's line says where the person changed it
+/// from the one the file last showed, and it is not the name's.
+fn typed_title(
+    bound: &state::Bound,
+    document: &document::Document,
+    retitle: &Retitle,
+) -> Option<String> {
+    let typed = document.front.get(&retitle.field)?.as_str()?;
+    let shown = bound
+        .presentation
+        .as_ref()
+        .and_then(|agreed| agreed.front().get(&retitle.field))
+        .and_then(Value::as_str);
+    (shown != Some(typed) && !typed.trim().is_empty() && typed != retitle.title)
+        .then(|| typed.to_string())
 }
 
 /// A file's name for a title, with `extension` where the title carries none.

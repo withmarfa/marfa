@@ -470,7 +470,7 @@ describe("folder placement and file publication boundaries", () => {
     expect([read("One.md"), read("Two.md")]).toEqual(before);
   });
 
-  it("keeps the old file when publishing a move fails and leaves emptied directories after success", async () => {
+  it("keeps the moved file whole when writing it at its new placement fails, and leaves emptied directories after success", async () => {
     const edges: WireEdgeOptions[] = [];
     const { frames } = await seed([note(1, "Moved")], edges, undefined, {
       [id(1)]: "Old/Moved.md",
@@ -488,18 +488,31 @@ describe("folder placement and file publication boundaries", () => {
           properties: { path: "New/Moved.md" },
         }),
       ),
+      // Changed as well as moved, so new bytes are written at the new path.
+      copyItemEvent(
+        "3",
+        "item.updated",
+        wireItem({
+          ...note(1, "Moved"),
+          version: 2,
+          properties: { title: "Moved", body: "changed\n" },
+        }),
+      ),
     );
     expect((await folder!.folder.device().catchUp()).ok).toBe(true);
     process.env.MARFA_TEST_FAULT = "sync-failure=Moved.md";
     const failed = await pull();
     delete process.env.MARFA_TEST_FAULT;
     expect(failed.unwritten).toBe(1);
-    expect(read("Old/Moved.md")).toBe(before);
-    expect(statSync(join(folder!.dir, "Old/Moved.md")).ino).toBe(identity);
-    expect(existsSync(join(folder!.dir, "New/Moved.md"))).toBe(false);
+    // Moved by a rename before its new bytes were to land, and whole.
+    expect(read("New/Moved.md")).toBe(before);
+    expect(statSync(join(folder!.dir, "New/Moved.md")).ino).toBe(identity);
+    expect(existsSync(join(folder!.dir, "Old/Moved.md"))).toBe(false);
+    expect(failed.moved).toBe(1);
     const success = await pull();
-    expect(success.moved).toBe(1);
+    expect(success.rewritten).toBe(1);
     expect(read("New/Moved.md")).toContain(id(1));
+    expect(read("New/Moved.md")).toContain("changed");
     expect(existsSync(join(folder!.dir, "Old/Moved.md"))).toBe(false);
     expect(statSync(join(folder!.dir, "Old")).isDirectory()).toBe(true);
   });

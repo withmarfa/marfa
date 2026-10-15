@@ -292,7 +292,7 @@ fn running(_pid: i32) -> bool {
 }
 
 /// A person's save made between the folder's decision and its last look.
-fn save_meanwhile(dir: &Directory, target: &Path) {
+pub(crate) fn save_meanwhile(dir: &Directory, target: &Path) {
     if crate::fault::named("save-before-last-look").is_some()
         && target
             .extension()
