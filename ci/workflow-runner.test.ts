@@ -17,10 +17,10 @@ const WORKFLOWS = resolve(
 
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
-  "core.yml:core",
+  "core-live.yml:live",
   "release.yml:build",
   "release.yml:sign",
-  "control-socket.yml:macos",
+  "ci.yml:control-socket",
 ]);
 
 // Ubuntu for a pull request, a push and a dispatch that does not ask, macOS
@@ -37,7 +37,10 @@ const NIGHTLY_MAC_JOBS = new Set([
 ]);
 
 interface Workflow {
-  jobs: Record<string, { "runs-on"?: unknown; concurrency?: unknown }>;
+  jobs: Record<
+    string,
+    { "runs-on"?: unknown; concurrency?: unknown; uses?: unknown }
+  >;
 }
 
 // Parse YAML so quoted labels, arrays and expressions cannot bypass the rule.
@@ -61,6 +64,16 @@ describe("jobs use standard GitHub-hosted runners", () => {
     for (const [job, config] of Object.entries(
       jobsOf(readFileSync(join(WORKFLOWS, file), "utf8")),
     )) {
+      // A job that calls a workflow of this repository has no runner of its
+      // own; the jobs of the workflow it calls are held to the policy here.
+      if (config.uses !== undefined) {
+        expect(config.uses, `${file}: ${job}`).toMatch(
+          /^\.\/\.github\/workflows\/[\w-]+\.yml$/,
+        );
+        expect(config["runs-on"], `${file}: ${job}`).toBeUndefined();
+        expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
+        continue;
+      }
       const key = `${file}:${job}`;
       const expected = MAC_JOBS.has(key)
         ? "macos-26"
@@ -72,7 +85,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
     }
   });
 
-  it.each(["ci.yml", "core.yml", "codeql.yml"])(
+  it.each(["ci.yml", "codeql.yml"])(
     "%s cancels only superseded pull requests and preserves every other run",
     (file) => {
       const { concurrency } = parse(

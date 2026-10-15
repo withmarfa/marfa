@@ -1,13 +1,13 @@
 /**
  * Which CI jobs a change can affect.
  *
- * Each job in `ci.yml` and `core.yml` runs when this answers `true` for it
- * and is skipped otherwise, and a skipped job satisfies a required check
- * where a workflow filtered out by `paths` would leave it pending. `Full CI`,
- * the gate job of `ci.yml`, waits for the rest and is what a ruleset
- * requires. The nightly and a dispatch answer `true` for every job, and so
- * does a change that could not be read, so a skip only ever comes from a diff
- * that was read and classified.
+ * Each job in `ci.yml` runs when this answers `true` for it and is skipped
+ * otherwise, and a skipped job satisfies a required check where a workflow
+ * filtered out by `paths` would leave it pending. `core` is the job that
+ * calls `core-live.yml`. `Full CI`, the gate job of `ci.yml`, waits for the
+ * rest and is what a ruleset requires. The nightly and a dispatch answer
+ * `true` for every job, and so does a change that could not be read, so a
+ * skip only ever comes from a diff that was read and classified.
  *
  * A push to `main` runs every job too, unless `forPush` finds that it
  * changes only what no job but the format check reads and that this
@@ -69,15 +69,18 @@ export const JOBS = [
   "openapi-freshness",
   "version-fields",
   "clients-freshness",
-  // `core.yml`'s live job, on macOS. It boots the server too, but a pull
-  // request that changes only the server leaves it to the push to `main`.
+  // `core-live.yml`, on macOS, which `ci.yml` calls for a pull request. It
+  // boots the server too, but a pull request that changes only the server
+  // leaves it to the push to `main`, where `core.yml` runs it.
   "core",
+  // `Control socket (macOS)`: the private control socket's tests on macOS,
+  // the only run of them there. Linux runs them in `CI (SQLite)`'s tests.
+  "control-socket",
 ] as const;
 
 export type Job = (typeof JOBS)[number];
 
 const ALL: readonly Job[] = JOBS;
-const CI_YML: readonly Job[] = JOBS.filter((job) => job !== "core");
 
 /**
  * A group of the contract's server fixtures, run over `shards` runners of
@@ -156,6 +159,7 @@ const RUST: readonly Job[] = [
 /** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
   "workspace",
+  "control-socket",
   ...CONFORMANCE,
   "cli-scenarios",
   "restore-drill",
@@ -173,9 +177,11 @@ const WORKSPACE: readonly Job[] = [
 export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // What decides what runs is proven on everything it decides.
   [/^scripts\/ci-required\.ts$/, ALL],
-  [/^\.github\/workflows\/ci\.yml$/, CI_YML],
-  // `ci/` tests read every workflow.
-  [/^\.github\/workflows\/core\.yml$/, ["workspace", "core"]],
+  // It defines every job it runs, the call of `core-live.yml` among them.
+  [/^\.github\/workflows\/ci\.yml$/, ALL],
+  [/^\.github\/workflows\/core-live\.yml$/, ["workspace", "core"]],
+  // `ci/` tests read every workflow. `core.yml` only calls the one above,
+  // for a push to `main`, and no pull request runs it.
   [/^\.github\/workflows\//, ["workspace"]],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
@@ -228,6 +234,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^deploy\//, []],
 
+  // The control socket's tests and the global setup and test settings they
+  // run under.
+  [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
+  [
+    /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
+    [...SERVER, "control-socket"],
+  ],
   // The core's catalog is written from the shipped types, the registry that
   // lists them and the server's role resolution.
   [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
@@ -363,7 +376,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     WORKSPACE,
   ],
   [/^eslint\.config\.js$/, ["workspace"]],
-  [/^vitest\.(config|shared)\.ts$/, ["workspace", "version-fields"]],
+  [
+    /^vitest\.(config|shared)\.ts$/,
+    ["workspace", "version-fields", "control-socket"],
+  ],
   // Prettier skips what Git ignores, and a freshness check that asks
   // `git status` cannot see an ignored file.
   [/^\.gitignore$/, ["workspace", "types-freshness", "clients-freshness"]],

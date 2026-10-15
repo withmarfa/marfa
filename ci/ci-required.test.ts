@@ -64,7 +64,6 @@ const RUST: Job[] = [
   "cli-scenarios",
   "core",
 ];
-const CI_YML: Job[] = JOBS.filter((job) => job !== "core");
 /** The chapters of the contract a server fixture reads while it runs. */
 const READ_AT_RUN_TIME = ["errors.md", "coverage.md"];
 
@@ -426,7 +425,23 @@ describe("what a change runs", () => {
         "openapi-freshness",
         "version-fields",
         "clients-freshness",
+        "control-socket",
       ],
+    ],
+    [
+      "the control socket's code, which its macOS tests run",
+      ["packages/server/src/control/socket.ts"],
+      [...SERVER, "control-socket"],
+    ],
+    [
+      "the setup every server test runs under, the control socket's among them",
+      ["packages/server/src/test-global-setup.ts"],
+      [...SERVER, "control-socket"],
+    ],
+    [
+      "server code the control socket's tests do not read",
+      ["packages/server/src/config.ts"],
+      SERVER,
     ],
     [
       "a crate manifest, which this test reads",
@@ -434,14 +449,19 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...RUST, "version-fields"],
     ],
     [
-      "ci.yml, which defines every job it runs",
+      "ci.yml, which defines every job it runs, the call of core-live.yml among them",
       [".github/workflows/ci.yml"],
-      CI_YML,
+      [...JOBS],
     ],
     [
-      "core.yml, which the ci/ tests read",
-      [".github/workflows/core.yml"],
+      "core-live.yml, which the ci/ tests read and ci.yml calls",
+      [".github/workflows/core-live.yml"],
       ["ci-sqlite", "workspace", "core"],
+    ],
+    [
+      "core.yml, which the ci/ tests read and no pull request runs",
+      [".github/workflows/core.yml"],
+      ["ci-sqlite", "workspace"],
     ],
     [
       "another workflow",
@@ -649,7 +669,8 @@ interface Workflow {
       permissions?: Record<string, string>;
       outputs?: Record<string, string>;
       env?: Record<string, string>;
-      steps: Step[];
+      uses?: string;
+      steps?: Step[];
     }
   >;
 }
@@ -662,6 +683,13 @@ function workflow(file: string): Workflow {
 
 const gate = (output: string) =>
   `\${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.${output} != 'false') }}`;
+
+/**
+ * The call of `core-live.yml` runs for a pull request alone: `core.yml` runs
+ * it for a push to `main`, the nightly and a dispatch.
+ */
+const coreGate =
+  "${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}";
 
 /** The status check reads the logs of every shard, so it needs all of them to have passed. */
 const statusesGate =
@@ -816,7 +844,6 @@ describe("each job reads its own answer", () => {
           (job) =>
             job !== "workspace" &&
             job !== "swift-package" &&
-            job !== "core" &&
             !SHARDS.includes(job),
         ),
         CONFORMANCE_SHARD_JOB,
@@ -824,7 +851,7 @@ describe("each job reads its own answer", () => {
     );
     expect(jobs.changes?.outputs).toEqual(
       Object.fromEntries(
-        [...CI_YML, "conformance-shards", "full"].map((job) => [
+        [...JOBS, "conformance-shards", "full"].map((job) => [
           job,
           `\${{ steps.classify.outputs.${job} }}`,
         ]),
@@ -837,7 +864,11 @@ describe("each job reads its own answer", () => {
           : "changes",
       );
       expect(jobs[name]?.if, name).toBe(
-        name === "conformance-statuses" ? statusesGate : gate(name),
+        name === "conformance-statuses"
+          ? statusesGate
+          : name === "core"
+            ? coreGate
+            : gate(name),
       );
     }
     // The shards are skipped when the matrix is empty, and run from the
@@ -852,7 +883,7 @@ describe("each job reads its own answer", () => {
       actions: "read",
     });
     expect(
-      jobs.changes?.steps.find((step) => step.id === "classify")?.env,
+      jobs.changes?.steps?.find((step) => step.id === "classify")?.env,
     ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
@@ -889,7 +920,7 @@ describe("each job reads its own answer", () => {
     // merging, so no step of any job fails a draft for being one.
     const draftSteps = (all: Workflow["jobs"]) =>
       Object.entries(all).flatMap(([id, job]) =>
-        job.steps
+        (job.steps ?? [])
           .filter((step) => step.if?.includes("pull_request.draft") === true)
           .map(() => id),
       );
@@ -918,7 +949,7 @@ describe("each job reads its own answer", () => {
     expect(build?.if).toBe(
       "${{ needs.changes.outputs.swift-package != 'false' }}",
     );
-    // The Apple targets and the Xcode are the ones `core.yml` builds with.
+    // The Apple targets and the Xcode are the ones `core-live.yml` builds with.
     const toolchain = steps.find((step) =>
       step.uses?.startsWith("dtolnay/rust-toolchain"),
     );
@@ -930,21 +961,8 @@ describe("each job reads its own answer", () => {
       expect(String(toolchain?.with?.targets)).toContain(target);
     }
     expect(build?.env?.DEVELOPER_DIR).toBe(
-      workflow("core.yml").jobs.core?.env?.DEVELOPER_DIR,
+      workflow("core-live.yml").jobs.live?.env?.DEVELOPER_DIR,
     );
-  });
-
-  it("core.yml runs its job on a pull request only when the classifier says so", () => {
-    const { on, jobs } = workflow("core.yml");
-    expect(on.pull_request).toEqual({
-      branches: ["main"],
-      types: ["opened", "synchronize", "reopened", "ready_for_review"],
-    });
-    expect(jobs.changes?.outputs).toEqual({
-      core: "${{ steps.classify.outputs.core }}",
-    });
-    expect(jobs.core?.needs).toBe("changes");
-    expect(jobs.core?.if).toBe(gate("core"));
   });
 
   it("core.yml runs on a push to main for the core and the server it boots, never for Markdown", () => {
@@ -959,6 +977,7 @@ describe("each job reads its own answer", () => {
       "pnpm-workspace.yaml",
       "tsconfig.base.json",
       ".github/workflows/core.yml",
+      ".github/workflows/core-live.yml",
       "!**/*.md",
     ]);
   });
