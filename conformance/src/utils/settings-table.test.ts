@@ -43,6 +43,16 @@ describe("the settings table", () => {
     ).toBe("None");
   });
 
+  it("names the unit in the singular for a default of one", () => {
+    const days = {
+      ...WAIT,
+      rule: { kind: "count" as const, min: 0, unit: "days" },
+    };
+    expect(defaultText({ ...days, default: 1 })).toBe("`1` day");
+    expect(defaultText({ ...days, default: 30 })).toBe("`30` days");
+    expect(defaultText({ ...WAIT, default: 1 })).toBe("`1` ms");
+  });
+
   it("states no value for a secret, only the note", () => {
     expect(defaultText(SALT)).toBe("None. Required in production.");
   });

@@ -531,6 +531,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       ? translateConsentError(consentError)
       : undefined;
 
+    // Before the page is shown, so the reaper keeps the client while the
+    // owner decides, however old its registration is.
+    await deps.storage.oauthProvider?.markClientOffered(clientId);
+
     const html = renderConsentScreen({
       nonce: c.var.cspNonce,
       clientName,

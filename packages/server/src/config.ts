@@ -169,19 +169,18 @@ export interface AppConfig {
    *  Optional on the type; `housekeeping/registrations.ts` applies the 1h
    *  fallback. */
   authSessionCleanupIntervalMs?: number;
-  /** Days a grantless DCR (`auth_oauth_client`) row survives before the
-   *  reaper hard-deletes it. A row is reaped only when it's older than this
-   *  AND carries zero grants (no access token, no refresh token, no
-   *  projected `system.connection` app item). Unauthenticated DCR lets
-   *  clients accumulate forever; this bounds the abandoned ones. `0`
-   *  switches the housekeeping job off. Default 30. Env override
+  /** Days a registered client that no grant names survives, counted from
+   *  its registration or the last time an approval page offered it, before
+   *  the reaper hard-deletes it. Registration takes no credential and
+   *  answers every origin, so this bounds what any page can leave behind;
+   *  one day is far longer than any approval takes, since the offer itself
+   *  restarts the count. `0` switches the housekeeping job off. Env override
    *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type;
-   *  `housekeeping/registrations.ts` applies the 30-day fallback. */
+   *  `housekeeping/registrations.ts` applies the fallback. */
   dcrClientRetentionDays?: number;
-  /** Cadence (ms) for the grantless-DCR-client reaper sweep. Default
-   *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
-   *  Optional on the type; `housekeeping/registrations.ts` applies the
-   *  24h fallback. */
+  /** Cadence (ms) for the registration reaper. Env override
+   *  `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`. Optional on the type;
+   *  `housekeeping/registrations.ts` applies the fallback. */
   dcrClientCleanupIntervalMs?: number;
   /** Cadence (ms) for the unreferenced-blob sweep, `blob-orphans`. A full
    *  pass over the item corpus and the version history, so this is
@@ -919,7 +918,7 @@ const settingsShape = {
   ),
   MARFA_MAX_REQUEST_BYTES: count(
     1_048_576,
-    "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, blob uploads and inbound webhook deliveries have separate limits.",
+    "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits.",
     { unit: "bytes" },
   ),
   MARFA_MAX_BULK_REQUEST_BYTES: count(
@@ -1248,12 +1247,12 @@ const settingsShape = {
     { max: MAX_RETENTION_MS, unit: "ms" },
   ),
   MARFA_DCR_CLIENT_RETENTION_DAYS: count(
-    30,
-    "How long a dynamically registered client with no grants is kept. At 0 the job that removes them is off.",
+    1,
+    "How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 the job that removes them is off.",
     { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(
-    86_400_000,
+    3_600_000,
     "How often the job that removes dynamically registered clients with no grants runs.",
     { max: MAX_RETENTION_MS, unit: "ms" },
   ),

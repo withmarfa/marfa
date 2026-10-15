@@ -3,10 +3,10 @@ import { createRoute, z } from "@hono/zod-openapi";
 import type { MarfaAuth } from "../auth/instance.js";
 import { makeErrorResponseSchema, REFUSAL_TEXT } from "../openapi.js";
 import { CHAIN_REFUSALS } from "../openapi-finalize.js";
+import { MAX_REGISTERED_REDIRECT_URIS } from "../middleware/body-cap.js";
 
 const REQUEST_TEXT: Record<string, string> = {
-  redirect_uris:
-    "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
+  redirect_uris: `The addresses Marfa may send a person back to after authorization. Required for \`authorization_code\`. At most ${String(MAX_REGISTERED_REDIRECT_URIS)}. A \`web\` client's URIs must use \`https\` off the loopback; a \`native\` client may use \`http\` on \`localhost\`, \`127.0.0.1\` or \`[::1]\`.`,
   grant_types:
     "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`.",
   response_types:
@@ -167,7 +167,7 @@ export function oauthRegistrationRoute(
     tags: ["Access"],
     summary: "Register an OAuth client",
     description:
-      "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
+      "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential; a web page can call it from a browser on any origin. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
     request: {
       body: {
         required: true,
@@ -185,8 +185,7 @@ export function oauthRegistrationRoute(
         },
       },
       400: {
-        description:
-          "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n- `invalid_software_statement`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+        description: `- \`invalid_client_metadata\`: client metadata is invalid.\n- \`invalid_redirect_uri\`: a redirect URI is invalid, or there are more than ${String(MAX_REGISTERED_REDIRECT_URIS)}.\n- \`invalid_scope\`: a scope is not allowed.\n- \`invalid_target\`: a resource is invalid.\n- \`invalid_software_statement\`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's \`validation_error\` instead.`,
         content: {
           "application/json": {
             schema: z.union([

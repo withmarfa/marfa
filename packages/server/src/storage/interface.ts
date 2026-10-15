@@ -1949,25 +1949,33 @@ export interface OauthProviderStore {
     authUserId: string;
   }): Promise<string | null>;
   /**
-   * Reaper for grantless DCR clients. Hard-deletes every `auth_oauth_client`
-   * row that is BOTH:
+   * Reaper for registrations nobody approved. Hard-deletes, in one
+   * statement, up to `limit` `auth_oauth_client` rows that are BOTH:
    *
-   *   - older than `cutoffIso` (`created_at < cutoffIso`), AND
-   *   - grantless — no `auth_oauth_access_token` row, no
+   *   - idle since before `cutoffIso`: registered, and last offered on an
+   *     approval page (`markClientOffered`), before it; AND
+   *   - grantless: no `auth_oauth_access_token` row, no
    *     `auth_oauth_refresh_token` row, and no projected
-   *     `system.connection { kind: "app" }` item — for its `client_id`.
+   *     `system.connection { kind: "app" }` item in any state or status
+   *     for its `client_id`.
    *
-   * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
-   * means clients accumulate forever with no natural reaper; an abandoned
-   * registration that was never consented to is pure dead weight. The
-   * conservative shape (delete only when ALL three grant signals are
-   * absent) guarantees a client a user actually authorized — or one with
-   * any live token — is never reaped. Returns the number of rows deleted.
-   *
-   * A row with zero grants is dead whoever registered it.
-   * One call removes at most 200 matching grantless clients.
+   * Registration takes no credential and answers every origin, so any page
+   * can add rows here. The check and the delete are one statement, so a
+   * client offered or approved while the sweep runs is either kept or was
+   * already gone, never deleted after the check. A revoked grant's
+   * projection keeps its client until the revoked-grant purge removes it,
+   * so the audit trail never names a client that is gone. Returns the
+   * number of rows deleted.
    */
-  deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
+  deleteIdleGrantlessClients(cutoffIso: string, limit: number): Promise<number>;
+  /**
+   * Records that an approval page offered `clientId` to the signed-in owner,
+   * so the reaper leaves it for a whole retention window from now: a
+   * registration older than the window is still kept while the owner is
+   * deciding on it. Only pages behind the owner's session call it, so no
+   * caller without one can keep a registration alive.
+   */
+  markClientOffered(clientId: string): Promise<void>;
   /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
    * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in

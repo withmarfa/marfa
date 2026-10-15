@@ -1527,7 +1527,7 @@ export interface paths {
         put?: never;
         /**
          * Register an OAuth client
-         * @description Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.
+         * @description Registers an OAuth client for an app and returns it with its `client_id`. Send no credential; a web page can call it from a browser on any origin. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.
          */
         post: operations["registerOAuthClient"];
         delete?: never;
@@ -4297,7 +4297,7 @@ export interface components {
         };
         /** @description An OAuth client: its app metadata and the grants it uses. */
         OAuthClientRegistration: {
-            /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
+            /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
             /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
             scope?: string;
@@ -21744,7 +21744,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_client_metadata`: client metadata is invalid.
-             *     - `invalid_redirect_uri`: a redirect URI is invalid.
+             *     - `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.
              *     - `invalid_scope`: a scope is not allowed.
              *     - `invalid_target`: a resource is invalid.
              *     - `invalid_software_statement`: a software statement is invalid.

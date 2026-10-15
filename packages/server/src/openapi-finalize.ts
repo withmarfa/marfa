@@ -53,6 +53,8 @@ const GENERAL_SECTIONS = [
   "Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.",
   "## Event stream",
   "`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.",
+  "## Web pages",
+  "A web page can connect from a browser with no setup. `POST /auth/oauth2/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.",
   "## Every response",
   "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response outside `/auth/` and `/.well-known/`, and every response to `POST /auth/oauth2/register`, also carries `X-Request-ID`, which identifies the request if you report a problem.",
 ].join("\n\n");

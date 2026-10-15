@@ -3,16 +3,7 @@
  * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
-import {
-  eq,
-  and,
-  desc,
-  lt,
-  isNotNull,
-  inArray,
-  sql,
-  type SQL,
-} from "drizzle-orm";
+import { eq, and, desc, sql, type SQL } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -682,44 +673,40 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   /**
-   * Reap grantless DCR clients older than `cutoffIso`. A client is reaped
-   * only when it has NO access token, NO refresh token, and NO projected
-   * `system.connection { kind: "app" }` item referencing its `client_id`.
-   * Conservative by construction — any one grant signal spares the row.
-   *
-   * `createdAt` is stored as Unix seconds (`integer mode:timestamp`); the
-   * Drizzle `lt(column, Date)` operator handles the Date → epoch-seconds
-   * coercion so the cutoff comparison stays correct.
+   * `created_at` and `updated_at` are Unix seconds (`integer
+   * mode:timestamp`), so the cutoff is compared in seconds.
    */
-  async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
-    const cutoff = new Date(cutoffIso);
-    return this.db.transaction(async (tx) => {
-      const candidates = await tx
-        .select({ id: auth_oauth_client.id })
-        .from(auth_oauth_client)
-        .where(
-          and(
-            isNotNull(auth_oauth_client.createdAt),
-            lt(auth_oauth_client.createdAt, cutoff),
-            sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
-            sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
-            sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
-          ),
-        )
-        .orderBy(auth_oauth_client.id)
-        .limit(200);
-      if (candidates.length === 0) return 0;
-      const deleted = await tx
-        .delete(auth_oauth_client)
-        .where(
-          inArray(
-            auth_oauth_client.id,
-            candidates.map((row) => row.id),
-          ),
-        )
-        .returning({ id: auth_oauth_client.id });
-      return deleted.length;
-    });
+  async deleteIdleGrantlessClients(
+    cutoffIso: string,
+    limit: number,
+  ): Promise<number> {
+    const cutoff = Math.floor(new Date(cutoffIso).getTime() / 1000);
+    const deleted = await this.db.all<{ id: string }>(sql`
+      DELETE FROM auth_oauth_client
+      WHERE id IN (
+        SELECT c.id FROM auth_oauth_client AS c
+        WHERE COALESCE(c.updated_at, c.created_at) < ${cutoff}
+          AND NOT EXISTS (SELECT 1 FROM auth_oauth_access_token AS t WHERE t.client_id = c.client_id)
+          AND NOT EXISTS (SELECT 1 FROM auth_oauth_refresh_token AS r WHERE r.client_id = c.client_id)
+          AND NOT EXISTS (
+            SELECT 1 FROM items AS i
+            WHERE i.type = 'system.connection'
+              AND json_extract(i.properties, '$.kind') = 'app'
+              AND json_extract(i.properties, '$.client_id') = c.client_id
+          )
+        ORDER BY c.id
+        LIMIT ${limit}
+      )
+      RETURNING id
+    `);
+    return deleted.length;
+  }
+
+  async markClientOffered(clientId: string): Promise<void> {
+    await this.db
+      .update(auth_oauth_client)
+      .set({ updatedAt: new Date() })
+      .where(eq(auth_oauth_client.clientId, clientId));
   }
 
   async getPriorConsent(

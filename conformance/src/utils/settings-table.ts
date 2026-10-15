@@ -92,14 +92,22 @@ export function allowedValues(rule: SettingRow["rule"]): string {
   }
 }
 
+/** A unit's name for one of it, where it differs. */
+const SINGULAR_UNITS: Record<string, string> = {
+  days: "day",
+  hours: "hour",
+  bytes: "byte",
+};
+
 /** What a setting is when it is unset or blank. */
 export function defaultText(row: SettingRow): string {
   const parts: string[] = [];
   if (row.default !== undefined) {
+    const named = row.rule.kind === "count" ? row.rule.unit : undefined;
     const unit =
-      row.rule.kind === "count" && row.rule.unit !== undefined
-        ? ` ${row.rule.unit}`
-        : "";
+      named === undefined
+        ? ""
+        : ` ${row.default === 1 ? (SINGULAR_UNITS[named] ?? named) : named}`;
     parts.push(`${code(String(row.default))}${unit}`);
   }
   if (row.defaultNote !== undefined) parts.push(row.defaultNote);

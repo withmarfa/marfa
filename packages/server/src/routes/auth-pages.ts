@@ -800,6 +800,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // which answer a person gets does not depend on which screen the flow
     // put them on.
     const descriptions = buildScopeDescriptions(parsedScopes);
+    // Before the page is shown, so the reaper keeps the client while the
+    // owner decides, however old its registration is.
+    await storage.oauthProvider?.markClientOffered(client.clientId);
 
     setNoStore(c);
     return c.html(
