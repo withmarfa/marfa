@@ -5118,7 +5118,7 @@ When a folder is added, or a watch starts on a folder, whose directory is below 
 
 ### `folders/network-storage-warns`
 
-When a folder is added, or a watch starts on a folder, whose directory is on a file system that `statfs` reports as `smbfs`, `nfs`, `afpfs` or `webdav` on macOS, or by the `NFS_SUPER_MAGIC`, `CIFS_SUPER_MAGIC` or `SMB2_SUPER_MAGIC` number on Linux, the CLI MUST print a storage warning that names the file system type and says that a change made from another computer may not be noticed.
+When a folder is added, or a watch starts on a folder, whose directory is on a file system that `statfs` reports as `smbfs`, `nfs`, `afpfs` or `webdav` on macOS, or as the NFS (0x6969), CIFS (0xFF534D42) or SMB2 (0xFE534D42) file system type on Linux, the CLI MUST print a storage warning that names the file system type and says that a change made from another computer may not be noticed.
 
 **Reason:** A network file system may not send change notifications for what another computer writes.
 
