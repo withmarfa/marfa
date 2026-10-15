@@ -33,7 +33,7 @@ A command sends one trace to an OpenTelemetry collector when the environment nam
 | `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off. |
 
-The trace's root span is named for the command, such as `marfa items create`, and carries the exit code. The core's operations are beneath it, with their counts and outcomes. A command that fails adds an `error` event with the error code from the list above and the exit code. The trace holds no argument, address, credential, item content or message. A collector that is unreachable, slow or refusing changes neither the command's output nor its exit code.
+The trace's root span is named for the command, such as `marfa items create`, and carries the exit code. The core's operations are beneath it, with their counts and outcomes. A command that fails adds an `error` event with the exit code and, for a refusal, the error code from the list above. The trace holds no argument, address, credential, item content or message. A collector that is unreachable, slow or refusing changes neither the command's output nor its exit code.
 
 ";
 
