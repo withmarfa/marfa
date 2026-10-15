@@ -1859,5 +1859,29 @@
   "system",
   "user",
   "webhooks"
+ ],
+ "reserved_field_names": [
+  "capture_latitude",
+  "capture_longitude",
+  "created_at",
+  "id",
+  "occurred_at",
+  "properties",
+  "schema_version",
+  "source",
+  "source_id",
+  "state",
+  "tier",
+  "trashed_by_cascade",
+  "trashed_with",
+  "type",
+  "updated_at",
+  "version"
+ ],
+ "searched_field_names": [
+  "body",
+  "description",
+  "name",
+  "title"
  ]
 }

@@ -178,6 +178,8 @@ fn skipped(words: &[String]) -> bool {
         || first == Some("operations")
         // Reads the docs site, never a server.
         || first == Some("docs")
+        // Prints a definition from its arguments and sends nothing.
+        || words == ["types", "scaffold"]
         // Remote settings and health commands need no local folder. Other
         // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")

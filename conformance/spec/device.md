@@ -3576,6 +3576,102 @@ If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` 
 
 **Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`.
 
+## A starting type definition
+
+`marfa types scaffold` prints a definition for a type identifier and its fields. It names no server, working copy or key, and sends nothing.
+
+### `device/types-scaffold-prints`
+
+When `marfa types scaffold` is given a type identifier, the CLI MUST print as JSON an object holding that `id`, the `parent` and `description` where given, and `fields` with one definition for each `--field`, in the order given, holding its `type`, `required: true` where `--required` names it, the `enum_values` of an `enum` and the `items_type` of an `array`.
+
+**Tests:** `device/types-scaffold.test.ts › prints the id, the fields in the order given, the parent and the description`.
+
+### `device/types-scaffold-needs-nothing`
+
+While no server, working copy or key is named, the CLI MUST print the definition `marfa types scaffold` is asked for.
+
+**Reason:** an agent can write a definition before it has an instance to put it on.
+
+**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`.
+
+### `device/types-scaffold-offline`
+
+When `marfa types scaffold` runs, the CLI MUST send no request, whatever `MARFA_API_URL` and `MARFA_API_KEY` hold and whether it prints a definition or refuses.
+
+**Reason:** a definition is written on this machine, so naming a server must not make the command contact it.
+
+**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`, `› refuses --url, --key and --socket with usage, sending nothing`.
+
+### `device/types-scaffold-no-server-options`
+
+If `marfa types scaffold` is given `--url`, `--key` or `--socket`, then the CLI MUST exit 2 with `usage`.
+
+**Reason:** the command uses none of them, so a person who gave one would believe it was used.
+
+**Tests:** `device/types-scaffold.test.ts › refuses --url, --key and --socket with usage, sending nothing`.
+
+### `device/types-scaffold-id-refused`
+
+If the identifier `marfa types scaffold` is given breaks the type grammar (`types/id-grammar`), is under a root `types/id-reserved-scope-root` names, or is under `core`, `system` or `marfa` (`types/id-reserved-namespace`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Reason:** the server would refuse a registration of the identifier, so the definition printed for it would be one nothing could register.
+
+**Tests:** `device/types-scaffold.test.ts › refuses an id the grammar or a reserved root refuses, naming the reason`.
+
+### `device/types-scaffold-field-name-refused`
+
+If a `--field` of `marfa types scaffold` names a field an item has of its own (`types/field-shadows-item`), or a field already given, then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a field name an item has and a name given twice`.
+
+### `device/types-scaffold-field-type-refused`
+
+If a `--field` of `marfa types scaffold` gives a type outside the field grammar, an `enum` with no values, or an `array` with no element type (`types/field-grammar`), or an `array` whose element type is `thumbnail` (`types/thumbnail-name`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a field type outside the grammar, an enum with no values, and an array with no element type or of thumbnails`.
+
+### `device/types-scaffold-thumbnail-refused`
+
+If the fields of `marfa types scaffold` include a second `thumbnail` (`types/thumbnail-one`), or a `thumbnail` named `title`, `body`, `description` or `name` (`types/thumbnail-name`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a second thumbnail and a thumbnail named for a field search reads`.
+
+### `device/types-scaffold-parent-refused`
+
+If the `--parent` of `marfa types scaffold` breaks the type grammar or names the type itself, then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a parent that breaks the grammar or is the type itself`.
+
+### `device/types-scaffold-parent-shape-refused`
+
+If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+
+**Reason:** the server refuses such a subtype with `inheritance_violation`, so the definition would not register.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a field a shipped parent holds to another shape, or to be required`.
+
+### `device/types-scaffold-usage`
+
+If a `--field` of `marfa types scaffold` is not `NAME:TYPE` or gives a third part to a type that takes none, or a `--required` names a field no `--field` gives, then the CLI MUST exit 2 with `usage`.
+
+**Tests:** `device/types-scaffold.test.ts › refuses an option it cannot read with usage`.
+
+### `device/types-scaffold-declared`
+
+The CLI MUST print, for `marfa types scaffold`, a definition that `marfa device types declare` takes unchanged.
+
+**Reason:** a definition written for an app's working copy is declared as it stands.
+
+**Tests:** `device/types-scaffold.test.ts › declares what it printed on a working copy, unchanged`.
+
+### `device/types-scaffold-registered`
+
+The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types register` registers unchanged where the key may register its identifier.
+
+**Reason:** the command exists so that a definition is not written by hand, and one that needed editing before it registered would not save that.
+
+**Tests:** `device/types-scaffold-live.test.ts › is registered unchanged by a key that may register its id, and by no other`.
+
 ## Search, matched as the server matches
 
 A local search matches, ranks and excerpts as the server's search does, so a query answers the same rows online and offline. The server's halves are the `search-and-filters` rules of the same names.
