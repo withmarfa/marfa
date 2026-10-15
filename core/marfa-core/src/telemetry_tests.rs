@@ -455,7 +455,7 @@ fn a_read_back_that_fails_after_a_refusal_records_a_warning_with_its_code() {
 }
 
 #[test]
-fn an_owed_read_back_that_fails_again_records_a_warning_with_its_code() {
+fn a_refused_write_whose_read_back_fails_on_the_next_drain_records_a_warning_with_its_code() {
     let server = Scripted::start();
     let core = copy_with_a_refused_write(&server);
     core.drain().unwrap();
@@ -465,6 +465,111 @@ fn an_owed_read_back_that_fails_again_records_a_warning_with_its_code() {
     let report = result.unwrap();
     assert!(report.unavailable.is_some(), "{report:?}");
     assert_eq!(log.one("drain").fields["outcome"], "unavailable");
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn an_owed_read_back_with_no_receipt_that_fails_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    crate::store::owe_read_back(
+        &core.conn().unwrap(),
+        &crate::store::Owed {
+            subject: crate::model::Subject::Item,
+            id: "owed".into(),
+            source_id: None,
+            edge_type: None,
+            moved: false,
+        },
+    )
+    .unwrap();
+    server.on("/items/owed", vec![scripted::refusal(503, "unavailable")]);
+
+    let (result, log) = recorded(|| core.drain());
+
+    assert!(result.unwrap().unavailable.is_some());
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_failed_instance_check_before_a_relocated_pass_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    server.on("/", vec![scripted::json(503, "{}")]);
+    let (_dir, core) =
+        crate::relocation_tests::moving_copy(&server.url(), Some(scripted::INSTANCE));
+    crate::relocation_tests::current_copy(&core);
+
+    let (result, log) = recorded(|| core.drain());
+
+    assert!(result.unwrap().unavailable.is_some());
+    assert_eq!(log.one("drain").fields["outcome"], "unavailable");
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(warned[0].within.as_deref(), Some("drain"));
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_natural_key_lookup_that_fails_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = crate::tier_tests::library_copy(&server, dir.path());
+    core.create_item(&crate::tier_tests::keyed("article-1", None))
+        .unwrap();
+    server.on("/items/lookup", vec![scripted::refusal(503, "unavailable")]);
+
+    let (result, log) = recorded(|| core.drain());
+
+    let report = result.unwrap();
+    assert!(
+        report
+            .unavailable
+            .as_deref()
+            .is_some_and(|why| why.contains("natural key")),
+        "{report:?}"
+    );
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_read_back_that_fails_after_a_create_landed_on_a_held_row_records_a_warning() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = crate::tier_tests::library_copy(&server, dir.path());
+    core.create_item(&crate::tier_tests::keyed("article-1", None))
+        .unwrap();
+    server.on(
+        "/items/lookup",
+        vec![scripted::json(200, r#"{"data":[],"tombstones":[]}"#)],
+    );
+    let held = "01a00000-0000-7000-8000-000000000009";
+    server.on(
+        "/items",
+        vec![scripted::json(
+            409,
+            &format!(
+                r#"{{"error":{{"code":"version_conflict","message":"held"}},"current":{{"id":"{held}"}}}}"#
+            ),
+        )],
+    );
+    server.on(
+        &format!("/items/{held}"),
+        vec![scripted::refusal(503, "unavailable")],
+    );
+
+    let (result, log) = recorded(|| core.drain());
+
+    assert!(result.unwrap().unavailable.is_some());
     let warned = warnings(&log);
     assert_eq!(warned.len(), 1, "{log:?}");
     assert_eq!(warned[0].fields["code"], "server");

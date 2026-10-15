@@ -9,7 +9,7 @@ use crate::{Core, CoreError, Server, store};
 const OLD_ORIGIN: &str = "http://127.0.0.1:8";
 const OTHER_INSTANCE: &str = "00000000-0000-7000-8000-000000000001";
 
-fn moving_copy(url: &str, identity: Option<&str>) -> (tempfile::TempDir, Core) {
+pub(crate) fn moving_copy(url: &str, identity: Option<&str>) -> (tempfile::TempDir, Core) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("copy.sqlite");
     let core = Core::open(&path, None).unwrap();
@@ -521,7 +521,7 @@ fn relocation_can_cancel_a_waiter_while_another_clone_confirms() {
     assert_eq!(origin(&core), server.url());
 }
 
-fn current_copy(core: &Core) {
+pub(crate) fn current_copy(core: &Core) {
     let conn = core.conn().unwrap();
     store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
     store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
