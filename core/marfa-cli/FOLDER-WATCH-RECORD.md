@@ -41,7 +41,7 @@ For `marfa folders health`, which reads what the server was told, see [Read remo
 - `folders` lists the folders that process was asked to hold. A watch of every folder lists every folder the registry lists, and stops listing one the registry drops.
 - `dir` is the folder's directory, and `folder` is its `system.folder` ID.
 - `watching` is `true` once the folder is said to be watched. A folder tried again after it failed is said to be watched once its watch has lasted about 10 seconds, so until then `watching` stays `false` and `reason` stays as it was. For a folder a watch of every folder cannot watch, it is `false` and `reason` is the error code, such as `first_sync_waiting`, `unauthorized` or `io`. The watch tries it again, and `reason` changes with the attempt. `reason` is `null` for a folder not yet tried.
-- `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` are the values of the folder's latest report to the server, as [Read remote folder health](FOLDER-HEALTH.md) describes them. `last_success_at` is `null` until a sync completes. They stay as last observed while a folder is not watched. Until this process has read a report for a folder, such as one it could not open, all six are `null`, so `null` in `problems` means unknown and `[]` means none. The exception is a folder whose `reason` is `first_sync_waiting`, which shows `first_sync_waiting` as `true`.
+- `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` are the values of the folder's latest report to the server, as [Read remote folder health](FOLDER-HEALTH.md) describes them. `last_success_at` is `null` until a sync completes. They stay as last observed while a folder is not watched. Until this process has read a report for a folder, such as one it could not open, though another process may have saved one, all six are `null`, so `null` in `problems` means unknown and `[]` means none. The exception is a folder whose `reason` is `first_sync_waiting`, which shows `first_sync_waiting` as `true`.
 
 The record holds no credential, no file name inside a folder and no item content. A folder's directory and its ID are the only names in it.
 
@@ -52,7 +52,7 @@ An entry is **current** when both hold:
 1. `ended_at` is `null`.
 2. `heartbeat_at` is no later than now, and less than three `heartbeat_interval_seconds` before now.
 
-A running watch rewrites its entry about once every `heartbeat_interval_seconds` (5). A beat that finds the record's lock held by another process is tried again at the next poll. Three intervals allow for that and for a slow write. A heartbeat that lies in the future, as after the clock was set back, is not current.
+A running watch rewrites its entry at least once every `heartbeat_interval_seconds` (5), except while another process holds the record's lock. A beat that finds the record's lock held by another process is tried again at the next poll. Three intervals allow for that and for a slow write. A heartbeat that lies in the future, as after the clock was set back, is not current.
 
 An entry that is not current describes a watch that has ended, or one that cannot write the record because another process keeps its lock:
 
@@ -67,4 +67,4 @@ A watch that writes drops the entries of other processes whose `heartbeat_at` is
 
 ## When the record cannot be written
 
-A watch whose record cannot be written, such as when `folder-watch.json` is a directory or its directory is read-only, says so once and goes on syncing. It writes the record when it can again. A watch writes while it holds a lock on `folder-watch.lock`, beside the record, and it never waits on that lock: if another process holds it, the beat is tried again at the next poll, and no folder's watch waits.
+A watch that finds the record's lock held by another process for more than three `heartbeat_interval_seconds` says so once, and again only after a write has succeeded in between. A watch whose record cannot be written, such as when `folder-watch.json` is a directory or its directory is read-only, says so once and goes on syncing. It writes the record when it can again. A watch writes while it holds a lock on `folder-watch.lock`, beside the record, and it never waits on that lock: if another process holds it, the beat is tried again at the next poll, and no folder's watch waits.

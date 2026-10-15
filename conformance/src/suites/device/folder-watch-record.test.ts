@@ -5,7 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { answers } from "../../device/marfa-answers.js";
@@ -152,6 +152,28 @@ function current(process: Process, now = Date.now()): boolean {
     age >= 0 &&
     age < 3 * process.heartbeat_interval_seconds * 1000
   );
+}
+
+/** Another process, holding the lock on the record's lock file. */
+async function lockHeld(harness: FolderHarness): Promise<ChildProcess> {
+  mkdirSync(dirname(recordPath(harness)), { recursive: true });
+  const holder = spawn(
+    "python3",
+    [
+      "-c",
+      "import fcntl,sys,time\nf=open(sys.argv[1],'a')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('held',flush=True)\ntime.sleep(600)",
+      join(dirname(recordPath(harness)), "folder-watch.lock"),
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  await new Promise<void>((resolve, reject) => {
+    holder.stdout?.once("data", () => resolve());
+    holder.once("error", reject);
+    holder.once("close", () =>
+      reject(new Error("the lock holder ended before it held the lock")),
+    );
+  });
+  return holder;
 }
 
 function reports(harness: FolderHarness): Report[] {
@@ -442,24 +464,9 @@ describe("the record of folder watches", () => {
 
   it("goes on syncing and ends on an interrupt while another process holds the record's lock", async () => {
     const { a } = await twoFolders("record-locked");
-    mkdirSync(dirname(recordPath(a)), { recursive: true });
-    const holder = spawn(
-      "python3",
-      [
-        "-c",
-        "import fcntl,sys,time\nf=open(sys.argv[1],'a')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('held',flush=True)\ntime.sleep(600)",
-        join(dirname(recordPath(a)), "folder-watch.lock"),
-      ],
-      { stdio: ["ignore", "pipe", "inherit"] },
-    );
+    const first = await lockHeld(a);
+    const second: ChildProcess[] = [];
     try {
-      await new Promise<void>((resolve, reject) => {
-        holder.stdout.once("data", () => resolve());
-        holder.once("error", reject);
-        holder.once("close", () =>
-          reject(new Error("the lock holder ended before it held the lock")),
-        );
-      });
       put(a, "Locked.md", "---\ntitle: Locked\n---\nsynced under the lock\n");
       const watch = hold(a.folder.watchEvery());
       await vi.waitFor(
@@ -469,13 +476,45 @@ describe("the record of folder watches", () => {
       expect(existsSync(recordPath(a)), "written under a held lock").toBe(
         false,
       );
+      // The witness that the record is kept when the lock is free: the same
+      // watch writes it once the lock is let go.
+      first.kill("SIGKILL");
+      await vi.waitFor(
+        () => expect(processOf(a, watch.pid()), watch.stdout).toBeDefined(),
+        WAIT,
+      );
+      second.push(await lockHeld(a));
       const interrupted = Date.now();
       watch.interrupt();
       await watch.exited();
       expect(Date.now() - interrupted).toBeLessThan(3_000);
       expect(watch.exitCode(), watch.stderr).toBe(130);
-      // Never written, so no `ended_at` was set either.
-      expect(existsSync(recordPath(a))).toBe(false);
+    } finally {
+      first.kill("SIGKILL");
+      for (const holder of second) holder.kill("SIGKILL");
+    }
+  });
+
+  it("says once that another process has held the record's lock for long", async () => {
+    const { a } = await twoFolders("record-locked-long");
+    const holder = await lockHeld(a);
+    try {
+      const watch = hold(a.folder.watchEvery());
+      const said = (): unknown[] =>
+        watch.stdout
+          .split("\n")
+          .filter((line) => line.trim() !== "")
+          .map((line) => JSON.parse(line) as { record?: string })
+          .filter((line) => line.record !== undefined);
+      // Three intervals of 5 seconds, and a moment.
+      await vi.waitFor(() => expect(said(), watch.stderr).toHaveLength(1), {
+        timeout: 30_000,
+        interval: 200,
+      });
+      expect(JSON.stringify(said()[0])).toContain("lock");
+      await new Promise((resolve) => setTimeout(resolve, 7_000));
+      expect(said(), "said again unchanged").toHaveLength(1);
+      expect(watch.running(), watch.stderr).toBe(true);
     } finally {
       holder.kill("SIGKILL");
     }

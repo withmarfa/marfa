@@ -146,6 +146,10 @@ struct Inner {
     written: u64,
     last_write: Option<Instant>,
     warned: bool,
+    /// Since when every beat has found the file's lock held, if it has.
+    busy_since: Option<Instant>,
+    /// Said that the lock has been held for long, until a write succeeds.
+    busy_said: bool,
 }
 
 /// A watch process's entry in the machine's record of folder watches.
@@ -174,7 +178,8 @@ impl Observed for Folder {
 /// What came of an attempt to write the record.
 #[derive(Debug, PartialEq, Eq)]
 enum Landed {
-    Written,
+    /// Written, with the moment its heartbeat was stamped.
+    Written(Instant),
     /// Another process held the file's lock.
     Busy,
 }
@@ -361,13 +366,28 @@ impl WatchRecord {
                 };
                 let mut inner = self.inner();
                 let failed = match landed {
-                    Ok(Landed::Written) => {
-                        inner.last_write = Some(Instant::now());
+                    Ok(Landed::Written(stamped)) => {
+                        // From the stamp, so a wait for the lock or the disk
+                        // does not stretch the gap to the next beat.
+                        inner.last_write = Some(stamped);
                         inner.written = built;
+                        inner.busy_since = None;
+                        inner.busy_said = false;
                         None
                     }
                     // Tried again at the next poll.
-                    Ok(Landed::Busy) => None,
+                    Ok(Landed::Busy) => {
+                        let since = *inner.busy_since.get_or_insert_with(Instant::now);
+                        (since.elapsed() > self.heartbeat * 3
+                            && !std::mem::replace(&mut inner.busy_said, true))
+                        .then(|| {
+                            format!(
+                                "cannot write {}: another process has held its lock for {} seconds",
+                                self.path.display(),
+                                since.elapsed().as_secs()
+                            )
+                        })
+                    }
                     Err(reason) => {
                         inner.last_write = Some(Instant::now());
                         inner.written = built;
@@ -492,6 +512,7 @@ fn publish(path: &Path, pid: u32, mut mine: Process, wait: Duration) -> Result<L
         .filter(|other| other.pid != pid && recent(other))
         .collect();
     mine.heartbeat_at = store::now_iso();
+    let stamped = Instant::now();
     processes.push(mine);
     let bytes = serde_json::to_vec_pretty(&File {
         version: FORMAT,
@@ -505,7 +526,7 @@ fn publish(path: &Path, pid: u32, mut mine: Process, wait: Duration) -> Result<L
         |_| true,
     )
     .map_err(|error| failed("write", &error))?;
-    Ok(Landed::Written)
+    Ok(Landed::Written(stamped))
 }
 
 /// Whether an entry another process wrote was written lately enough to keep:
@@ -944,6 +965,39 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20));
             }
             free.finish();
+        });
+    }
+
+    #[test]
+    fn a_lock_held_past_three_intervals_is_said_once_and_again_only_after_a_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(FILE_NAME);
+        let record = WatchRecord::at(path.clone(), 11, Duration::from_secs(1));
+        record.listed(Path::new("/a"), "folder-a");
+        let said = Mutex::new(Vec::new());
+        let held = lock_held(temp.path());
+        std::thread::scope(|scope| {
+            scope.spawn(|| record.keep(|reason| said.lock().unwrap().push(reason.to_string())));
+            // Not yet three intervals: nothing said.
+            std::thread::sleep(Duration::from_millis(2500));
+            assert!(said.lock().unwrap().is_empty(), "{:?}", said.lock());
+            std::thread::sleep(Duration::from_millis(2000));
+            assert_eq!(said.lock().unwrap().len(), 1, "{:?}", said.lock());
+            assert!(said.lock().unwrap()[0].contains("lock"));
+            std::thread::sleep(Duration::from_millis(1200));
+            assert_eq!(said.lock().unwrap().len(), 1, "said again unchanged");
+            drop(held);
+            let until = Instant::now() + Duration::from_secs(5);
+            while !path.exists() {
+                assert!(Instant::now() < until, "never written");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // Held again, past three intervals: said again.
+            let held = lock_held(temp.path());
+            std::thread::sleep(Duration::from_millis(4500));
+            assert_eq!(said.lock().unwrap().len(), 2, "{:?}", said.lock());
+            drop(held);
+            record.finish();
         });
     }
 

@@ -3914,7 +3914,7 @@ While a folder that a watch of every folder lists is not said to be watched, a d
 
 ### `folders/watch-record-health`
 
-While a folder has a saved report to the server, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to the values of the folder’s latest report.
+While a device has read a folder’s latest report to the server, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to the values of the folder’s latest report.
 
 **Reason:** The record carries the report’s own values, so that a program reading it and the server never disagree about a folder. `last_success_at` is `null` until a sync completes, and `problems` holds the report’s closed set of codes with their counts.
 
@@ -3922,9 +3922,9 @@ While a folder has a saved report to the server, a device MUST set `last_success
 
 ### `folders/watch-record-health-unread`
 
-While a folder has no saved report to the server and its `reason` is not `first_sync_waiting`, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to `null`.
+While a device has not read a report to the server for a folder and the folder’s `reason` is not `first_sync_waiting`, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to `null`.
 
-**Reason:** A reader tells a folder with nothing to report from a folder whose report was never read, such as one this process could not open. A folder whose `reason` is `first_sync_waiting` shows `first_sync_waiting` as `true`.
+**Reason:** A reader tells a folder with nothing to report from a folder whose report this process never read, such as one it could not open, though another process may have saved one. A folder whose `reason` is `first_sync_waiting` shows `first_sync_waiting` as `true`.
 
 **Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`.
 
@@ -3938,7 +3938,7 @@ While several watch processes run on one machine, a device MUST keep one entry i
 
 ### `folders/watch-record-heartbeat`
 
-While a watch process runs, a device MUST rewrite the process’s entry in the record, setting `heartbeat_at` to the time of the write, at least once every `heartbeat_interval_seconds`.
+While a watch process runs and no other process holds the lock on `folder-watch.lock`, a device MUST rewrite the process’s entry in the record, setting `heartbeat_at` to the time of the write, at least once every `heartbeat_interval_seconds`.
 
 **Reason:** A reader decides that an entry is current when its `ended_at` is `null` and its `heartbeat_at` is no later than now and less than three `heartbeat_interval_seconds` before now. A process that was killed cannot say that it ended, so its heartbeat grows old instead.
 
@@ -4006,13 +4006,13 @@ If another process holds the lock on `folder-watch.lock` when a watch is interru
 
 **Tests:** `device/folder-watch-record.test.ts › goes on syncing and ends on an interrupt while another process holds the record's lock`.
 
-### `folders/watch-record-locked-unended`
+### `folders/watch-record-locked-said`
 
-If another process holds the lock on `folder-watch.lock` when a watch is interrupted, then the CLI MUST NOT set `ended_at` in the process’s entry.
+If another process has held the lock on `folder-watch.lock` for more than three `heartbeat_interval_seconds` while a watch runs, then the CLI MUST say so once, and again only after a write of the record has succeeded in between.
 
-**Reason:** The watch ends without the write. A reader finds the entry older than three `heartbeat_interval_seconds` and takes the watch as ended.
+**Reason:** The watch goes on, but a reader finds its entry old and takes it as ended.
 
-**Tests:** `device/folder-watch-record.test.ts › goes on syncing and ends on an interrupt while another process holds the record's lock`.
+**Tests:** `device/folder-watch-record.test.ts › says once that another process has held the record's lock for long`.
 
 ### `folders/watch-record-written-again`
 
