@@ -13,6 +13,7 @@ use crate::folders;
 use crate::interrupt;
 use crate::output;
 use crate::remote::{Named, Session};
+use crate::storage;
 
 /// How long a pass under way gets to finish once Ctrl-C has arrived. A pass
 /// can wait on a server that never answers, and Ctrl-C has to end the command
@@ -28,7 +29,7 @@ pub fn watch(
     json: bool,
 ) -> Result<(), CliError> {
     let server = session.server.url.clone();
-    let folder = folders::opened_to_watch(dir, Some(session))?;
+    let folder = folders::opened(dir, Some(session))?;
     // Once the folder is open, so that an interrupt before then ends the
     // command as it always did.
     interrupt::stop_on_interrupt();
@@ -150,8 +151,7 @@ impl EveryFolder for Machine {
         if let Some(refused) = self.still_refused(dir, &bearer) {
             return Err(refused);
         }
-        let folder =
-            folders::opened_to_watch(dir, Some(session)).map_err(|error| unwatched(&error))?;
+        let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
         self.opened_with(dir, server, bearer);
         Ok(folder)
     }
@@ -169,6 +169,10 @@ impl EveryFolder for Machine {
         match event {
             Every::Watching { dir } => {
                 say(json, dir).line(serde_json::json!({ "watching": true }), || "watching".into())
+            }
+            Every::Storage { dir, cause } => {
+                storage::warn_of(dir, cause);
+                Ok(())
             }
             Every::Folder { dir, folder, event } => {
                 let mut folders = self.folders();
@@ -346,7 +350,10 @@ fn tell(
     event: WatchEvent,
 ) -> Result<(), CliError> {
     match event {
-        WatchEvent::Watching { dir, .. } => {
+        WatchEvent::Watching { dir, storage } => {
+            if let Some(cause) = &storage {
+                storage::warn_of(&dir, cause);
+            }
             say.note(&format!("watching {} (interrupt to stop)", dir.display()));
             Ok(())
         }

@@ -5098,13 +5098,13 @@ When a folder is added, or a watch starts on a folder, whose directory is below 
 
 **Reason:** iCloud Drive syncs those files itself, so a second program syncs the same files as Marfa and the two can overwrite each other’s changes or leave conflicting copies.
 
-**Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to iCloud Drive, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in iCloud Drive, and watches all the same`.
+**Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to iCloud Drive, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in iCloud Drive, and watches all the same`, `› warns of a synced folder whose first sync waits only once its watch has started, after the first sync is confirmed`.
 
 ### `folders/icloud-ubiquitous-warns`
 
-When a folder is added, or a watch starts on a folder, whose directory macOS reports as an item iCloud Drive syncs (the URL resource key `isUbiquitousItem`), the CLI MUST print a storage warning that names iCloud Drive, wherever the directory sits.
+When a folder is added, or a watch starts on a folder, whose directory is not below `Library/Mobile Documents` or `Library/CloudStorage` in the home directory and that macOS reports as ubiquitous (the URL resource key `isUbiquitousItem`), the CLI MUST print a storage warning that names iCloud Drive or another cloud service’s synced location.
 
-**Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents`, and iCloud Drive syncs the files in them.
+**Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents` that iCloud Drive syncs. macOS reports every File Provider item as ubiquitous, so the key alone does not say which service syncs it.
 
 **Tests:** waiting on #2027.
 

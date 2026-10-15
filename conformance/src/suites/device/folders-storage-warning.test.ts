@@ -4,6 +4,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   type FolderSettings,
   type HeldCommand,
 } from "../../device/cli-adapter.js";
+import { answers } from "../../device/marfa-answers.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   KEY,
@@ -336,5 +338,53 @@ describe("a watch of every folder", () => {
     ).toHaveLength(1);
     expect(warnings(watch.stderr)).toHaveLength(2);
     expect(watch.running(), watch.stderr).toBe(true);
+  });
+
+  it("warns of a synced folder whose first sync waits only once its watch has started, after the first sync is confirmed", async () => {
+    const machined = await machine("every-waiting");
+    const waiting = machined.folder(ICLOUD);
+    writeFileSync(
+      join(waiting.dir, "Waits.md"),
+      "---\ntitle: Waits\n---\nwaits for the first sync\n",
+    );
+    // The file is sent once the first sync goes; the server refuses it, which
+    // ends that folder's watch and is nothing this fixture asserts on.
+    machined.server.answer("POST", "/items", answers.unauthorized());
+    // Without --yes and at no terminal, the add leaves the first sync waiting.
+    const added = waiting.hold([
+      "folders",
+      "add",
+      waiting.dir,
+      "--folder",
+      waiting.id,
+    ]);
+    await added.exited();
+    expect(added.exitCode(), added.stderr).toBe(0);
+    expect(JSON.parse(added.stdout)).toMatchObject({
+      first_sync: { waiting: true },
+    });
+
+    const watch = waiting.hold(["folders", "watch"]);
+    await vi.waitFor(
+      () =>
+        expect(
+          linesOf(watch).filter(
+            (line) =>
+              line.dir === waiting.dir && line.code === "first_sync_waiting",
+          ),
+          watch.stdout,
+        ).toHaveLength(1),
+      WAIT,
+    );
+    // The watch has not started, so there is nothing to warn of yet.
+    expect(warnings(watch.stderr), watch.stderr).toHaveLength(0);
+    // The witness: once the first sync is let go, the watch starts and warns.
+    expect((await waiting.folder.confirm()).ok).toBe(true);
+    await vi.waitFor(
+      () => expect(watching(watch, waiting.dir), watch.stdout).toBe(1),
+      WAIT,
+    );
+    expect(warnings(watch.stderr), watch.stderr).toHaveLength(1);
+    expect(warnings(watch.stderr)[0]).toContain(waiting.dir);
   });
 });

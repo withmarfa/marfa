@@ -21,11 +21,18 @@ pub struct ListedFolder {
 /// shows it; it is a warning, and the folder works.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum StorageCause {
-    /// iCloud Drive syncs the files, including `Desktop` and `Documents`
-    /// where iCloud's "Desktop & Documents" is on.
+    /// iCloud Drive syncs the files: the directory is below
+    /// `Library/Mobile Documents`.
     ICloudDrive,
-    /// A cloud service's File Provider syncs the files.
+    /// A cloud service's File Provider syncs the files: the directory is
+    /// below `Library/CloudStorage`.
     CloudService,
+    /// macOS reports the directory as ubiquitous outside both of those
+    /// places, as it does for `Desktop` and `Documents` where iCloud's
+    /// "Desktop & Documents" is on. It reports every File Provider item so,
+    /// so which service syncs it is not known: say "iCloud Drive or another
+    /// cloud service".
+    CloudSynced,
     /// A network file system, named as the operating system names it
     /// (`smbfs`, `nfs`, `afpfs`, `webdav`, `cifs` or `smb2`). Changes made
     /// from another computer may not be noticed.
@@ -37,6 +44,7 @@ fn storage_of(cause: Option<marfa_core::StorageCause>) -> Option<StorageCause> {
     cause.map(|cause| match cause {
         C::ICloudDrive => StorageCause::ICloudDrive,
         C::CloudService => StorageCause::CloudService,
+        C::CloudSynced => StorageCause::CloudSynced,
         C::NetworkFileSystem(kind) => StorageCause::NetworkFileSystem { kind },
     })
 }
@@ -702,6 +710,10 @@ mod tests {
         assert_eq!(
             storage_of(Some(C::CloudService)),
             Some(StorageCause::CloudService)
+        );
+        assert_eq!(
+            storage_of(Some(C::CloudSynced)),
+            Some(StorageCause::CloudSynced)
         );
         assert_eq!(
             storage_of(Some(C::NetworkFileSystem("nfs".into()))),

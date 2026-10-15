@@ -10,13 +10,16 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageCause {
     /// iCloud Drive syncs the files: the directory is below
-    /// `Library/Mobile Documents`, or macOS reports it as ubiquitous, as it
-    /// does for `Desktop` and `Documents` with iCloud's "Desktop & Documents"
-    /// on.
+    /// `Library/Mobile Documents`.
     ICloudDrive,
     /// A cloud service's File Provider syncs the files: the directory is
     /// below `Library/CloudStorage`.
     CloudService,
+    /// macOS reports the directory as ubiquitous outside both of those
+    /// places, as it does for `Desktop` and `Documents` with iCloud's
+    /// "Desktop & Documents" on. It reports every File Provider item so, so
+    /// which service syncs it is not known.
+    CloudSynced,
     /// The directory is on a network file system, named as the operating
     /// system names it (`smbfs`, `nfs`, `afpfs`, `webdav` on macOS; `nfs`,
     /// `cifs`, `smb2` on Linux).
@@ -53,7 +56,7 @@ fn cause_of(
         return Some(StorageCause::CloudService);
     }
     if ubiquitous(dir) {
-        return Some(StorageCause::ICloudDrive);
+        return Some(StorageCause::CloudSynced);
     }
     network(dir).map(StorageCause::NetworkFileSystem)
 }
@@ -320,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_macos_reports_as_ubiquitous_is_in_icloud_drive_wherever_it_sits() {
+    fn a_directory_macos_reports_as_ubiquitous_is_in_a_synced_location_whichever_service_it_is() {
         let temp = tempdir();
         let home = temp.path().to_path_buf();
         let documents = made(&home, "Documents/notes");
@@ -329,10 +332,22 @@ mod tests {
         let reported = |dir: &Path| dir.starts_with(documents.parent().unwrap());
         assert_eq!(
             cause_of(&documents, &homes, &reported, &local),
-            Some(StorageCause::ICloudDrive)
+            Some(StorageCause::CloudSynced)
         );
         // The witness: the same answer, asked of a directory it is false for.
         assert_eq!(cause_of(&downloads, &homes, &reported, &local), None);
+        // A path settles which service it is, whatever macOS reports.
+        let all = |_: &Path| true;
+        let icloud = made(&homes[0], "Library/Mobile Documents/notes");
+        let provider = made(&homes[0], "Library/CloudStorage/Box/notes");
+        assert_eq!(
+            cause_of(&icloud, &homes, &all, &local),
+            Some(StorageCause::ICloudDrive)
+        );
+        assert_eq!(
+            cause_of(&provider, &homes, &all, &local),
+            Some(StorageCause::CloudService)
+        );
     }
 
     #[test]

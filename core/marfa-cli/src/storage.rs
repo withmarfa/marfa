@@ -14,11 +14,22 @@ type Warned = Mutex<Option<HashSet<PathBuf>>>;
 static WARNED: Warned = Mutex::new(None);
 
 /// Warns on standard error, once per run for this folder, if its directory
-/// sits in cloud-synced or network storage.
+/// sits in cloud-synced or network storage. For a folder just added.
 pub fn warn(folder: &Folder) {
     warn_with(
         folder.root(),
         &|| folder.storage_cause(),
+        &WARNED,
+        &mut std::io::stderr(),
+    );
+}
+
+/// The same for a folder whose watch has started, where the watch has said
+/// already what it found.
+pub fn warn_of(dir: &Path, cause: &StorageCause) {
+    warn_with(
+        dir,
+        &|| Some(cause.clone()),
         &WARNED,
         &mut std::io::stderr(),
     );
@@ -60,6 +71,9 @@ fn notice(dir: &Path, cause: &StorageCause) -> String {
         StorageCause::CloudService => format!(
             "marfa: warning: {shown} is in a location a cloud service syncs itself, so a second program syncs the same files as Marfa and the two can overwrite each other's changes or leave conflicting copies; Marfa goes on"
         ),
+        StorageCause::CloudSynced => format!(
+            "marfa: warning: {shown} is in a location iCloud Drive or another cloud service syncs itself, so a second program syncs the same files as Marfa and the two can overwrite each other's changes or leave conflicting copies; Marfa goes on"
+        ),
         StorageCause::NetworkFileSystem(kind) => format!(
             "marfa: warning: {shown} is on a network file system ({kind}), where a change made from another computer may not be noticed, so a watch can miss it until a later full scan; Marfa goes on"
         ),
@@ -96,6 +110,11 @@ mod tests {
         );
         assert!(text.contains("network file system (nfs)"), "{text}");
         assert!(text.contains("not be noticed"), "{text}");
+        let text = said("/home/notes", Some(StorageCause::CloudSynced));
+        assert!(
+            text.contains("iCloud Drive or another cloud service"),
+            "{text}"
+        );
         // The witness: a directory with no cause is said nothing of.
         assert_eq!(said("/home/notes", None), "");
     }

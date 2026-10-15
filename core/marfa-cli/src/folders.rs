@@ -676,14 +676,6 @@ pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> 
     Ok(folder)
 }
 
-/// A folder opened to watch: the one place a watch starts on a folder, so
-/// the warning about where its directory sits is given here.
-pub fn opened_to_watch(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
-    let folder = opened(dir, session)?;
-    storage::warn(&folder);
-    Ok(folder)
-}
-
 pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
     flagged
         .iter()
