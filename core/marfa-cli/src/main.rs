@@ -329,6 +329,9 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
             | Command::Device(_)
             | Command::Folders { .. }
             | Command::Docs(_)
+            | Command::Types {
+                command: types::TypesCommand::Scaffold(_)
+            }
     ) {
         return Some(CliError::Usage(
             "this command does not support --socket".into(),
@@ -377,6 +380,17 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "this operation requires --socket PATH".into(),
         ));
     }
+    if matches!(
+        cli.command,
+        Command::Types {
+            command: types::TypesCommand::Scaffold(_)
+        }
+    ) && (cli.url.is_some() || cli.key.is_some())
+    {
+        return Err(CliError::Usage(
+            "types scaffold contacts no server and takes neither --url nor --key".into(),
+        ));
+    }
     let named = Named {
         url: cli.url,
         key: cli.key,
@@ -393,7 +407,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "keychain commands cannot use --socket".into(),
         ));
     }
-    // Lazy: login, logout, device, folders, operations and docs must run
+    // Lazy: login, logout, device, folders, operations, docs and types scaffold must run
     // without a resolved credential.
     let remote = || match &cli.socket {
         Some(path) => Remote::local(path),
@@ -421,7 +435,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Items { command } => items::run(command, &remote()?, &out),
         Command::Edges { command } => edges::run(command, &remote()?, &out),
         Command::EdgeTypes { command } => edge_types::run(command, &remote()?, &out),
-        Command::Types { command } => types::run(command, &remote()?, &out),
+        Command::Types { command } => types::run(command, remote, &out),
         Command::Search(args) => search::run(args, &remote()?, &out),
         Command::Metadata { command } => metadata::run(command, &remote()?, &out),
         Command::Extensions { command } => extensions::run(command, &remote()?, &out),
@@ -495,6 +509,7 @@ mod tests {
             &["device", "status"],
             &["folders", "list"],
             &["docs", "topics"],
+            &["types", "scaffold", "user.recipe"],
         ] {
             assert!(
                 matches!(socket_refusal(&command(words)), Some(CliError::Usage(ref message)) if message == "this command does not support --socket"),

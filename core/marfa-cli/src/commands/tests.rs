@@ -1245,7 +1245,7 @@ mod dispatch {
                 body: Some(definition.to_string()),
                 ..Default::default()
             }),
-            &remote_at(&door),
+            || Ok(remote_at(&door)),
             &QUIET,
         )
         .unwrap();
