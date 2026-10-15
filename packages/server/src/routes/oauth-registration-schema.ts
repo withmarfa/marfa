@@ -185,8 +185,7 @@ export function oauthRegistrationRoute(
         },
       },
       400: {
-        description:
-          "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n- `invalid_software_statement`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+        description: `- \`invalid_client_metadata\`: client metadata is invalid.\n- \`invalid_redirect_uri\`: a redirect URI is invalid, or there are more than ${String(MAX_REGISTERED_REDIRECT_URIS)}.\n- \`invalid_scope\`: a scope is not allowed.\n- \`invalid_target\`: a resource is invalid.\n- \`invalid_software_statement\`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's \`validation_error\` instead.`,
         content: {
           "application/json": {
             schema: z.union([

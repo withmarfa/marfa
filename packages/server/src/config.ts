@@ -918,7 +918,7 @@ const settingsShape = {
   ),
   MARFA_MAX_REQUEST_BYTES: count(
     1_048_576,
-    "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, blob uploads and inbound webhook deliveries have separate limits.",
+    "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits.",
     { unit: "bytes" },
   ),
   MARFA_MAX_BULK_REQUEST_BYTES: count(

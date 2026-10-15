@@ -21744,7 +21744,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_client_metadata`: client metadata is invalid.
-             *     - `invalid_redirect_uri`: a redirect URI is invalid.
+             *     - `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.
              *     - `invalid_scope`: a scope is not allowed.
              *     - `invalid_target`: a resource is invalid.
              *     - `invalid_software_statement`: a software statement is invalid.

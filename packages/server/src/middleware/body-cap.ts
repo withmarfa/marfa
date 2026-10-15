@@ -1,6 +1,7 @@
 /**
  * Blob and archive doors stream to disk, so they take no cap; bulk doors
- * need the larger one — stated once so `app.ts` and the OpenAPI doc agree.
+ * need a larger one, and connector state and registration their own. Stated
+ * once so `app.ts` and the OpenAPI doc agree.
  * Inbound caps after its endpoint lookup, so an unknown address reads nothing.
  */
 export type BodyCap =
@@ -44,7 +45,7 @@ export const CONNECTOR_STATE_BODY_CAP =
  * answers every origin, and what it stores lives until the reaper takes it,
  * so a page could otherwise park the general cap's worth per request. The
  * first-party clients register in about 200 bytes and a hosted assistant's
- * dynamic registration in a few kilobytes; 32 KiB leaves room for a signed
+ * dynamic registration in under a kilobyte; 32 KiB leaves room for a signed
  * software statement and still bounds what one request can leave behind.
  */
 export const REGISTRATION_BODY_CAP = 32 * 1024;
