@@ -702,13 +702,13 @@ When a folder scan encounters a directory ending in `.app`, `.bundle`, `.pages`,
 
 Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST report the directory as `package`.
 
-**Tests:** `device/folders.test.ts › does not walk into a package`.
+**Tests:** `device/folders.test.ts › excludes a directory only while its Finder bundle bit is set`.
 
 ### `folders/macos-package-scan-contents-excluded`
 
 Where a device runs on macOS, when the operating system identifies a directory as a package by its type or Finder bundle bit, a device MUST NOT admit the directory’s contents.
 
-**Tests:** `device/folders.test.ts › does not walk into a package`.
+**Tests:** `device/folders.test.ts › excludes a directory only while its Finder bundle bit is set`.
 
 ### `folders/package-pull`
 
