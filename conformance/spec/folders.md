@@ -2192,9 +2192,9 @@ When unbound files claim the same item ID and have distinct birth times, a devic
 
 ### `folders/copy-new-item`
 
-When a file copies another file's item ID, a device MUST create a separate item for the copy under a fresh ID.
+When a file copies another file's item ID, a device MUST create a separate item for the copy under a fresh ID, unless it is an old buffer of that item's file as `folders/moved-save-taken` says.
 
-**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`.
+**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`, `device/folders-placement.test.ts › makes a later copy at the old name a new item, and leaves the note as it was`.
 
 ### `folders/copy-write-id`
 
@@ -2656,7 +2656,7 @@ When two remote placements swap paths occupied by each other's files, a device M
 
 If writing a moved file at its new placement fails, then a device MUST leave the file whole with the bytes it had, at its previous path where the rename that moves it has not been made and at its new path where it has.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › keeps the moved file whole when writing it at its new placement fails, and leaves emptied directories after success`.
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps the moved file whole when writing it at its new placement fails, and leaves emptied directories after success`, `device/folders-placement.test.ts › keeps a file at its old path, whole, when the rename that moves it is refused`.
 
 ### `folders/placement-empty-directories`
 
@@ -2798,7 +2798,7 @@ When a pull moves a bound file whose bytes are still the ones it is bound to, a 
 
 ### `folders/moved-save-taken`
 
-When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's, while the item's file still holds the bytes the device last agreed, a device MUST move the file over the item's file and send it as a save of an old copy of that file.
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
 
 **Reason:** it is an editor's save of the buffer it held before the move, and as a new item it would be a second note holding the person's edit.
 
@@ -2806,9 +2806,23 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 ### `folders/moved-save-held`
 
-When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's, while the item's file holds a change the device has not agreed, a device MUST hold the file, flagged `waiting`, without making an item of it.
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds a change the device has not read, or one it holds unsent or refused, a device MUST hold the file, flagged `waiting`, without making an item of it.
 
-**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`.
+**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`.
+
+### `folders/moved-save-race`
+
+If an item's file is saved while a device puts an old buffer in its place, then a device MUST keep that save in the item's file and hold the old buffer, flagged `waiting`.
+
+**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file while an old buffer is taken over it`.
+
+### `folders/moved-save-ends`
+
+When a person edits or moves the file a pull moved, a device MUST treat a later file at the path it was moved from as `folders/copy-new-item` says.
+
+**Reason:** a file made there after the person worked on the moved file is the person's own, not an old buffer of it.
+
+**Tests:** `device/folders-placement.test.ts › makes an old buffer saved at the old name a new item once the moved file was edited`.
 
 ## Ending a placement
 

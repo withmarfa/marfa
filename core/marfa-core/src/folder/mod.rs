@@ -1287,6 +1287,8 @@ struct Scanned {
     source: Option<Vec<u8>>,
     /// `None` on a volume that keeps no permission.
     executable: Option<bool>,
+    /// An old buffer taken over the file a pull moved, at this file's path.
+    folded: bool,
 }
 
 /// What a rename that follows a title may take: the paths other items are
@@ -1324,6 +1326,7 @@ impl Scanned {
             deferred: true,
             source: None,
             executable: None,
+            folded: false,
         })
     }
 
@@ -1666,6 +1669,7 @@ impl Folder {
                 .get(&path)
                 .map(|captured| captured.metadata.borrow().clone());
             files.push(Scanned {
+                folded: false,
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
                 born: metadata.as_ref().and_then(identity::born),
@@ -1908,6 +1912,11 @@ impl Folder {
                     )? {
                         report.updated += 1;
                         report.warnings.extend(near_limit(&file.key, &file.text));
+                        // Edited where the pull moved it, it is no longer
+                        // the file an old buffer was read from.
+                        if !file.folded {
+                            state::clear_moved_from(&*self.core.conn()?, &item_id)?;
+                        }
                     } else {
                         report.unchanged += 1;
                     }
@@ -1917,6 +1926,7 @@ impl Folder {
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
+                    state::clear_moved_from(&*self.core.conn()?, &item_id)?;
                     let document = file.document();
                     let retitle =
                         self.renamed_title(&item_id, &bound, file, Some(&document), &catalog)?;
@@ -2083,10 +2093,11 @@ impl Folder {
 
     /// An editor that did not follow a pull's move of a document saves its old
     /// buffer where the file was. Such a save, naming the item and a version
-    /// line no newer than the item's, is moved over the item's file, where
-    /// the scan takes it as a save of an old buffer; where that file holds an
-    /// edit of its own, the save waits, keyed by path with why. Never a new
-    /// item.
+    /// line no newer than the item's when it moved, takes the place of the
+    /// item's file where that file holds nothing the device has not read and
+    /// sent, and the scan reads it as a save of an old buffer. Otherwise it waits, keyed
+    /// by path with why. Never a new item, and never a byte of the item's file
+    /// lost: that file is renamed aside, checked there, and only then removed.
     fn fold_stale_saves(
         &self,
         files: &mut Vec<Scanned>,
@@ -2100,72 +2111,37 @@ impl Folder {
         let mut at = 0;
         while at < files.len() {
             let file = &files[at];
-            let folded = (|| -> Result<Option<(String, std::io::Result<()>)>> {
-                let Some(id) = file.id.as_deref() else {
-                    return Ok(None);
-                };
-                if file.deferred
-                    || file.unreadable.is_some()
-                    || !carries_frontmatter(&file.path)
-                    || !moved
-                        .get(id)
-                        .is_some_and(|from| crate::names::same(from, &file.key))
-                {
-                    return Ok(None);
-                }
-                let Some(bound) = snapshot.iter().find(|row| row.item_id == id) else {
-                    return Ok(None);
-                };
-                if bound.path == file.key || bound.identity.is_some() && bound.identity == file.mark
-                {
-                    return Ok(None);
-                }
-                let Some(held) = self.core.get(id)? else {
-                    return Ok(None);
-                };
-                if file.line.is_none_or(|line| line > held.version) {
-                    return Ok(None);
-                }
-                let target = self.root.join(&bound.path);
-                let there = match self.read(&target) {
-                    Ok(found) => Some(state::hash(&found)),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Ok(Some((bound.path.clone(), Err(error)))),
-                };
-                if there
-                    .as_ref()
-                    .is_some_and(|there| *there != bound.content_hash)
-                {
-                    return Ok(Some((
-                        bound.path.clone(),
-                        Err(std::io::Error::other(format!(
-                            "it is an old copy of {}, which holds an edit of its own; keep one of the two",
-                            bound.path
-                        ))),
-                    )));
-                }
-                let renamed = self.inside(target.parent()).and_then(|()| {
-                    let (from_dir, from_name) = self.location(&file.path, false)?;
-                    let (to_dir, to_name) = self.location(&target, true)?;
-                    from_dir.rename(
-                        Path::new(&from_name),
-                        &to_dir,
-                        Path::new(&to_name),
-                        there.is_none(),
-                    )
-                });
-                Ok(Some((bound.path.clone(), renamed)))
-            })()?;
-            match folded {
-                None => at += 1,
-                Some((_, Err(error))) => {
-                    waiting.insert(file.key.clone(), error.to_string());
+            let Some(bound) = file
+                .id
+                .as_deref()
+                .filter(|_| {
+                    !file.deferred && file.unreadable.is_none() && carries_frontmatter(&file.path)
+                })
+                .and_then(|id| Some((moved.get(id)?, id)))
+                .filter(|(from, _)| {
+                    crate::names::same(&from.path, &file.key)
+                        && file.line.is_some_and(|line| line <= from.version)
+                })
+                .and_then(|(_, id)| snapshot.iter().find(|row| row.item_id == id))
+                .filter(|bound| {
+                    bound.path != file.key
+                        && (bound.identity.is_none() || bound.identity != file.mark)
+                })
+            else {
+                at += 1;
+                continue;
+            };
+            match self.take_stale_save(file, bound)? {
+                Err(reason) => {
+                    waiting.insert(file.key.clone(), reason);
                     at += 1;
                 }
-                Some((path, Ok(()))) => {
+                Ok(()) => {
+                    let path = bound.path.clone();
                     let mut file = files.remove(at);
                     file.path = self.root.join(&path);
                     file.key = path;
+                    file.folded = true;
                     match files.iter().position(|other| other.key == file.key) {
                         Some(other) => files[other] = file,
                         None => files.insert(at, file),
@@ -2174,6 +2150,84 @@ impl Folder {
             }
         }
         Ok(waiting)
+    }
+
+    /// Moves `file` to `bound`'s path, every step a rename that replaces
+    /// nothing: the bound file aside, checked to hold the bytes it is bound
+    /// to, the save in its place, and only then the bound file removed. Answers
+    /// why not, where it did not.
+    fn take_stale_save(
+        &self,
+        file: &Scanned,
+        bound: &state::Bound,
+    ) -> Result<std::result::Result<(), String>> {
+        let own = |reason: &str| Err(format!("it is an old copy of {}, {reason}", bound.path));
+        // A held or refused file holds the person's bytes, which the server
+        // does not. Any other change read since the move is an earlier old
+        // buffer, since an edit of the moved file ends its record.
+        if bound.held.is_some() || !bound.writes.refused.is_empty() {
+            return Ok(own("which holds a change of its own; keep one of the two"));
+        }
+        let target = self.root.join(&bound.path);
+        let edited = || own("which holds an edit of its own; keep one of the two");
+        let failed = |error: std::io::Error| own(&format!("which could not be replaced: {error}"));
+        let (to_dir, to_name) = match self
+            .inside(target.parent())
+            .and_then(|()| self.location(&target, true))
+        {
+            Ok(found) => found,
+            Err(error) => return Ok(failed(error)),
+        };
+        let (from_dir, from_name) = match self.location(&file.path, false) {
+            Ok(found) => found,
+            Err(error) => return Ok(failed(error)),
+        };
+        let to_name = Path::new(&to_name);
+        let aside = match to_dir.read(to_name) {
+            Ok(found) if state::hash(&found) != bound.content_hash => return Ok(edited()),
+            Ok(_) => {
+                landing::save_meanwhile(&to_dir, to_name);
+                match landing::set_aside(&to_dir, to_name) {
+                    Ok(aside) => Some(aside),
+                    Err(error) => return Ok(failed(error)),
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Ok(failed(error)),
+        };
+        if let Some(aside) = &aside
+            && !to_dir
+                .read(aside)
+                .is_ok_and(|found| state::hash(&found) == bound.content_hash)
+        {
+            // Saved between the look and the rename: put back, or where
+            // another file took the path meanwhile, left aside, whole.
+            return Ok(
+                match landing::rename_new_at(&to_dir, aside, &to_dir, to_name) {
+                    Ok(()) => edited(),
+                    Err(_) => own(&format!(
+                        "which was saved meanwhile and is kept as {}",
+                        aside.display()
+                    )),
+                },
+            );
+        }
+        let placed = landing::rename_new_at(&from_dir, Path::new(&from_name), &to_dir, to_name);
+        if let Some(aside) = &aside {
+            // Bytes the device read and sent, or the pull wrote.
+            let back = placed
+                .is_err()
+                .then(|| landing::rename_new_at(&to_dir, aside, &to_dir, to_name));
+            if !back.as_ref().is_some_and(std::result::Result::is_ok) {
+                let _ = landing::remove_at(&to_dir, aside, |found| {
+                    state::hash(found) == bound.content_hash
+                });
+            }
+        }
+        Ok(match placed {
+            Ok(()) => Ok(()),
+            Err(error) => failed(error),
+        })
     }
 
     /// Held ids decide first; then the binding by identity across every file
@@ -3210,6 +3264,7 @@ impl Folder {
             deferred: false,
             source: Some(bytes),
             executable: file.executable,
+            folded: file.folded,
             text,
         })
     }
@@ -4585,7 +4640,14 @@ impl Folder {
                 });
             }
             rendering.unbind(&conn, &bound.path)?;
-            state::set_moved_from(&conn, &item.id, &bound.path)?;
+            state::set_moved_from(
+                &conn,
+                &item.id,
+                &state::MovedFrom {
+                    path: bound.path.clone(),
+                    version: item.version,
+                },
+            )?;
             if journaled_for(&conn, &bound.path, &item.id)? {
                 report.revived += 1;
             }
@@ -4653,6 +4715,10 @@ impl Folder {
             },
         )?;
         drop(conn);
+        // Queued before the rename, so a crash after it leaves the placement
+        // where the file is going, and the next pull finishes the move rather
+        // than moving it back.
+        let placed = self.place(&item.id, want, withheld)?;
         self.move_folder_if_asked();
         let renamed = self.inside(to.parent()).and_then(|()| {
             let (from_dir, from_name) = self.location(&from, false)?;
@@ -4671,15 +4737,26 @@ impl Folder {
                 Some(before) => rendering.bind(&conn, before)?,
                 None => rendering.unbind(&conn, want)?,
             }
+            drop(conn);
+            if placed {
+                self.place(&item.id, &bound.path, withheld)?;
+            }
             return Ok(None);
         }
-        rendering.bind(&conn, &moved)?;
-        rendering.unbind(&conn, &bound.path)?;
-        state::journal_clear(&conn, &bound.path)?;
-        state::journal_clear_for(&conn, want, &item.id)?;
-        state::set_moved_from(&conn, &item.id, &bound.path)?;
-        drop(conn);
-        let placed = self.place(&item.id, want, withheld)?;
+        let swap = conn.unchecked_transaction()?;
+        rendering.bind(&swap, &moved)?;
+        rendering.unbind(&swap, &bound.path)?;
+        state::journal_clear(&swap, &bound.path)?;
+        state::journal_clear_for(&swap, want, &item.id)?;
+        state::set_moved_from(
+            &swap,
+            &item.id,
+            &state::MovedFrom {
+                path: bound.path.clone(),
+                version: item.version,
+            },
+        )?;
+        swap.commit()?;
         Ok(Some((moved, placed)))
     }
 

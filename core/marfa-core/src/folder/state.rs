@@ -275,16 +275,38 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
 }
 
 /// One `meta` row per item a pull last moved, naming the path its file left,
-/// where an editor that did not follow the move may save it again.
+/// where an editor that did not follow the move may save it again, and the
+/// item's version when it moved. Cleared once the moved file is edited or
+/// moved by the person.
 const MOVED_FROM: &str = "folder_moved_from:";
 
-pub fn set_moved_from(conn: &Connection, item_id: &str, path: &str) -> Result<(), CoreError> {
-    crate::store::meta_set(conn, &format!("{MOVED_FROM}{item_id}"), path)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovedFrom {
+    pub path: String,
+    pub version: i64,
 }
 
-/// The path each item's file last left in a pull's move, by item.
-pub fn moved_from(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
-    Ok(under(conn, MOVED_FROM)?.into_iter().collect())
+pub fn set_moved_from(
+    conn: &Connection,
+    item_id: &str,
+    moved: &MovedFrom,
+) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(moved).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{MOVED_FROM}{item_id}"), &value)
+}
+
+pub fn clear_moved_from(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{MOVED_FROM}{item_id}"))
+}
+
+/// Where each item's file last left in a pull's move, by item. A row that
+/// does not read names nothing.
+pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreError> {
+    Ok(under(conn, MOVED_FROM)?
+        .into_iter()
+        .filter_map(|(item, value)| Some((item, serde_json::from_str(&value).ok()?)))
+        .collect())
 }
 
 /// The edge ends lines hold, each with whether the folder made its pin.
