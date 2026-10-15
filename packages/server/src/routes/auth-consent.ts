@@ -102,6 +102,7 @@ import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
+import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import type { AuthorizeFailure } from "./authorize-expired-page.js";
@@ -533,6 +534,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const html = renderConsentScreen({
       nonce: c.var.cspNonce,
       clientName,
+      webOrigins: webOriginsOf(client),
       scopes: parsed,
       clientId,
       oauthQuery,
@@ -1203,6 +1205,7 @@ async function resolveClient(
   clientId: string,
 ): Promise<{
   name: string | null;
+  applicationType: string | null;
   redirectUris: readonly string[];
 } | null> {
   try {
@@ -1211,6 +1214,7 @@ async function resolveClient(
       return row
         ? {
             name: row.name,
+            applicationType: row.applicationType,
             redirectUris: row.redirectUris,
           }
         : null;

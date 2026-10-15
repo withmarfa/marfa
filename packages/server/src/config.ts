@@ -1078,7 +1078,7 @@ const settingsShape = {
   CORS_ORIGINS: setting(
     origins,
     () => [],
-    "The browser origins allowed to call the API across origins. Each is an exact scheme and host with no trailing slash.",
+    "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.",
   ),
   MARFA_PERMISSION_BUNDLES: setting<PermissionBundle[] | undefined>(
     permissionBundles,

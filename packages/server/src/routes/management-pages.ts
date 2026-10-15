@@ -89,7 +89,7 @@ async function refresh() {
       if (row.current) { location.assign('/auth/sign-in'); return 'left'; }
     });
   });
-  rows('apps', apps.data, (li, row) => { li.textContent = row.client_name || row.client_id || row.id;
+  rows('apps', apps.data, (li, row) => { li.textContent = (row.client_name || row.client_id || row.id) + (row.origins.length ? ', at ' + row.origins.join(', ') : '');
     action(li, 'Disconnect', async () => { if (confirm('Disconnect this app? Its ordinary keys keep their access.')) await request('/auth/grants/' + encodeURIComponent(row.id), {method:'DELETE'}); });
     action(li, 'Disconnect and revoke keys', async () => { if (confirm('Disconnect this app and revoke all keys it created, including descendant keys?')) await request('/auth/grants/' + encodeURIComponent(row.id) + '?revoke_keys=true', {method:'DELETE'}); });
   });

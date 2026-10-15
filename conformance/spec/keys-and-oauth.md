@@ -999,7 +999,7 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 When a person accepts with only some of the offered scopes ticked, the server MUST issue a token for exactly the scopes left ticked.
 
-**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person left ticked`.
+**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person left ticked`, `compliance/web-page-origin.test.ts › issues a narrowed page only what it left ticked, though its origin is allowed`.
 
 ### `keys-and-oauth/consent-standing`
 
@@ -1295,6 +1295,12 @@ When a caller holding `grants.manage` sends `GET /auth/grants`, the server MUST 
 
 **Tests:** `compliance/auth-grants.test.ts › lists each app the person approved, with its client, scopes and status, in one page`.
 
+### `keys-and-oauth/grants-page-fields`
+
+When `GET /auth/grants` lists a grant, the server MUST give it `client_name`, the name the app registered or `null`, and `origins`, the origin of each redirect URI a web client registered, empty for a native client.
+
+**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`, `› reads the origin as scheme, host and port, whatever path, port or trailing slash the redirect URI carries`, `› allows no origin for a native app's redirect URI`.
+
 ### `keys-and-oauth/grants-permission`
 
 If a caller without `grants.manage` lists or revokes grants, then the server MUST answer `403 forbidden` with `details.required_scope` naming `grants.manage`.
@@ -1350,6 +1356,46 @@ Where the limiter is on, the server MUST count every request a signed-in app mak
 **Reason:** Refreshing a token does not start a fresh window.
 
 **Tests:** `compliance/signed-in-apps.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
+
+## Web pages
+
+A web page connects as an app does, registered as a web client, whose redirect URIs registration holds to `https` off the loopback. The owner's approval is what lets the page's address call the instance from a browser. These rules cover the `Access-Control-Allow-Origin` header the server answers a request that carries an `Origin`; what the page may then do is what its credential holds.
+
+### `keys-and-oauth/page-origin-allowed`
+
+While `GET /auth/grants` lists a grant to a web client, the server MUST answer each request whose `Origin` is the origin of a redirect URI the client registered, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+
+**Reason:** The address is the one the page registered and the approval page showed, never the `Origin` a browser reports, because registration takes no credential and only the owner's approval makes an address trusted. It lasts as long as some listed grant names it, so two pages on one address keep it until the last is disconnected.
+
+**Tests:** `compliance/web-page-origin.test.ts › allows a page's origin once the owner approves it, on a preflight and on a request`, `› lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`, `› allows each origin of a page registered on two, once the owner approves it`, `› keeps allowing the page on a reload, which a standing consent answers with a code`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› names the page's origin on the device approval page, and allows it once approved there`.
+
+### `keys-and-oauth/page-origin-refused`
+
+If a request carries an `Origin` that is off the loopback, that `CORS_ORIGINS` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
+
+**Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
+
+**Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› names the page's origin on the device approval page, and allows it once approved there`.
+
+### `keys-and-oauth/origin-no-credentials`
+
+The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
+
+**Reason:** A page on an allowed origin reads only what the credential it sends reaches, never an answer to a request the owner's cookie rode on.
+
+**Tests:** `compliance/web-page-origin.test.ts › lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`.
+
+### `keys-and-oauth/page-origin-serialized`
+
+The server MUST take the origin of a redirect URI as its scheme, its host in lowercase and its port, leaving out the scheme's default port and ignoring the path, the query and a trailing slash.
+
+**Tests:** `compliance/web-page-origin.test.ts › reads the origin as scheme, host and port, whatever path, port or trailing slash the redirect URI carries`.
+
+### `keys-and-oauth/origin-configured`
+
+When a request carries an `Origin` that `CORS_ORIGINS` names, the server MUST answer it, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+
+**Tests:** `compliance/web-page-origin.test.ts › allows a configured origin, and refuses an unapproved one beside it`, `compliance/contract-header.test.ts › sends its contract version on a preflight from an origin the instance allows`.
 
 ## The device grant
 
@@ -1465,9 +1511,11 @@ If a signed-in person opens the device approval page for a pending code whose cl
 
 ### `keys-and-oauth/browser-origin`
 
-If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one of the instance's CORS origins, `null` included, then the server MUST answer `403 forbidden` before it reads the form.
+If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `CORS_ORIGINS` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
+**Reason:** A form posted under the owner's cookie acts as the owner, so approving a web page lets it call the instance with the credential it holds and never with the owner's browser session.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`, `compliance/web-page-origin.test.ts › refuses an approved page's origin on the browser forms and at password sign-in, where a configured origin passes`.
 
 ### `keys-and-oauth/browser-no-origin`
 
@@ -1621,6 +1669,14 @@ When `GET /auth/get-session` answers a signed-in browser, the server MUST NOT se
 
 **Tests:** `compliance/sign-in-library-routes.test.ts › answer the browser session with no signed token`.
 
+### `keys-and-oauth/library-origin`
+
+If `POST /auth/sign-in/email` carries an `Origin` that is neither the issuer's origin nor one `CORS_ORIGINS` names, an approved web page's origin included, then the server MUST answer `403`.
+
+**Reason:** A password sign-in sets the owner's session cookie, so the origins it trusts are the operator's and never widen with an approval.
+
+**Tests:** `compliance/web-page-origin.test.ts › refuses an approved page's origin on the browser forms and at password sign-in, where a configured origin passes`.
+
 ## What the sign-in pages say
 
 ### `keys-and-oauth/caution-consent`
@@ -1646,6 +1702,22 @@ The server MUST show the unverified-app caution for an app that authenticates wi
 **Reason:** An app that authenticates with a secret registered itself under a name it chose, as any other app did.
 
 **Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the consent page, whether or not it authenticates with a secret`, `› is shown with the caution on the device approval page, whether or not it authenticates with a secret`, `› is shown with the caution on the sign-in page, whether or not it authenticates with a secret`.
+
+### `keys-and-oauth/consent-names-page`
+
+When the consent screen offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+
+**Reason:** Approving the page allows those addresses, so the owner confirms the address and not only the name the page chose.
+
+**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`, `› names both origins of a page registered on two, on the consent screen and the device approval page`.
+
+### `keys-and-oauth/device-names-page`
+
+When the device approval page offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+
+**Reason:** Approving a web client on this page allows its addresses as approving it on the consent screen does.
+
+**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the device approval page, and allows it once approved there`, `› names both origins of a page registered on two, on the consent screen and the device approval page`.
 
 ### `keys-and-oauth/sign-in-email-kept`
 

@@ -36,6 +36,17 @@ import type { DrizzleDb } from "./connection.js";
 import { WriteTracker } from "../write-tracker.js";
 import { sameScopeSet } from "../consent-scopes.js";
 
+function parseRedirectUris(column: string): string[] {
+  const parsed = safeJsonParse<unknown>(
+    column,
+    [],
+    "auth_oauth_client.redirect_uris",
+  );
+  return Array.isArray(parsed)
+    ? parsed.filter((s): s is string => typeof s === "string")
+    : [];
+}
+
 export class SqliteOauthProviderStore implements OauthProviderStore {
   constructor(private db: DrizzleDb) {}
 
@@ -253,6 +264,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         id: auth_oauth_client.id,
         clientId: auth_oauth_client.clientId,
         name: auth_oauth_client.name,
+        applicationType: auth_oauth_client.applicationType,
         redirectUris: auth_oauth_client.redirectUris,
         postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
         scopes: auth_oauth_client.scopes,
@@ -287,14 +299,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     const grantTypes = Array.isArray(parsedGrantTypes)
       ? parsedGrantTypes.filter((s): s is string => typeof s === "string")
       : null;
-    const parsed = safeJsonParse<unknown>(
-      row.redirectUris,
-      [],
-      "auth_oauth_client.redirect_uris",
-    );
-    const redirectUris = Array.isArray(parsed)
-      ? parsed.filter((s): s is string => typeof s === "string")
-      : [];
+    const redirectUris = parseRedirectUris(row.redirectUris);
     const parsedPostLogoutRedirectUris = safeJsonParse<unknown>(
       row.postLogoutRedirectUris ?? "[]",
       [],
@@ -309,11 +314,51 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       id: row.id,
       clientId: row.clientId,
       name: row.name,
+      applicationType: row.applicationType,
       redirectUris,
       postLogoutRedirectUris,
       scopes,
       grantTypes,
     };
+  }
+
+  /**
+   * Runs on every cross-origin request before the limiter, so it walks the
+   * few `system.connection` rows rather than every active item: `INDEXED BY`
+   * holds SQLite to the type index, which it would otherwise trade for the
+   * state index on an instance that never ran `ANALYZE`, and each grant
+   * reaches its client through the unique `client_id` index.
+   * `live-grant-clients-plan.test.ts` pins the plan.
+   */
+  async listLiveGrantClients(): Promise<
+    { applicationType: string | null; redirectUris: string[] }[]
+  > {
+    const rows = await this.db.all<{
+      clientId: string;
+      applicationType: string | null;
+      redirectUris: string;
+    }>(sql`
+      SELECT c.client_id AS clientId, c.application_type AS applicationType,
+             c.redirect_uris AS redirectUris
+      FROM items AS i INDEXED BY idx_items_type
+      JOIN auth_oauth_client AS c
+        ON c.client_id = json_extract(i.properties, '$.client_id')
+      WHERE i.type = 'system.connection'
+        AND i.state = 'active'
+        AND json_extract(i.properties, '$.kind') = 'app'
+        AND json_extract(i.properties, '$.status') = 'active'
+    `);
+    const byClient = new Map<
+      string,
+      { applicationType: string | null; redirectUris: string[] }
+    >();
+    for (const row of rows) {
+      byClient.set(row.clientId, {
+        applicationType: row.applicationType,
+        redirectUris: parseRedirectUris(row.redirectUris),
+      });
+    }
+    return [...byClient.values()];
   }
 
   async widenClientScopes(
