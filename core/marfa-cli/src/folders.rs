@@ -89,11 +89,11 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
         /// Send what the folder holds and go no further: scan and drain,
-        /// catch up with nothing and pull nothing, so no file is written into
-        /// the directory or removed from it. A copy never hydrated hydrates
-        /// first, which writes no file. A later push without this pulls what
-        /// the server holds. Refused while the first sync waits to be
-        /// confirmed.
+        /// catch up with nothing and pull nothing, so no item's file is
+        /// written into the directory or removed from it. A copy never
+        /// hydrated hydrates first, which writes only the folder's store. A
+        /// later push without this pulls what the server holds. Refused while
+        /// the first sync waits to be confirmed.
         #[arg(long)]
         send_only: bool,
     },
@@ -114,7 +114,8 @@ pub enum FoldersCommand {
         #[arg(long)]
         remove: bool,
         /// Confirm the removal without asking, for scripts. Without it, a
-        /// removal asks at a terminal and is refused anywhere else.
+        /// removal asks at a terminal, and is refused with `--json` or
+        /// anywhere else.
         #[arg(long, requires = "remove")]
         yes: bool,
     },
@@ -338,7 +339,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     lines.extend(embed_lines(&scanned.embeds));
                     lines.extend(drain_lines(&folder, &drained));
                     lines.push(
-                        "send-only run: nothing was pulled, no file was written or removed, and the next `folders push` pulls what the server holds"
+                        "send-only run: nothing was pulled, so no item's file was written or removed; the next `folders push` pulls what the server holds"
                             .into(),
                     );
                     lines.join("\n")
@@ -454,7 +455,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     let at_terminal = !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !yes && !at_terminal {
         return Err(CliError::Usage(
-            "`folders unmatched --remove` asks at a terminal and takes away nothing anywhere else; pass --yes to confirm it for a script".into(),
+            "`folders unmatched --remove` asks only at a terminal and without --json, and otherwise takes away nothing; pass --yes to confirm it".into(),
         ));
     }
     let folder = Folder::open(dir, None).map_err(held(dir))?;
@@ -488,6 +489,8 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
         || {
             let mut lines = vec![if !agreed {
                 "nothing was removed".to_string()
+            } else if done.removed.is_empty() {
+                "no file was removed".to_string()
             } else {
                 format!(
                     "{} file(s) removed; their items are unchanged in Marfa, and the folder's placement of each ends, sent at the next `folders push`",

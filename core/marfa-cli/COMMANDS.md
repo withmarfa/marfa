@@ -3174,7 +3174,7 @@ marfa folders push [OPTIONS] <DIR>
 
 | Option | Description |
 | --- | --- |
-| `--send-only` | Send what the folder holds and go no further: scan and drain, catch up with nothing and pull nothing, so no file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes no file. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
+| `--send-only` | Send what the folder holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the folder's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
 
 ### marfa folders unmatched
 
@@ -3191,7 +3191,7 @@ marfa folders unmatched [OPTIONS] <DIR>
 | Option | Description |
 | --- | --- |
 | `--remove` | Take the files away, after a confirmation. |
-| `--yes` | Confirm the removal without asking, for scripts. Without it, a removal asks at a terminal and is refused anywhere else. |
+| `--yes` | Confirm the removal without asking, for scripts. Without it, a removal asks at a terminal, and is refused with `--json` or anywhere else. |
 
 ### marfa folders create
 
