@@ -425,7 +425,23 @@ describe("what a change runs", () => {
         "openapi-freshness",
         "version-fields",
         "clients-freshness",
+        "control-socket",
       ],
+    ],
+    [
+      "the control socket's code, which its macOS tests run",
+      ["packages/server/src/control/socket.ts"],
+      [...SERVER, "control-socket"],
+    ],
+    [
+      "the setup every server test runs under, the control socket's among them",
+      ["packages/server/src/test-global-setup.ts"],
+      [...SERVER, "control-socket"],
+    ],
+    [
+      "server code the control socket's tests do not read",
+      ["packages/server/src/config.ts"],
+      SERVER,
     ],
     [
       "a crate manifest, which this test reads",

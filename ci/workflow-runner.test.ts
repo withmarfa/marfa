@@ -20,7 +20,7 @@ const MAC_JOBS = new Set([
   "core-live.yml:live",
   "release.yml:build",
   "release.yml:sign",
-  "control-socket.yml:macos",
+  "ci.yml:control-socket",
 ]);
 
 // Ubuntu for a pull request, a push and a dispatch that does not ask, macOS
@@ -85,7 +85,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
     }
   });
 
-  it.each(["ci.yml", "core.yml", "codeql.yml"])(
+  it.each(["ci.yml", "codeql.yml"])(
     "%s cancels only superseded pull requests and preserves every other run",
     (file) => {
       const { concurrency } = parse(

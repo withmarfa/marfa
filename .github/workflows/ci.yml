@@ -70,6 +70,7 @@ jobs:
       version-fields: ${{ steps.classify.outputs.version-fields }}
       clients-freshness: ${{ steps.classify.outputs.clients-freshness }}
       core: ${{ steps.classify.outputs.core }}
+      control-socket: ${{ steps.classify.outputs.control-socket }}
       full: ${{ steps.classify.outputs.full }}
     steps:
       - uses: actions/checkout@v7
@@ -804,6 +805,27 @@ jobs:
     name: Core
     uses: ./.github/workflows/core-live.yml
 
+  # The private control socket's tests on macOS, the only run of them there.
+  # Linux runs them in `CI (SQLite)`, which installs the ACL tool they read.
+  control-socket:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.control-socket != 'false') }}
+    name: Control socket (macOS)
+    timeout-minutes: 15
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter '@withmarfa/server^...' build
+      - run: pnpm exec vitest run packages/server/src/control/socket.test.ts packages/server/src/control/socket-race.test.ts
+
   # The one required check. A skipped job passes a required check, and a draft
   # skips most jobs, so on a draft this job is named `Draft CI`: the required
   # `Full CI` stays expected, which blocks a merge, until the run that marking
@@ -831,6 +853,7 @@ jobs:
         version-fields,
         clients-freshness,
         core,
+        control-socket,
       ]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -868,6 +891,7 @@ jobs:
         version-fields,
         clients-freshness,
         core,
+        control-socket,
       ]
     if: ${{ failure() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest

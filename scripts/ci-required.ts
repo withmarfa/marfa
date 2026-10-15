@@ -73,6 +73,9 @@ export const JOBS = [
   // boots the server too, but a pull request that changes only the server
   // leaves it to the push to `main`, where `core.yml` runs it.
   "core",
+  // `Control socket (macOS)`: the private control socket's tests on macOS,
+  // the only run of them there. Linux runs them in `CI (SQLite)`'s tests.
+  "control-socket",
 ] as const;
 
 export type Job = (typeof JOBS)[number];
@@ -156,6 +159,7 @@ const RUST: readonly Job[] = [
 /** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
   "workspace",
+  "control-socket",
   ...CONFORMANCE,
   "cli-scenarios",
   "restore-drill",
@@ -232,6 +236,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   // The core's catalog is written from the shipped types, the registry that
   // lists them and the server's role resolution.
+  // The control socket's tests and the global setup and test settings they
+  // run under.
+  [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
+  [
+    /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
+    [...SERVER, "control-socket"],
+  ],
   [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
   [/^packages\/shared\//, [...SERVER, "clients-freshness"]],
   [
@@ -365,7 +376,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     WORKSPACE,
   ],
   [/^eslint\.config\.js$/, ["workspace"]],
-  [/^vitest\.(config|shared)\.ts$/, ["workspace", "version-fields"]],
+  [
+    /^vitest\.(config|shared)\.ts$/,
+    ["workspace", "version-fields", "control-socket"],
+  ],
   // Prettier skips what Git ignores, and a freshness check that asks
   // `git status` cannot see an ignored file.
   [/^\.gitignore$/, ["workspace", "types-freshness", "clients-freshness"]],

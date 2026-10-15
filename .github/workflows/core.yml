@@ -26,12 +26,6 @@ on:
     - cron: "47 3 * * *"
   workflow_dispatch:
 
-# Even with cancellation disabled, a shared group replaces older pending
-# runs; non-PR runs need their own groups.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 permissions:
   contents: read
 
