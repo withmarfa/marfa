@@ -177,17 +177,21 @@ pub enum Exit {
     Environment = 3,
     Local = 4,
     Credential = 5,
+    /// Never the exit of a refusal: the status a shell gives a process that
+    /// died of Ctrl-C.
+    Interrupted = 130,
 }
 
 impl Exit {
     /// Every exit code, in the order the help lists them.
-    pub const ALL: [Exit; 6] = [
+    pub const ALL: [Exit; 7] = [
         Exit::Done,
         Exit::Refused,
         Exit::Usage,
         Exit::Environment,
         Exit::Local,
         Exit::Credential,
+        Exit::Interrupted,
     ];
 
     /// What the code tells an agent, as the help and the command reference say it.
@@ -206,6 +210,9 @@ impl Exit {
             }
             Exit::Credential => {
                 "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"
+            }
+            Exit::Interrupted => {
+                "a long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended a command that was still stopping"
             }
         }
     }
@@ -492,12 +499,13 @@ pub fn exit_codes_help() -> &'static str {
         let mut help = String::from("Exit codes:\n");
         for exit in Exit::ALL {
             let mut line = format!("  {}  ", exit as u8);
+            let indent = line.len();
             let mut first = true;
             for word in exit.meaning().split(' ') {
                 if !first && line.len() + 1 + word.len() > MEANING_WIDTH {
                     help.push_str(&line);
                     help.push('\n');
-                    line = " ".repeat(5);
+                    line = " ".repeat(indent);
                 } else if !first {
                     line.push(' ');
                 }

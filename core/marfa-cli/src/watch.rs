@@ -1,15 +1,23 @@
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use marfa_core::folder::RETRY_MOST;
 use marfa_core::{CoreError, Folder, WatchError, WatchEvent, WatchPass};
 
 use crate::error::CliError;
 use crate::folders;
+use crate::interrupt;
 use crate::output;
 use crate::remote::Session;
+
+/// How long a pass under way gets to finish once Ctrl-C has arrived. A pass
+/// can wait on a server that never answers, and Ctrl-C has to end the command
+/// anyway.
+const INTERRUPT_GRACE: Duration = Duration::from_secs(2);
+
+const POLL: Duration = Duration::from_millis(100);
 
 pub fn watch(
     dir: &Path,
@@ -19,22 +27,68 @@ pub fn watch(
 ) -> Result<(), CliError> {
     let server = session.server.url.clone();
     let folder = folders::opened(dir, Some(session))?;
-    let stop = Arc::new(AtomicBool::new(false));
+    // Once the folder is open, so that an interrupt before then ends the
+    // command as it always did.
+    interrupt::stop_on_interrupt();
+    let (done, ended) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(keep_in_step(&folder, &server, stop_after, json));
+    });
+    let result = await_end(&ended, interrupt::signaled, INTERRUPT_GRACE);
+    if result.is_ok() {
+        interrupt::ended_by_interrupt();
+    }
+    result
+}
+
+/// The watch's result once it ends, or `Ok` once `interrupted` has been true
+/// for `grace` and the watch still has not ended. That watch is left to the
+/// process's end: what a pass had not finished stays queued or on disk for the
+/// next one.
+fn await_end(
+    ended: &mpsc::Receiver<Result<(), CliError>>,
+    interrupted: impl Fn() -> bool,
+    grace: Duration,
+) -> Result<(), CliError> {
+    let mut interrupted_at = None;
+    loop {
+        match ended.recv_timeout(POLL) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if interrupted()
+                    && interrupted_at.get_or_insert_with(Instant::now).elapsed() >= grace
+                {
+                    return Ok(());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(CliError::Watch("the watch ended in a fault".into()));
+            }
+        }
+    }
+}
+
+fn keep_in_step(
+    folder: &Folder,
+    server: &str,
+    stop_after: Option<Duration>,
+    json: bool,
+) -> Result<(), CliError> {
+    let stop = interrupt::stop();
     let mut conflicts = folders::Conflicts::default();
     folder
-        .watch(&stop, |event| {
+        .watch(stop, |event| {
             if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
-                let stop = Arc::clone(&stop);
                 // Detached: the process ends with the watch.
                 std::thread::spawn(move || {
                     std::thread::sleep(limit);
                     stop.store(true, Ordering::SeqCst);
                 });
             }
-            tell(&server, json, &folder, &mut conflicts, event)
+            tell(server, json, folder, &mut conflicts, event)
         })
         .map_err(|error| match error {
-            WatchError::CredentialRefused(error) => refused_credential(&server, &error),
+            WatchError::CredentialRefused(error) => refused_credential(server, &error),
             WatchError::FollowEnded(error) => CliError::Watch(format!(
                 "the server's changes stopped reaching this folder: {error}"
             )),
@@ -258,4 +312,48 @@ fn passed(
                 .collect::<String>()
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    #[test]
+    fn an_interrupt_ends_a_watch_whose_pass_never_finishes_after_the_grace_and_not_before() {
+        let (_never, ended) = mpsc::channel::<Result<(), CliError>>();
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&interrupted);
+        let waiting = std::thread::spawn(move || {
+            await_end(
+                &ended,
+                || seen.load(Ordering::SeqCst),
+                Duration::from_millis(300),
+            )
+            .is_ok()
+        });
+        // The witness: with no interrupt it goes on waiting.
+        std::thread::sleep(Duration::from_millis(700));
+        assert!(!waiting.is_finished(), "ended with no interrupt");
+        let raised = Instant::now();
+        interrupted.store(true, Ordering::SeqCst);
+        assert!(waiting.join().unwrap());
+        let took = raised.elapsed();
+        assert!(took >= Duration::from_millis(250), "{took:?}");
+        assert!(took < Duration::from_secs(2), "{took:?}");
+    }
+
+    #[test]
+    fn a_watch_that_ends_gives_its_own_result_and_a_fault_is_a_watch_error() {
+        let (done, ended) = mpsc::channel();
+        done.send(Err(CliError::Watch("stopped".into()))).unwrap();
+        let result = await_end(&ended, || true, Duration::from_secs(60));
+        assert!(matches!(result, Err(CliError::Watch(ref reason)) if reason == "stopped"));
+        let (done, ended) = mpsc::channel::<Result<(), CliError>>();
+        drop(done);
+        let result = await_end(&ended, || false, Duration::from_secs(60));
+        assert!(matches!(result, Err(CliError::Watch(_))));
+    }
 }

@@ -614,7 +614,9 @@ struct Watched {
 impl Watched {
     fn new(mut source: Box<dyn Read + Send>, idle: Duration) -> Watched {
         let (sender, chunks) = mpsc::sync_channel(4);
-        std::thread::spawn(move || {
+        // Apart from Ctrl-C, which a command that takes it itself installs
+        // after this thread is made.
+        crate::interrupt::spawn_apart("stream", move || {
             let mut buffer = vec![0u8; 64 * 1024];
             loop {
                 let chunk = match source.read(&mut buffer) {
@@ -627,7 +629,8 @@ impl Watched {
                     return;
                 }
             }
-        });
+        })
+        .expect("the thread that reads the stream starts");
         Watched {
             chunks,
             idle,

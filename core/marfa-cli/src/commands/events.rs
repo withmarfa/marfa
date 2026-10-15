@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader, Read};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -6,9 +7,13 @@ use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 
 use crate::error::CliError;
+use crate::interrupt;
 use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
+
+/// How long the stream waits for a frame before it looks for an interrupt.
+const INTERRUPT_POLL: Duration = Duration::from_millis(100);
 
 /// Read the instance's event stream, one frame per line.
 #[derive(Debug, Default, Args)]
@@ -105,30 +110,33 @@ fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Result<Frame, 
 
 pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (_, reader) = remote.stream(&request(&args))?;
+    // After the stream is open, since until then nothing here looks for the
+    // stop and a first Ctrl-C has to end the command as it always did.
+    interrupt::stop_on_interrupt();
     let (sender, frames) = mpsc::channel::<Result<Frame, std::io::Error>>();
     std::thread::spawn(move || read_frames(reader, sender));
     let started = Instant::now();
     let limit = args.r#for.map(Duration::from_secs);
     loop {
-        let remaining = match limit {
+        if interrupt::stop().load(Ordering::Relaxed) {
+            interrupt::ended_by_interrupt();
+            return Ok(());
+        }
+        let wait = match limit {
             Some(limit) => match limit.checked_sub(started.elapsed()) {
-                Some(remaining) => remaining,
+                Some(remaining) => remaining.min(INTERRUPT_POLL),
                 None => return Ok(()),
             },
-            None => Duration::from_secs(3600),
+            None => INTERRUPT_POLL,
         };
-        match frames.recv_timeout(remaining) {
+        match frames.recv_timeout(wait) {
             Ok(Ok(frame)) => print_frame(&frame, out)?,
             Ok(Err(error)) => {
                 return Err(CliError::Core(marfa_core::CoreError::Network(format!(
                     "the stream broke: {error}"
                 ))));
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if limit.is_some() {
-                    return Ok(());
-                }
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }

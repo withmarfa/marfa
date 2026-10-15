@@ -1656,6 +1656,49 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
+  it("ends a changes helper with status 130 when interrupted, where one whose time is up ends with 0", async () => {
+    harness = await startHarness("changes-interrupted");
+    expect((await harness.device.status()).ok).toBe(true);
+
+    const interrupted = harness.device.hold(["changes"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            interrupted.stdout,
+            `the helper never started watching: ${interrupted.stderr}`,
+          ).toContain('"watching":true');
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      interrupted.interrupt();
+      const ended = await Promise.race([
+        interrupted.exited().then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 5_000),
+        ),
+      ]);
+      expect(ended, "an interrupted helper went on watching").toBe(true);
+    } finally {
+      await interrupted.stop();
+    }
+    expect(
+      interrupted.exitCode(),
+      `an interrupted helper did not end with 130: ${interrupted.stderr}`,
+    ).toBe(130);
+
+    // The witness: the same helper, left alone until its time is up, ends 0.
+    const timed = harness.device.hold(["changes", "--for", "1"]);
+    try {
+      await timed.exited();
+    } finally {
+      await timed.stop();
+    }
+    expect(timed.exitCode(), timed.stderr).toBe(0);
+  });
+
   it("refuses to read a store a writer of another schema version made", async () => {
     harness = await hydratedHarness("reader-schema", {
       rows: { "core.note": [{ item: { id: "n1" } }] },
