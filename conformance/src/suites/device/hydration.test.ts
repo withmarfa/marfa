@@ -21,6 +21,7 @@ import {
   wireType,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
+import type { Answer, Responder } from "../../device/scripted-server.js";
 
 /**
  * "Hydration subscribes first, then reads."
@@ -43,6 +44,13 @@ async function edgeIds(device: DeviceUnderTest, id: string): Promise<string[]> {
   const read = await device.edgesFrom(id);
   expect(read.ok, JSON.stringify(read)).toBe(true);
   return read.ok ? read.value.map((edge) => edge.id) : [];
+}
+
+function atCursor(cursor: string | undefined, answer: Answer): Responder {
+  return (request) =>
+    request.headers["last-event-id"] === cursor
+      ? answer
+      : refusal(400, "validation_error", "unexpected replay cursor");
 }
 
 describe("what a hydration declares", () => {
@@ -290,24 +298,29 @@ describe("the order a hydration reads in", () => {
   it("takes the cursor before the snapshot, so a write during the snapshot replays", async () => {
     harness = await startHarness("ordering");
     const { server, device } = harness;
-    scriptHydration(server, {
-      head: "10",
-      rows: { "core.note": [{ item: { id: "already-there" } }] },
-    });
-    // The whole sequence is scripted before the device runs: answers for a
-    // door are consumed in order, so a second subscription is the replay the
-    // catch-up below makes, carrying a write that landed at id 11 while the
-    // snapshot at cursor 10 was being read.
     server.copyAnswer(
       "GET",
       "/events",
-      copyReplay("11", [
-        copyItemEvent(
-          "11",
-          "item.created",
-          wireItem({ id: "written-during-the-snapshot" }),
-        ),
-      ]),
+      atCursor(undefined, copyHeadRead("10")),
+      atCursor(
+        "10",
+        copyReplay("11", [
+          copyItemEvent(
+            "11",
+            "item.created",
+            wireItem({ id: "written-during-the-snapshot" }),
+          ),
+        ]),
+      ),
+      atCursor("11", copyReplay("11", [])),
+    );
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    scriptKey(server);
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "already-there" }) }]),
     );
 
     const hydrated = await device.hydrate(["core.note"], "library");
@@ -326,7 +339,8 @@ describe("the order a hydration reads in", () => {
     ).toBeLessThan(firstRow);
 
     // And the consequence, rather than only the ordering: a write that landed
-    // while the snapshot was being read reaches the copy on the first replay.
+    // while the snapshot was being read reaches the copy, and the next replay
+    // starts where hydration finished.
     expect((await device.catchUp()).ok).toBe(true);
     const held = await device.list();
     expect(held.ok).toBe(true);
@@ -392,16 +406,29 @@ describe("what a hydration leaves behind", () => {
     // so there is something a resuming device could resume from. With nothing
     // landed, the second attempt reports the whole slice either way and the
     // assertion below would be about nothing.
-    const firstPage = itemsPage([{ item: wireItem({ id: "a" }) }], {
-      nextCursor: "p2",
-    });
+    const page =
+      (cursor: string | null, answer: Answer): Responder =>
+      (request) =>
+        request.query.get("cursor") === cursor
+          ? answer
+          : refusal(400, "validation_error", "unexpected page cursor");
     server.copyAnswer(
       "GET",
       "/items",
-      firstPage,
-      { kind: "drop" },
-      firstPage,
-      itemsPage([{ item: wireItem({ id: "b" }) }]),
+      page(
+        null,
+        itemsPage([{ item: wireItem({ id: "before-interruption" }) }], {
+          nextCursor: "p2",
+        }),
+      ),
+      page("p2", { kind: "drop" }),
+      page(
+        null,
+        itemsPage([{ item: wireItem({ id: "fresh-first-page" }) }], {
+          nextCursor: "p2",
+        }),
+      ),
+      page("p2", itemsPage([{ item: wireItem({ id: "b" }) }])),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
@@ -419,7 +446,16 @@ describe("what a hydration leaves behind", () => {
       again.ok ? [again.value.items, again.value.pages] : undefined,
       "the second hydration walked less than the whole slice, so it resumed the interrupted one rather than replacing it and the copy is short whatever the first attempt missed",
     ).toEqual([2, 2]);
-    expect((await device.list()).ok).toBe(true);
+    const held = await device.list();
+    expect(held.ok ? held.value.map((row) => row.id).sort() : held).toEqual([
+      "b",
+      "fresh-first-page",
+    ]);
+    expect(
+      server.requests
+        .filter((request) => request.pathname === "/items")
+        .map((request) => request.query.get("cursor")),
+    ).toEqual([null, "p2", null, "p2"]);
   });
 
   it("walks past an empty page that still carries a cursor", async () => {
@@ -691,10 +727,19 @@ describe("how a hydration completes", () => {
     server.copyAnswer(
       "GET",
       "/events",
-      copyHeadRead("10"),
-      copyReplay("11", [
-        copyItemEvent("11", "item.created", wireItem({ id: "during" })),
-      ]),
+      atCursor(undefined, copyHeadRead("10")),
+      atCursor(
+        "10",
+        copyReplay("11", [
+          copyItemEvent("11", "item.created", wireItem({ id: "during" })),
+        ]),
+      ),
+      atCursor(
+        "11",
+        copyReplay("12", [
+          copyItemEvent("12", "item.created", wireItem({ id: "after" })),
+        ]),
+      ),
     );
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
@@ -715,6 +760,21 @@ describe("how a hydration completes", () => {
       held.ok ? held.value.map((row) => row.id).sort() : held,
       "a write made while the pages were read was missing when the hydration returned",
     ).toEqual(["before", "during"]);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    const after = await device.list();
+    expect(after.ok ? after.value.map((row) => row.id).sort() : after).toEqual([
+      "after",
+      "before",
+      "during",
+    ]);
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("12");
+    expect(
+      server.requests
+        .filter((request) => request.pathname === "/events")
+        .map((request) => request.headers["last-event-id"]),
+    ).toEqual([undefined, "10", "11"]);
   });
 
   it("does not complete a hydration whose replay sends no live marker", async () => {
