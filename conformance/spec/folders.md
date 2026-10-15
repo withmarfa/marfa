@@ -3774,6 +3774,110 @@ When a folder item’s moved file is present in another folder but not bound the
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
+## Watching every folder
+
+A watch of every folder is `folders watch` run with no directory.
+
+### `folders/watch-every-listed`
+
+When `folders watch` names no directory, the CLI MUST keep every folder that the machine’s folder registry lists in step, in one process.
+
+**Tests:** `device/folders-watch-every.test.ts › keeps every listed folder in step in one process, naming the folder on every line`.
+
+### `folders/watch-every-names-folder`
+
+While `folders watch` runs with no directory, the CLI MUST name the folder’s directory on every line it reports about one folder.
+
+**Tests:** `device/folders-watch-every.test.ts › keeps every listed folder in step in one process, naming the folder on every line`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+
+### `folders/watch-every-own-server`
+
+When a watch of every folder opens a folder whose working copy records the server it was hydrated from, a device MUST keep that folder in step with that server.
+
+**Reason:** Folders on one machine can follow different servers.
+
+**Tests:** `device/folders-watch-every.test.ts › keeps each folder with its own server and credential, and one server down stops only its folder`.
+
+### `folders/watch-every-key-kept-apart`
+
+When a watch of every folder opens a folder whose working copy records a server other than the one the command names, the CLI MUST NOT send that server the credential named for the command.
+
+**Reason:** A key or token is for the server it was named for, and another server could use it.
+
+**Tests:** `device/folders-watch-every.test.ts › keeps each folder with its own server and credential, and one server down stops only its folder`.
+
+### `folders/watch-every-unwatchable-said`
+
+If a folder that the machine’s folder registry lists cannot be watched, then the CLI MUST report the folder’s directory and why once for as long as the reason stays the same.
+
+**Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+
+### `folders/watch-every-others-go-on`
+
+If a watch of every folder cannot watch one listed folder, or that folder’s watch ends, then a device MUST keep the other listed folders in step.
+
+**Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`, `device/folders-watch-every.test.ts › ends only the watch of a folder whose credential the server refuses`, `device/folders-watch-every.test.ts › keeps each folder with its own server and credential, and one server down stops only its folder`.
+
+### `folders/watch-every-tried-again`
+
+While a watch of every folder cannot watch a listed folder, a device MUST try the folder again and watch it once it can be watched.
+
+**Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+
+### `folders/watch-every-credential-refused`
+
+If the server refuses one folder’s credential during a watch of every folder, then the CLI MUST end that folder’s watch without ending the command.
+
+**Tests:** `device/folders-watch-every.test.ts › ends only the watch of a folder whose credential the server refuses`.
+
+### `folders/watch-every-joins`
+
+When the machine’s folder registry comes to list a folder while a watch of every folder runs, a device MUST keep that folder in step without a restart.
+
+**Tests:** `device/folders-watch-every.test.ts › waits while no folder is listed, takes up a folder added, and lets go of one removed`.
+
+### `folders/watch-every-leaves`
+
+When the machine’s folder registry stops listing a folder while a watch of every folder runs, a device MUST let go of that folder while it keeps the other folders in step.
+
+**Tests:** `device/folders-watch-every.test.ts › waits while no folder is listed, takes up a folder added, and lets go of one removed`.
+
+### `folders/watch-every-leaves-said`
+
+When a watch of every folder lets go of a folder the machine’s folder registry no longer lists, the CLI MUST report that folder’s directory as no longer listed.
+
+**Tests:** `device/folders-watch-every.test.ts › waits while no folder is listed, takes up a folder added, and lets go of one removed`.
+
+### `folders/watch-every-registry-unread`
+
+If the machine’s folder registry cannot be read while a watch of every folder runs, then a device MUST keep the folders it watches in step.
+
+**Tests:** `device/folders-watch-every.test.ts › goes on with the folders it watches while the registry cannot be read`.
+
+### `folders/watch-every-none-waits`
+
+While the machine’s folder registry lists no folder, the CLI MUST keep a watch of every folder running.
+
+**Tests:** `device/folders-watch-every.test.ts › waits while no folder is listed, takes up a folder added, and lets go of one removed`.
+
+### `folders/watch-every-none-said`
+
+When a watch of every folder finds that the machine’s folder registry lists no folder, the CLI MUST say once that no folder is listed.
+
+**Tests:** `device/folders-watch-every.test.ts › waits while no folder is listed, takes up a folder added, and lets go of one removed`.
+
+### `folders/watch-every-interrupt`
+
+If a watch of every folder is interrupted while a folder’s pass waits on a server that does not answer, then the CLI MUST end within three seconds.
+
+**Tests:** `device/folders-watch-every.test.ts › ends soon after an interrupt while a pass waits on the server, keeping the edit it was sending`.
+
+### `folders/watch-every-interrupt-queued`
+
+If a watch of every folder is interrupted before the server answers a folder’s write, then a device MUST keep that write queued for the folder’s next sync.
+
+**Tests:** `device/folders-watch-every.test.ts › ends soon after an interrupt while a pass waits on the server, keeping the edit it was sending`.
+
 ## Taking in another folder’s file
 
 ### `folders/take-in-file`

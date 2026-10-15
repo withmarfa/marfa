@@ -497,7 +497,12 @@ export class CliDevice implements DeviceUnderTest {
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
    */
-  hold(args: string[], at: "device" | "root" | "text" = "device"): HeldCommand {
+  /** `env` is laid over the binary's own, a keychain of the fixture's say. */
+  hold(
+    args: string[],
+    at: "device" | "root" | "text" = "device",
+    env: NodeJS.ProcessEnv = {},
+  ): HeldCommand {
     const child = spawn(
       this.options.binary,
       [
@@ -506,7 +511,7 @@ export class CliDevice implements DeviceUnderTest {
         ...this.server(),
       ],
       {
-        env: this.env(),
+        env: { ...this.env(), ...env },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -1323,6 +1328,20 @@ export class CliFolder {
   /** A watch left running that prints for a person, not a program. */
   watchText(): HeldCommand {
     return this.device().hold(["folders", "watch", this.dir], "text");
+  }
+
+  /**
+   * A watch of every folder this folder's machine lists, left running, which
+   * the caller stops. It names this folder's server and key, as the person's
+   * own server.
+   */
+  watchEvery(env: NodeJS.ProcessEnv = {}): HeldCommand {
+    return this.device().hold(["folders", "watch"], "root", env);
+  }
+
+  /** A watch of every folder, printed for a person. */
+  watchEveryText(): HeldCommand {
+    return this.device().hold(["folders", "watch"], "text");
   }
 
   /** A pull, printed for a person. */
