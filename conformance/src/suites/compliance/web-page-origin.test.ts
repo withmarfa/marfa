@@ -96,11 +96,6 @@ async function consentFor(page: Page, scope = SCOPE): Promise<URL> {
 }
 
 /**
- * The owner approves `page` on the consent screen, leaving `ticked` ticked,
- * and the page exchanges its code. Answers the access token and the scope
- * the token answer names.
- */
-/**
  * The owner approves `page` on the consent screen, leaving `ticked` ticked.
  * Answers the code the decision sends to the redirect URI and its verifier.
  */
