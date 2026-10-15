@@ -322,22 +322,43 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     };
   }
 
+  /**
+   * Runs on every cross-origin request before the limiter, so it walks the
+   * few `system.connection` rows rather than every active item: `INDEXED BY`
+   * holds SQLite to the type index, which it would otherwise trade for the
+   * state index on an instance that never ran `ANALYZE`, and each grant
+   * reaches its client through the unique `client_id` index.
+   * `live-grant-clients-plan.test.ts` pins the plan.
+   */
   async listLiveGrantClients(): Promise<
     { applicationType: string | null; redirectUris: string[] }[]
   > {
-    const rows = await this.db
-      .select({
-        applicationType: auth_oauth_client.applicationType,
-        redirectUris: auth_oauth_client.redirectUris,
-      })
-      .from(auth_oauth_client)
-      .where(
-        sql`EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.state} = 'active' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.status') = 'active' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
-      );
-    return rows.map((row) => ({
-      applicationType: row.applicationType,
-      redirectUris: parseRedirectUris(row.redirectUris),
-    }));
+    const rows = await this.db.all<{
+      clientId: string;
+      applicationType: string | null;
+      redirectUris: string;
+    }>(sql`
+      SELECT c.client_id AS clientId, c.application_type AS applicationType,
+             c.redirect_uris AS redirectUris
+      FROM items AS i INDEXED BY idx_items_type
+      JOIN auth_oauth_client AS c
+        ON c.client_id = json_extract(i.properties, '$.client_id')
+      WHERE i.type = 'system.connection'
+        AND i.state = 'active'
+        AND json_extract(i.properties, '$.kind') = 'app'
+        AND json_extract(i.properties, '$.status') = 'active'
+    `);
+    const byClient = new Map<
+      string,
+      { applicationType: string | null; redirectUris: string[] }
+    >();
+    for (const row of rows) {
+      byClient.set(row.clientId, {
+        applicationType: row.applicationType,
+        redirectUris: parseRedirectUris(row.redirectUris),
+      });
+    }
+    return [...byClient.values()];
   }
 
   async widenClientScopes(

@@ -100,10 +100,14 @@ async function consentFor(page: Page, scope = SCOPE): Promise<URL> {
  * and the page exchanges its code. Answers the access token and the scope
  * the token answer names.
  */
-async function approve(
+/**
+ * The owner approves `page` on the consent screen, leaving `ticked` ticked.
+ * Answers the code the decision sends to the redirect URI and its verifier.
+ */
+async function approvedCode(
   page: Page,
   ticked: readonly string[] = SCOPE.split(" "),
-): Promise<{ access: string; scope: string }> {
+): Promise<{ code: string; verifier: string }> {
   const proof = pkce();
   const consent = await sentTo(
     server,
@@ -120,11 +124,23 @@ async function approve(
   const landed = await decide(server, issuer, cookie, consent!, true, ticked);
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
+  return { code: code!, verifier: proof.verifier };
+}
+
+/**
+ * The owner approves `page` and the page exchanges its code. Answers the
+ * access token and the scope the token answer names.
+ */
+async function approve(
+  page: Page,
+  ticked: readonly string[] = SCOPE.split(" "),
+): Promise<{ access: string; scope: string }> {
+  const { code, verifier } = await approvedCode(page, ticked);
   const answer = await token(server, {
     grant_type: "authorization_code",
-    code: code!,
+    code,
     redirect_uri: page.redirectUri,
-    code_verifier: proof.verifier,
+    code_verifier: verifier,
     client_id: page.clientId,
   });
   expect(answer.status, JSON.stringify(answer.body)).toBe(200);
@@ -212,6 +228,62 @@ describe("a web page's address", () => {
     await expectRefused(origin, server.workingKey);
     const { access } = await approve(page);
     await expectAllowed(origin, access);
+  });
+
+  it("lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed", async () => {
+    const origin = "https://exchange.web-page-origin.test";
+    const page = await registerPage([`${origin}/callback`]);
+    const { code, verifier } = await approvedCode(page);
+    const asked = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+      method: "OPTIONS",
+      headers: {
+        origin,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    await asked.body?.cancel();
+    expect(asked.status).toBe(204);
+    expect(asked.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(asked.headers.get("access-control-allow-credentials")).toBeNull();
+    const exchanged = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: page.redirectUri,
+        code_verifier: verifier,
+        client_id: page.clientId,
+      }),
+    });
+    expect(exchanged.status).toBe(200);
+    expect(exchanged.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(
+      exchanged.headers.get("access-control-allow-credentials"),
+    ).toBeNull();
+    const { access_token: access } = (await exchanged.json()) as {
+      access_token: string;
+    };
+    await expectAllowed(origin, access);
+  });
+
+  it("allows each origin of a page registered on two, once the owner approves it", async () => {
+    const first = "https://first-of-two.web-page-origin.test";
+    const second = "https://second-of-two.web-page-origin.test";
+    const page = await registerPage([
+      `${first}/callback`,
+      `${second}/callback`,
+    ]);
+    await expectRefused(first, server.workingKey);
+    await expectRefused(second, server.workingKey);
+    const { access } = await approve(page);
+    await expectAllowed(first, access);
+    await expectAllowed(second, access);
+    expect((await grantOf(page))?.origins).toEqual([first, second]);
   });
 
   it("refuses a page's origin before approval, after a denial, and for another origin", async () => {
@@ -441,6 +513,45 @@ describe("where the owner reads a page's address", () => {
     const grant = await grantOf(page);
     expect(grant?.origins).toEqual([origin]);
     expect(grant?.client_name).toBe("Web Page Fixture");
+  });
+
+  it("names both origins of a page registered on two, on the consent screen and the device approval page", async () => {
+    const first = "https://named-first.web-page-origin.test";
+    const second = "https://named-second.web-page-origin.test";
+    const page = await registerPage(
+      [`${first}/callback`, `${second}/callback`],
+      {
+        grant_types: ["authorization_code", DEVICE_GRANT],
+      },
+    );
+    const consent = await fetch(await consentFor(page), {
+      headers: { cookie },
+    });
+    expect(consent.status).toBe(200);
+    const consentHtml = await consent.text();
+    expect(consentHtml).toContain(`<b>${first}</b>`);
+    expect(consentHtml).toContain(`<b>${second}</b>`);
+
+    const code = await fetch(`${server.apiUrl}/auth/device/code`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: page.clientId,
+        scope: "core.note:read",
+      }),
+    });
+    expect(code.status).toBe(200);
+    const { user_code: userCode } = (await code.json()) as {
+      user_code: string;
+    };
+    const device = await fetch(
+      `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+      { headers: { cookie } },
+    );
+    expect(device.status).toBe(200);
+    const deviceHtml = await device.text();
+    expect(deviceHtml).toContain(`<b>${first}</b>`);
+    expect(deviceHtml).toContain(`<b>${second}</b>`);
   });
 
   it("names the page's origin on the device approval page, and allows it once approved there", async () => {

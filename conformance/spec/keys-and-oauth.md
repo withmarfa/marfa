@@ -1367,7 +1367,7 @@ While `GET /auth/grants` lists a grant to a web client, the server MUST answer e
 
 **Reason:** The address is the one the page registered and the approval page showed, never the `Origin` a browser reports, because registration takes no credential and only the owner's approval makes an address trusted. It lasts as long as some listed grant names it, so two pages on one address keep it until the last is disconnected.
 
-**Tests:** `compliance/web-page-origin.test.ts › allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page on a reload, which a standing consent answers with a code`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› names the page's origin on the device approval page, and allows it once approved there`.
+**Tests:** `compliance/web-page-origin.test.ts › allows a page's origin once the owner approves it, on a preflight and on a request`, `› lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`, `› allows each origin of a page registered on two, once the owner approves it`, `› keeps allowing the page on a reload, which a standing consent answers with a code`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› names the page's origin on the device approval page, and allows it once approved there`.
 
 ### `keys-and-oauth/page-origin-refused`
 
@@ -1376,6 +1376,14 @@ If a request carries an `Origin` that is off the loopback, that `CORS_ORIGINS` d
 **Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
 
 **Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› names the page's origin on the device approval page, and allows it once approved there`.
+
+### `keys-and-oauth/origin-no-credentials`
+
+The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
+
+**Reason:** A page on an allowed origin reads only what the credential it sends reaches, never an answer to a request the owner's cookie rode on.
+
+**Tests:** `compliance/web-page-origin.test.ts › lets the page exchange its code at the token endpoint from its own origin, with no credentials allowed`.
 
 ### `keys-and-oauth/page-origin-serialized`
 
@@ -1701,7 +1709,7 @@ When the consent screen offers access to a web client, the server MUST name on i
 
 **Reason:** Approving the page allows those addresses, so the owner confirms the address and not only the name the page chose.
 
-**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`.
+**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`, `› names both origins of a page registered on two, on the consent screen and the device approval page`.
 
 ### `keys-and-oauth/device-names-page`
 
@@ -1709,7 +1717,7 @@ When the device approval page offers access to a web client, the server MUST nam
 
 **Reason:** Approving a web client on this page allows its addresses as approving it on the consent screen does.
 
-**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the device approval page, and allows it once approved there`.
+**Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the device approval page, and allows it once approved there`, `› names both origins of a page registered on two, on the consent screen and the device approval page`.
 
 ### `keys-and-oauth/sign-in-email-kept`
 

@@ -287,11 +287,17 @@ export function createApp(
   // `http://localhost:<port>`.
   //
   // A refused origin gets no `Access-Control-Allow-Origin` at all. A request
-  // with no `Origin` is no browser's cross-origin request and skips the layer.
+  // with no `Origin` is no browser's cross-origin request and skips the layer,
+  // but its answer still says it varies by `Origin`, so a cache never hands
+  // it to a page on another origin.
   const reflectLocalhost =
     !config.isProduction && config.corsOrigins.length > 0;
+  // The server's own pages post from here, and a same-origin request needs
+  // no answer from this layer, so it never pays for the read of approvals.
+  const issuerOrigin = new URL(config.authBaseUrl).origin;
   const allowedOrigin = async (origin: string): Promise<string | null> => {
     if (config.corsOrigins.includes(origin)) return origin;
+    if (origin === issuerOrigin) return null;
     if (reflectLocalhost) {
       try {
         const url = new URL(origin);
@@ -311,8 +317,9 @@ export function createApp(
   app.use(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
-      if (c.req.header("origin") === undefined) return next();
-      return corsLayer(c, next);
+      if (c.req.header("origin") !== undefined) return corsLayer(c, next);
+      await next();
+      c.header("Vary", "Origin", { append: true });
     }),
   );
 

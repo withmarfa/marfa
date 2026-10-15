@@ -185,7 +185,25 @@ describe("the origin layer", () => {
     });
   });
 
-  it("sends nothing of its own to a request that carries no Origin", async () => {
+  it("reads no approvals for a request from the instance's own origin", async () => {
+    ctx = await createTestContext();
+    const store = ctx.storage.oauthProvider;
+    if (!store) throw new Error("the test context has no OAuth store");
+    const read = vi.spyOn(store, "listLiveGrantClients");
+    const own = new URL(ctx.config.authBaseUrl).origin;
+    const answered = await ctx.app.request("/items?limit=1", {
+      headers: { origin: own, authorization: `Bearer ${ctx.workingKey}` },
+    });
+    expect(answered.status).toBe(200);
+    expect(read).not.toHaveBeenCalled();
+    // The witness: the same request from another https origin reads them.
+    await ctx.app.request("/items?limit=1", {
+      headers: { origin: PAGE, authorization: `Bearer ${ctx.workingKey}` },
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a request that carries no Origin only that the answer varies by Origin", async () => {
     ctx = await createTestContext();
     await seedOauthBearer(ctx, ["core.note:read"], {
       webRedirectUri: `${PAGE}/callback`,
@@ -196,5 +214,8 @@ describe("the origin layer", () => {
     expect(read.status).toBe(200);
     expect(read.headers.get("access-control-allow-origin")).toBeNull();
     expect(read.headers.get("access-control-expose-headers")).toBeNull();
+    expect(
+      (read.headers.get("vary") ?? "").split(",").map((part) => part.trim()),
+    ).toContain("Origin");
   });
 });
