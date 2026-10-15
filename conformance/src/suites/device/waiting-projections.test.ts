@@ -97,58 +97,133 @@ it.each(["dead", "released"] as const)(
   },
 );
 
-it("shows an unsent dependent edit as soon as its dead create is released", async () => {
-  harness = await hydratedHarness("projection-release-dependents", {
-    rows: {},
-  });
-  const { device, server } = harness;
-  const create = await device.create({
-    type: "core.note",
-    properties: { title: "first", body: "held" },
-  });
-  expect(create.ok).toBe(true);
-  if (!create.ok) return;
-  const made = create.value.item_id!;
-  const edit = await device.update(made, {
-    version: 0,
-    properties: { title: "edited" },
-  });
-  expect(edit.ok).toBe(true);
-  if (!edit.ok) return;
-  scriptWrites(server, {
-    create: [{ kind: "json", status: 200, body: "unreadable answer" }],
-    read: [
-      answers.updated(
-        wireItem({
-          id: made,
-          version: 1,
-          properties: { title: "first", body: "held" },
-        }),
+it.each(["parent-first", "dependent-first"] as const)(
+  "sends an unsent dependent edit after release in %s order",
+  async (order) => {
+    harness = await hydratedHarness("projection-release-dependents", {
+      rows: {},
+    });
+    const { device, server } = harness;
+    const create = await device.create({
+      type: "core.note",
+      properties: { title: "first", body: "held" },
+    });
+    expect(create.ok).toBe(true);
+    if (!create.ok) return;
+    const made = create.value.item_id!;
+    const edit = await device.update(made, {
+      version: 0,
+      properties: { title: "edited" },
+    });
+    expect(edit.ok).toBe(true);
+    if (!edit.ok) return;
+    const acceptedCreate = wireItem({
+      id: made,
+      version: 1,
+      properties: { title: "first", body: "held" },
+    });
+    const acceptedEdit = wireItem({
+      id: made,
+      version: 2,
+      properties: { title: "edited", body: "held" },
+    });
+    let editAccepted = false;
+    scriptWrites(server, {
+      create: [
+        ...Array.from({ length: 5 }, () => ({
+          kind: "json" as const,
+          status: 200,
+          body: "unreadable answer",
+        })),
+        answers.created(acceptedCreate),
+      ],
+      update: [
+        () => {
+          editAccepted = true;
+          return answers.updated(acceptedEdit);
+        },
+      ],
+      read: [
+        () => answers.updated(editAccepted ? acceptedEdit : acceptedCreate),
+      ],
+    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      expect((await device.drain()).ok).toBe(true);
+    }
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    expect(queue.value.map((row) => row.verdict)).toEqual(["dead", "refused"]);
+    const before = await device.get(made);
+    expect(before.ok && before.value.properties.title).toBe("first");
+    expect(queue.value[1]?.depends_on).toEqual([create.value.id]);
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
       ),
-    ],
-  });
-  for (let attempt = 0; attempt < 5; attempt++) {
-    expect((await device.drain()).ok).toBe(true);
-  }
-  const queue = await device.queue();
-  expect(queue.ok).toBe(true);
-  if (!queue.ok) return;
-  expect(queue.value.map((row) => row.verdict)).toEqual(["dead", "refused"]);
-  const before = await device.get(made);
-  expect(before.ok && before.value.properties.title).toBe("first");
-  const released = await device.release({ id: create.value.id });
-  expect(released.ok && released.value).toBe(1);
-  const after = await device.get(made);
-  expect(after.ok && after.value.properties.title).toBe("edited");
-  expect(
-    server.requests.filter((request) => request.method === "PATCH"),
-  ).toHaveLength(0);
-  const releasedQueue = await device.queue();
-  expect(
-    releasedQueue.ok && releasedQueue.value.map((row) => row.verdict),
-    "the edit refused for its dead create was not released with it",
-  ).toEqual([null, null]);
-});
+    ).toHaveLength(5);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+    ).toHaveLength(0);
+    if (order === "dependent-first") {
+      const dependent = await device.release({ id: edit.value.id });
+      expect(dependent.ok && dependent.value).toBe(1);
+      const partial = await device.queue();
+      expect(partial.ok && partial.value.map((row) => row.verdict)).toEqual([
+        "dead",
+        null,
+      ]);
+    }
+    const released = await device.release({ id: create.value.id });
+    expect(released.ok && released.value).toBe(1);
+    const after = await device.get(made);
+    expect(after.ok && after.value.properties.title).toBe("edited");
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+    ).toHaveLength(0);
+    const releasedQueue = await device.queue();
+    expect(
+      releasedQueue.ok && releasedQueue.value.map((row) => row.verdict),
+      "the edit refused for its dead create was not released with it",
+    ).toEqual([null, null]);
+    const beforeSend = server.requests.length;
+    const drained = await device.drain();
+    expect(
+      drained.ok && drained.value.verdicts.map((row) => [row.id, row.verdict]),
+    ).toEqual([
+      [create.value.id, "accepted"],
+      [edit.value.id, "accepted"],
+    ]);
+    const sent = server.requests
+      .slice(beforeSend)
+      .filter(
+        (request) =>
+          request.method === "PATCH" ||
+          (request.method === "POST" && request.pathname === "/items"),
+      );
+    expect(sent.map((request) => [request.method, request.pathname])).toEqual([
+      ["POST", "/items"],
+      ["PATCH", `/items/${made}`],
+    ]);
+    expect(JSON.parse(sent[0]!.body)).toMatchObject({
+      id: made,
+      properties: { title: "first", body: "held" },
+    });
+    expect(JSON.parse(sent[1]!.body)).toMatchObject({
+      version: 1,
+      properties: { title: "edited" },
+    });
+    const settled = await device.queue();
+    expect(settled.ok && settled.value.map((row) => row.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    const visible = await device.get(made);
+    expect(
+      visible.ok && [visible.value.version, visible.value.properties],
+    ).toEqual([2, { title: "edited", body: "held" }]);
+  },
+);
 
 it("keeps a dead create visible through hydration", async () => {
   harness = await hydratedHarness("projection-dead-create", { rows: {} });

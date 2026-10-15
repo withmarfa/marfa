@@ -6,6 +6,7 @@ import {
   wireItem,
   withMetadata,
   wireEdge,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
 import { hydratedHarness, queuedEdit, scriptWrites } from "./harness.js";
@@ -2128,6 +2129,195 @@ describe("withdrawing a write that can never be sent", () => {
       "a write held for a withdrawn create was sent",
     ).toEqual([]);
   });
+
+  it.each(["withdrawn", "accepted"] as const)(
+    "settles a transitive edge dependency with its item create %s",
+    async (outcome) => {
+      harness = await hydratedHarness("class-withdraw-transitive", {
+        rows: held(),
+      });
+      const { device, server } = harness;
+      const created = await device.create({
+        type: "core.note",
+        properties: { title: "local", body: "local" },
+        version: 0,
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      if (!created.ok) return;
+      const local = created.value.item_id!;
+      const linked = await device.createEdge({
+        source: local,
+        target: HELD.id,
+        type: "references",
+        properties: { note: "original" },
+      });
+      expect(linked.ok, JSON.stringify(linked)).toBe(true);
+      if (!linked.ok) return;
+      const edgeId = linked.value.edge_id!;
+      const edited = queuedEdit(
+        await device.updateEdge(edgeId, {
+          version: 0,
+          properties: { note: "edited" },
+        }),
+      );
+      expect(edited.ok, JSON.stringify(edited)).toBe(true);
+      if (!edited.ok) return;
+      expect([
+        created.value.depends_on,
+        linked.value.depends_on,
+        edited.value.depends_on,
+      ]).toEqual([[], [created.value.id], [linked.value.id]]);
+      let edgeVersion = 0;
+      const edgeAnswer = (status: 200 | 201 = 200) =>
+        writeAnswers.edge(
+          {
+            id: edgeId,
+            source_id: local,
+            target_id: HELD.id,
+            version: edgeVersion,
+            properties: { note: edgeVersion === 1 ? "original" : "edited" },
+          },
+          status,
+        );
+      scriptWrites(server, {
+        // An unkeyed create cannot receive this refusal from the server; this isolates withdrawal classification.
+        create: [
+          outcome === "withdrawn"
+            ? refusal(
+                409,
+                "ancestor_unavailable",
+                "no snapshot of that version",
+              )
+            : answers.created(
+                wireItem({
+                  id: local,
+                  properties: { title: "local", body: "local" },
+                }),
+              ),
+        ],
+        read: [
+          outcome === "withdrawn"
+            ? refusal(404, "item_not_found", "Item not found")
+            : answers.updated(
+                wireItem({
+                  id: local,
+                  properties: { title: "local", body: "local" },
+                }),
+              ),
+        ],
+        edges: [
+          (request) => {
+            edgeVersion++;
+            return edgeAnswer(request.method === "POST" ? 201 : 200);
+          },
+        ],
+      });
+      server.copyAnswer("GET", /^\/edges\/[^/]+$/, () =>
+        edgeVersion === 0
+          ? refusal(404, "edge_not_found", "Edge not found")
+          : edgeAnswer(),
+      );
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (outcome === "accepted") {
+        expect(
+          drained.ok &&
+            drained.value.verdicts.map((row) => [row.id, row.verdict]),
+        ).toEqual([
+          [created.value.id, "accepted"],
+          [linked.value.id, "accepted"],
+          [edited.value.id, "accepted"],
+        ]);
+        const sent = server.requests.filter(
+          (request) =>
+            request.pathname.startsWith("/edges") && request.method !== "GET",
+        );
+        expect(
+          sent.map((request) => [request.method, request.pathname]),
+        ).toEqual([
+          ["POST", "/edges"],
+          ["PATCH", `/edges/${edgeId}`],
+        ]);
+        expect(JSON.parse(sent[0]!.body)).toMatchObject({
+          properties: { note: "original" },
+        });
+        expect(JSON.parse(sent[1]!.body)).toMatchObject({
+          version: 1,
+          properties: { note: "edited" },
+        });
+        const heldEdge = await device.edgesFrom(local);
+        expect(
+          heldEdge.ok &&
+            heldEdge.value.map((edge) => [edge.id, edge.properties]),
+        ).toEqual([[edgeId, { note: "edited" }]]);
+        return;
+      }
+      expect(
+        (await queueOf(harness)).map((row) => [
+          row.id,
+          row.verdict,
+          row.reason,
+        ]),
+      ).toEqual([
+        [created.value.id, "blocked", "ancestor_unavailable"],
+        [linked.value.id, "blocked", "awaiting_dependency"],
+        [edited.value.id, "blocked", "awaiting_dependency"],
+      ]);
+      expect((await device.get(local)).ok).toBe(true);
+      const before = await device.edgesFrom(local);
+      expect(
+        before.ok && before.value.map((edge) => [edge.id, edge.properties]),
+      ).toEqual([[edgeId, { note: "edited" }]]);
+      const sentBefore = server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      );
+      expect(sentBefore).toHaveLength(1);
+      expect(JSON.parse(sentBefore[0]!.body).id).toBe(local);
+      const withdrawn = await device.withdraw(created.value.id);
+      expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+        true,
+      );
+      const refused = await queueOf(harness);
+      expect(
+        refused.map((row) => [row.id, row.verdict, row.reason, row.depends_on]),
+      ).toEqual([
+        [
+          linked.value.id,
+          "refused",
+          "the create_item it waits for was withdrawn",
+          [created.value.id],
+        ],
+        [
+          edited.value.id,
+          "refused",
+          "the create_item it waits for was withdrawn",
+          [linked.value.id],
+        ],
+      ]);
+      const gone = await device.get(local);
+      expect(gone.ok ? "held" : gone.refusal.code).toBe("not_held");
+      const edges = await device.edgesFrom(local);
+      expect(edges.ok && edges.value).toEqual([]);
+      for (const row of [edited.value, linked.value]) {
+        const released = await device.release({ id: row.id });
+        expect(released.ok && released.value, JSON.stringify(released)).toBe(0);
+      }
+      const beforeDrain = server.requests.length;
+      expect((await device.drain()).ok).toBe(true);
+      expect(
+        server.requests
+          .slice(beforeDrain)
+          .filter((request) => request.method !== "GET"),
+      ).toEqual([]);
+      expect(
+        server.requests.filter(
+          (request) =>
+            request.pathname.startsWith("/edges") && request.method !== "GET",
+        ),
+      ).toEqual([]);
+      expect(await queueOf(harness)).toEqual(refused);
+    },
+  );
 
   it("clears with the answered rows those only a withdrawn write was keeping, but for one carrying content", async () => {
     const setup = await createHeldFor("class-withdraw-forget-held");

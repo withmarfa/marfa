@@ -292,7 +292,7 @@ When a drain that has not ended and has confirmed the server's instance comes to
 
 **Reason:** nothing that depended on a row the server never took is sent.
 
-**Tests:** `device/verdicts.test.ts › refuses the writes that were waiting on a create the server refused`, `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`.
+**Tests:** `device/verdicts.test.ts › refuses the writes that were waiting on a create the server refused`, `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`.
 
 ### `queue-and-verdicts/follows-write-ahead`
 
@@ -1080,7 +1080,7 @@ When a caller releases by its id a write `blocked` with the reason `awaiting_dep
 
 When a caller releases a write the drain refused without sending it, other than one refused because a write it waited for was withdrawn or discarded, a device MUST take it back to no verdict so the next drain sends it.
 
-**Tests:** `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`.
+**Tests:** `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`.
 
 ### `queue-and-verdicts/release-takes-dependants`
 
@@ -1088,7 +1088,7 @@ When a caller releases a write, a device MUST release with it every write the dr
 
 **Reason:** no caller would know to release them.
 
-**Tests:** `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`.
+**Tests:** `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`.
 
 ### `queue-and-verdicts/release-sent-refused`
 
@@ -1102,7 +1102,7 @@ If a caller releases a write the server refused, then a device MUST answer that 
 
 When a caller releases writes, a device MUST lay each of them back over the copy before the release returns.
 
-**Tests:** `device/waiting-projections.test.ts › shows an unsent dependent edit as soon as its dead create is released`, `› keeps a %s edit visible after a newer server row arrives`.
+**Tests:** `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`, `› keeps a %s edit visible after a newer server row arrives`.
 
 ### `queue-and-verdicts/withdraw-two-reasons`
 
@@ -1146,7 +1146,7 @@ When a caller withdraws a create, a device MUST refuse without sending every wri
 
 **Reason:** the row each names will never exist on the server.
 
-**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`.
+**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› settles a transitive edge dependency with its item create %s`.
 
 ### `queue-and-verdicts/withdrawn-never-released`
 
@@ -1154,7 +1154,7 @@ If a caller releases a write refused because a write it waited for was withdrawn
 
 **Reason:** released, it would wait on a write the queue no longer holds.
 
-**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
+**Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› settles a transitive edge dependency with its item create %s`, `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
 
 ### `queue-and-verdicts/withdraw-keeps-caught-up`
 

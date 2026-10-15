@@ -1474,23 +1474,73 @@ describe("the working copy belongs to one server", () => {
   it("opens a store under another key at the origin it is bound to", async () => {
     harness = await startHarness("origin-key");
     const { server, device } = harness;
-    scriptHydration(server, { head: "10" });
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "retained",
+              version: 1,
+              properties: { title: "before" },
+            },
+          },
+        ],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "retained",
+            version: 2,
+            properties: { title: "after" },
+          }),
+        ),
+      ]),
+    );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const before = await device.get("retained");
+    expect(
+      before.ok && [before.value.version, before.value.properties.title],
+    ).toEqual([1, "before"]);
+    expect(
+      server.requests.some(
+        (request) => request.headers.authorization === `Bearer ${KEY}`,
+      ),
+    ).toBe(true);
     const asked = server.requests.length;
-    const caught = await device.reopen({ key: "another-key" }).catchUp();
+    const reopened = device.reopen({ key: "another-key" });
+    const caught = await reopened.catchUp();
     expect(
       caught.ok,
-      `a store refused the key it was not hydrated under, so a rotated key strands its copy: ${JSON.stringify(caught)}`,
+      `a store refused the key it was not hydrated under, so a replaced key strands its copy: ${JSON.stringify(caught)}`,
     ).toBe(true);
-    // The witness: the catch-up went out under the other key.
+    expect(caught.ok && [caught.value.applied, caught.value.cursor]).toEqual([
+      1,
+      "11",
+    ]);
+    const requests = server.requests
+      .slice(asked)
+      .filter((request) => request.pathname !== "/");
+    const streams = requests.filter(
+      (request) => request.pathname === "/events",
+    );
+    expect(streams).toHaveLength(1);
+    expect(streams[0]!.headers["last-event-id"]).toBe("10");
     expect(
-      server.requests
-        .slice(asked)
-        .filter((request) => request.pathname !== "/")
-        .every(
-          (request) => request.headers.authorization === "Bearer another-key",
-        ),
+      requests.every(
+        (request) => request.headers.authorization === "Bearer another-key",
+      ),
     ).toBe(true);
+    const after = await reopened.get("retained");
+    expect(
+      after.ok && [after.value.version, after.value.properties.title],
+    ).toEqual([2, "after"]);
   });
 
   it("confirms a changed path prefix anonymously and refuses another instance there", async () => {
@@ -1527,17 +1577,40 @@ describe("the working copy belongs to one server", () => {
     scriptHydration(server, { head: "10" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
-    const file = readFileSync(device.store).toString("latin1");
-    // The control. Without it a store the search never reached, or one whose
-    // bytes are unreadable here, would report the key absent from anything.
     expect(
-      file,
-      "the store does not carry the origin it is bound to, so this file is not the one the device wrote and the search below proves nothing",
-    ).toContain(server.url.replace("http://", ""));
-    expect(
-      file.includes(KEY),
-      "the key is written into the store, so a copied file carries the credential with it",
-    ).toBe(false);
+      server.requests.some(
+        (request) => request.headers.authorization === `Bearer ${KEY}`,
+      ),
+      "the device never used the credential whose absence this fixture checks",
+    ).toBe(true);
+    const connection = new DatabaseSync(device.store);
+    try {
+      connection.exec("BEGIN");
+      connection.prepare("SELECT COUNT(*) FROM meta").get();
+      const created = await device.create({
+        type: "core.note",
+        properties: { title: "retained WAL", body: "retained WAL" },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      expect(existsSync(`${device.store}-wal`)).toBe(true);
+      expect(statSync(`${device.store}-wal`).size).toBeGreaterThan(32);
+      expect(existsSync(`${device.store}-shm`)).toBe(true);
+      const files = [device.store, `${device.store}-wal`, `${device.store}-shm`]
+        .filter((path) => existsSync(path))
+        .map((path) => ({ path, bytes: readFileSync(path) }));
+      expect(
+        Buffer.concat(files.map(({ bytes }) => bytes)).toString("latin1"),
+        "the inspected files do not carry the origin the device bound",
+      ).toContain(server.url.replace("http://", ""));
+      for (const { path, bytes } of files) {
+        expect(
+          bytes.includes(KEY),
+          `the credential was persisted in ${path}`,
+        ).toBe(false);
+      }
+    } finally {
+      connection.close();
+    }
   });
 
   it("opens a store to read without claiming the writer role, and is told when it saves", async () => {
