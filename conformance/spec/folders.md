@@ -2760,6 +2760,14 @@ If the rename that follows an item's title is refused, then a device MUST leave 
 
 **Tests:** `device/folders-placement.test.ts › keeps the placement at the old name when the rename for a new title is refused`.
 
+### `folders/title-rename-refused-once`
+
+When the file system refuses the rename that follows an item's title, a device MUST NOT try that rename again while the folder stays open and the item's title and placement are unchanged.
+
+**Reason:** a volume that refuses such renames refuses them every time, and each try moves the placement and back, which a watch would repeat at every pass.
+
+**Tests:** `device/folders-placement.test.ts › asks a volume that refused the rename for a new title once, not at every pass of a watch`.
+
 ### `folders/title-rename-numbered`
 
 When the name the device makes from a document's new title is taken by another file or by another item's placement, a device MUST rename the file to the first free name numbered as `folders/placement-collision-number` numbers it.

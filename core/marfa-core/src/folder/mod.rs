@@ -135,6 +135,10 @@ pub struct Folder {
     /// and when.
     unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
     permissions: std::sync::OnceLock<bool>,
+    /// Renames to follow a title that the file system refused, by item: the
+    /// path the file kept and the one refused, not tried again while both
+    /// stand, so a volume that refuses them is not asked at every pass.
+    refused_renames: std::sync::Mutex<HashMap<String, (String, String)>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -319,6 +323,7 @@ impl Folder {
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
+            refused_renames: std::sync::Mutex::new(HashMap::new()),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -402,6 +407,7 @@ impl Folder {
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
+            refused_renames: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -434,6 +440,7 @@ impl Folder {
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
+            refused_renames: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -4792,6 +4799,9 @@ impl Folder {
             drop(conn);
             if placed {
                 self.place(&item.id, &bound.path, withheld)?;
+                if let Ok(mut refused) = self.refused_renames.lock() {
+                    refused.insert(item.id.clone(), (bound.path.clone(), want.to_string()));
+                }
             }
             return Ok(None);
         }
@@ -5248,7 +5258,11 @@ impl Folder {
         if !self.follows_title(&bound.path, was, title) {
             return None;
         }
-        self.title_path(&item.id, &bound.path, title, renaming)
+        let path = self.title_path(&item.id, &bound.path, title, renaming)?;
+        let refused = self.refused_renames.lock().is_ok_and(|refused| {
+            refused.get(&item.id) == Some(&(bound.path.clone(), path.clone()))
+        });
+        (!refused).then_some(path)
     }
 
     #[allow(clippy::too_many_arguments)]

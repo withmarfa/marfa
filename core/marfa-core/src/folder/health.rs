@@ -766,6 +766,7 @@ mod tests {
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
+            refused_renames: std::sync::Mutex::new(Default::default()),
             root_dir,
             state_dir,
             store_mark,

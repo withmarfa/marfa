@@ -2936,7 +2936,7 @@ describe("where a file sits", () => {
     });
 
     it("keeps a save made to the moved file under a numbered name where another file took its path meanwhile", async () => {
-      await notePlaced("title-old-buffer-kept-beside");
+      const { held } = await notePlaced("title-old-buffer-kept-beside");
       const buffer = read(harness!, "Plan.md");
       await retitle(harness!, "Roadmap");
       expect((await harness!.folder.push()).ok).toBe(true);
@@ -2957,9 +2957,17 @@ describe("where a file sits", () => {
       expect(
         scanned.value.flagged.find((file) => file.path === "Plan.md")?.reason,
       ).toContain("Roadmap (2).md");
-      // A later push keeps it, as a file the person made.
+      // A later push keeps it as the note's file, holding the person's save,
+      // and the file that took the path meanwhile becomes an item of its own.
       expect((await harness!.folder.push()).ok).toBe(true);
       expect(read(harness!, "Roadmap (2).md")).toContain("saved meanwhile");
+      expect(idIn(harness!, "Roadmap (2).md")).toBe(NOTE);
+      expect(String(held.get(NOTE)?.properties.body)).toContain(
+        "saved meanwhile",
+      );
+      const [appeared] = sentCreates(harness!);
+      expect(appeared?.id).not.toBe(NOTE);
+      expect(idIn(harness!, "Roadmap.md")).toBe(appeared?.id);
     });
 
     it("holds an old buffer until the person changes that file, whatever the moved file does", async () => {
@@ -3037,6 +3045,38 @@ describe("where a file sits", () => {
       expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
         "Roadmap.md",
       );
+    });
+
+    it("asks a volume that refused the rename for a new title once, not at every pass of a watch", async () => {
+      const { edges } = await notePlaced("title-rename-refused-watch");
+      await retitle(harness!, "Roadmap");
+      const toNewName = () =>
+        harness!.server.requests.filter(
+          (request) =>
+            request.method === "PATCH" &&
+            request.pathname.startsWith("/edges/") &&
+            request.body.includes("Roadmap.md"),
+        ).length;
+      const watching = await withFault(
+        "rename-new-unsupported=Roadmap.md",
+        async () => harness!.folder.watchText(),
+      );
+      try {
+        // The witness: the watch tried the rename, and put the placement back.
+        await vi.waitFor(() => expect(toNewName()).toBeGreaterThan(0), {
+          timeout: 20_000,
+          interval: 100,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        expect(
+          toNewName(),
+          "a watch tried a rename the volume refuses at every pass, moving the placement and back each time",
+        ).toBe(1);
+      } finally {
+        await watching.stop();
+      }
+      expect(names(harness!)).toEqual(["Plan.md"]);
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe("Plan.md");
     });
 
     it("keeps the name of a note whose name was not its title", async () => {
