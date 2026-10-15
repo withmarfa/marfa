@@ -676,7 +676,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * `created_at` and `updated_at` are Unix seconds (`integer
    * mode:timestamp`), so the cutoff is compared in seconds.
    */
-  async deleteGrantlessClientsOlderThan(
+  async deleteIdleGrantlessClients(
     cutoffIso: string,
     limit: number,
   ): Promise<number> {

@@ -1967,10 +1967,7 @@ export interface OauthProviderStore {
    * so the audit trail never names a client that is gone. Returns the
    * number of rows deleted.
    */
-  deleteGrantlessClientsOlderThan(
-    cutoffIso: string,
-    limit: number,
-  ): Promise<number>;
+  deleteIdleGrantlessClients(cutoffIso: string, limit: number): Promise<number>;
   /**
    * Records that an approval page offered `clientId` to the signed-in owner,
    * so the reaper leaves it for a whole retention window from now: a

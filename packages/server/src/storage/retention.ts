@@ -386,7 +386,7 @@ export const DCR_REAP_BATCH = 200;
  * lets anyone register an `auth_oauth_client` row; without a reaper those
  * rows accumulate forever (DB growth) — most are abandoned registrations a
  * user never consented to. Each run deletes, a batch at a time, every
- * client that `OauthProviderStore.deleteGrantlessClientsOlderThan` finds
+ * client that `OauthProviderStore.deleteIdleGrantlessClients` finds
  * idle past the retention window and grantless.
  *
  * Conservative: any single grant signal spares the row, so a client a user
@@ -422,7 +422,7 @@ export class DcrClientCleaner {
     for (;;) {
       const batch = await runAuditedTransaction(
         this.storage,
-        () => provider.deleteGrantlessClientsOlderThan(cutoff, DCR_REAP_BATCH),
+        () => provider.deleteIdleGrantlessClients(cutoff, DCR_REAP_BATCH),
         (count) =>
           count > 0
             ? {

@@ -61,7 +61,7 @@ const WRITES: Record<string, string> = {
   WebhookDeliveryStore:
     "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cleanup",
   OauthProviderStore:
-    "widenClientScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteGrantlessClientsOlderThan markClientOffered updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
+    "widenClientScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteIdleGrantlessClients markClientOffered updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
   AuditStore: "log cleanup",
   EventLogStore: "append cleanup",
   IdempotencyStore: "claim takeOverExpiredClaim complete release cleanup",

@@ -453,7 +453,7 @@
     "calls": {
       "AuthSessionStore.deleteExpired": 1,
       "KeyStore.deleteDeadKeysOlderThan": 1,
-      "OauthProviderStore.deleteGrantlessClientsOlderThan": 1,
+      "OauthProviderStore.deleteIdleGrantlessClients": 1,
       "RateLimitStore.cleanup": 1,
       "runAuditedTransaction": 4,
       "writeItem": 1
