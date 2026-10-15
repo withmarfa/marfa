@@ -199,5 +199,10 @@ describe("the control socket's tests under Full CI", () => {
         true,
       );
     }
+    const serverConfig = readFileSync(
+      resolve(import.meta.dirname, "..", "packages/server/vitest.config.ts"),
+      "utf8",
+    );
+    expect(serverConfig).not.toMatch(/\b(include|exclude)\s*:/);
   });
 });
