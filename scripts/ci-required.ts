@@ -234,8 +234,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^deploy\//, []],
 
-  // The core's catalog is written from the shipped types, the registry that
-  // lists them and the server's role resolution.
   // The control socket's tests and the global setup and test settings they
   // run under.
   [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
@@ -243,6 +241,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
     [...SERVER, "control-socket"],
   ],
+  // The core's catalog is written from the shipped types, the registry that
+  // lists them and the server's role resolution.
   [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
   [/^packages\/shared\//, [...SERVER, "clients-freshness"]],
   [

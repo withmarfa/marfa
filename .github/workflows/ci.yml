@@ -806,7 +806,7 @@ jobs:
     uses: ./.github/workflows/core-live.yml
 
   # The private control socket's tests on macOS, the only run of them there.
-  # Linux runs them in `CI (SQLite)`, which installs the ACL tool they read.
+  # Linux runs them in `CI (SQLite)`, which installs the `getfacl` they call.
   control-socket:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.control-socket != 'false') }}

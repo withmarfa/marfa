@@ -136,8 +136,8 @@ describe("the core's live checks under Full CI", () => {
     expect(jobs.core).toEqual({ name: "Core", uses: CALLED });
     expect(Object.keys(jobs)).toEqual(["core", "report-failure"]);
     expect(needsOf(jobs["report-failure"])).toEqual(["core"]);
-    // No group: the only event that cancelled a superseded run was a pull
-    // request's, and a push, a schedule and a dispatch never are.
+    // No group: only a pull request's run is ever cancelled, and none starts
+    // this workflow.
     expect(concurrency).toBeUndefined();
   });
 
