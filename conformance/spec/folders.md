@@ -4154,7 +4154,7 @@ When a `folders push` without `--send-only` follows a send-only run, the CLI MUS
 
 When a folder's copy has not hydrated, the CLI MUST hydrate it before `folders push --send-only` sends.
 
-**Reason:** a drain on a copy that has not hydrated is refused with `no_cursor`; hydrating writes no file.
+**Reason:** a drain on a copy that has not hydrated is refused with `no_cursor`; hydrating writes only the folder's store, never an item's file.
 
 **Tests:** `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
 
