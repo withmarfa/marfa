@@ -18,7 +18,7 @@ use super::Folder;
 use super::health::{Problem, Snapshot};
 use super::landing::land_at;
 use super::registry::{Registry, open_lock, resolved};
-use super::watch::{WatchError, WatchEvent};
+use super::watch::{Raise, WatchError, WatchEvent};
 use crate::directory::Directory;
 use crate::store;
 
@@ -138,14 +138,6 @@ pub(super) trait Observed: Sync {
 impl Observed for Folder {
     fn observed(&self) -> Option<Snapshot> {
         self.observed_health()
-    }
-}
-
-struct Raise<'a>(&'a AtomicBool);
-
-impl Drop for Raise<'_> {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
     }
 }
 

@@ -390,7 +390,7 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
 }
 
 /// Raises its flag when dropped, unwinding included.
-struct Raise<'a>(&'a AtomicBool);
+pub(super) struct Raise<'a>(pub(super) &'a AtomicBool);
 
 impl Drop for Raise<'_> {
     fn drop(&mut self) {
