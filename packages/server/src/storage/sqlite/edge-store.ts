@@ -60,13 +60,17 @@ function clampLimit(n: number | undefined): number {
  * presence of one it admits, so an edge whose source row is gone keeps the
  * reading the route gives it (`sourceTypeReadable`). The source item's state
  * does not enter: an item in the bin is judged by its source like any other.
+ *
+ * An item with no `source` in a covered type is refused, as the item listing
+ * refuses it: the predicate is NULL for it, and `COALESCE` reads NULL as
+ * refused so `NOT` does not turn it into admitted.
  */
 function sourceFilterCondition(
   filter: SourceFilterSettings | undefined,
 ): SQL | undefined {
   const admitted = sourceFilterToSql(filter, items.type, items.source);
   if (!admitted) return undefined;
-  return sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.id} = ${edges.source_id} AND NOT ${admitted})`;
+  return sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.id} = ${edges.source_id} AND NOT COALESCE(${admitted}, 0))`;
 }
 
 function typeFilter(value: string | string[] | undefined) {

@@ -13,6 +13,7 @@
  * at all would pass.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -587,6 +588,36 @@ describe("the edges an item read carries", () => {
     expect(blockIds(wholeItems[0]?.edges)).toHaveLength(1);
   });
 
+  it("applies to the edges a lookup by id carries", async () => {
+    const shown = await createItem(shownWriter);
+    const hidden = await createItem(hiddenWriter);
+    const target = await createItem(shownWriter);
+    const shownEdge = await createEdge(shownWriter, shown, target);
+    const hiddenEdge = await createEdge(hiddenWriter, hidden, target);
+
+    const lookup = async (key: string, ids: string[]) => {
+      const res = await request(ctx.app, "POST", "/items/lookup", {
+        key,
+        body: { type: "core.note", ids, include: ["edges"] },
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+      return ((await res.json()) as { data: { id: string; edges?: Blocks }[] })
+        .data;
+    };
+
+    // The witness: with no filter the hidden item carries its edge.
+    expect(blockIds((await lookup(unfiltered, [hidden]))[0]?.edges)).toEqual([
+      hiddenEdge,
+    ]);
+
+    const rows = await lookup(filtered, [shown, hidden]);
+    expect(blockIds(rows.find((i) => i.id === shown)?.edges)).toEqual([
+      shownEdge,
+    ]);
+    expect(rows.find((i) => i.id === hidden)).toBeDefined();
+    expect(rows.find((i) => i.id === hidden)?.edges ?? {}).toEqual({});
+  });
+
   it("applies to the edges the answer to a write carries", async () => {
     const source = await createItem(hiddenWriter);
     const target = await createItem(shownWriter);
@@ -609,6 +640,35 @@ describe("the edges an item read carries", () => {
     // The witness: the same write by a key with no filter answers with the edge.
     expect(blockIds(await patch(unfiltered))).toEqual([edge]);
     expect(await patch(filtered)).toEqual({});
+  });
+
+  it("applies to the edges the answer to a create carries", async () => {
+    const target = await createItem(shownWriter);
+    const create = async (key: string): Promise<Blocks | undefined> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key,
+        body: {
+          type: "core.note",
+          properties: { body: "with an edge" },
+          edges: { about: [target] },
+        },
+      });
+      expect(res.status, await res.clone().text()).toBe(201);
+      return ((await res.json()) as { item: { edges?: Blocks } }).item.edges;
+    };
+
+    // The witness: a key with no filter is answered with the edge it made.
+    expect(Object.keys((await create(unfiltered)) ?? {})).toEqual(["about"]);
+    // A filter that admits the key's own source keeps it, so the answer below
+    // is the filter's refusal of the new item and not of every create.
+    const admitsOwn = await mintKey("admits-own", `admits-own-${tag}`, {
+      types: ["core.note"],
+      sources: [`admits-own-${tag}`],
+    });
+    expect(Object.keys((await create(admitsOwn)) ?? {})).toEqual(["about"]);
+    // `filtered` admits only another source, so the item it creates is hidden
+    // from it and so are the edges it holds.
+    expect(await create(filtered)).toEqual({});
   });
 
   it("fills a block to its cap with admitted edges and continues it at the listing", async () => {
@@ -639,6 +699,53 @@ describe("the edges an item read carries", () => {
     expect(
       [...(block?.data ?? []), ...rest.data].map((e) => e.id).sort(),
     ).toEqual([...shownIds].sort());
+  });
+});
+
+describe("a source item with no source", () => {
+  it("is judged as the item listing judges it: refused by a filter that covers its type", async () => {
+    const orphan = (
+      await ctx.storage.runInTransaction(() =>
+        itemWrites(ctx.storage).create({
+          writer: null,
+          type: "core.note",
+          properties: { body: "written by the platform" },
+        }),
+      )
+    ).id;
+    const target = await createItem(shownWriter);
+    const edge = await createEdge(shownWriter, orphan, target);
+
+    // The witness: the item listing hides the item from the filtered key and
+    // shows it to one with no filter, and the unfiltered edge listing holds
+    // the edge.
+    const listed = async (key: string): Promise<string[]> => {
+      const found: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const res = await request(
+          ctx.app,
+          "GET",
+          `/items?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          { key },
+        );
+        expect(res.status, await res.clone().text()).toBe(200);
+        const body = (await res.json()) as {
+          data: { id: string }[];
+          next_cursor: string | null;
+        };
+        found.push(...body.data.map((i) => i.id));
+        cursor = body.next_cursor;
+      } while (cursor);
+      return found;
+    };
+    expect(await listed(unfiltered)).toContain(orphan);
+    expect(await listed(filtered)).not.toContain(orphan);
+    expect(await ids(unfiltered, "/edges")).toContain(edge);
+
+    expect(await ids(filtered, "/edges")).not.toContain(edge);
+    expect(await ids(filtered, `/items/${target}/backrefs`)).toEqual([]);
+    expect(await ids(filtered, `/items/${orphan}/edges`)).toEqual([]);
   });
 });
 

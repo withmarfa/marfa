@@ -55,7 +55,11 @@ import {
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
-import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
+import {
+  assertFilterEdgeTermsReadable,
+  edgeListingSourceFilter,
+} from "./_edge-visibility.js";
+import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -1608,13 +1612,17 @@ export function itemRoutes(storage: Storage) {
       (a, b) =>
         b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
     );
+    // The new item is the source of every edge it was created with, so the
+    // source filter decides them all at once, as it does for the same block
+    // on a read.
     const itemWithEdges = {
       ...item,
-      edges: groupAndCap(
-        orderedEdges,
-        HYDRATE_PER_TYPE_CAP,
-        ITEM_EDGES_CURSOR_KEY,
-      ),
+      edges: sourceFilterIncludesItem(
+        await edgeListingSourceFilter(storage, key),
+        item,
+      )
+        ? groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP, ITEM_EDGES_CURSOR_KEY)
+        : {},
     };
 
     return c.json(

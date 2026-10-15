@@ -444,6 +444,67 @@ describe("the source filter on the edges an item read carries", () => {
     expect(about(whole.data.items[0]?.edges)).toEqual([hiddenEdge]);
   });
 
+  it("applies to the edges a lookup carries", async () => {
+    const shown = await note(shownWriter);
+    const hidden = await note(hiddenWriter);
+    const target = await note(shownWriter);
+    const shownEdge = await edge(shownWriter, shown, target);
+    const hiddenEdge = await edge(hiddenWriter, hidden, target);
+
+    const found = await filtered.lookupItems({
+      type: "core.note",
+      ids: [shown, hidden],
+      include: ["edges"],
+    });
+    expect(found.status, JSON.stringify(found.error)).toBe(200);
+    expect(about(found.data.data.find((i) => i.id === shown)?.edges)).toEqual([
+      shownEdge,
+    ]);
+    // Read by id, so the item the filter hides is answered, without its edges.
+    expect(
+      found.data.data.find((i) => i.id === hidden),
+      "a lookup by id leaves out an item the filter hides",
+    ).toBeDefined();
+    expect(about(found.data.data.find((i) => i.id === hidden)?.edges)).toEqual(
+      [],
+    );
+
+    // The witness: with no filter the same lookup carries the hidden item's edge.
+    const whole = await unfiltered.lookupItems({
+      type: "core.note",
+      ids: [hidden],
+      include: ["edges"],
+    });
+    expect(about(whole.data.data[0]?.edges)).toEqual([hiddenEdge]);
+  });
+
+  it("applies to the edges the answer to a create carries", async () => {
+    const target = await note(shownWriter);
+    const create = async (writer: MarfaClient) => {
+      const r = await writer.createItem({
+        type: "core.note",
+        properties: { body: `with an edge ${ctx.runId}` },
+        edges: { [edgeType]: [target] },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return about(r.data.item.edges);
+    };
+
+    // The witness: a key with no filter is answered with the edge it made.
+    expect(await create(unfiltered)).toHaveLength(1);
+    // A filter that admits the key's own source keeps it, so the answer below
+    // is the filter's refusal of the new item and not of every create.
+    const admitsOwn = await mintKey("admits-own", `${ctx.source}-admits-own`, {
+      types: ["core.note"],
+      sources: [`${ctx.source}-admits-own`],
+    });
+    expect(await create(admitsOwn)).toHaveLength(1);
+    // `filtered` admits only another source, so the item it creates is hidden
+    // from it, and so are the edges the item holds.
+    expect(await create(filtered)).toEqual([]);
+  });
+
   it("applies to the edges the answer to a write carries", async () => {
     const source = await note(hiddenWriter);
     const target = await note(shownWriter);

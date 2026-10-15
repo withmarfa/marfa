@@ -1589,11 +1589,11 @@ When `GET /edges` meets an edge whose source item's type or whose edge type the 
 
 ### `edges/read-source-filter`
 
-Where a source filter applies to the key, the server MUST leave an edge out of `GET /edges`, `GET /items/{id}/edges` and `GET /items/{id}/backrefs` when the filter leaves out its source item, and not when it leaves out only its target item.
+Where a source filter applies to the key, the server MUST leave an edge out of `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/bulk-get`, `POST /items/lookup` and the answer to a create or an update of an item carry, when the filter leaves out its source item, and not when it leaves out only its target item.
 
-**Reason:** an edge is a statement its source makes about its target (`edges/target-named`), so the source decides where the statement shows. The filter narrows a listing and not a read by id (`types/source-filter-by-id`).
+**Reason:** an edge is a statement its source makes about its target (`edges/target-named`), so the source decides where the statement shows. A block is the first page of the listing it continues at, so it holds what that listing holds. The filter narrows what a read returns and not the item or edge a read by id names (`types/source-filter-by-id`), so an item the filter leaves out is still read by id, and is answered with none of its own outbound edges, as `GET /items/{id}/edges` answers none. The `neighbors` an item read carries are the far ends of these blocks (`edges/neighbors`), so an edge left out brings no neighbor.
 
-**Tests:** `compliance/edge-source-filter.test.ts › decides an edge on GET /edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/backrefs by the source of its source item, whatever the source of its target`, `› lists the edges of every source a filter names that names several, and no other`.
+**Tests:** `compliance/edge-source-filter.test.ts › decides an edge on GET /edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/backrefs by the source of its source item, whatever the source of its target`, `› lists the edges of every source a filter names that names several, and no other`, `› leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target`, `› judges the outbound edges of an item read by the source of that item, whatever the source of their targets`, `› applies to the edges an item listing and a bulk read by id carry`, `› applies to the edges a lookup carries`, `› applies to the edges the answer to a write carries`, `› applies to the edges the answer to a create carries`.
 
 ### `edges/read-source-filter-bin`
 
@@ -1603,27 +1603,11 @@ While the source item of an edge is in the bin, the server MUST judge the edge u
 
 ### `edges/read-source-filter-page`
 
-If a source filter leaves out an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`.
+If a source filter leaves out an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`, or against the cap of a block that an item read carries.
 
-**Reason:** a caller stops on a `next_cursor` of `null` and not on a short page, so a filter that cut a page after the fact would hand back pages of a few edges, or none, for a filter that leaves most of a listing out.
+**Reason:** a caller stops on a `next_cursor` of `null` and not on a short page or block, so one cut before the filter would hand back a fraction of its size, or none, while the listing it continues at held more.
 
-**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`.
-
-### `edges/read-source-filter-hydrated`
-
-Where a source filter applies to the key, the server MUST leave an edge out of the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/bulk-get` and the answer to a write of an item carry when the filter leaves out its source item, and not when it leaves out only its target item.
-
-**Reason:** a block is the first page of the listing it continues at, so it holds what that listing holds. The item itself is read by id and the filter does not narrow that (`types/source-filter-by-id`), so an item the filter leaves out is answered with none of its own outbound edges, as `GET /items/{id}/edges` answers none. The `neighbors` an item read carries are the far ends of these blocks (`edges/neighbors`), so an edge left out brings no neighbor.
-
-**Tests:** `compliance/edge-source-filter.test.ts › leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target`, `› judges the outbound edges of an item read by the source of that item, whatever the source of their targets`, `› applies to the edges an item listing and a bulk read by id carry`, `› applies to the edges the answer to a write carries`.
-
-### `edges/read-source-filter-block`
-
-If a source filter leaves out an edge, then the server MUST NOT count the edge against the cap of a block that an item read carries.
-
-**Reason:** a block that took the cap before the filter would hold a fraction of it while the listing it continues at held more, and a caller stops on a block with no `next_cursor`.
-
-**Tests:** `compliance/edge-source-filter.test.ts › fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`.
+**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`.
 
 ### `edges/read-list-short`
 
