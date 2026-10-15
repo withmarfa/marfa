@@ -434,7 +434,50 @@ mod tests {
             &[field("language", "string")],
         );
         assert!(reformatted.contains("different format"), "{reformatted}");
+        let revalued = refusal(
+            "user.child",
+            Some("core.task"),
+            &[ScaffoldField {
+                enum_values: vec!["low".into(), "high".into()],
+                ..field("priority", "enum")
+            }],
+        );
+        assert!(revalued.contains("different enum_values"), "{revalued}");
+        let retyped_items = refusal(
+            "user.child",
+            Some("core.message"),
+            &[ScaffoldField {
+                items_type: Some("url".into()),
+                ..field("to", "array")
+            }],
+        );
+        assert!(
+            retyped_items.contains("different items_type"),
+            "{retyped_items}"
+        );
         // Witness: the same fields, restated as the parent has them or left out, are taken.
+        scaffold_type(
+            "user.child",
+            Some("core.task"),
+            None,
+            &[ScaffoldField {
+                enum_values: ["low", "medium", "high", "urgent"]
+                    .map(String::from)
+                    .to_vec(),
+                ..field("priority", "enum")
+            }],
+        )
+        .unwrap();
+        scaffold_type(
+            "user.child",
+            Some("core.message"),
+            None,
+            &[ScaffoldField {
+                items_type: Some("string".into()),
+                ..field("to", "array")
+            }],
+        )
+        .unwrap();
         scaffold_type(
             "user.child",
             Some("core.note"),
