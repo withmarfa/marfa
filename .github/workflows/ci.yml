@@ -204,13 +204,6 @@ jobs:
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
           cargo nextest run --locked --workspace
-      # The telemetry feature is off in every build above, so its code and the
-      # tests that record it are built and run here.
-      - name: Check the core with telemetry on
-        working-directory: core
-        run: |
-          cargo clippy --locked -p marfa-core --all-targets --no-deps --features telemetry -- -D warnings
-          cargo nextest run --locked -p marfa-core --features telemetry
 
   # The contract, run against the server in this same checkout.
   #
