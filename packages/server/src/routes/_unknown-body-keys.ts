@@ -31,6 +31,7 @@
  * gains a parameter, the list does not, and a valid parameter starts
  * answering 400. Reading the shape off the schema cannot drift.
  */
+import type { z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { RESERVED_CLIENT_PREFIX } from "../middleware/undeclared-query-keys.js";
 
@@ -134,4 +135,26 @@ export function refuseUnknownBodyKeys(
       `"${RESERVED_CLIENT_PREFIX}", which is always ignored.`,
     { unknown_body_fields: unknown },
   );
+}
+
+/**
+ * Refuse the keys a bulk entry sent that its schema does not declare.
+ *
+ * Judged by the door rather than by the request validator, so the refusal
+ * is an entry's and `atomic` decides what it does to the page. Parsed
+ * against a strict copy of the entry's schema, so it is worded as the
+ * validator words an undeclared key on a strict body such as `POST /items`.
+ */
+export function undeclaredEntryKeyRefusal(
+  entry: unknown,
+  strictEntrySchema: z.ZodType,
+): MarfaError | null {
+  const parsed = strictEntrySchema.safeParse(entry);
+  if (parsed.success) return null;
+  return new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
+    errors: parsed.error.issues.map((i) => ({
+      path: i.path.join("."),
+      message: i.message,
+    })),
+  });
 }

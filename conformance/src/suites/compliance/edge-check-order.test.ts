@@ -172,6 +172,39 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("invalid_id");
   });
 
+  it("refuses an undeclared key after a missing field and before a malformed id", async () => {
+    const target = await note();
+    const missing = await client.rawRequest("/edges", {
+      method: "POST",
+      body: { source_id: "not-an-id", target_id: target, weight: 5 },
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.code).toBe("missing_required_field");
+
+    const undeclared = await client.rawRequest("/edges", {
+      method: "POST",
+      body: {
+        source_id: "not-an-id",
+        target_id: target,
+        edge_type: "about",
+        weight: 5,
+      },
+    });
+    expect(undeclared.status).toBe(400);
+    expect(undeclared.error?.error.code).toBe("validation_error");
+    expect(JSON.stringify(undeclared.error?.error.details)).toContain("weight");
+
+    // The witness: without the undeclared key, the malformed id is refused
+    // for itself.
+    const alone = await client.createEdge({
+      source_id: "not-an-id",
+      target_id: target,
+      edge_type: "about",
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("invalid_id");
+  });
+
   it("answers a source in the bin as missing before it asks for write on the source's type", async () => {
     const reader = await keyWith({ "core.note": "read" }, { about: "write" });
     const source = await note();

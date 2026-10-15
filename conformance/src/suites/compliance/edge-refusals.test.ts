@@ -73,7 +73,49 @@ async function keyClient(
   return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
 }
 
+function messages(details: unknown): string {
+  return (
+    (details as { errors?: { message: string }[] } | undefined)?.errors ?? []
+  )
+    .map((e) => e.message)
+    .join(" ");
+}
+
 describe("POST /edges refusals", () => {
+  it("refuses a body key the operation does not declare, naming each one, and creates nothing", async () => {
+    const a = await makeItem("undeclared-a");
+    const b = await makeItem("undeclared-b");
+    const refused = await client.rawRequest<unknown>("/edges", {
+      method: "POST",
+      body: {
+        source_id: a,
+        target_id: b,
+        edge_type: "about",
+        weight: 5,
+        data: {},
+      },
+    });
+    expect(
+      refused.status,
+      "a create naming fields the operation does not declare was answered as success",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(messages(refused.error?.error.details)).toContain('"weight"');
+    expect(messages(refused.error?.error.details)).toContain('"data"');
+    const none = await client.listItemEdges(a, { edge_type: "about" });
+    expect(none.ok).toBe(true);
+    expect(none.data.data, "the refused create stored an edge anyway").toEqual(
+      [],
+    );
+
+    // The witness: the same body without the undeclared keys is created, and
+    // a key inside `properties` is the edge type's, so it is kept.
+    const edge = await makeEdge(a, b, "about", { weight: 5 });
+    expect(edge.properties).toEqual({ weight: 5 });
+    const one = await client.listItemEdges(a, { edge_type: "about" });
+    expect(one.data.data.map((e) => e.id)).toEqual([edge.id]);
+  });
+
   it("refuses a second edge naming a triple one already holds as a duplicate", async () => {
     const a = await makeItem("dup-a");
     const b = await makeItem("dup-b");

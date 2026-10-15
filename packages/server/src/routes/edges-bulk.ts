@@ -68,6 +68,7 @@ import {
 } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 import { requestBlobProof } from "./_blob-reach.js";
+import { undeclaredEntryKeyRefusal } from "./_unknown-body-keys.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -109,6 +110,10 @@ const BulkEdgeInputItemSchema = z
   })
   .describe("One edge to create or update.");
 
+const StrictBulkEdgeInputItemSchema = z.strictObject(
+  BulkEdgeInputItemSchema.shape,
+);
+
 // ---------------------------------------------------------------------------
 // Route definition
 // ---------------------------------------------------------------------------
@@ -127,11 +132,11 @@ const edgesBulkRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             edges: z
               .array(BulkEdgeInputItemSchema)
               .describe(
-                "The entries to write, at most 5,000. The items they join must already exist.",
+                "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key.",
               ),
             mode: z
               .enum(["upsert", "create_only"])
@@ -165,7 +170,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+        "- `validation_error`: the body is malformed, has an undeclared key, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry lacks `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is that refusal's own.",
     },
     401: {
       content: {
@@ -265,9 +270,27 @@ async function processBulkEdge(
     mayTell: (edge: Edge) => Promise<boolean>;
     /** What the credential has proved of the digests an entry sends. */
     proof: NonNullable<BlobProof>;
+    /** The refusal of the keys the entry sent and does not declare. */
+    undeclared: MarfaError | null;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
   const { mode, checkEdgeWrite, mayRead, mayTell, proof } = options;
+
+  if (options.undeclared) {
+    return {
+      result: {
+        index,
+        outcome: "errored",
+        error: {
+          code: options.undeclared.code,
+          message: options.undeclared.message,
+          ...(options.undeclared.details && {
+            details: options.undeclared.details,
+          }),
+        },
+      },
+    };
+  }
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -553,6 +576,13 @@ export function edgesBulkRoutes(storage: Storage) {
       );
     }
 
+    // The validator has already stripped what the entries do not declare,
+    // so their keys are read from the body as sent.
+    const sent = await c.req.json<{ edges: unknown[] }>();
+    const undeclared = sent.edges.map((entry) =>
+      undeclaredEntryKeyRefusal(entry, StrictBulkEdgeInputItemSchema),
+    );
+
     const operationId = generateId();
     const run = async (): Promise<BulkEdgeResult[]> => {
       // In atomic mode, judge every entry's ids and write gates before any
@@ -564,6 +594,18 @@ export function edgesBulkRoutes(storage: Storage) {
       // over a refusal whose cause is a permission it lacks.
       if (atomic) {
         for (const [i, raw] of rawEdges.entries()) {
+          const refusal = undeclared[i];
+          if (refusal) {
+            throw bulkAtomicRollback(
+              i,
+              {
+                code: refusal.code,
+                message: refusal.message,
+                details: refusal.details,
+              },
+              "edge",
+            );
+          }
           const shape = !isValidId(raw.source_id)
             ? `Invalid source_id: ${raw.source_id}`
             : !isValidId(raw.target_id)
@@ -610,6 +652,7 @@ export function edgesBulkRoutes(storage: Storage) {
             mayRead,
             mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),
             proof,
+            undeclared: undeclared[i] ?? null,
           });
           const written = processed.created ?? processed.updated;
           if (written) {

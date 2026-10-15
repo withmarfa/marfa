@@ -100,6 +100,7 @@ import {
 import {
   refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
+  undeclaredEntryKeyRefusal,
 } from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 
@@ -186,24 +187,7 @@ const BulkInputItemSchema = z.object({
     ),
 });
 
-/**
- * An entry's own undeclared keys are judged here rather than by the request
- * validator, so they refuse the entry as any other entry refusal does: the
- * page under `atomic`, the entry alone otherwise. Strict parsing words the
- * refusal as `POST /items` words it.
- */
 const StrictBulkInputItemSchema = z.strictObject(BulkInputItemSchema.shape);
-
-function undeclaredEntryKeys(entry: unknown): MarfaError | null {
-  const parsed = StrictBulkInputItemSchema.safeParse(entry);
-  if (parsed.success) return null;
-  return new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
-    errors: parsed.error.issues.map((i) => ({
-      path: i.path.join("."),
-      message: i.message,
-    })),
-  });
-}
 
 // The request shape is `BulkActionInputSchema`, declared once in the
 // bulk-action module and imported here, envelope and filter alike: two
@@ -685,7 +669,9 @@ export function bulkRoutes(storage: Storage) {
     // The validator has already stripped what the entries do not declare,
     // so their keys are read from the body as sent.
     const sent = await c.req.json<{ items: unknown[] }>();
-    const undeclared = sent.items.map(undeclaredEntryKeys);
+    const undeclared = sent.items.map((entry) =>
+      undeclaredEntryKeyRefusal(entry, StrictBulkInputItemSchema),
+    );
 
     const operationId = generateId();
     const run = async (): Promise<ProcessedBulkItem[]> => {
