@@ -537,10 +537,10 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
-/// Whether a drain now would send a write or read one back: a write with no
-/// verdict, one blocked for a reason a drain clears itself, a read-back owed,
-/// or a body whose names wait. A dead write, or one blocked until something
-/// outside the queue changes, is no reason to drain.
+/// Whether a drain now has work: a write with no verdict, one blocked for a
+/// reason a drain clears itself, a read-back owed, a body whose names wait,
+/// or a body's answers still to apply. A dead write, or one blocked until
+/// something outside the queue changes, is no reason to drain.
 pub(crate) fn would_send(core: &Core) -> Result<bool> {
     let conn = core.conn()?;
     let sendable = store::waiting_writes(&conn)?
