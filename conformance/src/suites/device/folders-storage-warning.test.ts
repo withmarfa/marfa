@@ -59,7 +59,7 @@ interface Placed {
   /** `folders add`, run under the machine's home. */
   add: (flags?: string[]) => Promise<Ran>;
   /** A command on the folder under the machine's home, left running. */
-  hold: (args: string[]) => HeldCommand;
+  hold: (args: string[], at?: "root" | "text") => HeldCommand;
 }
 
 interface Ran {
@@ -103,8 +103,11 @@ async function machine(label: string): Promise<Machine> {
         key: KEY,
         registry,
       });
-      const hold = (args: string[]): HeldCommand => {
-        const held = folder.device().hold(args, "root", { HOME: home });
+      const hold = (
+        args: string[],
+        at: "root" | "text" = "root",
+      ): HeldCommand => {
+        const held = folder.device().hold(args, at, { HOME: home });
         stops.push(() => held.stop());
         return held;
       };
@@ -230,20 +233,19 @@ describe("a folder in cloud-synced storage", () => {
     expect(warnings(added.stderr)).toHaveLength(1);
     expect(added.stdout).not.toContain(WARNING);
     expect(() => JSON.parse(added.stdout)).not.toThrow();
-    // The witness: the same command without --json says it as text, so the
-    // JSON above is a choice the flag made and not an accident of the add.
+    // The witness: the same command without --json prints text on standard
+    // output, so the JSON above is a choice the flag made and not an accident
+    // of the add, and the warning is on standard error either way.
     const other = machined.folder("Library/CloudStorage/Box/notes");
-    const text = other.hold([
-      "folders",
-      "add",
-      other.dir,
-      "--folder",
-      other.id,
-      "--yes",
-    ]);
+    const text = other.hold(
+      ["folders", "add", other.dir, "--folder", other.id, "--yes"],
+      "text",
+    );
     await text.exited();
     expect(text.exitCode(), text.stderr).toBe(0);
     expect(warnings(text.stderr)).toHaveLength(1);
+    expect(text.stdout).not.toContain(WARNING);
+    expect(() => JSON.parse(text.stdout)).toThrow();
   });
 });
 
@@ -273,6 +275,10 @@ describe("a folder anywhere else", () => {
     const added = await lookalike.add();
     expect(added.code, added.stderr).toBe(0);
     expect(added.stderr).toBe("");
+    // The witness: the exact name beside it warns.
+    const exact = machined.folder("Library/Mobile Documents/notes");
+    const warned = await exact.add();
+    expect(warnings(warned.stderr), warned.stderr).toHaveLength(1);
   });
 });
 
