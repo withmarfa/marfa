@@ -914,6 +914,9 @@ describe("what a drain sends and reports", () => {
 
   it("lets a row go once its retype out of the slice is answered", async () => {
     harness = await hydratedHarness("queue-retype-out", { rows: held() });
+    const before = await harness.device.list();
+    expect(before.ok, JSON.stringify(before)).toBe(true);
+    expect(before.ok && before.value.map((item) => item.id)).toContain(HELD.id);
     expect(
       (
         await harness.device.update(HELD.id, {
@@ -945,6 +948,7 @@ describe("what a drain sends and reports", () => {
     });
     expect((await harness.device.drain()).ok).toBe(true);
     const listed = await harness.device.list();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
     expect(
       listed.ok ? listed.value.map((item) => item.id) : [],
       "the copy kept a row its own answered retype moved out of its slice",
@@ -1229,6 +1233,9 @@ describe("what a drain sends and reports", () => {
       rows: held(),
     });
     const { device, server } = harness;
+    const before = await harness.device.list();
+    expect(before.ok, JSON.stringify(before)).toBe(true);
+    expect(before.ok && before.value.map((item) => item.id)).toContain(HELD.id);
     expect(
       (
         await device.update(HELD.id, {
@@ -1265,6 +1272,7 @@ describe("what a drain sends and reports", () => {
       "refused",
     ]);
     const listed = await device.list();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
     expect(listed.ok ? listed.value.map((item) => item.id) : []).not.toContain(
       HELD.id,
     );
@@ -1275,6 +1283,9 @@ describe("what a drain sends and reports", () => {
       rows: held(),
     });
     const { device, server } = harness;
+    const before = await harness.device.list();
+    expect(before.ok, JSON.stringify(before)).toBe(true);
+    expect(before.ok && before.value.map((item) => item.id)).toContain(HELD.id);
     expect(
       (
         await device.update(HELD.id, {
@@ -1335,6 +1346,7 @@ describe("what a drain sends and reports", () => {
       "accepted",
     ]);
     const listed = await device.list();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
     expect(listed.ok ? listed.value.map((item) => item.id) : []).not.toContain(
       HELD.id,
     );
@@ -1400,8 +1412,12 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     expect((await device.drain()).ok).toBe(true);
-    const patch = server.requests.find((request) => request.method === "PATCH");
-    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    const patches = server.requests.filter(
+      (request) => request.method === "PATCH",
+    );
+    expect(patches).toHaveLength(1);
+    const body = JSON.parse(patches[0]!.body) as Record<string, unknown>;
+    expect(body.properties).toEqual({ title: "renamed" });
     expect("tier" in body).toBe(false);
     expect((await device.get(fileId)).ok).toBe(true);
   });
@@ -1623,10 +1639,12 @@ describe("what a drain sends and reports", () => {
       ],
     });
     expect((await harness.device.drain()).ok).toBe(true);
-    const patch = harness.server.requests.find(
+    const patches = harness.server.requests.filter(
       (request) => request.method === "PATCH",
     );
-    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect(patches).toHaveLength(1);
+    const body = JSON.parse(patches[0]!.body) as Record<string, unknown>;
+    expect(body.properties).toEqual({ title: "same type" });
     expect("retype" in body).toBe(false);
   });
 
@@ -1651,10 +1669,12 @@ describe("what a drain sends and reports", () => {
       ],
     });
     expect((await harness.device.drain()).ok).toBe(true);
-    const patch = harness.server.requests.find(
+    const patches = harness.server.requests.filter(
       (request) => request.method === "PATCH",
     );
-    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect(patches).toHaveLength(1);
+    const body = JSON.parse(patches[0]!.body) as Record<string, unknown>;
+    expect(body.properties).toEqual({ title: "still a note" });
     expect("type" in body || "retype" in body || "tier" in body).toBe(false);
   });
 
