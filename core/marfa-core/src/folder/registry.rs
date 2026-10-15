@@ -183,7 +183,7 @@ impl Registry {
             folder: folder.to_string(),
             store: store.map(str::to_string),
         };
-        self.change(unreadable, |listed| put(listed, &entry))
+        self.change_unless(unreadable, Some(&entry), |listed| put(listed, &entry))
             .map(|_| ())
     }
 
@@ -222,6 +222,19 @@ impl Registry {
         unreadable: Unreadable,
         edit: impl FnOnce(&mut Vec<Registered>) -> bool,
     ) -> Result<(Vec<Registered>, bool)> {
+        self.change_unless(unreadable, None, edit)
+    }
+
+    /// As `change`, but leaves the list as it is, untidied, where it already
+    /// holds `listed`: the tidy opens every listed directory, and a folder
+    /// lists itself at every pass, so one volume that does not answer would
+    /// hold up every folder's pass.
+    fn change_unless(
+        &self,
+        unreadable: Unreadable,
+        listed: Option<&Registered>,
+        edit: impl FnOnce(&mut Vec<Registered>) -> bool,
+    ) -> Result<(Vec<Registered>, bool)> {
         // Resolved as a file, so a link at the registry's own directory is
         // followed and only the file itself is opened without following.
         let path = resolved(&self.path);
@@ -256,10 +269,13 @@ impl Registry {
             }
             Err(error) => return Err(self.failed("read", &error)),
         };
+        if !replaced && listed.is_some_and(|entry| listing.folders.contains(entry)) {
+            return Ok((listing.folders, false));
+        }
         let mut tidied: Vec<Registered> = Vec::new();
         // Entries are listed resolved; resolving one again would follow a
         // link that replaced its directory since.
-        for entry in std::mem::take(&mut listing.folders) {
+        for entry in listing.folders.iter().cloned() {
             if gone(&entry) {
                 continue;
             }
@@ -846,6 +862,81 @@ mod tests {
         std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
         std::fs::write(dir.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
         dir
+    }
+
+    /// The file's inode, which a rewrite, landing a new file, changes.
+    fn written(registry: &Registry) -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(registry.path()).unwrap().ino()
+    }
+
+    #[test]
+    fn a_registry_whose_entries_are_all_gone_is_written_empty() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join(FILE_NAME));
+        let removed = folder_at(temp.path(), "removed");
+        add(&registry, &removed, "removed", Some("store-removed")).unwrap();
+        std::fs::remove_file(removed.join(STATE_DIR).join("core.sqlite")).unwrap();
+        assert_eq!(registry.folders().unwrap(), Vec::new());
+        assert_eq!(
+            registry.read().unwrap(),
+            Some(Vec::new()),
+            "an entry a read dropped was left in the file"
+        );
+    }
+
+    #[test]
+    fn a_tidy_read_that_drops_nothing_leaves_the_file_alone() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join(FILE_NAME));
+        let kept = folder_at(temp.path(), "kept");
+        add(&registry, &kept, "kept", Some("store-kept")).unwrap();
+        let before = written(&registry);
+        assert_eq!(registry.folders().unwrap().len(), 1);
+        assert_eq!(
+            written(&registry),
+            before,
+            "a read that changed nothing rewrote the file"
+        );
+        // The witness: a change is written.
+        let other = folder_at(temp.path(), "other");
+        add(&registry, &other, "other", Some("store-other")).unwrap();
+        assert_ne!(written(&registry), before);
+    }
+
+    #[test]
+    fn a_folder_listed_as_it_is_registers_without_opening_another_folder() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join(FILE_NAME));
+        let own = folder_at(temp.path(), "own");
+        let other = folder_at(temp.path(), "other");
+        add(&registry, &own, "own", Some("store-own")).unwrap();
+        add(&registry, &other, "other", Some("store-other")).unwrap();
+        // Only a look into the other folder's directory finds this.
+        std::fs::remove_file(other.join(STATE_DIR).join("core.sqlite")).unwrap();
+        let before = written(&registry);
+        registry.register(&own, "own", Some("store-own")).unwrap();
+        assert_eq!(
+            registry.read().unwrap().unwrap().len(),
+            2,
+            "a folder listing itself looked into another folder's directory"
+        );
+        assert_eq!(
+            written(&registry),
+            before,
+            "a folder already listed rewrote the file"
+        );
+        // The witness: a folder that is not listed as it is tidies the list.
+        let moved = folder_at(temp.path(), "moved");
+        registry.register(&moved, "own", Some("store-own")).unwrap();
+        let listed: Vec<PathBuf> = registry
+            .read()
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.dir)
+            .collect();
+        assert_eq!(listed, vec![moved]);
     }
 
     #[test]
