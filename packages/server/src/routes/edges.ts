@@ -319,7 +319,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
+    "Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -362,7 +362,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
+        "Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
     },
     201: {
       content: {

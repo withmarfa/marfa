@@ -168,6 +168,27 @@ it("conditions lifecycle and edge writes on the source version without replacing
     kept = await create(2, other);
   expect(made.status).toBe(201);
   expect(kept.status).toBe(201);
+  const repeatedBody = {
+    id: made.data.edge.id,
+    source_id: source,
+    target_id: target,
+    edge_type: "references",
+  };
+  expect(
+    (
+      await client.rawRequest("/edges?source_version=1", {
+        method: "POST",
+        body: repeatedBody,
+      })
+    ).status,
+  ).toBe(409);
+  const repeated = await client.rawRequest<{ acknowledged: boolean }>(
+    "/edges?source_version=2",
+    { method: "POST", body: repeatedBody },
+  );
+  expect(repeated.status).toBe(200);
+  expect(repeated.data.acknowledged).toBe(true);
+
   const remove = (version: number) =>
     client.rawRequest<unknown>(
       `/edges/${made.data.edge.id}?source_version=${version}`,

@@ -202,3 +202,44 @@ it("conditions edge additions and deletions on the exact source version", async 
   expect(await ctx.storage.edges.get(kept.id)).not.toBeNull();
   expect((await ctx.storage.items.get(source))?.version).toBe(2);
 });
+
+it("checks an exact source version before acknowledging a repeated edge", async () => {
+  const source = await note();
+  const target = await note();
+  const first = await request(ctx.app, "POST", "/edges?source_version=1", {
+    key: ctx.workingKey,
+    body: { source_id: source, target_id: target, edge_type: "references" },
+  });
+  expect(first.status).toBe(201);
+  const { edge } = (await first.json()) as { edge: { id: string } };
+  expect(
+    (
+      await patch(source, {
+        version: 1,
+        properties: { title: "Changed owner marker" },
+      })
+    ).status,
+  ).toBe(200);
+  const body = {
+    id: edge.id,
+    source_id: source,
+    target_id: target,
+    edge_type: "references",
+  };
+  const stale = await request(ctx.app, "POST", "/edges?source_version=1", {
+    key: ctx.workingKey,
+    body,
+  });
+  expect(stale.status).toBe(409);
+  for (const query of ["", "?source_version=2"]) {
+    const repeated = await request(ctx.app, "POST", `/edges${query}`, {
+      key: ctx.workingKey,
+      body,
+    });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({
+      acknowledged: true,
+      edge: { id: edge.id },
+    });
+  }
+});

@@ -487,7 +487,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
+         * @description Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -10252,7 +10252,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
+            /** @description Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
