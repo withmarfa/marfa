@@ -80,7 +80,7 @@ If `POST /items` carries a top-level body key the operation does not declare, th
 
 **Reason:** a dropped key is a request half performed and answered as success: `data` sent where the operation takes `properties` creates an empty item. Keys inside `properties` are the type's, not the operation's.
 
-**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `compliance/field-enforcement.test.ts › a key inside properties is the type's, and a create carrying one is written`.
+**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `› a key inside properties is the type's, and a create carrying one is written`.
 
 ### `items/no-device-field`
 
