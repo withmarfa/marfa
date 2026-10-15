@@ -1114,6 +1114,33 @@ export interface PushReport {
   pull: PullReport | null;
 }
 
+/** What `folders push --send-only` reports (`folders/send-only-report-sent`). */
+export interface SendOnlyReport {
+  send_only: true;
+  /** Always false: the run catches up with nothing and pulls nothing. */
+  pulled: false;
+  hydrated: HydrateReport | null;
+  settings: SettingsFileReport;
+  scan: ScanReport;
+  drain: PushReport["drain"];
+}
+
+/** A file the folder keeps whose item its search no longer matches (`folders/unmatched-list`). */
+export interface UnmatchedFile {
+  path: string;
+  item_id?: string;
+  /** Why removing the file would keep it, where it would. */
+  kept?: string;
+}
+
+/** What `folders unmatched --remove` did (`folders/unmatched-remove-file`). */
+export interface UnmatchedRemoval {
+  removed: UnmatchedFile[];
+  kept: UnmatchedFile[];
+  ended: number;
+  declined: boolean;
+}
+
 /**
  * A directory driven as a folder.
  *
@@ -1248,6 +1275,43 @@ export class CliFolder {
       "push",
       this.dir,
       ...this.server(),
+    ]);
+  }
+
+  /** A push that sends what the folder holds and pulls nothing. */
+  async pushSendOnly(): Promise<Outcome<SendOnlyReport>> {
+    return this.run<SendOnlyReport>([
+      "folders",
+      "push",
+      this.dir,
+      "--send-only",
+      ...this.server(),
+    ]);
+  }
+
+  /** A send-only push, printed for a person. */
+  async pushSendOnlyText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "push", this.dir, "--send-only"]);
+  }
+
+  /** The files the folder keeps whose items its search no longer matches. */
+  async unmatched(): Promise<Outcome<{ unmatched: UnmatchedFile[] }>> {
+    return this.run(["folders", "unmatched", this.dir]);
+  }
+
+  /**
+   * Removes them. Without `yes` and without a terminal the command refuses,
+   * which is what a fixture without a pty meets.
+   */
+  async removeUnmatched(
+    options: { yes?: boolean } = {},
+  ): Promise<Outcome<UnmatchedRemoval>> {
+    return this.run([
+      "folders",
+      "unmatched",
+      this.dir,
+      "--remove",
+      ...(options.yes === true ? ["--yes"] : []),
     ]);
   }
 

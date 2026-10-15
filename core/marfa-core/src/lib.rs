@@ -63,8 +63,8 @@ pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
-    Removal, Restored, ScanReport, Settings, SettingsFileReport, StatusReport, SyncReport, Synced,
-    WatchError, WatchEvent, WatchPass,
+    Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
+    SyncReport, Synced, Unmatched, UnmatchedRemoved, WatchError, WatchEvent, WatchPass,
 };
 pub use folder_settings::FolderRow;
 pub use lock::Handle;
