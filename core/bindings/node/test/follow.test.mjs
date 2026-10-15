@@ -467,3 +467,152 @@ test(
     assert.equal(ended, "stopped");
   },
 );
+
+/**
+ * A server that can be taken down and brought back: while down, every
+ * stream is refused `503`. It takes every create and counts them.
+ */
+async function comingBack() {
+  const state = { down: false, following: false, creates: 0 };
+  /** @type {Map<string, Record<string, unknown>>} */
+  const rows = new Map();
+  /** @type {Set<Response>} */
+  const open = new Set();
+  const server = createServer((req, res) => {
+    const path = (req.url ?? "").split("?")[0];
+    const json = (
+      /** @type {number} */ status,
+      /** @type {unknown} */ body,
+    ) => {
+      res.writeHead(status, {
+        "content-type": "application/json",
+        "x-marfa-contract": CONTRACT,
+        ...readProof(req),
+      });
+      res.end(JSON.stringify(body));
+    };
+    if (path === "/") {
+      json(200, { instance_id: INSTANCE });
+    } else if (path === "/types") {
+      json(200, {
+        data: [{ id: "core.note", display_hints: { title_field: "title" } }],
+        next_cursor: null,
+      });
+    } else if (path === "/edge-types") {
+      json(200, { data: [], next_cursor: null });
+    } else if (path === "/keys/current") {
+      json(200, { type_permissions: { "*": "write" } });
+    } else if (path === "/items/lookup") {
+      json(200, { data: [], tombstones: [] });
+    } else if (path === "/items" && req.method === "POST") {
+      let text = "";
+      req.on("data", (chunk) => (text += chunk));
+      req.on("end", () => {
+        state.creates += 1;
+        const body = JSON.parse(text);
+        const item = {
+          id: body.id,
+          type: body.type,
+          properties: body.properties,
+          state: "active",
+          tier: body.tier,
+          version: 1,
+          schema_version: 1,
+          source: "device",
+          source_id: null,
+          occurred_at: AT,
+          created_at: AT,
+          updated_at: AT,
+        };
+        rows.set(body.id, item);
+        json(201, { item });
+      });
+    } else if (path === "/items") {
+      json(200, { data: [], next_cursor: null });
+    } else if (path.startsWith("/items/")) {
+      const item = rows.get(decodeURIComponent(path.slice("/items/".length)));
+      if (item) json(200, { item, metadata: { tags: [] }, listed: true });
+      else json(404, { error: { code: "item_not_found", message: "no such item" } });
+    } else if (path === "/events") {
+      if (state.down) {
+        json(503, { error: { code: "unavailable", message: "down" } });
+        return;
+      }
+      const cursor = streamHead(req, res);
+      if (cursor !== null) res.write(marker("stream_live", cursor));
+      if (!state.following) {
+        res.end();
+        return;
+      }
+      open.add(res);
+      res.on("close", () => open.delete(res));
+      held(res);
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve(undefined)),
+  );
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("no port");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    state,
+    close: () => {
+      for (const res of open) res.destroy();
+      server.closeAllConnections();
+      server.close();
+    },
+  };
+}
+
+test(
+  "sends what waited once its server is back, and tells what the drain did",
+  { timeout: 30_000 },
+  async (t) => {
+    const server = await comingBack();
+    t.after(server.close);
+    const core = MarfaCore.open(storeFor(t), server.url, "k");
+    await core.hydrate(["core.note"], SliceTier.Library);
+    core.createItem({ type: "core.note", properties: { title: "first" } });
+    core.createItem({ type: "core.note", properties: { title: "second" } });
+    server.state.down = true;
+    server.state.following = true;
+    /** @type {import("../index.js").Change[]} */
+    const told = [];
+    /** @type {unknown} */
+    let ended;
+    const subscription = core.follow(
+      (change) => told.push(change),
+      (error) => {
+        ended = error ?? "stopped";
+      },
+    );
+    t.after(() => subscription.stop());
+    const deadline = Date.now() + 20_000;
+    while (told.length === 0 && Date.now() < deadline) await sleep(20);
+    assert.equal(told[0]?.kind, "serverUnreachable");
+    assert.equal(server.state.creates, 0, "a write was sent to a server that was down");
+    server.state.down = false;
+    while (!told.some((change) => change.kind === "queueDrained") && Date.now() < deadline)
+      await sleep(20);
+    const kinds = told.map((change) => change.kind);
+    assert.deepEqual(
+      kinds.slice(0, 3),
+      ["serverUnreachable", "serverReachable", "queueDrained"],
+      "the follow did not drain once its server was back, or did not say so",
+    );
+    const drained = told[2];
+    assert.ok(drained?.kind === "queueDrained");
+    assert.equal(drained.report.answered, 2);
+    assert.equal(drained.report.verdicts.length, 2);
+    assert.equal(server.state.creates, 2, "a write was not sent once");
+    await sleep(300);
+    assert.equal(server.state.creates, 2, "a drained queue was sent again");
+    subscription.stop();
+    while (ended === undefined && Date.now() < deadline) await sleep(20);
+    assert.equal(ended, "stopped");
+  },
+);

@@ -806,10 +806,16 @@ fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
 }
 
 fn drained(env: Env, report: marfa_core::DrainReport) -> Result<DrainReport> {
+    report_of(report).map_err(|error| failure(env, error))
+}
+
+fn report_of(
+    report: marfa_core::DrainReport,
+) -> std::result::Result<DrainReport, marfa_core::CoreError> {
     let mut verdicts = Vec::with_capacity(report.verdicts.len());
     for entry in report.verdicts {
         verdicts.push(DrainVerdict {
-            verdict: crossed(entry.outcome().map_err(|error| failure(env, error))?).0,
+            verdict: crossed(entry.outcome()?).0,
             id: entry.id,
             kind: entry.kind.into(),
             item_id: entry.item_id,
@@ -1111,8 +1117,9 @@ pub struct Thumbnail {
     pub bytes: Buffer,
 }
 
-/// What a held stream changed in the copy, or what became of the server,
-/// told apart by `kind`. `cursor` is the cursor held after it.
+/// What a held stream changed in the copy, what became of the server, or
+/// what became of the queue it drained then, told apart by `kind`. `cursor`
+/// is the cursor held after it.
 #[napi(discriminant = "kind", discriminant_case = "camelCase")]
 pub enum Change {
     /// An event the stream applied, by the event's type, with the item or
@@ -1127,8 +1134,22 @@ pub enum Change {
     CatalogChanged { cursor: String },
     /// No stream can be had, for `reason`; told once until one is had again.
     ServerUnreachable { reason: String, cursor: String },
-    /// A stream is had again, which is when to drain what waited.
+    /// A stream is had again. Where writes waited, the follow drains them
+    /// once and tells `queueDrained` or `queueNotDrained`.
     ServerReachable { cursor: String },
+    /// The queue was drained once a stream was had again, and what that
+    /// drain did, as `drain` returns it.
+    QueueDrained { report: DrainReport, cursor: String },
+    /// Writes waited when a stream was had again, and the queue was not
+    /// drained. `running` where another drain on the store was under way,
+    /// which sends them; otherwise `code` is the error the drain ended
+    /// with, the same word a thrown error carries. `reason` says why.
+    QueueNotDrained {
+        running: bool,
+        code: Option<String>,
+        reason: String,
+        cursor: String,
+    },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1147,7 +1168,26 @@ impl From<&marfa_core::Change> for Change {
                 cursor,
             },
             marfa_core::ChangeEvent::ServerReachable => Change::ServerReachable { cursor },
+            marfa_core::ChangeEvent::QueueDrained(report) => match report_of(report.clone()) {
+                Ok(report) => Change::QueueDrained { report, cursor },
+                // A report whose verdict cannot be read is told as a drain
+                // that failed with that error.
+                Err(error) => not_drained(&marfa_core::NotDrained::Failed(error), cursor),
+            },
+            marfa_core::ChangeEvent::QueueNotDrained(why) => not_drained(why, cursor),
         }
+    }
+}
+
+fn not_drained(why: &marfa_core::NotDrained, cursor: String) -> Change {
+    Change::QueueNotDrained {
+        running: *why == marfa_core::NotDrained::Running,
+        code: match why {
+            marfa_core::NotDrained::Running => None,
+            marfa_core::NotDrained::Failed(error) => Some(error.code().to_string()),
+        },
+        reason: why.to_string(),
+        cursor,
     }
 }
 
@@ -1506,6 +1546,9 @@ impl MarfaCore {
     /// null where it was stopped. Neither callback keeps the process alive. An
     /// `onChange` that throws ends the follow, and `onEnd` is given an error
     /// whose `code` is `listener_threw` and whose message says what it threw.
+    /// Each time it tells `serverReachable` with writes waiting, it drains
+    /// them once and tells `queueDrained` or `queueNotDrained`; `onEnd`
+    /// follows that drain's end.
     #[napi(
         ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
     )]
