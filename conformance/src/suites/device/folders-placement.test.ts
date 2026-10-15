@@ -2350,19 +2350,34 @@ describe("where a file sits", () => {
 
 describe("writing", () => {
   it("does not read its own writes back as changes", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    const edges = new EdgeDoor();
     harness = await folderHarness("folder-echo", {
+      // Close each replay so the watcher reconnects to the updated event log.
+      events: [
+        (request) => {
+          const answer = edges.stream()(request);
+          return answer.kind === "sse" ? { ...answer, hold: false } : answer;
+        },
+      ],
       rows: {
         "core.note": [
           {
             item: {
-              id: "01a00000-0000-7000-8000-00000000000a",
+              id,
               properties: { title: "Written", body: "by the folder\n" },
             },
           },
         ],
       },
     });
-    scriptFolderWrites(harness);
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
 
     // The folder writes the file. The scan that follows must not read it
     // back as a change: a write the folder made never returns as one.
@@ -2395,6 +2410,69 @@ describe("writing", () => {
       edited.value.updated,
       "a change the folder did not make was suppressed too, so echo suppression is suppressing everything",
     ).toBe(1);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const before = sentUpdates(harness).length;
+    expect(before).toBe(1);
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(() => expect(watching.stderr).toContain("watching"), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      edges.logItem(
+        "item.updated",
+        door!.update(id, {
+          version: rows.get(id)!.version,
+          properties: { body: "changed remotely while watching\n" },
+        }),
+      );
+      await vi.waitFor(
+        () =>
+          expect(read(harness!, "Written.md")).toContain(
+            "changed remotely while watching",
+          ),
+        { timeout: 30_000, interval: 100 },
+      );
+      put(harness, "probe.md", "---\ntitle: Probe\n---\nwatch scan witness\n");
+      await vi.waitFor(() => expect(sentTitles(harness!)).toContain("Probe"), {
+        timeout: 30_000,
+        interval: 100,
+      });
+      await vi.waitFor(() => expect(watching.stdout).toContain("1 created"), {
+        timeout: 30_000,
+        interval: 100,
+      });
+      expect(watching.running(), watching.stderr).toBe(true);
+      expect(sentTitles(harness)).toEqual(["Probe"]);
+      expect(sentUpdates(harness)).toHaveLength(before);
+      put(
+        harness,
+        "Written.md",
+        read(harness, "Written.md").replace(
+          "changed remotely while watching",
+          "edited locally while watching",
+        ),
+      );
+      await vi.waitFor(
+        () =>
+          expect(rows.get(id)?.properties.body).toBe(
+            "edited locally while watching\n",
+          ),
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(sentUpdates(harness).slice(before)).toEqual([
+        expect.objectContaining({
+          id,
+          body: expect.objectContaining({
+            properties: expect.objectContaining({
+              body: "edited locally while watching\n",
+            }),
+          }),
+        }),
+      ]);
+    } finally {
+      await watching.stop();
+    }
   });
 
   it("sends a file edited twice before a push as two edits, not a conflict with itself", async () => {

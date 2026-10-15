@@ -41,6 +41,8 @@ import {
   type FolderHarness,
 } from "./harness.js";
 
+import { EdgeDoor, idIn, scriptFolderWrites } from "./folders.shared.js";
+
 let harness: FolderHarness | undefined;
 let second: FolderHarness | undefined;
 afterEach(async () => {
@@ -354,16 +356,49 @@ it.each(["CAFÉ.md", "Cafe\u0301.md"])(
         ],
       },
     });
-    expect((await harness.folder.pull()).ok).toBe(true);
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = row(0).item.id;
+    expect(idIn(harness, "Café.md")).toBe(id);
+    expect(edges.placements(harness.settings.id).get(id)).toBe("Café.md");
     const before = await harness.folder.device().queue();
     expect(before.ok).toBe(true);
-    renameSync(join(harness.dir, "Café.md"), join(harness.dir, name));
-    const scan = await harness.folder.scan();
-    expect(scan.ok).toBe(true);
-    const after = await harness.folder.device().queue();
-    expect(after.ok && after.value.map((r) => r.id)).toEqual(
-      before.ok && before.value.map((r) => r.id),
+    expect(before.ok && before.value).toContainEqual(
+      expect.objectContaining({ kind: "create_edge", verdict: "accepted" }),
     );
+    const edgeWrites = () =>
+      harness!.server.requests.filter(
+        (r) => r.pathname.startsWith("/edges") && r.method !== "GET",
+      );
+    const beforeWrites = edgeWrites().length;
+
+    renameSync(join(harness.dir, "Café.md"), join(harness.dir, name));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const after = await harness.folder.device().queue();
+    expect(after.ok && after.value.map((write) => write.id)).toEqual(
+      before.ok && before.value.map((write) => write.id),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(edgeWrites()).toHaveLength(beforeWrites);
+
+    renameSync(join(harness.dir, name), join(harness.dir, "Elsewhere.md"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const moved = await harness.folder.device().queue();
+    expect(moved.ok && moved.value).toContainEqual(
+      expect.objectContaining({
+        kind: "update_edge",
+        body: expect.objectContaining({ properties: { path: "Elsewhere.md" } }),
+      }),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(edgeWrites().slice(beforeWrites)).toContainEqual(
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"path":"Elsewhere.md"'),
+      }),
+    );
+    expect(edges.placements(harness.settings.id).get(id)).toBe("Elsewhere.md");
   },
 );
 

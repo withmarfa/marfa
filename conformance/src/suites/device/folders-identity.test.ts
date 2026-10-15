@@ -538,8 +538,10 @@ describe("identity", () => {
     put(harness, "note.md", text);
     expect((await harness.folder.push()).ok).toBe(true);
     const id = idIn(harness, "note.md");
-    // The witness is `› keeps the item when a save drops the id line`: the
-    // same save with a new body is sent.
+    expect(id).toEqual(expect.any(String));
+    expect(sentCreates(harness)).toContainEqual(
+      expect.objectContaining({ id }),
+    );
     saveAtomically(harness, "note.md", text);
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -547,6 +549,17 @@ describe("identity", () => {
       sentUpdates(harness),
       "a save that changed nothing but the id line sent an edit",
     ).toEqual([]);
+    expect(idIn(harness, "note.md")).toBe(id);
+    saveAtomically(harness, "note.md", text.replace("body", "edited body"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([
+      expect.objectContaining({
+        id,
+        body: expect.objectContaining({
+          properties: expect.objectContaining({ body: "edited body\n" }),
+        }),
+      }),
+    ]);
     expect(idIn(harness, "note.md")).toBe(id);
   });
 

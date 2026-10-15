@@ -3925,20 +3925,6 @@ describe("what a folder takes", () => {
       "---\ntitle: Tool\n---\nbody\n",
     );
     put(harness, "Thing.mystery/inner.md", "---\ntitle: Marked\n---\nbody\n");
-    // The Finder's bundle bit: a package by the system's word, not its name.
-    // Only macOS has one, so elsewhere the directory is an ordinary one and
-    // its file is walked into like any other.
-    const marked = process.platform === "darwin";
-    if (marked) {
-      const info = Buffer.alloc(32);
-      info[8] = 0x20;
-      execFileSync("xattr", [
-        "-wx",
-        "com.apple.FinderInfo",
-        info.toString("hex"),
-        join(harness.dir, "Thing.mystery"),
-      ]);
-    }
     put(harness, "notes/note.md", "---\ntitle: Note\n---\nbody\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -3946,13 +3932,12 @@ describe("what a folder takes", () => {
     expect(
       sentTitles(harness).sort(),
       "a file inside a package was sent as a note, so a presentation or an app reaches the server piece by piece",
-    ).toEqual(marked ? ["Note"] : ["Marked", "Note"]);
+    ).toEqual(["Marked", "Note"]);
     expect(
       pushed.value.scan.directories.map((dir) => [dir.path, dir.flag]).sort(),
       "a package the folder did not walk into was not reported, so its files are missing without a word",
     ).toEqual([
       ["Deck.key", "package"],
-      ...(marked ? [["Thing.mystery", "package"]] : []),
       ["Tool.APP", "package"],
     ]);
     expect(
@@ -3961,6 +3946,64 @@ describe("what a folder takes", () => {
     ).toBe(false);
     expect(pushed.value.pull?.outside).toBe(1);
   });
+
+  it(
+    "excludes a directory only while its Finder bundle bit is set",
+    { skip: process.platform !== "darwin" },
+    async () => {
+      harness = await folderHarness("folder-finder-package");
+      const rows = scriptFolderWrites(harness);
+      const name = "Thing.mystery/inner.md";
+      put(harness, name, "---\ntitle: Inner\n---\nordinary directory\n");
+      expect((await harness.folder.push()).ok).toBe(true);
+      const id = idIn(harness, name);
+      expect(id).toEqual(expect.any(String));
+      expect(sentTitles(harness)).toEqual(["Inner"]);
+
+      const info = Buffer.alloc(32);
+      info[8] = 0x20;
+      execFileSync("xattr", [
+        "-wx",
+        "com.apple.FinderInfo",
+        info.toString("hex"),
+        join(harness.dir, "Thing.mystery"),
+      ]);
+      put(
+        harness,
+        name,
+        read(harness, name).replace(
+          "ordinary directory",
+          "changed inside package",
+        ),
+      );
+      const marked = await harness.folder.push();
+      expect(marked.ok, JSON.stringify(marked)).toBe(true);
+      expect(
+        marked.ok &&
+          marked.value.scan.directories.map((dir) => [dir.path, dir.flag]),
+      ).toEqual([["Thing.mystery", "package"]]);
+      expect(sentUpdates(harness)).toEqual([]);
+      expect(rows.get(id!)?.properties.body).toBe("ordinary directory\n");
+
+      execFileSync("xattr", [
+        "-d",
+        "com.apple.FinderInfo",
+        join(harness.dir, "Thing.mystery"),
+      ]);
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(sentUpdates(harness)).toContainEqual(
+        expect.objectContaining({
+          id,
+          body: expect.objectContaining({
+            properties: expect.objectContaining({
+              body: "changed inside package\n",
+            }),
+          }),
+        }),
+      );
+      expect(rows.get(id!)?.properties.body).toBe("changed inside package\n");
+    },
+  );
 
   it("holds the files of a directory it cannot read, and goes on with the rest", async () => {
     let changed: Record<string, unknown> = {};
