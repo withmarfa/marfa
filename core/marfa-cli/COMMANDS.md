@@ -32,6 +32,7 @@ Every command accepts these.
 | 3 | The environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
 | 4 | The working copy or the queue refused under the device rules, or this system has no keychain. |
 | 5 | No credential, the credential was refused, or the sign-in ended; `marfa login` starts one. |
+| 130 | A long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended any command at once. |
 
 A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes), 3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass. A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
 

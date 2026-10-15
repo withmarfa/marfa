@@ -832,12 +832,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Changes { r#for } => {
-            stop_on_interrupt();
             let core = Store {
                 reader: true,
                 ..store
             }
             .open(None)?;
+            // Once the store is open, so that an interrupt before then ends
+            // the command as it always did.
+            stop_on_interrupt();
             let stop = stop_after(r#for);
             // Read before announcing, so a save landing just after is told.
             let mut seen = core.data_version()?;

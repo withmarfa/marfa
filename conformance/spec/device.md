@@ -2524,6 +2524,14 @@ When the CLI receives a second Ctrl-C before the call has stopped, the CLI MUST 
 
 **Tests:** `device/stop.test.ts › ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
 
+### `device/command-changes-interrupted`
+
+When `changes` is interrupted, the CLI MUST end it with status 130.
+
+**Reason:** a helper that is told to stop is not one whose time ran out, which ends with status 0, and a caller tells the two apart by the status.
+
+**Tests:** `device/working-copy.test.ts › ends a changes helper with status 130 when interrupted, where one whose time is up ends with 0`.
+
 ### `device/stop-before-read-returns`
 
 When a stop is raised before an in-flight read returns, a device MUST end the hydration or the catch-up `canceled`, even where the read then fails.

@@ -23,7 +23,7 @@ use std::time::Duration;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::error::CliError;
-use crate::interrupt::INTERRUPTED;
+use crate::interrupt::{self, INTERRUPTED};
 
 use export::{Exporter, Sink};
 use settings::{Reading, Settings};
@@ -41,17 +41,22 @@ struct Live {
 
 /// Starts telemetry for `command`, the path of a command's names as clap
 /// parsed them, if the environment asks for it.
-pub fn start(command: &str) -> Run {
-    start_with(command, |name| std::env::var(name).ok())
+///
+/// A malformed endpoint turns telemetry off for the run, and is said on
+/// standard error unless `json` is set, where stderr is one JSON object.
+pub fn start(command: &str, json: bool) -> Run {
+    start_with(command, json, |name| std::env::var(name).ok())
 }
 
-fn start_with(command: &str, get: impl Fn(&str) -> Option<String>) -> Run {
+fn start_with(command: &str, json: bool, get: impl Fn(&str) -> Option<String>) -> Run {
     match settings::read(get) {
         Reading::Off => Run { live: None },
         Reading::Ignored(variable) => {
-            eprintln!(
-                "marfa: {variable} is not an http or https address, so this run sends no telemetry"
-            );
+            if !json {
+                eprintln!(
+                    "marfa: {variable} is not an http or https address, so this run sends no telemetry"
+                );
+            }
             Run { live: None }
         }
         Reading::On(settings) => Run {
@@ -90,6 +95,16 @@ fn live(command: &str, settings: &Settings) -> Option<Live> {
     })
 }
 
+/// Whether a run that ends with `status` failed. A command the person
+/// stopped with Ctrl-C did not, whether it ended through its own stop, as
+/// `canceled`, or as a command that runs until it is stopped does.
+fn failed(status: u8, error: Option<&CliError>, interrupted: bool) -> bool {
+    status != 0
+        && status != INTERRUPTED
+        && !interrupted
+        && !error.is_some_and(|error| error.code() == "canceled")
+}
+
 impl Run {
     /// Runs the command inside the run's root span, so that the core's spans
     /// on this thread are beneath it.
@@ -109,8 +124,7 @@ impl Run {
             return;
         };
         live.root.record("exit_code", u64::from(status));
-        // An interrupt is how a command that runs until it is stopped ends.
-        if status != 0 && status != INTERRUPTED {
+        if failed(status, error, interrupt::signaled()) {
             match error {
                 Some(error) => tracing::error!(
                     parent: &live.root,
@@ -141,8 +155,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_stopped_command_is_not_a_failed_one() {
+        let canceled = CliError::from(marfa_core::CoreError::Canceled);
+        let refused = CliError::Usage("x".into());
+        assert!(failed(3, Some(&refused), false));
+        assert!(failed(3, None, false));
+        assert!(!failed(0, None, false));
+        assert!(!failed(INTERRUPTED, None, false));
+        assert!(!failed(3, Some(&canceled), false));
+        assert!(!failed(3, Some(&refused), true));
+        assert!(!failed(3, None, true));
+    }
+
+    #[test]
     fn without_an_endpoint_a_run_starts_nothing() {
-        let run = start_with("marfa status", |_| None);
+        let run = start_with("marfa status", false, |_| None);
         assert!(run.live.is_none());
         assert_eq!(run.within(|| 7), 7);
         run.finish(3, None);

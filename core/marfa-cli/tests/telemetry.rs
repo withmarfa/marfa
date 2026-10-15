@@ -97,7 +97,7 @@ impl Collector {
     fn spans(&self) -> Vec<Value> {
         self.received()
             .iter()
-            .filter(|post| post.path() == "/v1/traces")
+            .filter(|post| post.path().split('?').next() == Some("/v1/traces"))
             .flat_map(|post| {
                 let body: Value = serde_json::from_str(&post.body).unwrap();
                 body["resourceSpans"]
@@ -649,17 +649,25 @@ fn an_endpoint_that_cannot_be_used_is_ignored_with_one_line_that_does_not_show_i
             format!("ftp://user:{SECRET}@host/"),
         ),
     ] {
+        // With --json, standard error stays one JSON object: no line at all.
         let ran = run(&[(variable, bad.as_str())], &args);
         assert_eq!(ran.code, plain.code);
         assert_eq!(ran.stdout, plain.stdout);
+        assert_eq!(ran.stderr, plain.stderr);
+        // Without it, one line that names the variable and not its value.
+        let words = ["device", "--db", store.to_str().unwrap(), "catch-up"];
+        let plain_words = run(&[], &words);
+        let said = run(&[(variable, bad.as_str())], &words);
+        assert_eq!(said.code, plain_words.code);
+        assert_eq!(said.stdout, plain_words.stdout);
         assert_eq!(
-            ran.stderr,
+            said.stderr,
             format!(
                 "marfa: {variable} is not an http or https address, so this run sends no telemetry\n{}",
-                plain.stderr
+                plain_words.stderr
             )
         );
-        assert!(!ran.stderr.contains(SECRET));
+        assert!(!said.stderr.contains(SECRET));
     }
     // A header or a timeout that cannot be used is left out without a word.
     let collector = Collector::open(Reply::Answer(200));
@@ -796,4 +804,112 @@ fn an_interrupt_ends_a_stream_that_runs_until_stopped_after_its_trace_is_sent() 
         "an interrupt is how this command ends"
     );
     assert!(root["events"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_query_in_the_base_address_stays_a_query_and_the_path_gets_the_traces_path() {
+    let collector = Collector::open(Reply::Answer(200));
+    let base = format!("{}/?token=abc", collector.url);
+    let ran = run(
+        &[("OTEL_EXPORTER_OTLP_ENDPOINT", base.as_str())],
+        &["operations"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let posts = collector.received();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].path(), "/v1/traces?token=abc");
+}
+
+/// Starts `args` with a server that takes the connection and never answers,
+/// waits until it has, sends Ctrl-C and returns how the command ended and
+/// how long that took. The command is killed if it outlasts the wait.
+fn interrupted_while_the_server_is_silent(
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> (std::process::ExitStatus, Duration, String) {
+    use std::io::Read;
+    let silent = Collector::open(Reply::Silence);
+    let mut child = command(env, args)
+        .env("MARFA_API_URL", silent.url.as_str())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while silent.connections.load(Ordering::SeqCst) == 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the command never asked the server"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Held a moment, so the command is in the wait the signal has to end.
+    std::thread::sleep(Duration::from_millis(300));
+    // SAFETY: signals the child this test started.
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+    let signalled = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if signalled.elapsed() > Duration::from_secs(8) {
+            child.kill().unwrap();
+            let status = child.wait().unwrap();
+            panic!("Ctrl-C did not end the command within 8 seconds ({status:?})");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    (status, signalled.elapsed(), stderr)
+}
+
+#[test]
+fn a_first_interrupt_ends_a_stream_still_being_asked_for_as_the_signal_does() {
+    use std::os::unix::process::ExitStatusExt;
+    let (status, took, stderr) = interrupted_while_the_server_is_silent(&["events"], &[]);
+    // Killed by the signal, as ever, not left waiting for the server.
+    assert_eq!(status.signal(), Some(libc::SIGINT), "{status:?} {stderr}");
+    assert!(took < Duration::from_secs(2), "{took:?}");
+}
+
+#[test]
+fn a_first_interrupt_ends_a_hydration_waiting_on_the_server_and_it_is_not_a_failed_run() {
+    let collector = Collector::open(Reply::Answer(200));
+    let store = scratch("hydrate").join("copy.sqlite");
+    let (status, took, stderr) = interrupted_while_the_server_is_silent(
+        &[
+            "--json",
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "hydrate",
+            "--types",
+            "core.note",
+            "--tier",
+            "library",
+        ],
+        &report_to(&collector, &[]),
+    );
+    assert_eq!(status.code(), Some(3), "{stderr}");
+    assert!(stderr.contains("\"canceled\""), "{stderr}");
+    assert!(took < Duration::from_secs(5), "{took:?}");
+
+    let root = collector.root();
+    assert_eq!(root["name"], "marfa device hydrate");
+    assert_eq!(number(&root, "exit_code"), 3);
+    // A refused run carries both, as the first test shows.
+    assert!(
+        root.get("status").is_none(),
+        "a stopped run has an error status"
+    );
+    assert!(
+        root["events"].as_array().unwrap().is_empty(),
+        "a stopped run has an error event"
+    );
 }

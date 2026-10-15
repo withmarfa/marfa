@@ -109,8 +109,10 @@ fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Result<Frame, 
 }
 
 pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    interrupt::stop_on_interrupt();
     let (_, reader) = remote.stream(&request(&args))?;
+    // After the stream is open, since until then nothing here looks for the
+    // stop and a first Ctrl-C has to end the command as it always did.
+    interrupt::stop_on_interrupt();
     let (sender, frames) = mpsc::channel::<Result<Frame, std::io::Error>>();
     std::thread::spawn(move || read_frames(reader, sender));
     let started = Instant::now();

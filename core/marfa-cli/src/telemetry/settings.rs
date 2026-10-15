@@ -67,17 +67,24 @@ pub fn read(get: impl Fn(&str) -> Option<String>) -> Reading {
         (None, Some(base)) => ("OTEL_EXPORTER_OTLP_ENDPOINT", base, true),
         (None, None) => return Reading::Off,
     };
-    let usable = Url::parse(&named)
-        .ok()
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some());
-    if !usable {
+    let parsed = Url::parse(&named).ok().filter(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && !url.cannot_be_a_base()
+    });
+    let Some(mut parsed) = parsed else {
         return Reading::Ignored(variable);
-    }
-    let address = if appends {
-        format!("{}/v1/traces", named.trim_end_matches('/'))
-    } else {
-        named
     };
+    if appends {
+        // On the path, so that a query the base carries stays a query.
+        let Ok(mut path) = parsed.path_segments_mut() else {
+            return Reading::Ignored(variable);
+        };
+        path.pop_if_empty().push("v1").push("traces");
+        drop(path);
+        parsed.set_fragment(None);
+    }
+    let address = parsed.to_string();
     let mut headers = Vec::new();
     for name in [
         "OTEL_EXPORTER_OTLP_HEADERS",
@@ -213,6 +220,35 @@ mod tests {
         assert_eq!(
             on(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318/base")]).url,
             "http://collector:4318/base/v1/traces"
+        );
+        assert_eq!(
+            on(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318/base/")]).url,
+            "http://collector:4318/base/v1/traces"
+        );
+        // A query stays a query, and a fragment is not sent.
+        assert_eq!(
+            on(&[(
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "http://collector:4318/?token=abc"
+            )])
+            .url,
+            "http://collector:4318/v1/traces?token=abc"
+        );
+        assert_eq!(
+            on(&[(
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "https://collector/base?a=1&b=2#frag"
+            )])
+            .url,
+            "https://collector/base/v1/traces?a=1&b=2"
+        );
+        assert_eq!(
+            on(&[(
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+                "http://collector:4318/in?token=abc"
+            )])
+            .url,
+            "http://collector:4318/in?token=abc"
         );
         assert_eq!(
             on(&[

@@ -177,17 +177,21 @@ pub enum Exit {
     Environment = 3,
     Local = 4,
     Credential = 5,
+    /// Never the exit of a refusal: the status a shell gives a process that
+    /// died of Ctrl-C.
+    Interrupted = 130,
 }
 
 impl Exit {
     /// Every exit code, in the order the help lists them.
-    pub const ALL: [Exit; 6] = [
+    pub const ALL: [Exit; 7] = [
         Exit::Done,
         Exit::Refused,
         Exit::Usage,
         Exit::Environment,
         Exit::Local,
         Exit::Credential,
+        Exit::Interrupted,
     ];
 
     /// What the code tells an agent, as the help and the command reference say it.
@@ -206,6 +210,9 @@ impl Exit {
             }
             Exit::Credential => {
                 "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"
+            }
+            Exit::Interrupted => {
+                "a long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended any command at once"
             }
         }
     }

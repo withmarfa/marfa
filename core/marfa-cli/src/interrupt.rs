@@ -13,7 +13,7 @@ static SIGNALED: AtomicBool = AtomicBool::new(false);
 static ENDED: AtomicBool = AtomicBool::new(false);
 
 /// The status a shell gives a process that died of Ctrl-C.
-pub const INTERRUPTED: u8 = 130;
+pub const INTERRUPTED: u8 = crate::error::Exit::Interrupted as u8;
 
 pub fn stop() -> &'static AtomicBool {
     &STOP
@@ -29,11 +29,16 @@ pub fn stop_after(seconds: Option<u64>) -> &'static AtomicBool {
     &STOP
 }
 
+/// Whether Ctrl-C has arrived, which a `--for` limit never does.
+pub fn signaled() -> bool {
+    SIGNALED.load(Ordering::Relaxed)
+}
+
 /// For a command that runs until the person stops it: call when it returns.
 /// The process then leaves with the status the interrupt gave it before this
 /// command handled the signal itself.
 pub fn ended_by_interrupt() {
-    if SIGNALED.load(Ordering::Relaxed) {
+    if signaled() {
         ENDED.store(true, Ordering::Relaxed);
     }
 }

@@ -212,7 +212,7 @@ fn main() -> ExitCode {
         },
     };
     let json = cli.json;
-    let telemetry = telemetry::start(&command);
+    let telemetry = telemetry::start(&command, json);
     let result = telemetry.within(|| run(cli));
     let status = match &result {
         Ok(exit) => interrupt::status(*exit as u8),
