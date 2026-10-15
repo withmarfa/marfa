@@ -300,9 +300,9 @@ When the sign-in that wrote a version has ended, whether a key revoked, an app e
 
 If the body of a write to an item names a `writer`, then the server MUST NOT record that `writer` as the writer of any version.
 
-**Reason:** `POST /items` drops a body key it does not declare (`items/create-undeclared-key`) and `PATCH /items/{id}` refuses one (`items/update-undeclared-key`), so no body reaches the writer.
+**Reason:** `POST /items` and `PATCH /items/{id}` refuse a body key they do not declare (`items/create-undeclared-key`, `items/update-undeclared-key`), so no body reaches the writer.
 
-**Tests:** `compliance/version-writers.test.ts › takes the writer from the credential, drops one a create names and refuses one an update names`.
+**Tests:** `compliance/version-writers.test.ts › takes the writer from the credential, and refuses one a create or an update names`.
 
 ### `versions/writer-sender`
 

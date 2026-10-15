@@ -268,7 +268,11 @@ const createItemRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          /** Strict, as the update door is: a dropped key is a request half
+           *  performed and answered as success, such as `data` sent for
+           *  `properties` creating an empty item. `.strict()` does not
+           *  recurse, so `properties` stays open to the type's keys. */
+          schema: z.strictObject({
             type: z
               .string()
               .describe("The item's type identifier, such as `core.note`."),
@@ -373,7 +377,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is invalid.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+        "- `validation_error`: a field is invalid or undeclared.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {

@@ -5050,7 +5050,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid.
+             * @description - `validation_error`: a field is invalid or undeclared.
              *     - `missing_required_field`: `type` is missing.
              *     - `unknown_type`: `type` isn't registered.
              *     - `invalid_id`: `id` or an edge target isn't a valid ID.
@@ -7728,7 +7728,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The entries to write, at most 5,000. */
+                    /** @description The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key. */
                     items: {
                         /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
                         id?: string;
@@ -7789,7 +7789,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is malformed, or has more than 5,000 entries.
+             * @description - `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.
              *     - `missing_required_field`: a required field is missing.
              *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
              */
