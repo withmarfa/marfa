@@ -106,11 +106,11 @@ pub enum FoldersCommand {
     /// and only while its bytes are the ones the folder wrote and no edit of
     /// it waits to be sent; any other is kept and said. The item stays in
     /// Marfa as it was, and the folder's placement of it ends, sent at the
-    /// next push. Takes away no `held`, `outside` or `unreached` file. A watch
-    /// holding the folder lets it go while this runs; another process holding
-    /// it for longer than 10 seconds refuses it. Delete an
-    /// unmatched file with this, not by hand: a file deleted by hand sends a
-    /// delete of its item.
+    /// next push. Takes away no `held`, `outside` or `unreached` file. With
+    /// `--remove`, a watch holding the folder lets it go while this runs, and
+    /// this is refused if the process holding the folder does not let it go
+    /// within 10 seconds. Delete an unmatched file with this, not by hand: a
+    /// file deleted by hand sends a delete of its item.
     Unmatched {
         /// The folder.
         dir: PathBuf,
