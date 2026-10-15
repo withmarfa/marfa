@@ -635,8 +635,7 @@ impl Core {
     /// meanwhile, and tells `queue.drained` or `queue.not_drained`
     /// (`device/follow-drains-reachable`). That drain waits for one under
     /// way to end, and then does only the work left. The follow ending,
-    /// however it ends, stops that drain as `drain_until`'s stop does, so
-    /// this returns without waiting on a write in flight.
+    /// however it ends, stops that drain as `drain_until`'s stop does.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -960,10 +959,13 @@ impl Core {
     }
 
     /// Ended with `Canceled` soon after `stop` is raised, without waiting on
-    /// a write in flight, as an upload can be for as long as the server
-    /// takes. That write stays queued as sent, under its key, and the next
-    /// drain sends it again; an answer to it that arrives after the stop is
-    /// dropped. Answers already recorded remain in the queue.
+    /// an upload in flight, which can take as long as the server takes, or
+    /// a write the server answers by its key: that write stays queued as
+    /// sent, under its key, and the next drain sends it again; an answer to
+    /// it that arrives after the stop is dropped. Any other write in flight
+    /// is waited for, and its answer recorded, since sent again it could
+    /// overwrite a newer change. Answers already recorded remain in the
+    /// queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
         let _one = self.wait_to_drain(stop)?;
         drain::drain(self, stop)

@@ -8,6 +8,7 @@ import {
 } from "./harness.js";
 import {
   answers,
+  writeAnswers,
   connected,
   copyHeadRead,
   itemsPage,
@@ -432,6 +433,62 @@ describe("stopping a drain", () => {
       "accepted",
     ]);
     release();
+  });
+
+  it("waits for a tag write in flight at a stop, and records its answer", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    harness = await hydratedHarness("stop-drain-unkeyed", {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "held", body: "held" } } },
+        ],
+      },
+    });
+    const { server, device } = harness;
+    const tagged = await device.addTag(id, "kept");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    scriptWrites(server, {
+      read: [answers.updated(wireItem({ id }))],
+      tags: [
+        { kind: "gated", until, then: writeAnswers.metadata(id, ["kept"]) },
+      ],
+    });
+    const tags = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname === `/items/${id}/tags`,
+      ).length;
+    const draining = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(tags(), draining.stderr).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      draining.interrupt();
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(
+        draining.exitCode(),
+        "a stop let go of a tag write, which the server would apply again over a newer change",
+      ).toBeNull();
+      release();
+      await draining.exited();
+      expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+    } finally {
+      release();
+      await draining.stop();
+    }
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => row.verdict),
+      "the answer the stopped drain waited for was not recorded",
+    ).toEqual(["accepted"]);
+    expect(tags()).toBe(1);
   });
 });
 

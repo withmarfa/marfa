@@ -1225,8 +1225,8 @@ pub struct MarfaCore {
 /// after, with an error coded `canceled`. What the call had taken is
 /// consistent: a hydration left unfinished refuses reads, a catch-up keeps
 /// the cursor it reached, and a drain leaves what it had not sent queued, and
-/// a write it had in flight queued as sent, for the next drain to send again
-/// under the same key. A raised `Stop` stays raised, so a call given one
+/// an upload or item or edge write it had in flight queued as sent, for the
+/// next drain to send again under the same key. A raised `Stop` stays raised, so a call given one
 /// afterwards ends at once.
 #[napi]
 pub struct Stop {

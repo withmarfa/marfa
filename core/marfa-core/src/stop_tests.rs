@@ -417,6 +417,76 @@ fn a_stopped_drain_leaves_its_write_in_flight_for_the_next_drain_to_send_again()
     );
 }
 
+type Queues = dyn Fn(&Core) -> crate::QueuedWrite;
+
+#[test]
+fn a_stopped_drain_waits_for_a_write_the_server_does_not_answer_by_key() {
+    let tag = |core: &Core| core.add_tag("a", "x").unwrap();
+    let metadata = |core: &Core| {
+        core.write_metadata(
+            "a",
+            &crate::MetadataWrite {
+                tags: vec!["y".into()],
+            },
+            false,
+        )
+        .unwrap()
+    };
+    let extension = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
+    let writes: [(&str, &Queues); 3] = [
+        ("/items/a/tags", &tag),
+        ("/items/a/metadata", &metadata),
+        ("/items/a/extensions/app.cursor", &extension),
+    ];
+    for (path, queue) in writes {
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        {
+            let conn = core.conn().unwrap();
+            let held = store::testing::note("a", "a", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &held, None, &Default::default()).unwrap();
+        }
+        let row = queue(&core).id;
+        let (_, read) = created("a", "core.note");
+        server.on("/items/a", vec![read]);
+        let late = Arc::new(AtomicBool::new(false));
+        server.on(
+            path,
+            vec![Answer::WaitFor {
+                ready: late.clone(),
+                answer: Box::new(scripted::json(200, r#"{"ok":true}"#)),
+            }],
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done, result) = mpsc::channel();
+        {
+            let (core, stop) = (core.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let _ = done.send(core.drain_until(&stop));
+            });
+        }
+        server.wait_for(path, 1, WAIT);
+        stop.store(true, Ordering::Relaxed);
+        assert!(
+            result.recv_timeout(Duration::from_millis(600)).is_err(),
+            "{path}: a stop let go of a write the server would not answer by its key"
+        );
+        late.store(true, Ordering::Relaxed);
+        let ended = result
+            .recv_timeout(WAIT)
+            .expect("the drain did not end once its write was answered");
+        assert_eq!(ended.unwrap_err(), CoreError::Canceled, "{path}");
+        let answered = core.queue().unwrap();
+        let answered = answered.iter().find(|queued| queued.id == row).unwrap();
+        assert!(
+            answered.verdict.is_some(),
+            "{path}: the answer waited for was not recorded: {answered:?}"
+        );
+        assert_eq!(server.seen(path).len(), 1, "{path}");
+    }
+}
+
 type Stoppable = dyn FnOnce(&Core, &AtomicBool) -> Result<()> + Send;
 
 #[test]

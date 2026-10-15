@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contractVersionOf } from "../packages/client/scripts/contract-version.js";
+import { keyedWrites } from "../scripts/keyed-writes.js";
 
 /**
  * The core keeps its own transport rather than the generated client, so the
@@ -20,5 +21,22 @@ describe("the contract the core is built for", () => {
     const stated = /^pub const CONTRACT_VERSION: u64 = (\d+);$/m.exec(source);
     expect(stated, "contract.rs states no CONTRACT_VERSION").not.toBeNull();
     expect(Number(stated?.[1])).toBe(contractVersionOf(document.info.version));
+  });
+
+  it("lets go at a stop only of the writes the document says take a key", () => {
+    const document = JSON.parse(
+      readFileSync(new URL("../openapi.json", import.meta.url), "utf8"),
+    ) as Parameters<typeof keyedWrites>[0];
+    const source = readFileSync(
+      new URL("../core/marfa-core/src/contract.rs", import.meta.url),
+      "utf8",
+    );
+    const listed = [
+      ...source.matchAll(/^ {4}\("([A-Z]+)", "([^"]+)"\),$/gm),
+    ].map((match) => [match[1], match[2]]);
+    // The witness: the document names keyed writes, so an empty list is not
+    // a match of nothing.
+    expect(keyedWrites(document).length).toBeGreaterThan(0);
+    expect(listed).toEqual(keyedWrites(document));
   });
 });
