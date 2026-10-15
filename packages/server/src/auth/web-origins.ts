@@ -17,6 +17,7 @@
  * gate (`routes/_cross-origin.ts`) and the sign-in library's trusted origins
  * are built from `CORS_ORIGINS` and the issuer alone.
  */
+import { errorMessage } from "../error-text.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -77,7 +78,7 @@ export async function isApprovedWebOrigin(
     return clients.some((client) => webOriginsOf(client).includes(origin));
   } catch (err) {
     log("warn", "cors: approved origins could not be read", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return false;
   }
