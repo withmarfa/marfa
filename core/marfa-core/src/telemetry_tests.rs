@@ -684,8 +684,8 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
     );
     let sent = server.seen("/items");
     let body = String::from_utf8(sent[0].body.clone()).unwrap();
-    for secret in &SECRETS[..2] {
-        assert!(body.contains(secret), "the write did not carry {secret}");
+    for (n, secret) in SECRETS[..2].iter().enumerate() {
+        assert!(body.contains(secret), "the write did not carry marker {n}");
     }
     assert!(
         sent[0]
@@ -699,10 +699,10 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
 
     let text = log.text();
     assert!(text.iter().any(|text| text == "drain"));
-    for secret in SECRETS {
+    for (n, secret) in SECRETS.iter().enumerate() {
         assert!(
             !text.iter().any(|text| text.contains(secret)),
-            "{secret} reached a span or an event: {log:?}"
+            "marker {n} reached a span or an event: {log:?}"
         );
     }
 }
