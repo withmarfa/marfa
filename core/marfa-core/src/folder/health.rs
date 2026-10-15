@@ -13,7 +13,7 @@ const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Code {
+pub(super) enum Code {
     Conflict,
     Refused,
     CredentialRefused,
@@ -25,19 +25,29 @@ enum Code {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Problem {
-    code: Code,
-    count: u64,
+pub(super) struct Problem {
+    pub(super) code: Code,
+    pub(super) count: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct Snapshot {
-    last_success_at: Option<String>,
-    pending_uploads: u64,
-    pending_downloads: u64,
-    paused_removals: u64,
-    first_sync_waiting: bool,
-    problems: Vec<Problem>,
+pub(super) struct Snapshot {
+    pub(super) last_success_at: Option<String>,
+    pub(super) pending_uploads: u64,
+    pub(super) pending_downloads: u64,
+    pub(super) paused_removals: u64,
+    pub(super) first_sync_waiting: bool,
+    pub(super) problems: Vec<Problem>,
+}
+
+#[cfg(test)]
+impl Snapshot {
+    pub(super) fn succeeded(at: &str) -> Snapshot {
+        Snapshot {
+            last_success_at: Some(at.into()),
+            ..Snapshot::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +256,12 @@ fn observed_downloads(pull: &PullReport) -> (u64, Vec<Problem>) {
 }
 
 impl Folder {
+    /// The snapshot last observed for the report to the server, as saved in
+    /// the folder's store.
+    pub(super) fn observed_health(&self) -> Option<Snapshot> {
+        State::load(&*self.core.conn().ok()?).ok()?.observed
+    }
+
     /// Reporting is independent of the content queue. Its failure cannot
     /// turn a successful content operation into a failed one.
     pub(super) fn health_observe(

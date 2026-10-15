@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
-use marfa_core::folder::{Every, EveryFolder, RETRY_MOST, Registry, Unwatched};
+use marfa_core::folder::{Every, EveryFolder, RETRY_MOST, Registry, Unwatched, WatchRecord};
 use marfa_core::{CoreError, Folder, WatchError, WatchEvent, WatchPass};
 use serde_json::Value;
 
@@ -33,11 +33,28 @@ pub fn watch(
     // Once the folder is open, so that an interrupt before then ends the
     // command as it always did.
     interrupt::stop_on_interrupt();
+    let record = WatchRecord::located().map(Arc::new);
+    if let Some(record) = &record {
+        let record = Arc::clone(record);
+        std::thread::spawn(move || {
+            record.keep(|reason| record_unwritten(json, record.path(), reason));
+        });
+    }
     let (done, ended) = mpsc::channel();
+    let kept = record.clone();
     std::thread::spawn(move || {
-        let _ = done.send(keep_in_step(&folder, &server, stop_after, json));
+        let _ = done.send(keep_in_step(
+            &folder,
+            &server,
+            stop_after,
+            json,
+            kept.as_deref(),
+        ));
     });
     let result = await_end(&ended, interrupt::signaled, INTERRUPT_GRACE);
+    if let Some(record) = &record {
+        record.finish();
+    }
     if result.is_ok() {
         interrupt::ended_by_interrupt();
     }
@@ -64,11 +81,18 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
         registry: registry.path().to_path_buf(),
         folders: Mutex::default(),
     };
+    let record = Arc::new(WatchRecord::beside(&registry));
     let (done, ended) = mpsc::channel();
+    let kept = Arc::clone(&record);
     std::thread::spawn(move || {
-        let _ = done.send(marfa_core::folder::watch_every(&registry, stop, &machine));
+        let _ = done.send(marfa_core::folder::watch_every(
+            &registry, stop, &machine, &kept,
+        ));
     });
     let result = await_end(&ended, interrupt::signaled, INTERRUPT_GRACE);
+    // A watch left behind at the end of the grace is not stopped, so its
+    // folders are marked not watched here.
+    record.finish();
     if result.is_ok() {
         interrupt::ended_by_interrupt();
     }
@@ -216,11 +240,28 @@ impl EveryFolder for Machine {
                 &serde_json::json!({ "registry": self.registry, "readable": false, "reason": reason }),
                 || format!("{reason}; the folders already watched keep syncing"),
             ),
+            Every::Record { path, reason } => {
+                record_unwritten(json, path, reason);
+                Ok(())
+            }
             Every::Registry(None) => self.line(
                 &serde_json::json!({ "registry": self.registry, "readable": true, "reason": null }),
                 || format!("the folder registry {} can be read again", self.registry.display()),
             ),
         }
+    }
+}
+
+/// Said once: the watch goes on without the record other programs read.
+fn record_unwritten(json: bool, path: &Path, reason: &str) {
+    if json {
+        let _ = output::line_of(
+            &serde_json::json!({ "record": path, "written": false, "reason": reason }),
+            true,
+            String::new,
+        );
+    } else {
+        eprintln!("{reason}; the watch goes on without it");
     }
 }
 
@@ -311,35 +352,39 @@ fn keep_in_step(
     server: &str,
     stop_after: Option<Duration>,
     json: bool,
+    record: Option<&WatchRecord>,
 ) -> Result<(), CliError> {
     let stop = interrupt::stop();
     let mut conflicts = folders::Conflicts::default();
-    folder
-        .watch(stop, |event| {
-            if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
-                // Detached: the process ends with the watch.
-                std::thread::spawn(move || {
-                    std::thread::sleep(limit);
-                    stop.store(true, Ordering::SeqCst);
-                });
-            }
-            tell(
-                server,
-                Say { json, dir: None },
-                folder,
-                &mut conflicts,
-                event,
-            )
-        })
-        .map_err(|error| match error {
-            WatchError::CredentialRefused(error) => refused_credential(server, &error),
-            WatchError::FollowEnded(error) => CliError::Watch(format!(
-                "the server's changes stopped reaching this folder: {error}"
-            )),
-            WatchError::Unwatchable(reason) => CliError::Watch(reason),
-            WatchError::Core(error) => error.into(),
-            WatchError::Told(error) => error,
-        })
+    let tell_event = |event| {
+        if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
+            // Detached: the process ends with the watch.
+            std::thread::spawn(move || {
+                std::thread::sleep(limit);
+                stop.store(true, Ordering::SeqCst);
+            });
+        }
+        tell(
+            server,
+            Say { json, dir: None },
+            folder,
+            &mut conflicts,
+            event,
+        )
+    };
+    match record {
+        Some(record) => record.watch_folder(folder, stop, tell_event),
+        None => folder.watch(stop, tell_event),
+    }
+    .map_err(|error| match error {
+        WatchError::CredentialRefused(error) => refused_credential(server, &error),
+        WatchError::FollowEnded(error) => CliError::Watch(format!(
+            "the server's changes stopped reaching this folder: {error}"
+        )),
+        WatchError::Unwatchable(reason) => CliError::Watch(reason),
+        WatchError::Core(error) => error.into(),
+        WatchError::Told(error) => error,
+    })
 }
 
 fn tell(

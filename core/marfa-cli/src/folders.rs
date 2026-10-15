@@ -144,7 +144,9 @@ pub enum FoldersCommand {
         /// Each folder uses the server its copy came from, and each line names
         /// its folder. A folder added or removed while the watch runs joins or
         /// leaves it. A folder that can't be watched is reported once and
-        /// tried again.
+        /// tried again. Either way the watch keeps a record of its folders in
+        /// `folder-watch.json` beside the registry, for other programs on
+        /// the machine to read.
         dir: Option<PathBuf>,
         /// Stop after this long. Unset, it runs until interrupted.
         #[arg(long, value_name = "SECONDS")]

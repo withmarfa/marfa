@@ -3878,6 +3878,148 @@ If a watch of every folder is interrupted before the server answers a folder’s
 
 **Tests:** `device/folders-watch-every.test.ts › ends soon after an interrupt while a pass waits on the server, keeping the edit it was sending`.
 
+## The record of folder watches
+
+A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
+
+### `folders/watch-record-location`
+
+While `folders watch` runs, with or without a directory, the CLI MUST keep a JSON file named `folder-watch.json` in the directory that holds the machine’s folder registry.
+
+**Reason:** A program on the machine reads what a watch is doing without opening a folder’s store, calling the server or running a command for each folder.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
+
+### `folders/watch-record-folders`
+
+While `folders watch` runs, a device MUST list in the record, in the entry of its process, each folder it was asked to watch: the folder at the named directory, or every folder the registry lists.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
+
+### `folders/watch-record-watching`
+
+While a folder is said to be watched, a device MUST set `watching` to `true` for that folder in the record and `reason` to `null`.
+
+**Reason:** A folder tried again after it could not be watched is said to be watched once its watch has lasted, so the record keeps showing why it was not watched until then.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
+
+### `folders/watch-record-unwatched`
+
+While a folder that a watch of every folder lists is not said to be watched, a device MUST list it in the record with `watching` set to `false` and `reason` set to the code of the error that keeps it out.
+
+**Reason:** A program showing folder syncing tells a folder that is failing from one that is not listed. The code is the one `folders watch` reports, and the record holds no message, which may name a path.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`.
+
+### `folders/watch-record-health`
+
+While a device has read a folder’s latest report to the server, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to the values of the folder’s latest report.
+
+**Reason:** The record carries the report’s own values, so that a program reading it and the server never disagree about a folder. `last_success_at` is `null` until a sync completes, and `problems` holds the report’s closed set of codes with their counts.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`.
+
+### `folders/watch-record-health-unread`
+
+While a device has not read a report to the server for a folder and the folder’s `reason` is not `first_sync_waiting`, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to `null`.
+
+**Reason:** A reader tells a folder with nothing to report from a folder whose report this process never read, such as one it could not open, though another process may have saved one. A folder whose `reason` is `first_sync_waiting` shows `first_sync_waiting` as `true`.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`.
+
+### `folders/watch-record-processes`
+
+While several watch processes run on one machine, a device MUST keep one entry in the record for each of them, with its own `pid`.
+
+**Reason:** An entry left by an earlier process that had the same `pid` is replaced, so the `pid` names one entry.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › is never read half written, while two watches write it`, `device/folder-watch-record.test.ts › refreshes a running watch's heartbeat, and marks its folders not watched when it is stopped`.
+
+### `folders/watch-record-heartbeat`
+
+While a watch process runs and no other process holds the lock on `folder-watch.lock`, a device MUST rewrite the process’s entry in the record, setting `heartbeat_at` to the time of the write, at least once every `heartbeat_interval_seconds`.
+
+**Reason:** A reader decides that an entry is current when its `ended_at` is `null` and its `heartbeat_at` is no later than now and less than three `heartbeat_interval_seconds` before now. A process that was killed cannot say that it ended, so its heartbeat grows old instead.
+
+**Tests:** `device/folder-watch-record.test.ts › refreshes a running watch's heartbeat, and marks its folders not watched when it is stopped`.
+
+### `folders/watch-record-stopped`
+
+When a watch is stopped by an interrupt, a device MUST set `ended_at` in the process’s entry to the time it stopped and `watching` to `false` for each of the entry’s folders.
+
+**Tests:** `device/folder-watch-record.test.ts › refreshes a running watch's heartbeat, and marks its folders not watched when it is stopped`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
+
+### `folders/watch-record-killed`
+
+If a watch process is killed, then a device MUST leave that process’s entry in the record as it was until `folders/watch-record-pruned` drops it.
+
+**Reason:** A process that others replaced would show a dead watch as current. The entry keeps its last `heartbeat_at`, which a reader finds older than three `heartbeat_interval_seconds`.
+
+**Tests:** `device/folder-watch-record.test.ts › leaves a killed watch's entry as it was, so that its heartbeat shows it ended`.
+
+### `folders/watch-record-pruned`
+
+When a device writes the record, a device MUST drop each entry of another process whose `heartbeat_at` is an hour or more before now or is later than now.
+
+**Reason:** The record does not keep every watch that ever ran, and a heartbeat that has not happened yet, as after the clock was set back, would otherwise show a watch as current.
+
+**Tests:** `device/folder-watch-record.test.ts › drops the entries nothing has written to for an hour and any that is still to come, and keeps a recent one`.
+
+### `folders/watch-record-whole`
+
+When a device writes the record, a device MUST replace the whole file in one step, keeping the entries of the other watch processes.
+
+**Reason:** A reader never reads half a record, and two watch processes never lose each other’s entries.
+
+**Tests:** `device/folder-watch-record.test.ts › is never read half written, while two watches write it`, `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`.
+
+### `folders/watch-record-no-content`
+
+A device MUST NOT write into the record a credential, the name of a file inside a folder, or an item’s content.
+
+**Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`.
+
+### `folders/watch-record-unwritable-said`
+
+If the record cannot be written, then the CLI MUST say so once while the watch runs.
+
+**Tests:** `device/folder-watch-record.test.ts › says once that the record cannot be written, and the watch goes on and writes it once it can`.
+
+### `folders/watch-record-unwritable-goes-on`
+
+If the record cannot be written, then the CLI MUST keep the watch syncing.
+
+**Tests:** `device/folder-watch-record.test.ts › says once that the record cannot be written, and the watch goes on and writes it once it can`.
+
+### `folders/watch-record-locked-syncs`
+
+While another process holds the lock on `folder-watch.lock`, the CLI MUST keep every folder’s watch syncing.
+
+**Reason:** No folder’s start, pass or sync waits on the record.
+
+**Tests:** `device/folder-watch-record.test.ts › goes on syncing and ends on an interrupt while another process holds the record's lock`.
+
+### `folders/watch-record-locked-ends`
+
+If another process holds the lock on `folder-watch.lock` when a watch is interrupted, then the CLI MUST end within three seconds.
+
+**Tests:** `device/folder-watch-record.test.ts › goes on syncing and ends on an interrupt while another process holds the record's lock`.
+
+### `folders/watch-record-locked-said`
+
+If another process has held the lock on `folder-watch.lock` for more than three `heartbeat_interval_seconds` while a watch runs, then the CLI MUST say so once, and again only after a write of the record has succeeded in between.
+
+**Reason:** The watch goes on, but a reader finds its entry old and takes it as ended.
+
+**Tests:** `device/folder-watch-record.test.ts › says once that another process has held the record's lock for long`.
+
+### `folders/watch-record-written-again`
+
+When the record can be written again, a device MUST write it.
+
+**Tests:** `device/folder-watch-record.test.ts › says once that the record cannot be written, and the watch goes on and writes it once it can`.
+
 ## Taking in another folder’s file
 
 ### `folders/take-in-file`

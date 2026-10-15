@@ -72,6 +72,8 @@ export interface HeldCommand {
   /** What it has printed so far, for a command that reports as it runs. */
   readonly stdout: string;
   running: () => boolean;
+  /** Its process id. */
+  pid: () => number;
   /** Its exit code once it has exited, and null before. */
   exitCode: () => number | null;
   /** Resolves once it has exited, however it exited. */
@@ -538,6 +540,11 @@ export class CliDevice implements DeviceUnderTest {
         return stdout;
       },
       running: () => child.exitCode === null && !child.killed,
+      pid: () => {
+        if (child.pid === undefined)
+          throw new Error("the command never started");
+        return child.pid;
+      },
       exitCode: () => child.exitCode,
       exited: () => exited,
       interrupt: () => {
