@@ -171,12 +171,11 @@ export const ConflictResponseSchema = z
   .openapi("ItemVersionConflict");
 
 /**
- * The refusal for a stale write that carried nothing to merge.
+ * The refusal for a failed exact version precondition.
  *
  * `current` and `error.status` are here because every `version_conflict`
  * carries them, whichever door answered and whatever the write held. What is
- * absent is what a merge would need and this write has none of: there is no
- * ancestor to compare against and no field that could have collided.
+ * absent is what a merge would need: this refusal attempts no merge.
  */
 const StaleVersionSchema = z
   .object({
@@ -184,7 +183,7 @@ const StaleVersionSchema = z
     current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
   })
   .describe(
-    "A stale write that carried nothing to merge: the error and the item now.",
+    "A failed exact version precondition: the error and the item now.",
   )
   .openapi("ItemStaleVersion");
 
@@ -760,7 +759,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.",
+    "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

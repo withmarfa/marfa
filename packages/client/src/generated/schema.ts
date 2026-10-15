@@ -91,7 +91,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.
+         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -2331,7 +2331,7 @@ export interface components {
                 };
             };
         };
-        /** @description A stale write that carried nothing to merge: the error and the item now. */
+        /** @description A failed exact version precondition: the error and the item now. */
         ItemStaleVersion: {
             error: components["schemas"]["VersionConflictError"] & unknown;
             current: components["schemas"]["ConflictSnapshot"] & unknown;
