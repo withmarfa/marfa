@@ -143,9 +143,10 @@ describe("GET /auth/device/consent", () => {
     expect(shown.status).toBe(200);
     expect(shown.headers.get("Content-Type")).toContain("text/html");
 
-    // A registration nobody authorized is removed once it is older than the
-    // retention window, however recently a code was asked for it. The window
-    // is days, so the client's age is written rather than waited for.
+    // A registration nobody authorized is removed once it has been idle past
+    // the retention window, however recently a code was asked for it. The
+    // window is days, so the client's registration and offer times are
+    // written rather than waited for.
     const aged = withInstanceDatabase(server.sqlitePath, (db) =>
       db
         .prepare(

@@ -4,10 +4,11 @@
  * and registration. A page needs both to open the approval window at all.
  *
  * Each takes no credential and answers nothing that belongs to the owner,
- * so it is answered with `Access-Control-Allow-Origin: *`. A browser never
- * sends credentials on a request answered with `*`, and the answer is the
- * same for every origin, so a cache may hand it to any of them.
- * `app.cors.test.ts` holds this list to the app's own route table.
+ * so it is answered with `Access-Control-Allow-Origin: *`. A browser lets no
+ * page read that answer to a request it sent with cookies, and `app.ts`
+ * keeps the cookie from registration. The answer is the same for every
+ * origin, so a cache may hand it to any of them.
+ * `_open-origin.test.ts` holds this list to the app's own route table.
  */
 export const OPEN_TO_EVERY_ORIGIN: ReadonlyMap<string, readonly string[]> =
   new Map([

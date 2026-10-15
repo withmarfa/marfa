@@ -22,9 +22,10 @@ describe("the operations open to every origin", () => {
     for (const [path, methods] of OPEN_TO_EVERY_ORIGIN) {
       for (const method of methods) {
         // Registration is served by the sign-in library behind `/auth/*`.
-        const key = served.has(`${method} ${path}`)
-          ? `${method} ${path}`
-          : `${method} /auth/*`;
+        const key =
+          served.has(`${method} ${path}`) || !path.startsWith("/auth/")
+            ? `${method} ${path}`
+            : `${method} /auth/*`;
         expect(served, `${method} ${path}`).toContain(key);
       }
     }

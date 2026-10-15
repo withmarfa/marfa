@@ -376,6 +376,9 @@ export class RateLimitWindowCleaner {
   }
 }
 
+/** Clients one write of the DCR reaper removes at most. */
+export const DCR_REAP_BATCH = 200;
+
 /**
  * Reaps grantless OAuth Dynamic Client Registration (DCR) clients.
  *
@@ -387,7 +390,7 @@ export class RateLimitWindowCleaner {
  * idle past the retention window and grantless.
  *
  * Conservative: any single grant signal spares the row, so a client a user
- * actually authorized (or one with any live token) is never reaped. The
+ * actually authorized (or one that holds any token) is never reaped. The
  * grant check asks only whether a client has any grant left, so this is an
  * instance-wide sweep like `AuthSessionCleaner` and
  * `RateLimitWindowCleaner`, with no configurable override.
@@ -395,9 +398,6 @@ export class RateLimitWindowCleaner {
  * `retentionDays <= 0` switches the housekeeping job off: the operator can
  * leave the deployment running with no DCR reaper by setting the env var to 0.
  */
-/** Clients one write of the DCR reaper removes at most. */
-export const DCR_REAP_BATCH = 200;
-
 export class DcrClientCleaner {
   constructor(
     private storage: Storage,
@@ -405,7 +405,7 @@ export class DcrClientCleaner {
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  /** One sweep — deletes grantless clients older than the window. No-op
+  /** One sweep — deletes grantless clients idle past the window. No-op
    *  when the window is off or the oauth-provider store is absent (test
    *  contexts that skip better-auth). */
   async runOnce(): Promise<number> {

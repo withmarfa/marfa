@@ -1429,7 +1429,7 @@ When a request carries an `Origin`, the server MUST answer `GET /.well-known/oau
 
 When a request to `POST /auth/oauth2/register` carries an `Origin`, the server MUST answer it with `Access-Control-Allow-Origin: *`.
 
-**Reason:** A page registers itself from the browser before it opens the approval window, so registration answers every origin; a browser never sends credentials on a request answered with `*`.
+**Reason:** A page registers itself from the browser before it opens the approval window, so registration answers every origin; a browser lets no page read an answer that carries `*` to a request sent with cookies.
 
 **Tests:** `compliance/web-page-register.test.ts › answers the discovery documents and registration to any origin, with every origin allowed and no credentials`, `› completes the flow from a page that was never registered: discover, register, approve, exchange and read`.
 
