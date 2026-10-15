@@ -5142,6 +5142,6 @@ While a folder’s directory is not below `Library/Mobile Documents` or `Library
 
 Where `--json` is given, the CLI MUST print a storage warning on standard error and not in the JSON on standard output.
 
-**Reason:** A program reading standard output gets only JSON; the warning follows the plain-`http` warning, one plain line on standard error before any error object.
+**Reason:** A program reading standard output gets only JSON, as it does when the CLI warns of a plain `http` address.
 
 **Tests:** `device/folders-storage-warning.test.ts › keeps standard output to its JSON document under --json, with the warning a plain line on standard error`.
