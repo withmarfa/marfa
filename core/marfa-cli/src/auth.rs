@@ -499,7 +499,11 @@ fn resolved(store: &std::path::Path) -> Result<PathBuf, CliError> {
 
 #[cfg(unix)]
 fn user_home() -> Result<PathBuf, CliError> {
-    marfa_core::folder::user_home().map_err(|error| CliError::Invalid(error.to_string()))
+    // A failed lookup is an I/O error; a record with no usable home is invalid.
+    marfa_core::folder::user_home().map_err(|error| match error.raw_os_error() {
+        Some(_) => error.into(),
+        None => CliError::Invalid(error.to_string()),
+    })
 }
 
 #[cfg(unix)]
