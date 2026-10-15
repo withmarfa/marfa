@@ -496,8 +496,10 @@ export class CliDevice implements DeviceUnderTest {
    * The caller stops it. A held process that outlived its fixture would hold
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
+   *
+   * `env` is laid over the binary's own environment, such as a keychain file
+   * of the fixture's own.
    */
-  /** `env` is laid over the binary's own, a keychain of the fixture's say. */
   hold(
     args: string[],
     at: "device" | "root" | "text" = "device",
