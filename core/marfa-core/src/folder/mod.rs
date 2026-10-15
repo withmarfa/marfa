@@ -24,11 +24,15 @@ pub mod registry;
 pub mod settings;
 mod settings_file;
 mod status;
+mod storage;
 mod sync;
 mod transfer;
 mod watch;
 pub use every::{Every, EveryFolder, Unwatched, watch_every};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
+pub use storage::StorageCause;
+#[cfg(unix)]
+pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use unmatched::{Unmatched, UnmatchedRemoved};
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
@@ -514,6 +518,13 @@ impl Folder {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Why the folder's directory is in cloud-synced or network storage, or
+    /// `None` where it is not. Reads the file system, so it can wait on a
+    /// mount that does not answer.
+    pub fn storage_cause(&self) -> Option<StorageCause> {
+        storage::storage_cause(&self.root)
     }
 
     /// The path, from the folder's root, of the file bound to the item, if

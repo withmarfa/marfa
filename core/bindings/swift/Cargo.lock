@@ -817,6 +817,7 @@ dependencies = [
  "core-foundation",
  "globset",
  "hex",
+ "libc",
  "libsqlite3-sys",
  "notify",
  "pulldown-cmark",

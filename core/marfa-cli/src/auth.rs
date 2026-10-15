@@ -498,55 +498,8 @@ fn resolved(store: &std::path::Path) -> Result<PathBuf, CliError> {
 }
 
 #[cfg(unix)]
-pub(crate) fn user_home() -> Result<PathBuf, CliError> {
-    use std::ffi::CStr;
-    use std::os::unix::ffi::OsStrExt;
-    let mut size = 1024;
-    loop {
-        let mut buffer = vec![0u8; size];
-        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
-        let mut result = std::ptr::null_mut();
-        // The entry and buffer remain live until pw_dir has been copied.
-        let status = unsafe {
-            libc::getpwuid_r(
-                libc::geteuid(),
-                entry.as_mut_ptr(),
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-                &mut result,
-            )
-        };
-        if status == libc::ERANGE {
-            size = size.checked_mul(2).ok_or_else(|| {
-                CliError::Invalid("the operating-system user record is too large".into())
-            })?;
-            continue;
-        }
-        if status != 0 {
-            return Err(std::io::Error::from_raw_os_error(status).into());
-        }
-        if result.is_null() {
-            return Err(CliError::Invalid(
-                "the operating-system user has no home directory".into(),
-            ));
-        }
-        // A successful lookup populated the entry; pw_dir lives in buffer.
-        let entry = unsafe { entry.assume_init() };
-        if entry.pw_dir.is_null() {
-            return Err(CliError::Invalid(
-                "the operating-system user has no home directory".into(),
-            ));
-        }
-        let home = PathBuf::from(std::ffi::OsStr::from_bytes(unsafe {
-            CStr::from_ptr(entry.pw_dir).to_bytes()
-        }));
-        if !home.is_absolute() {
-            return Err(CliError::Invalid(
-                "the operating-system user's home directory is not absolute".into(),
-            ));
-        }
-        return Ok(home);
-    }
+fn user_home() -> Result<PathBuf, CliError> {
+    marfa_core::folder::user_home().map_err(|error| CliError::Invalid(error.to_string()))
 }
 
 #[cfg(unix)]

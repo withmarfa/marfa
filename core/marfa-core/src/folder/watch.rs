@@ -8,7 +8,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use super::lists::Lists;
 use super::{
     Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport, SettingsFileReport,
-    Uncarried, Unsure,
+    StorageCause, Uncarried, Unsure,
 };
 use crate::error::CoreError;
 
@@ -36,7 +36,12 @@ pub const RETRY_MOST: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub enum WatchEvent {
     /// The directory is watched, as its resolved path, and passes begin.
-    Watching { dir: PathBuf },
+    /// `storage` says why it is in cloud-synced or network storage, where it
+    /// is.
+    Watching {
+        dir: PathBuf,
+        storage: Option<StorageCause>,
+    },
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed(String),
     /// A hydration failed and is tried again after `wait`, which doubles
@@ -194,7 +199,11 @@ impl Folder {
             .map_err(|error| {
                 WatchError::Unwatchable(format!("cannot watch {}: {error}", dir.display()))
             })?;
-        tell(WatchEvent::Watching { dir: dir.clone() }).map_err(WatchError::Told)?;
+        tell(WatchEvent::Watching {
+            dir: dir.clone(),
+            storage: self.storage_cause(),
+        })
+        .map_err(WatchError::Told)?;
 
         let mut gate = Gate::new(Instant::now());
         let mut telling = Telling::default();

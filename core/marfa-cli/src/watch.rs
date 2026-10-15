@@ -346,7 +346,7 @@ fn tell(
     event: WatchEvent,
 ) -> Result<(), CliError> {
     match event {
-        WatchEvent::Watching { dir } => {
+        WatchEvent::Watching { dir, .. } => {
             say.note(&format!("watching {} (interrupt to stop)", dir.display()));
             Ok(())
         }

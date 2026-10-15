@@ -16,6 +16,42 @@ pub struct ListedFolder {
     pub folder: String,
 }
 
+/// Why a folder's directory is in cloud-synced or network storage, where
+/// two programs may sync the same files or changes may not be noticed. An app
+/// shows it; it is a warning, and the folder works.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum StorageCause {
+    /// iCloud Drive syncs the files, including `Desktop` and `Documents`
+    /// where iCloud's "Desktop & Documents" is on.
+    ICloudDrive,
+    /// A cloud service's File Provider syncs the files.
+    CloudService,
+    /// A network file system, named as the operating system names it
+    /// (`smbfs`, `nfs`, `afpfs`, `webdav`, `cifs` or `smb2`). Changes made
+    /// from another computer may not be noticed.
+    NetworkFileSystem { kind: String },
+}
+
+fn storage_of(cause: Option<marfa_core::StorageCause>) -> Option<StorageCause> {
+    use marfa_core::StorageCause as C;
+    cause.map(|cause| match cause {
+        C::ICloudDrive => StorageCause::ICloudDrive,
+        C::CloudService => StorageCause::CloudService,
+        C::NetworkFileSystem(kind) => StorageCause::NetworkFileSystem { kind },
+    })
+}
+
+/// A folder `add` made, listed in the machine's registry.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AddedFolder {
+    /// The directory, resolved as far as it exists.
+    pub dir: String,
+    /// The id of the `system.folder` whose settings it follows.
+    pub folder: String,
+    /// Why the directory is in cloud-synced or network storage, where it is.
+    pub storage: Option<StorageCause>,
+}
+
 /// Where one file stands, from the folder's own store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FileState {
@@ -242,8 +278,12 @@ pub struct RestoredRemoval {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum FolderEvent {
-    /// The directory is watched, and passes begin.
-    Watching { dir: String },
+    /// The directory is watched, and passes begin. `storage` says why it is
+    /// in cloud-synced or network storage, where it is.
+    Watching {
+        dir: String,
+        storage: Option<StorageCause>,
+    },
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed { message: String },
     /// A hydration failed, and is tried again after `wait_ms`; or a pull met
@@ -299,12 +339,16 @@ impl Folders {
     /// Makes `dir` a folder that follows the `system.folder` `folder`, and
     /// lists it in the machine's registry. The directory is made if it is
     /// not there. Its first sync waits: `sync` says what it will do, and
-    /// `confirm_first_sync` lets it go.
-    pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
+    /// `confirm_first_sync` lets it go. The answer says why the directory is
+    /// in cloud-synced or network storage, where it is; the folder is added
+    /// all the same. Reads the file system, so it can wait on a mount that
+    /// does not answer.
+    pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
         let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)?;
-        Ok(ListedFolder {
+        Ok(AddedFolder {
             dir: added.root().display().to_string(),
             folder: added.folder_id().to_string(),
+            storage: storage_of(added.storage_cause()),
         })
     }
 
@@ -497,8 +541,9 @@ fn ended(error: marfa_core::WatchError<MarfaError>, origin: Option<&str>) -> Mar
 fn event_of(event: marfa_core::WatchEvent) -> Result<FolderEvent, MarfaError> {
     use marfa_core::WatchEvent as W;
     Ok(match event {
-        W::Watching { dir } => FolderEvent::Watching {
+        W::Watching { dir, storage } => FolderEvent::Watching {
             dir: dir.display().to_string(),
+            storage: storage_of(storage),
         },
         W::WatcherFailed(message) => FolderEvent::WatcherFailed { message },
         W::Retrying { error, wait } => FolderEvent::Retrying {
@@ -646,6 +691,46 @@ mod tests {
 
     /// Lists every folder in a registry under a temporary directory, named
     /// once before any folder call reads it.
+    #[test]
+    fn a_storage_cause_reaches_an_app_with_its_network_type() {
+        use marfa_core::StorageCause as C;
+        assert_eq!(storage_of(None), None);
+        assert_eq!(
+            storage_of(Some(C::ICloudDrive)),
+            Some(StorageCause::ICloudDrive)
+        );
+        assert_eq!(
+            storage_of(Some(C::CloudService)),
+            Some(StorageCause::CloudService)
+        );
+        assert_eq!(
+            storage_of(Some(C::NetworkFileSystem("nfs".into()))),
+            Some(StorageCause::NetworkFileSystem { kind: "nfs".into() })
+        );
+    }
+
+    #[test]
+    fn a_watch_that_starts_says_why_its_directory_is_in_synced_storage() {
+        let watching = |storage| {
+            event_of(marfa_core::WatchEvent::Watching {
+                dir: "/notes".into(),
+                storage,
+            })
+            .unwrap()
+        };
+        assert!(matches!(
+            watching(Some(marfa_core::StorageCause::ICloudDrive)),
+            FolderEvent::Watching {
+                storage: Some(StorageCause::ICloudDrive),
+                ..
+            }
+        ));
+        assert!(matches!(
+            watching(None),
+            FolderEvent::Watching { storage: None, .. }
+        ));
+    }
+
     fn registry() {
         static NAMED: std::sync::Once = std::sync::Once::new();
         NAMED.call_once(|| {

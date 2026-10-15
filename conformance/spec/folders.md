@@ -5100,6 +5100,14 @@ When a folder is added, or a watch starts on a folder, whose directory is below 
 
 **Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to iCloud Drive, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in iCloud Drive, and watches all the same`.
 
+### `folders/icloud-ubiquitous-warns`
+
+When a folder is added, or a watch starts on a folder, whose directory macOS reports as an item iCloud Drive syncs (the URL resource key `isUbiquitousItem`), the CLI MUST print a storage warning that names iCloud Drive, wherever the directory sits.
+
+**Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents`, and iCloud Drive syncs the files in them.
+
+**Tests:** waiting on #2027.
+
 ### `folders/cloud-storage-warns`
 
 When a folder is added, or a watch starts on a folder, whose directory is below `Library/CloudStorage` in the home directory, the CLI MUST print a storage warning that names a cloud service’s synced location.
@@ -5134,7 +5142,7 @@ While a command runs, the CLI MUST NOT print a storage warning for the same fold
 
 ### `folders/storage-warning-elsewhere`
 
-While a folder’s directory is not below `Library/Mobile Documents` or `Library/CloudStorage` in the home directory and is on none of the file systems that `folders/network-storage-warns` names, the CLI MUST NOT print a storage warning for it.
+While a folder’s directory is not below `Library/Mobile Documents` or `Library/CloudStorage` in the home directory, is not one that macOS reports as ubiquitous, and is on none of the file systems that `folders/network-storage-warns` names, the CLI MUST NOT print a storage warning for it.
 
 **Tests:** `device/folders-storage-warning.test.ts › prints no warning when it is added or watched, where the same home warns of a synced one`, `› is not taken for a synced one by a name that only begins like a synced location`.
 

@@ -158,7 +158,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
                 .map_err(held(&dir))?;
-            storage::warn(folder.root());
+            storage::warn(&folder);
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
             let (mut plan, mut confirmed, mut unread) = (None, true, None);
@@ -680,7 +680,7 @@ pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> 
 /// the warning about where its directory sits is given here.
 pub fn opened_to_watch(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let folder = opened(dir, session)?;
-    storage::warn(folder.root());
+    storage::warn(&folder);
     Ok(folder)
 }
 

@@ -609,6 +609,7 @@ mod tests {
         ) -> Result<(), WatchError<E>> {
             tell(WatchEvent::Watching {
                 dir: PathBuf::from("/resolved"),
+                storage: None,
             })
             .map_err(WatchError::Told)?;
             match &self.goes {
