@@ -228,7 +228,7 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of the item it points to.",
+    "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear: `GET /events` reports deletions. Nor does an edge whose source item `source_filter` leaves out.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

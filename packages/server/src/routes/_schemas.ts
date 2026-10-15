@@ -302,7 +302,7 @@ export const ItemSchema = z
       .record(z.string(), EdgePageSchema)
       .optional()
       .describe(
-        "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. If `source_filter` leaves the item out, none of its edges appear. Absent where an operation doesn't return edges, such as a listing without `include=edges`.",
+        "The item's outbound edges you can read, by edge type, each the first page that `GET /items/{id}/edges` continues. Empty if `source_filter` leaves the item out. Absent where an operation doesn't return edges, such as a listing without `include=edges`.",
       ),
     extensions: z
       .record(z.string(), z.record(z.string(), z.unknown()))
