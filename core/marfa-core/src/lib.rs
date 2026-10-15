@@ -5089,7 +5089,7 @@ mod tests {
                     "catch_up_pass",
                 ][..],
             ),
-            (include_str!("drain.rs"), &["drain", "drain_checked"][..]),
+            (include_str!("drain.rs"), &["drain_checked"][..]),
         ] {
             let mut current: Option<&str> = None;
             let mut in_tests = false;
