@@ -98,6 +98,27 @@ impl Machine {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The refusal a folder's credential met, where `bearer` is the credential
+    /// it met it with: opening it again would only be refused again.
+    fn still_refused(&self, dir: &Path, bearer: &str) -> Option<Unwatched> {
+        self.folders()
+            .get(dir)
+            .filter(|opened| opened.bearer == bearer)
+            .and_then(|opened| opened.refused.clone())
+    }
+
+    fn opened_with(&self, dir: &Path, server: String, bearer: String) {
+        self.folders().insert(
+            dir.to_path_buf(),
+            Opened {
+                server,
+                bearer,
+                refused: None,
+                conflicts: folders::Conflicts::default(),
+            },
+        );
+    }
+
     fn line(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
         output::line_of(value, self.json, human)
     }
@@ -126,26 +147,20 @@ impl EveryFolder for Machine {
             .session_for(origin)
             .map_err(|error| unwatched(&error))?;
         let (server, bearer) = (session.server.url.clone(), session.server.key.clone());
-        if let Some(Opened {
-            bearer: refused_bearer,
-            refused: Some(refused),
-            ..
-        }) = self.folders().get(dir)
-            && *refused_bearer == bearer
-        {
-            return Err(refused.clone());
+        if let Some(refused) = self.still_refused(dir, &bearer) {
+            return Err(refused);
         }
         let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
-        self.folders().insert(
-            dir.to_path_buf(),
-            Opened {
-                server,
-                bearer,
-                refused: None,
-                conflicts: folders::Conflicts::default(),
-            },
-        );
+        self.opened_with(dir, server, bearer);
         Ok(folder)
+    }
+
+    fn ended(&self, dir: &Path, reason: &Unwatched) {
+        if reason.code == "unauthorized"
+            && let Some(opened) = self.folders().get_mut(dir)
+        {
+            opened.refused = Some(reason.clone());
+        }
     }
 
     fn tell(&self, event: Every<'_>) -> Result<(), CliError> {
@@ -162,11 +177,6 @@ impl EveryFolder for Machine {
                 tell(&opened.server, say(json, dir), folder, &mut opened.conflicts, event)
             }
             Every::Unwatched { dir, reason } => {
-                if reason.code == "unauthorized"
-                    && let Some(opened) = self.folders().get_mut(dir)
-                {
-                    opened.refused = Some(reason.clone());
-                }
                 say(json, dir).line(
                     serde_json::json!({
                         "watching": false,
@@ -545,6 +555,42 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+
+    #[test]
+    fn a_refused_credential_is_not_sent_again_and_one_kept_since_is_tried_once() {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let dir = Path::new("/notes");
+        let refused = Unwatched {
+            code: "unauthorized".into(),
+            message: "the server refused this folder's credential".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &refused);
+        assert_eq!(machine.still_refused(dir, "first"), Some(refused.clone()));
+        // The witness: another credential is tried.
+        assert_eq!(machine.still_refused(dir, "second"), None);
+        // Refused the same way, so nothing is said of it: kept all the same.
+        machine.opened_with(dir, "https://one.test".into(), "second".into());
+        machine.ended(dir, &refused);
+        assert_eq!(
+            machine.still_refused(dir, "second"),
+            Some(refused.clone()),
+            "a second refused credential would be sent again at every try"
+        );
+        // A watch that ends otherwise does not hold its credential back.
+        let ended = Unwatched {
+            code: "not_found".into(),
+            message: "the server's changes stopped reaching this folder".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "third".into());
+        machine.ended(dir, &ended);
+        assert_eq!(machine.still_refused(dir, "third"), None);
+    }
 
     #[test]
     fn an_interrupt_ends_a_watch_whose_pass_never_finishes_after_the_grace_and_not_before() {

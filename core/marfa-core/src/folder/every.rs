@@ -118,6 +118,12 @@ pub trait EveryFolder: Sync {
 
     /// An error ends the watch of every folder.
     fn tell(&self, event: Every<'_>) -> Result<(), Self::Error>;
+
+    /// The folder's watch, opened at `dir`, ended for `reason`. Called at
+    /// every end, though [`Every::Unwatched`] is told only when the reason
+    /// changes, so what decides the next open is kept even when nothing is
+    /// said.
+    fn ended(&self, dir: &Path, reason: &Unwatched);
 }
 
 /// Keeps every folder `registry` lists in step until `stop` is raised, each
@@ -229,6 +235,7 @@ trait Supervised: Sync {
     type Error: Send;
     fn open(&self, dir: &Path) -> Result<Self::Folder, Unwatched>;
     fn tell(&self, event: Every<'_, Self::Folder>) -> Result<(), Self::Error>;
+    fn ended(&self, dir: &Path, reason: &Unwatched);
 }
 
 struct Machine<'a, W>(&'a W);
@@ -249,6 +256,10 @@ impl<W: EveryFolder> Supervised for Machine<'_, W> {
 
     fn tell(&self, event: Every<'_>) -> Result<(), W::Error> {
         self.0.tell(event)
+    }
+
+    fn ended(&self, dir: &Path, reason: &Unwatched) {
+        self.0.ended(dir, reason);
     }
 }
 
@@ -399,7 +410,10 @@ fn reap<S: Supervised>(
                 timing.ended,
             ),
             Outcome::Unopened(reason) => (reason, timing.unopened),
-            Outcome::Ended(reason) => (reason, timing.ended),
+            Outcome::Ended(reason) => {
+                every.ended(&dir, &reason);
+                (reason, timing.ended)
+            }
             Outcome::Told(_) => unreachable!("a failed tell ended the watch above"),
         };
         entry.run = Run::Waiting { until: now + wait };
@@ -617,7 +631,12 @@ mod tests {
         opens: Mutex<HashMap<PathBuf, VecDeque<Result<Goes, Unwatched>>>>,
         opened: Mutex<Vec<PathBuf>>,
         told: Mutex<Vec<String>>,
+        ended: Mutex<Vec<String>>,
         refuse_telling: AtomicBool,
+        /// Opens of these wait until it is lowered, as a directory on a
+        /// network volume that does not answer.
+        hung: Mutex<Vec<PathBuf>>,
+        hanging: AtomicBool,
     }
 
     impl Machine {
@@ -643,6 +662,11 @@ mod tests {
 
         fn open(&self, dir: &Path) -> Result<Fake, Unwatched> {
             lock(&self.opened).push(dir.to_path_buf());
+            if lock(&self.hung).iter().any(|hung| hung == dir) {
+                while self.hanging.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
             let mut opens = lock(&self.opens);
             let queue = opens.get_mut(dir).expect("a scripted folder");
             let next = if queue.len() > 1 {
@@ -671,6 +695,10 @@ mod tests {
             };
             lock(&self.told).push(said);
             Ok(())
+        }
+
+        fn ended(&self, dir: &Path, reason: &Unwatched) {
+            lock(&self.ended).push(format!("{} {}", dir.display(), reason.code));
         }
     }
 
@@ -959,5 +987,62 @@ mod tests {
         })
         .unwrap();
         assert_eq!(count(&machine, "watching /a"), 1);
+    }
+
+    #[test]
+    fn every_end_is_handed_back_though_its_reason_is_told_once() {
+        let machine = Machine::default();
+        machine.opens(
+            "/a",
+            vec![
+                Ok(Goes::Ends(reason("watch"))),
+                Ok(Goes::Ends(reason("watch"))),
+                Ok(Goes::Ends(reason("watch"))),
+                Ok(Goes::Lasts),
+            ],
+        );
+        let listing = listed(&["/a"]);
+        supervised(&machine, &listing, |machine| machine.opened("/a") == 4).unwrap();
+        assert_eq!(
+            count(&machine, "unwatched /a watch"),
+            1,
+            "{:?}",
+            machine.told()
+        );
+        assert_eq!(
+            lock(&machine.ended).clone(),
+            vec!["/a watch", "/a watch", "/a watch"],
+            "an end whose reason was not told again was not handed back"
+        );
+    }
+
+    #[test]
+    fn a_folder_whose_open_hangs_keeps_no_other_from_joining_or_leaving() {
+        let machine = Machine::default();
+        machine.opens("/hung", vec![Ok(Goes::Lasts)]);
+        machine.opens("/a", vec![Ok(Goes::Lasts)]);
+        machine.opens("/b", vec![Ok(Goes::Lasts)]);
+        lock(&machine.hung).push(PathBuf::from("/hung"));
+        machine.hanging.store(true, Ordering::SeqCst);
+        let listing = listed(&["/hung", "/a"]);
+        let at_release = Mutex::new(Vec::new());
+        let result = supervised(&machine, &listing, |machine| {
+            if count(machine, "watching /a") == 1 {
+                *lock(&listing) =
+                    Listing::Listed(vec![PathBuf::from("/hung"), PathBuf::from("/b")]);
+            }
+            let done = count(machine, "watching /b") == 1 && count(machine, "left /a") == 1;
+            if done {
+                *lock(&at_release) = machine.told();
+                // Let the hung open go, so the stop can wait for it.
+                machine.hanging.store(false, Ordering::SeqCst);
+            }
+            done
+        });
+        result.unwrap();
+        // The witness that it was hung throughout: it had not started.
+        let told = lock(&at_release).clone();
+        assert!(!told.is_empty());
+        assert!(told.iter().all(|told| !told.contains("/hung")), "{told:?}");
     }
 }
