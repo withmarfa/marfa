@@ -174,6 +174,9 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
     let state_dir = root_dir
         .child(Path::new(STATE_DIR), false)
         .map_err(|_| super::not_a_folder(&root))?;
+    state_dir
+        .entry_identity(Path::new("core.sqlite"))
+        .map_err(|_| super::not_a_folder(&root))?;
     let core = Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite"))?;
     let conn = core.conn()?;
     Ok(Recorded {
@@ -1044,5 +1047,18 @@ mod tests {
         let told = lock(&at_release).clone();
         assert!(!told.is_empty());
         assert!(told.iter().all(|told| !told.contains("/hung")), "{told:?}");
+    }
+
+    #[test]
+    fn a_listed_directory_with_no_store_is_said_to_be_no_folder() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let dir = temp.path().join("notes");
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        let Err(error) = recorded(&dir) else {
+            panic!("a directory with an empty state directory read as a folder");
+        };
+        let said = Unwatched::of(&error);
+        assert_eq!(said.code, "invalid", "{said:?}");
+        assert!(said.message.contains("is not a folder"), "{said:?}");
     }
 }
