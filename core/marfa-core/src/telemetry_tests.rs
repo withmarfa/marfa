@@ -319,6 +319,31 @@ fn a_drain_a_follow_starts_when_its_server_is_back_records_its_span_on_the_follo
 }
 
 #[test]
+fn a_write_a_stop_leaves_in_flight_ends_its_span_canceled_with_no_event() {
+    let server = Arc::new(Scripted::start());
+    let (core, _) = copy_with_a_write(&server, &note(None), "k");
+    server.on("/items", vec![scripted::Answer::Stall]);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let raiser = {
+        let (server, stop) = (server.clone(), stop.clone());
+        std::thread::spawn(move || {
+            server.wait_for("/items", 1, std::time::Duration::from_secs(5));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+    };
+
+    let (result, log) = recorded(|| core.drain_until(&stop));
+
+    raiser.join().unwrap();
+    assert_eq!(result, Err(CoreError::Canceled));
+    assert_eq!(log.one("write").fields["outcome"], "canceled");
+    assert_eq!(log.one("drain").fields["outcome"], "canceled");
+    assert!(error_events(&log).is_empty(), "{log:?}");
+    assert!(warnings(&log).is_empty(), "{log:?}");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
 fn a_drain_whose_server_cannot_be_reached_ends_its_span_and_records_the_code() {
     let server = Scripted::start();
     let (core, _) = copy_with_a_write(&server, &note(None), "k");

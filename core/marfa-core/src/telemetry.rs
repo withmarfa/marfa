@@ -44,6 +44,10 @@ pub(crate) mod live {
     /// the operation is recorded by the operation, once; one it carries on
     /// past is a warning here.
     pub(crate) fn unanswered(span: &tracing::Span, error: &CoreError, ends_operation: bool) {
+        if matches!(error, CoreError::Canceled) {
+            span.record("outcome", "canceled");
+            return;
+        }
         span.record("outcome", "error");
         if !ends_operation {
             degraded(error);

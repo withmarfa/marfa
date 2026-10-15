@@ -433,7 +433,7 @@ pub(crate) fn replay_build(
     catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
-    let catalog = read_unless_stopped(stop, http, Http::catalog)?;
+    let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
@@ -614,17 +614,19 @@ pub(crate) fn refuse_another_instance_until(
         }
         read_view::generation(&conn)?
     };
-    let served = read_unless_stopped(stop, http, Http::instance_id)?;
+    let served = ask_unless_stopped(stop, http, Http::instance_id)?;
     same_instance(core, &served, generation)
 }
 
-/// Runs a read on a thread of its own and ends with `Canceled` as soon as
-/// `stop` is raised, so a call stopped while its first request waits on a
-/// server that does not answer, one still being connected to among them,
-/// ends then rather than when the request gives up. Only for a read: the
-/// request may still reach the server after the call has ended. A credential
-/// renewal the read started is finished first, and none starts after.
-pub(crate) fn read_unless_stopped<T: Send + 'static>(
+/// Runs a request on a thread holding only the transport and ends with
+/// `Canceled` as soon as `stop` is raised, so a call stopped while a request
+/// waits on a server that does not answer, one still being connected to
+/// among them, ends then rather than when the request gives up. The request
+/// may still reach the server after the call has ended, and its answer is
+/// dropped: only for a read, or a write the caller marked sent first that
+/// its idempotency key, or its content, lets it send again. A credential
+/// renewal the request started is finished first, and none starts after.
+pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     stop: &AtomicBool,
     http: &Http,
     read: impl FnOnce(&Http) -> Result<T> + Send + 'static,

@@ -704,7 +704,7 @@ pub(crate) fn fetch_overflow(
 fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
-        let reader = crate::catch_up::read_unless_stopped(stop, http, |http| {
+        let reader = crate::catch_up::ask_unless_stopped(stop, http, |http| {
             http.open_events(None, HEAD_READ_TIMEOUT)
         })?;
         let mut frames = Frames::new(BufReader::new(reader));

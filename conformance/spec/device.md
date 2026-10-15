@@ -2528,13 +2528,13 @@ Where a declared type is left unregistered, a device MUST keep a write to it que
 
 When a stop is raised during a hydration, a catch-up or a drain, a device MUST end the call `canceled` soon after.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/command-stopped-exit`
 
 When a hydration, a catch-up or a drain that the CLI stopped on Ctrl-C ends `canceled`, the CLI MUST exit with status 3.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-hydration-replacing`
 
@@ -2556,21 +2556,37 @@ When a catch-up is stopped, a device MUST keep the cursor of the last event it t
 
 ### `device/stop-drain-in-flight`
 
-When a drain is stopped while a write is in flight, a device MUST settle that write's answer as an unstopped drain would before the drain ends.
+When a drain is stopped while a write is in flight, a device MUST end the drain without waiting for that write's answer.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Reason:** a server can hold a write, an upload above all, for longer than an app that closes a copy or cancels a sync can wait, and the write's idempotency key lets the next drain send it again without writing twice.
+
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+
+### `device/stop-drain-in-flight-kept`
+
+When a drain is stopped while a write is in flight, a device MUST leave that write queued with no verdict, under the idempotency key it was sent with.
+
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+
+### `device/stop-drain-late-answer`
+
+When the answer to a write a stopped drain left in flight arrives after the drain ended, a device MUST NOT record it.
+
+**Reason:** the drain has ended, and the next drain sends the write again and records the server's answer from its record of the key.
+
+**Tests:** waiting on #1890.
 
 ### `device/stop-drain-no-send`
 
 When a drain is stopped, a device MUST send no write after the stop.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-drain-rest-queued`
 
 When a drain is stopped, a device MUST leave every write it had not sent queued for the next drain.
 
-**Tests:** `device/stop.test.ts › ends it before the next write is sent, leaving that write queued and unsent`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `device/command-second-ctrl-c`
 

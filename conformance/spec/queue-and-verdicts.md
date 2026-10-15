@@ -116,7 +116,7 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 **Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key (`queue-and-verdicts/release-fresh-key`).
 
-**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`.
+**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
 ### `queue-and-verdicts/sent-write-unchanged`
 

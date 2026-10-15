@@ -635,9 +635,8 @@ impl Core {
     /// meanwhile, and tells `queue.drained` or `queue.not_drained`
     /// (`device/follow-drains-reachable`). That drain waits for one under
     /// way to end, and then does only the work left. The follow ending,
-    /// however it ends, ends that drain before its next write, and this
-    /// returns once the write in flight is answered or its request fails,
-    /// so no answer is left unrecorded.
+    /// however it ends, stops that drain as `drain_until`'s stop does, so
+    /// this returns without waiting on a write in flight.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -960,9 +959,11 @@ impl Core {
         self.drain_until(&NEVER_STOPPED)
     }
 
-    /// Ended with `Canceled` before the next write is sent once `stop` is
-    /// raised. A write already sent keeps its key and is settled by this or
-    /// a later drain; answers already recorded remain in the queue.
+    /// Ended with `Canceled` soon after `stop` is raised, without waiting on
+    /// a write in flight, as an upload can be for as long as the server
+    /// takes. That write stays queued as sent, under its key, and the next
+    /// drain sends it again; an answer to it that arrives after the stop is
+    /// dropped. Answers already recorded remain in the queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
         let _one = self.wait_to_drain(stop)?;
         drain::drain(self, stop)
@@ -2115,7 +2116,7 @@ impl Core {
     /// copy. Refused `NoServer` for a copy with no server, and ended with
     /// `Canceled` as soon as `stop` is raised.
     pub fn server_catalog_until(&self, stop: &AtomicBool) -> Result<ServerCatalog> {
-        let listed = catch_up::read_unless_stopped(stop, self.http()?, http::Http::catalog)?;
+        let listed = catch_up::ask_unless_stopped(stop, self.http()?, http::Http::catalog)?;
         catalog::served(&listed)
     }
 
