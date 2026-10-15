@@ -247,6 +247,7 @@ describe("handing a folder to a command", () => {
     const harness = await oneFolder("handover-one");
     const watch = hold(harness.folder.watch());
     await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    const expected: string[] = [];
     for (const [name, run] of [
       ["pull", () => harness.folder.pull()],
       ["scan", () => harness.folder.scan()],
@@ -255,18 +256,13 @@ describe("handing a folder to a command", () => {
     ] as const) {
       const worked = await run();
       expect(worked.ok, `${name}: ${JSON.stringify(worked)}`).toBe(true);
+      // Each command starts once the watch holds the folder again, so each
+      // is handed it: let go and taken back once more, never twice in a row.
+      expected.push("let go", "taken back");
       await vi.waitFor(() => {
-        expect(handovers(watch).at(-1), watch.stdout).toBe("taken back");
+        expect(handovers(watch), `${name}: ${watch.stdout}`).toEqual(expected);
       }, WAIT);
     }
-    const said = handovers(watch);
-    expect(said.length).toBeGreaterThanOrEqual(2);
-    expect(
-      said.every(
-        (line, at) => line === (at % 2 === 0 ? "let go" : "taken back"),
-      ),
-      `letting go or taking back was said twice in a row: ${said.join(", ")}`,
-    ).toBe(true);
     // Taken back, it keeps the folder in step.
     put(harness, "After.md", note("After"));
     await vi.waitFor(
