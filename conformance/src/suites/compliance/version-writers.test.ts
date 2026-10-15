@@ -366,15 +366,25 @@ describe("who wrote each version", () => {
     expect(writers(recordAfter)).toEqual([byOther, byOther]);
   });
 
-  it("takes the writer from the credential, drops one a create names and refuses one an update names", async () => {
+  it("takes the writer from the credential, and refuses one a create or an update names", async () => {
     const minted = await mintKey("honest key");
     const forged = { kind: "key", id: "someone-else", name: "Someone else" };
-    const created = await call(minted.key, "POST", "/items", {
+    const refusedCreate = await call(minted.key, "POST", "/items", {
       type: "core.note",
       properties: { body: "first" },
       writer: forged,
     });
-    // The witness: the create happened, with the body's own fields.
+    expect(refusedCreate.status).toBe(400);
+    expect(refusedCreate.body.error).toMatchObject({
+      code: "validation_error",
+    });
+    expect(JSON.stringify(refusedCreate.body)).toContain("writer");
+
+    // The witness: the same body without `writer` is created.
+    const created = await call(minted.key, "POST", "/items", {
+      type: "core.note",
+      properties: { body: "first" },
+    });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const id = (created.body.item as { id: string }).id;
     expect(created.body.item).not.toHaveProperty("writer");

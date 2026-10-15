@@ -307,7 +307,10 @@ const createEdgeRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          /** Strict, as `POST /items` is: a dropped key is a request half
+           *  performed and answered as success. `.strict()` does not
+           *  recurse, so `properties` stays open to the edge type's keys. */
+          schema: z.strictObject({
             id: z
               .string()
               .optional()
@@ -361,7 +364,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
+        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
     },
     401: {
       content: {
@@ -462,7 +465,9 @@ const updateEdgeRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          /** Strict, as `POST /edges` is. `.strict()` does not recurse, so
+           *  `properties` stays open to the edge type's keys. */
+          schema: z.strictObject({
             properties: z
               .record(z.string(), z.unknown())
               .optional()
@@ -522,7 +527,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
+        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
     },
     403: {
       content: {

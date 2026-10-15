@@ -100,6 +100,7 @@ import {
 import {
   refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
+  undeclaredEntryKeyRefusal,
 } from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 
@@ -186,6 +187,8 @@ const BulkInputItemSchema = z.object({
     ),
 });
 
+const StrictBulkInputItemSchema = z.strictObject(BulkInputItemSchema.shape);
+
 // The request shape is `BulkActionInputSchema`, declared once in the
 // bulk-action module and imported here, envelope and filter alike: two
 // declarations of one thing let `dry_run` and `max_items` drift out of
@@ -209,10 +212,12 @@ const bulkRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             items: z
               .array(BulkInputItemSchema)
-              .describe("The entries to write, at most 5,000."),
+              .describe(
+                "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key.",
+              ),
             mode: z
               .enum(["upsert", "create_only"])
               .optional()
@@ -251,7 +256,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+        "- `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
     },
     401: {
       content: {
@@ -534,8 +539,13 @@ async function processBulkItem(
     /** Whether the entry's events drive outbound work: off unless the page
      *  asks, and never whether the entry is logged. */
     enableFanout: boolean;
+    /** The refusal of the keys the entry sent and does not declare. */
+    undeclared: MarfaError | null;
   },
 ): Promise<ProcessedBulkItem> {
+  if (options.undeclared) {
+    return erroredEntry(index, options.undeclared, undefined);
+  }
   if (!isValidTypeIdentifier(raw.type)) {
     return erroredEntry(
       index,
@@ -656,6 +666,13 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
+    // The validator has already stripped what the entries do not declare,
+    // so their keys are read from the body as sent.
+    const sent = await c.req.json<{ items: unknown[] }>();
+    const undeclared = sent.items.map((entry) =>
+      undeclaredEntryKeyRefusal(entry, StrictBulkInputItemSchema),
+    );
+
     const operationId = generateId();
     const run = async (): Promise<ProcessedBulkItem[]> => {
       // In atomic mode, judge what every entry names before any entry is
@@ -668,6 +685,17 @@ export function bulkRoutes(storage: Storage) {
       // would re-read the row over a refusal whose cause is a permission it
       // lacks (`items/bulk-atomic-gates-first`).
       if (atomic) {
+        // The request's shape first, across the whole page, before anything
+        // an entry names (`items/bulk-atomic-undeclared-first`).
+        const first = undeclared.findIndex((refusal) => refusal !== null);
+        const refusal = undeclared[first];
+        if (refusal) {
+          throw bulkAtomicRollback(first, {
+            code: refusal.code,
+            message: refusal.message,
+            details: refusal.details,
+          });
+        }
         const enforcement = resolveEnforcement(
           await readInstanceConfig(storage.settings),
           key,
@@ -740,6 +768,7 @@ export function bulkRoutes(storage: Storage) {
             blobProof: requestBlobProof(c, storage),
             retype,
             enableFanout,
+            undeclared: undeclared[i] ?? null,
           });
         const entry = () =>
           atomic

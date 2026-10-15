@@ -7992,7 +7992,8 @@
                 },
                 "required": [
                   "type"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -8059,7 +8060,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
+            "description": "- `validation_error`: a field is invalid or undeclared.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target isn't a valid ID.\n- `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14002,7 +14003,7 @@
                         "type"
                       ]
                     },
-                    "description": "The entries to write, at most 5,000."
+                    "description": "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key."
                   },
                   "mode": {
                     "type": "string",
@@ -14027,7 +14028,8 @@
                 },
                 "required": [
                   "items"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -14061,7 +14063,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+            "description": "- `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19100,7 +19102,8 @@
                   "source_id",
                   "target_id",
                   "edge_type"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -19188,7 +19191,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
+            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19968,7 +19971,8 @@
                 },
                 "required": [
                   "version"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -20005,7 +20009,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
+            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20836,7 +20840,7 @@
                       ],
                       "description": "One edge to create or update."
                     },
-                    "description": "The entries to write, at most 5,000. The items they join must already exist."
+                    "description": "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key."
                   },
                   "mode": {
                     "type": "string",
@@ -20857,7 +20861,8 @@
                 },
                 "required": [
                   "edges"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -20891,7 +20896,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+            "description": "- `validation_error`: the body is malformed, has an undeclared key, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry lacks `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is that refusal's own.",
             "content": {
               "application/json": {
                 "schema": {

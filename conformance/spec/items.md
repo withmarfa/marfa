@@ -8,7 +8,7 @@ An item is a typed row: an `id`, a `type`, `properties` the type validates, a `s
 
 If the server refuses a write to an item, then the server MUST leave every item, tag, edge and extension as it was and announce nothing.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a source the key does not claim, naming it`, `correctness/dedup.test.ts › refuses a create naming an id that is not the row its natural key resolves`, `correctness/item-versioning.test.ts › refuses a retype into a type nothing registered, and moves nothing`, `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a source the key does not claim, naming it`, `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `correctness/dedup.test.ts › refuses a create naming an id that is not the row its natural key resolves`, `correctness/item-versioning.test.ts › refuses a retype into a type nothing registered, and moves nothing`, `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`.
 
 ## Creating an item
 
@@ -76,9 +76,11 @@ When `POST /items` names both the `id` and the natural key of one item, the serv
 
 ### `items/create-undeclared-key`
 
-When `POST /items` carries a body key the operation does not declare, the server MUST drop that key and create the item without it.
+If `POST /items` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
 
-**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one stores nothing`.
+**Reason:** a dropped key is a request half performed and answered as success: `data` sent where the operation takes `properties` creates an empty item. Keys inside `properties` are the type's, not the operation's.
+
+**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `› a key inside properties is the type's, and a create carrying one is written`.
 
 ### `items/no-device-field`
 
@@ -86,7 +88,7 @@ The server MUST NOT answer a `device` field on an item.
 
 **Reason:** a column whose meaning each writer decides alone, which a caller could filter on though only that caller wrote it, is worse than none.
 
-**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one stores nothing`.
+**Tests:** `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`.
 
 ### `items/no-device-filter`
 
@@ -586,7 +588,7 @@ If `PATCH /items/{id}` carries a body key the operation does not declare, then t
 
 **Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the type's, not the operation's.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a body key the update door does not declare`, `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one stores nothing`.
+**Tests:** `correctness/item-versioning.test.ts › refuses a body key the update door does not declare`, `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`.
 
 ### `items/update-inline-edges`
 
@@ -1134,6 +1136,22 @@ If a `POST /items/bulk` or `POST /items/bulk-actions` body is larger than 16 MiB
 
 **Tests:** `compliance/bulk-limits.test.ts › refuses a bulk body over 16 MiB with request_too_large, on both bulk item operations`.
 
+### `items/bulk-undeclared-key`
+
+If a `POST /items/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+
+**Reason:** a misspelled `atomic` would otherwise be dropped and the page written under the default.
+
+**Tests:** `compliance/bulk.test.ts › refuses a page or an entry carrying a key the operation does not declare, naming each one`.
+
+### `items/bulk-entry-undeclared-key`
+
+If a `POST /items/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key.
+
+**Reason:** the entry is a create or an update, refused as `POST /items` and `PATCH /items/{id}` refuse one, and refused as an entry so that `atomic` decides what happens to the rest of the page.
+
+**Tests:** `compliance/bulk.test.ts › refuses a page or an entry carrying a key the operation does not declare, naming each one`.
+
 ### `items/bulk-upsert`
 
 When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves a live item, the server MUST update that item and report the entry `updated` with its `id`.
@@ -1230,9 +1248,17 @@ When the server answers `bulk_atomic_rollback`, the server MUST answer it with t
 
 **Tests:** `compliance/bulk.test.ts › answers a rollback at the status of the refusal inside it`, `compliance/links.test.ts › refuses a bulk entry a link another row holds, on both halves`.
 
+### `items/bulk-atomic-undeclared-first`
+
+When a `POST /items/bulk` page under `atomic: true` holds an entry with a key the operation does not declare, the server MUST answer the rollback for the first such entry before it judges any entry's other fields, types or sources, or looks any entry up.
+
+**Reason:** the shape of a request is judged before anything it names, so a caller fixing a misnamed field is not first sent after a refusal it would meet anyway.
+
+**Tests:** `compliance/bulk.test.ts › judges an undeclared key under atomic before any other entry refusal, and each entry alone without it`.
+
 ### `items/bulk-atomic-gates-first`
 
-When the server reads a `POST /items/bulk` page under `atomic: true`, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
+When the server reads a `POST /items/bulk` page under `atomic: true` that holds no entry with a key the operation does not declare, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
 
 **Reason:** otherwise a stale entry ahead of it answers `409`, and the caller re-reads a row when the cause is a permission it lacks.
 

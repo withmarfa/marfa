@@ -172,6 +172,39 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("invalid_id");
   });
 
+  it("refuses an undeclared key after a missing field and before a malformed id", async () => {
+    const target = await note();
+    const missing = await client.rawRequest("/edges", {
+      method: "POST",
+      body: { source_id: "not-an-id", target_id: target, weight: 5 },
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.code).toBe("missing_required_field");
+
+    const undeclared = await client.rawRequest("/edges", {
+      method: "POST",
+      body: {
+        source_id: "not-an-id",
+        target_id: target,
+        edge_type: "about",
+        weight: 5,
+      },
+    });
+    expect(undeclared.status).toBe(400);
+    expect(undeclared.error?.error.code).toBe("validation_error");
+    expect(JSON.stringify(undeclared.error?.error.details)).toContain("weight");
+
+    // The witness: without the undeclared key, the malformed id is refused
+    // for itself.
+    const alone = await client.createEdge({
+      source_id: "not-an-id",
+      target_id: target,
+      edge_type: "about",
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.code).toBe("invalid_id");
+  });
+
   it("answers a source in the bin as missing before it asks for write on the source's type", async () => {
     const reader = await keyWith({ "core.note": "read" }, { about: "write" });
     const source = await note();
@@ -684,6 +717,32 @@ describe("the order POST /edges asks its refusals in", () => {
 });
 
 describe("the order PATCH /edges/{id} asks its refusals in", () => {
+  it("refuses an undeclared key after a missing version and before it looks for the edge", async () => {
+    const absent = generateId();
+    const missing = await client.rawRequest(`/edges/${absent}`, {
+      method: "PATCH",
+      body: { properties: { n: 1 }, weight: 5 },
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.code).toBe("missing_required_field");
+
+    const undeclared = await client.rawRequest(`/edges/${absent}`, {
+      method: "PATCH",
+      body: { version: 1, properties: { n: 1 }, weight: 5 },
+    });
+    expect(undeclared.status).toBe(400);
+    expect(undeclared.error?.error.code).toBe("validation_error");
+    expect(JSON.stringify(undeclared.error?.error.details)).toContain("weight");
+
+    // The witness: without the undeclared key, the absent edge is a not-found.
+    const alone = await client.updateEdge(absent, {
+      properties: { n: 1 },
+      version: 1,
+    });
+    expect(alone.status).toBe(404);
+    expect(alone.error?.error.code).toBe("edge_not_found");
+  });
+
   async function moveable(label: string) {
     return edgeTypeOf(`patch-${label}`, { cardinality: "one-to-one" });
   }

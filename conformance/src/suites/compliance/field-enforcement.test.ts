@@ -94,44 +94,53 @@ describe("client-supplied verbatim fields (preserved without validation)", () =>
 });
 
 describe("a field the wire does not declare", () => {
-  it("device: no such field ships, and a body naming one stores nothing", async () => {
-    // **Stripped rather than refused, and that is the create door's rule rather
-    // than this field's.** The create body is `z.object`, so Zod drops a key it
-    // does not declare; `PATCH /items/{id}` is `z.strictObject` and refuses one
-    // (`items/update-undeclared-key`). No decided line moves the create door,
-    // so this name sits where any other name the door never knew sits.
+  it("device: no such field ships, and a body naming one is refused by name and stores nothing", async () => {
     const label = "random-device-xyz-\u{1F3B2}";
-    const r = await client.createItem({
-      ...createNote(),
-      device: label,
-      capture_latitude: 999,
-    } as Parameters<typeof client.createItem>[0]);
-    expect(r.ok).toBe(true);
+    const tag = `undeclared-device-${Math.random().toString(36).slice(2, 10)}`;
+
+    // A refusal naming the key is unreachable unless the key travels, so
+    // the client is not dropping it before the request leaves. The status
+    // alone would not show that.
+    const refused = await client.rawRequest<unknown>("/items", {
+      method: "POST",
+      body: { ...createNote(), tags: [tag], device: label },
+    });
+    expect(
+      refused.status,
+      "a create naming a field the door does not declare was answered as success",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    const createErrors = refused.error?.error.details?.errors as
+      { message: string }[] | undefined;
+    expect(
+      createErrors?.some((e) => e.message.includes('"device"')),
+      "the refusal does not name the field the caller got wrong",
+    ).toBe(true);
+    const listed = await client.listItems({ tags: [tag], state: "any" });
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.data.data,
+      "the refused create stored an item anyway",
+    ).toEqual([]);
+
+    // The witness: the same body without the field is created and listed,
+    // so the empty listing above is the refusal and not the listing.
+    const r = await client.createItem({ ...createNote(), tags: [tag] });
+    expect(r.status).toBe(201);
     trackItem(ctx, r.data.item.id);
     expect(r.data.item).not.toHaveProperty("device");
+    const after = await client.listItems({ tags: [tag], state: "any" });
+    expect(after.data.data.map((i) => i.id)).toEqual([r.data.item.id]);
 
-    // The first witness: `capture_latitude` rode in the same body and came
-    // back, so the create the absence is asserted about is a create that
-    // happened and that kept what the door does declare.
-    expect(r.data.item.capture_latitude).toBe(999);
-
-    // And it is not there on a later read either. The create answer and
-    // the read are built by different code — the door's own return shape
-    // and `rowToItem` — so these are two claims rather than one repeated.
+    // The create answer and the read are built by different code, so these
+    // are two claims rather than one repeated.
     const read = await client.getItem(r.data.item.id);
     expect(read.ok).toBe(true);
     expect(read.data.item).not.toHaveProperty("device");
-    expect(read.data.item.capture_latitude).toBe(999);
 
-    // The second witness, and the one the absences rest on: the strict
-    // door refuses the key *by name*. The status alone would not do it —
-    // a PATCH the door finds empty answers `400 validation_error` too, so
-    // a body that never carried the key would satisfy a status-only
-    // assertion. Hence the name in the detail, alongside a change the
-    // door would otherwise accept. A refusal naming the key is
-    // unreachable unless the key travels, so the client is not dropping
-    // it before the request leaves.
-    const refused = await client.rawRequest<unknown>(
+    // The update door refuses it by name too, alongside a change it would
+    // otherwise accept.
+    const refusedUpdate = await client.rawRequest<unknown>(
       `/items/${r.data.item.id}`,
       {
         method: "PATCH",
@@ -142,11 +151,24 @@ describe("a field the wire does not declare", () => {
         },
       },
     );
-    expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("validation_error");
-    const errors = refused.error?.error.details?.errors as
+    expect(refusedUpdate.status).toBe(400);
+    expect(refusedUpdate.error?.error.code).toBe("validation_error");
+    const updateErrors = refusedUpdate.error?.error.details?.errors as
       { message: string }[] | undefined;
-    expect(errors?.some((e) => e.message.includes("device"))).toBe(true);
+    expect(updateErrors?.some((e) => e.message.includes('"device"'))).toBe(
+      true,
+    );
+  });
+
+  it("a key inside properties is the type's, and a create carrying one is written", async () => {
+    const r = await client.createItem(
+      createNote({
+        properties: { title: "kept", body: "kept", device: "a property" },
+      }),
+    );
+    expect(r.status).toBe(201);
+    trackItem(ctx, r.data.item.id);
+    expect(r.data.item.properties.device).toBe("a property");
   });
 
   it("device: the filter grammar does not know the name", async () => {

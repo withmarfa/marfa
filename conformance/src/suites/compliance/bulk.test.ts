@@ -15,6 +15,7 @@ import type {
   BulkActionInput,
   BulkActionResponse,
   BulkActionJob,
+  BulkResponse,
 } from "../../client/types.js";
 import {
   createSecondClient,
@@ -763,6 +764,126 @@ describe("bulk", () => {
     const stored = await client.getItem(goodId);
     expect(stored.ok).toBe(true);
     expect(stored.data.item.source_id).toBe(`mixed-good-${ctx.runId}`);
+  });
+
+  it("refuses a page or an entry carrying a key the operation does not declare, naming each one", async () => {
+    const tag = `undeclared-${ctx.runId}`;
+    const note = (title: string) => ({
+      type: "core.note",
+      properties: { title, body: title },
+      tags: [tag],
+    });
+    const messages = (details: unknown): string =>
+      (
+        (details as { errors?: { message: string }[] } | undefined)?.errors ??
+        []
+      )
+        .map((e) => e.message)
+        .join(" ");
+    const listed = async (): Promise<string[]> => {
+      const list = await client.listItems({ tags: [tag], tier: "all" });
+      expect(list.ok).toBe(true);
+      return list.data.data.map((i) => i.id);
+    };
+
+    // The page's own key: a misspelled `atomic` is not the default.
+    const envelope = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: { atomc: false, items: [note("envelope")] },
+    });
+    expect(envelope.status).toBe(400);
+    expect(envelope.error?.error.code).toBe("validation_error");
+    expect(messages(envelope.error?.error.details)).toContain('"atomc"');
+    expect(await listed()).toEqual([]);
+
+    // An entry's keys under `atomic`: the page rolls back on that entry.
+    const atomic = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: {
+        items: [note("first"), { ...note("second"), data: {}, device: "x" }],
+      },
+    });
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    const inner = atomic.error?.error.details as
+      { index: number; code: string; details: unknown } | undefined;
+    expect(inner?.index).toBe(1);
+    expect(inner?.code).toBe("validation_error");
+    expect(messages(inner?.details)).toContain('"data"');
+    expect(messages(inner?.details)).toContain('"device"');
+    expect(await listed()).toEqual([]);
+
+    // Without `atomic`, the entry alone is refused, and the witness: the
+    // entry beside it is written, so the empty listings above are refusals.
+    const best = await client.rawRequest<BulkResponse>("/items/bulk", {
+      method: "POST",
+      body: {
+        atomic: false,
+        items: [note("kept"), { ...note("refused"), data: {} }],
+      },
+    });
+    expect(best.status).toBe(200);
+    const [kept, refused] = best.data.results;
+    expect(kept?.outcome).toBe("created");
+    trackItem(ctx, kept!.id!);
+    expect(refused?.outcome).toBe("errored");
+    expect(refused?.error?.code).toBe("validation_error");
+    expect(messages(refused?.error?.details)).toContain('"data"');
+    expect(await listed()).toEqual([kept!.id]);
+  });
+
+  it("judges an undeclared key under atomic before any other entry refusal, and each entry alone without it", async () => {
+    const tag = `undeclared-order-${ctx.runId}`;
+    const page = (undeclared: boolean) => [
+      { type: "NOT a valid type", properties: { title: "bad" }, tags: [tag] },
+      {
+        type: "core.note",
+        properties: { title: "second", body: "second" },
+        tags: [tag],
+        ...(undeclared && { data: {} }),
+      },
+      {
+        type: "core.note",
+        properties: { title: "third", body: "third" },
+        tags: [tag],
+      },
+    ];
+    const listed = async (): Promise<string[]> => {
+      const list = await client.listItems({ tags: [tag], tier: "all" });
+      expect(list.ok).toBe(true);
+      return list.data.data.map((i) => i.id);
+    };
+
+    const atomic = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: { items: page(true) },
+    });
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details?.index).toBe(1);
+    expect(JSON.stringify(atomic.error?.error.details)).toContain("data");
+
+    // The witness: without the undeclared key, the earlier entry answers.
+    const alone = await client.rawRequest<unknown>("/items/bulk", {
+      method: "POST",
+      body: { items: page(false) },
+    });
+    expect(alone.status).toBe(400);
+    expect(alone.error?.error.details?.index).toBe(0);
+    expect(await listed()).toEqual([]);
+
+    const best = await client.rawRequest<BulkResponse>("/items/bulk", {
+      method: "POST",
+      body: { atomic: false, items: page(true) },
+    });
+    expect(best.status).toBe(200);
+    expect(best.data.results.map((r) => r.outcome)).toEqual([
+      "errored",
+      "errored",
+      "created",
+    ]);
+    trackItem(ctx, best.data.results[2]!.id!);
+    expect(await listed()).toEqual([best.data.results[2]!.id]);
   });
 
   it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {

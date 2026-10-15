@@ -73,7 +73,49 @@ async function keyClient(
   return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
 }
 
+function messages(details: unknown): string {
+  return (
+    (details as { errors?: { message: string }[] } | undefined)?.errors ?? []
+  )
+    .map((e) => e.message)
+    .join(" ");
+}
+
 describe("POST /edges refusals", () => {
+  it("refuses a body key the operation does not declare, naming each one, and creates nothing", async () => {
+    const a = await makeItem("undeclared-a");
+    const b = await makeItem("undeclared-b");
+    const refused = await client.rawRequest<unknown>("/edges", {
+      method: "POST",
+      body: {
+        source_id: a,
+        target_id: b,
+        edge_type: "about",
+        weight: 5,
+        data: {},
+      },
+    });
+    expect(
+      refused.status,
+      "a create naming fields the operation does not declare was answered as success",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(messages(refused.error?.error.details)).toContain('"weight"');
+    expect(messages(refused.error?.error.details)).toContain('"data"');
+    const none = await client.listItemEdges(a, { edge_type: "about" });
+    expect(none.ok).toBe(true);
+    expect(none.data.data, "the refused create stored an edge anyway").toEqual(
+      [],
+    );
+
+    // The witness: the same body without the undeclared keys is created, and
+    // a key inside `properties` is the edge type's, so it is kept.
+    const edge = await makeEdge(a, b, "about", { weight: 5 });
+    expect(edge.properties).toEqual({ weight: 5 });
+    const one = await client.listItemEdges(a, { edge_type: "about" });
+    expect(one.data.data.map((e) => e.id)).toEqual([edge.id]);
+  });
+
   it("refuses a second edge naming a triple one already holds as a duplicate", async () => {
     const a = await makeItem("dup-a");
     const b = await makeItem("dup-b");
@@ -214,6 +256,39 @@ describe("an edge named by an id that is malformed or unknown", () => {
 });
 
 describe("PATCH /edges/{id} versions and grants", () => {
+  it("refuses an update body key the operation does not declare, naming each one, and writes nothing", async () => {
+    const a = await makeItem("undeclared-update-a");
+    const b = await makeItem("undeclared-update-b");
+    const created = await makeEdge(a, b, "about", { note: "first" });
+    const refused = await client.rawRequest<unknown>(`/edges/${created.id}`, {
+      method: "PATCH",
+      body: {
+        version: created.version,
+        properties: { note: "second" },
+        weight: 9,
+        data: {},
+      },
+    });
+    expect(
+      refused.status,
+      "an update naming fields the operation does not declare was answered as success",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(messages(refused.error?.error.details)).toContain('"weight"');
+    expect(messages(refused.error?.error.details)).toContain('"data"');
+    const stored = await client.getEdge(created.id);
+    expect(stored.data.edge.version).toBe(created.version);
+    expect(stored.data.edge.properties).toEqual({ note: "first" });
+
+    // The witness: the same change without the undeclared keys is written.
+    const landed = await client.updateEdge(created.id, {
+      properties: { note: "second" },
+      version: created.version,
+    });
+    expect(landed.status).toBe(200);
+    expect(landed.data.edge.properties).toEqual({ note: "second" });
+  });
+
   it("refuses a version other than the current one, lower or higher, and writes nothing", async () => {
     const a = await makeItem("ver-a");
     const b = await makeItem("ver-b");

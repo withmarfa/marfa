@@ -5050,7 +5050,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid.
+             * @description - `validation_error`: a field is invalid or undeclared.
              *     - `missing_required_field`: `type` is missing.
              *     - `unknown_type`: `type` isn't registered.
              *     - `invalid_id`: `id` or an edge target isn't a valid ID.
@@ -7728,7 +7728,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The entries to write, at most 5,000. */
+                    /** @description The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key. */
                     items: {
                         /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
                         id?: string;
@@ -7789,7 +7789,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is malformed, or has more than 5,000 entries.
+             * @description - `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.
              *     - `missing_required_field`: a required field is missing.
              *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
              */
@@ -10278,7 +10278,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.
              *     - `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.
-             *     - `validation_error`, `invalid_properties`: a field is invalid, or a property breaks the edge type's schema.
+             *     - `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.
              *     - `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.
              */
             400: {
@@ -10888,9 +10888,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.
-             *     - `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.
+             *     - `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.
              *     - `invalid_id`: `source_id` or `target_id` isn't a valid ID.
-             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.
+             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.
              */
             400: {
                 headers: {
@@ -11084,7 +11084,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The entries to write, at most 5,000. The items they join must already exist. */
+                    /** @description The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key. */
                     edges: {
                         /** @description A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one. */
                         id?: string;
@@ -11129,9 +11129,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is malformed, or has more than 5,000 entries.
-             *     - `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.
-             *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
+             * @description - `validation_error`: the body is malformed, has an undeclared key, or has more than 5,000 entries.
+             *     - `missing_required_field`: `edges` is missing, or an entry lacks `source_id`, `target_id` or `edge_type`.
+             *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is that refusal's own.
              */
             400: {
                 headers: {

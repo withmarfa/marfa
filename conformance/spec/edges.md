@@ -29,9 +29,9 @@ Where one request meets more than one refusal below, `edges/create-order` says w
 
 ### `edges/create-order`
 
-When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
+When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
 
-**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `› acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `› acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
 
 ### `edges/create`
 
@@ -56,6 +56,22 @@ When `POST /edges` creates an edge, the server MUST announce `edge.created`.
 If `POST /edges` names no `source_id`, no `target_id` or no `edge_type`, then the server MUST answer `400 missing_required_field`.
 
 **Tests:** `correctness/edges/edges-crud.test.ts › rejects POST /edges missing required fields`, `compliance/edge-gaps.test.ts › refuses a request with no edge type as missing_required_field`.
+
+### `edges/create-undeclared-key`
+
+If `POST /edges` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+
+**Reason:** a dropped key is a request half performed and answered as success. Keys inside `properties` are the edge type's, not the operation's.
+
+**Tests:** `compliance/edge-refusals.test.ts › refuses a body key the operation does not declare, naming each one, and creates nothing`.
+
+### `edges/update-undeclared-key`
+
+If `PATCH /edges/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+
+**Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the edge type's, not the operation's.
+
+**Tests:** `compliance/edge-refusals.test.ts › refuses an update body key the operation does not declare, naming each one, and writes nothing`.
 
 ### `edges/create-invalid-id`
 
@@ -395,9 +411,9 @@ Where one request meets more than one rule of this section or the next, `edges/u
 
 ### `edges/update-order`
 
-When `PATCH /edges/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing `version`; an edge the key may not read; no write on the source's type; no write on the edge type; a stale `version`; a malformed id; both ends moved; an edge type no longer registered; an end the edge type cannot move; a new source no item holds or the key may not read; no write on the new source's type; an end that stays no item holds, in the bin or that the key may not read; neither `properties` nor a moved end; then the order of `edges/create-order` from a self-loop on.
+When `PATCH /edges/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing `version`; a key the operation does not declare; an edge the key may not read; no write on the source's type; no write on the edge type; a stale `version`; a malformed id; both ends moved; an edge type no longer registered; an end the edge type cannot move; a new source no item holds or the key may not read; no write on the new source's type; an end that stays no item holds, in the bin or that the key may not read; neither `properties` nor a moved end; then the order of `edges/create-order` from a self-loop on.
 
-**Tests:** `compliance/edge-check-order.test.ts › answers an edge whose source's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new source`, `› answers a new source the key cannot read as missing before it asks for write on it`, `› refuses a new source the key cannot write before it looks for the end that stays`, `› refuses write on the new source's type before it finds a source moved onto its own target`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing version and before it looks for the edge`, `› answers an edge whose source's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new source`, `› answers a new source the key cannot read as missing before it asks for write on it`, `› refuses a new source the key cannot write before it looks for the end that stays`, `› refuses write on the new source's type before it finds a source moved onto its own target`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
 
 ### `edges/move-invalid-id`
 
@@ -451,7 +467,7 @@ When `PATCH /edges/{id}` answers `409 version_conflict`, the server MUST carry t
 
 ### `edges/update-stale-first`
 
-When `PATCH /edges/{id}` names a stale `version`, the server MUST refuse it `409 version_conflict` before it judges anything else the body names.
+When `PATCH /edges/{id}` names a stale `version`, the server MUST refuse it `409 version_conflict` before it judges any end or property the body names.
 
 **Reason:** a move onto an item that does not exist, a malformed id or a cardinality the move would break is refused at the current version, and a stale write is told it is stale first.
 
@@ -659,6 +675,22 @@ If a `POST /edges/bulk` page holds more than 5,000 entries, then the server MUST
 
 **Tests:** `compliance/edges-bulk.test.ts › takes a page of 5,000 entries and refuses one of 5,001`.
 
+### `edges/bulk-undeclared-key`
+
+If a `POST /edges/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+
+**Reason:** a misspelled `atomic` would otherwise be dropped and the page written under the default.
+
+**Tests:** `compliance/edges-bulk.test.ts › refuses a page or an entry carrying a key the operation does not declare, naming each one`.
+
+### `edges/bulk-entry-undeclared-key`
+
+If a `POST /edges/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key.
+
+**Reason:** the entry is a create or an update, refused as `POST /edges` refuses one, and refused as an entry so that `atomic` decides what happens to the rest of the page.
+
+**Tests:** `compliance/edges-bulk.test.ts › refuses a page or an entry carrying a key the operation does not declare, naming each one`.
+
 ### `edges/bulk-empty`
 
 When `POST /edges/bulk` names an empty `edges` list, the server MUST answer `200` with zero `counts` and no `results`.
@@ -749,9 +781,17 @@ If an entry of a `POST /edges/bulk` page under `atomic: true` is refused, then t
 
 **Tests:** `compliance/edges-bulk.test.ts › atomic=true rolls back the whole batch on validation error`, `› atomic=true rolls back a batch naming an item that does not exist`, `correctness/edges/edges-cycle.test.ts › refuses an atomic page that proposes an edge and its reverse together, and writes neither`.
 
+### `edges/bulk-atomic-undeclared-first`
+
+When a `POST /edges/bulk` page under `atomic: true` holds an entry with a key the operation does not declare, the server MUST answer the rollback for the first such entry before it judges any entry's ids, types or the edges it holds.
+
+**Reason:** the same as `items/bulk-atomic-undeclared-first`: the shape of a request is judged before anything it names.
+
+**Tests:** `compliance/edges-bulk.test.ts › judges an undeclared key under atomic before any other entry refusal, and each entry alone without it`.
+
 ### `edges/bulk-atomic-gates-first`
 
-When a `POST /edges/bulk` page under `atomic: true` holds an entry with a malformed id, or one whose source type or edge type the key may not write, the server MUST answer the rollback for the first such entry before it judges any entry against the edges it holds.
+When a `POST /edges/bulk` page under `atomic: true` holds no entry with a key the operation does not declare, and holds an entry with a malformed id, or one whose source type or edge type the key may not write, the server MUST answer the rollback for the first such entry before it judges any entry against the edges it holds.
 
 **Reason:** the same as `items/bulk-atomic-gates-first`: a page the key may not write is refused whole, whatever else it holds.
 
