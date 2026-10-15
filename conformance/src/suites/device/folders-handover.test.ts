@@ -274,6 +274,23 @@ describe("handing a folder to a command", () => {
       WAIT,
     );
 
+    // The record other programs read shows why the folder is not watched
+    // while a command holds it.
+    const holding = withFault("hold-handed-folder=3000", () =>
+      harness.folder.scan(),
+    );
+    await vi.waitFor(() => {
+      expect(recorded(harness, watch.pid(), harness.dir)).toEqual(
+        expect.objectContaining({ watching: false, reason: "handed_over" }),
+      );
+    }, WAIT);
+    expect((await holding).ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(recorded(harness, watch.pid(), harness.dir)).toEqual(
+        expect.objectContaining({ watching: true, reason: null }),
+      );
+    }, WAIT);
+
     // A watch does not ask: a second one is refused at once.
     const another = hold(harness.folder.watch());
     await another.exited();

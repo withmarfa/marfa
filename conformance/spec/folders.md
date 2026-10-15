@@ -4082,7 +4082,7 @@ If a command that asked for a folder ends before the folder is let go, then the 
 
 While a running `folders watch` has let a folder go to a command, a device MUST list that folder in the record of folder watches with `watching` set to `false` and `reason` set to `handed_over`.
 
-**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`.
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
 
 ### `folders/one-watch-per-folder`
 

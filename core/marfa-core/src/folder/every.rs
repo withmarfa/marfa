@@ -1535,7 +1535,7 @@ mod tests {
         supervised(&machine, &listing, |machine| {
             if count(machine, "handed /asked") == 1 && machine.opened("/asked") == 2 {
                 // The command removes the folder, and its state with it.
-                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+                *lock(&listing) = listing_of(&["/a"]);
             }
             count(machine, "left /asked") == 1
         })
