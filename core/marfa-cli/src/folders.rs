@@ -131,10 +131,14 @@ pub enum FoldersCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Watch a folder and keep it in step.
+    /// Watch a folder and keep it in step, or every folder on this machine.
     Watch {
-        /// The directory to watch, recursively.
-        dir: PathBuf,
+        /// The directory to watch, recursively. Without one, every folder
+        /// `folders list` shows is watched in this one process, each with the
+        /// server its copy came from, and each line names its folder. A folder
+        /// listed or removed while it runs joins or leaves the watch, and one
+        /// that cannot be watched is said once and tried again.
+        dir: Option<PathBuf>,
         /// Stop after this long. Unset, it runs until interrupted.
         #[arg(long, value_name = "SECONDS")]
         r#for: Option<u64>,
@@ -432,9 +436,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
-        FoldersCommand::Watch { dir, r#for } => {
-            watch::watch(&dir, named.session()?, r#for.map(Duration::from_secs), json)
-        }
+        FoldersCommand::Watch {
+            dir: Some(dir),
+            r#for,
+        } => watch::watch(&dir, named.session()?, r#for.map(Duration::from_secs), json),
+        FoldersCommand::Watch { dir: None, r#for } => watch::watch_every(named, r#for, json),
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
         FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
         FoldersCommand::Revoke { id, idempotency } => send(
