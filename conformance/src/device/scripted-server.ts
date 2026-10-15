@@ -61,6 +61,8 @@ export type Answer =
       kind: "sse";
       frames: SseFrame[];
       hold?: boolean;
+      /** Additional frames, delayed from opening a held stream. */
+      delayedFrames?: Array<{ afterMs: number; frames: SseFrame[] }>;
       /** Held open with no keepalive: a server that has gone quiet. */
       quiet?: boolean;
     }
@@ -162,6 +164,7 @@ export class ScriptedServer {
   private unmatched: string[] = [];
   /** Keepalive timers for the streams still open, cleared when the server stops. */
   private held = new Set<NodeJS.Timeout>();
+  private delayed = new Set<NodeJS.Timeout>();
   /** Requests accepted and deliberately never answered. */
   private stalled = new Set<ServerResponse>();
 
@@ -271,6 +274,8 @@ export class ScriptedServer {
   async stop(): Promise<void> {
     for (const keepalive of this.held) clearInterval(keepalive);
     this.held.clear();
+    for (const timer of this.delayed) clearTimeout(timer);
+    this.delayed.clear();
     // Ended rather than left, or `server.close` waits on them and the
     // fixture's teardown hangs on a socket it opened on purpose.
     for (const response of this.stalled) response.destroy();
@@ -440,6 +445,28 @@ export class ScriptedServer {
       response.end();
       return;
     }
+    const pending = new Set<NodeJS.Timeout>();
+    for (const batch of answer.delayedFrames ?? []) {
+      const timer = setTimeout(() => {
+        pending.delete(timer);
+        this.delayed.delete(timer);
+        if (!response.destroyed) {
+          for (const frame of batch.frames) response.write(renderFrame(frame));
+        }
+      }, batch.afterMs);
+      timer.unref();
+      pending.add(timer);
+      this.delayed.add(timer);
+    }
+    const cancelDelayed = (): void => {
+      for (const timer of pending) {
+        clearTimeout(timer);
+        this.delayed.delete(timer);
+      }
+      pending.clear();
+    };
+    response.on("close", cancelDelayed);
+    response.on("error", cancelDelayed);
     if (answer.quiet === true) {
       this.stalled.add(response);
       response.on("close", () => this.stalled.delete(response));
