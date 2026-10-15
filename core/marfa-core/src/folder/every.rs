@@ -580,6 +580,7 @@ fn start_due<'scope, 'env, S: Supervised>(
                 {
                     every.tell(Every::Watching { dir })?;
                     start.said = Said::Told;
+                    record.watching(dir);
                 }
             }
             Run::Waiting { .. } => {}
@@ -608,18 +609,19 @@ fn run<S: Supervised>(
                     if let Some(cause) = storage {
                         every.tell(Every::Storage { dir, cause })?;
                     }
-                    record.watching(dir);
                     if start.quiet {
                         start.said = Said::Held(Instant::now());
                         return Ok(());
                     }
                     every.tell(Every::Watching { dir })?;
                     start.said = Said::Told;
+                    record.watching(dir);
                     return Ok(());
                 }
                 if matches!(start.said, Said::Held(_)) {
                     every.tell(Every::Watching { dir })?;
                     start.said = Said::Told;
+                    record.watching(dir);
                 }
             }
             every.tell(Every::Folder {
@@ -652,6 +654,8 @@ mod tests {
         Lasts,
         /// Ends with this, after telling it is watched.
         Ends(Unwatched),
+        /// As `Ends`, a moment after telling it is watched.
+        EndsSlowly(Unwatched),
         /// Tells a pass, then lasts.
         Passes,
         Panics,
@@ -687,6 +691,10 @@ mod tests {
             .map_err(WatchError::Told)?;
             match &self.goes {
                 Goes::Ends(reason) | Goes::EndsSynced(reason) => {
+                    return Err(WatchError::Unwatchable(reason.message.clone()));
+                }
+                Goes::EndsSlowly(reason) => {
+                    std::thread::sleep(Duration::from_millis(30));
                     return Err(WatchError::Unwatchable(reason.message.clone()));
                 }
                 Goes::Panics => panic!("a folder's watch panicked"),
@@ -1261,6 +1269,41 @@ mod tests {
             "{told:?}"
         );
         assert_eq!(count(&machine, "watching /a"), 1);
+    }
+
+    #[test]
+    fn a_folder_that_fails_the_same_way_at_every_try_keeps_its_reason_in_the_record() {
+        let machine = Machine::default();
+        machine.opens("/a", vec![Ok(Goes::EndsSlowly(reason("watch")))]);
+        machine.opens("/b", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/a", "/b"]);
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 7, Duration::from_secs(5));
+        let (failed, lasting) = (AtomicBool::new(false), AtomicBool::new(false));
+        let recovered = Mutex::new(Vec::new());
+        supervised_with(&machine, &listing, &record, |machine| {
+            if record.state_of(Path::new("/b")) == Some((true, None)) {
+                lasting.store(true, Ordering::SeqCst);
+            }
+            let state = record.state_of(Path::new("/a"));
+            match state {
+                Some((_, Some(_))) => failed.store(true, Ordering::SeqCst),
+                Some((_, None)) if failed.load(Ordering::SeqCst) => {
+                    lock(&recovered).push(state.clone());
+                }
+                _ => {}
+            }
+            machine.opened("/a") >= 5
+        })
+        .unwrap();
+        assert!(failed.load(Ordering::SeqCst), "the folder never failed");
+        assert_eq!(
+            lock(&recovered).clone(),
+            Vec::<Option<(bool, Option<String>)>>::new(),
+            "its watch was started again, but it had not recovered"
+        );
+        // The witness: a folder that lasts is shown as watched.
+        assert!(lasting.load(Ordering::SeqCst));
     }
 
     #[test]

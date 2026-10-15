@@ -33,9 +33,9 @@ pub(super) struct Problem {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Snapshot {
     pub(super) last_success_at: Option<String>,
-    pending_uploads: u64,
-    pending_downloads: u64,
-    paused_removals: u64,
+    pub(super) pending_uploads: u64,
+    pub(super) pending_downloads: u64,
+    pub(super) paused_removals: u64,
     pub(super) first_sync_waiting: bool,
     pub(super) problems: Vec<Problem>,
 }

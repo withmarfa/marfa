@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { answers } from "../../device/marfa-answers.js";
@@ -25,8 +32,11 @@ interface Entry {
   watching: boolean;
   reason: string | null;
   last_success_at: string | null;
-  first_sync_waiting: boolean;
-  problems: Array<{ code: string; count: number }>;
+  first_sync_waiting: boolean | null;
+  problems: Array<{ code: string; count: number }> | null;
+  pending_uploads: number | null;
+  pending_downloads: number | null;
+  paused_removals: number | null;
 }
 
 interface Process {
@@ -47,6 +57,9 @@ interface Report {
   last_success_at: string | null;
   first_sync_waiting: boolean;
   problems: Array<{ code: string; count: number }>;
+  pending_uploads: number;
+  pending_downloads: number;
+  paused_removals: number;
 }
 
 const made: FolderHarness[] = [];
@@ -133,10 +146,11 @@ function entryOf(
 
 /** How a program reading the record decides that an entry is current. */
 function current(process: Process, now = Date.now()): boolean {
+  const age = now - Date.parse(process.heartbeat_at);
   return (
     process.ended_at === null &&
-    now - Date.parse(process.heartbeat_at) <
-      3 * process.heartbeat_interval_seconds * 1000
+    age >= 0 &&
+    age < 3 * process.heartbeat_interval_seconds * 1000
   );
 }
 
@@ -188,6 +202,9 @@ describe("the record of folder watches", () => {
       expect(entry?.last_success_at).toBe(sent?.last_success_at);
       expect(entry?.first_sync_waiting).toBe(sent?.first_sync_waiting);
       expect(entry?.problems).toEqual(sent?.problems);
+      expect(entry?.pending_uploads).toBe(sent?.pending_uploads);
+      expect(entry?.pending_downloads).toBe(sent?.pending_downloads);
+      expect(entry?.paused_removals).toBe(sent?.paused_removals);
     }, WAIT);
     // The witness: a pass was reported, so this was not two empty lists.
     expect(reports(a).length).toBeGreaterThan(0);
@@ -222,6 +239,18 @@ describe("the record of folder watches", () => {
       const held = entryOf(a, every.pid(), b.dir);
       expect(held?.watching, every.stdout).toBe(false);
       expect(held?.reason).toBeTruthy();
+      // This process never read a report for it: nothing is claimed.
+      expect(
+        [
+          held?.last_success_at,
+          held?.first_sync_waiting,
+          held?.problems,
+          held?.pending_uploads,
+          held?.pending_downloads,
+          held?.paused_removals,
+        ],
+        JSON.stringify(held),
+      ).toEqual([null, null, null, null, null, null]);
       const first = entryOf(a, every.pid(), waiting.dir);
       expect(first?.watching).toBe(false);
       expect(first?.reason).toBe("first_sync_waiting");
@@ -248,7 +277,7 @@ describe("the record of folder watches", () => {
       const entry = entryOf(a, watch.pid(), a.dir);
       expect(entry?.watching, watch.stdout).toBe(false);
       expect(entry?.reason).toBe("unauthorized");
-      expect(entry?.problems.map((problem) => problem.code)).toContain(
+      expect(entry?.problems?.map((problem) => problem.code)).toContain(
         "credential_refused",
       );
     }, WAIT);
@@ -276,6 +305,27 @@ describe("the record of folder watches", () => {
       },
       { timeout: 4 * first.heartbeat_interval_seconds * 1000, interval: 100 },
     );
+    // Whatever else is written, no heartbeat comes later than its interval
+    // after the one before it.
+    const beats: string[] = [];
+    const until = Date.now() + 3.4 * first.heartbeat_interval_seconds * 1000;
+    while (Date.now() < until) {
+      const beat = (processOf(a, pid) as Process).heartbeat_at;
+      if (beats.at(-1) !== beat) beats.push(beat);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const gaps = beats
+      .slice(1)
+      .map((beat, n) => Date.parse(beat) - Date.parse(beats[n]));
+    expect(gaps.length).toBeGreaterThanOrEqual(3);
+    for (const gap of gaps) {
+      expect(gap, `heartbeat gaps ${gaps}`).toBeLessThanOrEqual(
+        first.heartbeat_interval_seconds * 1000,
+      );
+    }
+    expect(
+      record(a)?.processes.filter((process) => process.pid === pid),
+    ).toHaveLength(1);
     watch.interrupt();
     await watch.exited();
     const ended = processOf(a, pid) as Process;
@@ -354,6 +404,78 @@ describe("the record of folder watches", () => {
     );
     // The watch that is still running is still current.
     expect(current(processOf(a, alone.pid()) as Process)).toBe(true);
+  });
+
+  it("drops the entries nothing has written to for an hour and any that is still to come, and keeps a recent one", async () => {
+    const { a } = await twoFolders("record-pruned");
+    const entry = (pid: number, beat: number): Process => ({
+      pid,
+      started_at: new Date(beat).toISOString(),
+      heartbeat_at: new Date(beat).toISOString(),
+      heartbeat_interval_seconds: 5,
+      ended_at: null,
+      folders: [],
+    });
+    const now = Date.now();
+    const seeded: WatchRecord = {
+      version: 1,
+      processes: [
+        entry(2_000_001, now - 61 * 60_000),
+        entry(2_000_002, now - 10_000),
+        entry(2_000_003, now + 60 * 60_000),
+      ],
+    };
+    mkdirSync(dirname(recordPath(a)), { recursive: true });
+    writeFileSync(recordPath(a), JSON.stringify(seeded));
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(
+      () => expect(processOf(a, watch.pid()), watch.stdout).toBeDefined(),
+      WAIT,
+    );
+    const pids = (record(a) as WatchRecord).processes.map(
+      (process) => process.pid,
+    );
+    // The recent one is kept, which is the witness that the others were
+    // dropped and not the whole file replaced.
+    expect(pids.sort()).toEqual([2_000_002, watch.pid()].sort());
+  });
+
+  it("goes on syncing and ends on an interrupt while another process holds the record's lock", async () => {
+    const { a } = await twoFolders("record-locked");
+    mkdirSync(dirname(recordPath(a)), { recursive: true });
+    const holder = spawn(
+      "python3",
+      [
+        "-c",
+        "import fcntl,sys,time\nf=open(sys.argv[1],'a')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('held',flush=True)\ntime.sleep(600)",
+        join(dirname(recordPath(a)), "folder-watch.lock"),
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        holder.stdout.once("data", () => resolve());
+        holder.once("error", reject);
+      });
+      put(a, "Locked.md", "---\ntitle: Locked\n---\nsynced under the lock\n");
+      const watch = hold(a.folder.watchEvery());
+      await vi.waitFor(
+        () => expect(sentTitles(a), watch.stdout).toEqual(["Locked"]),
+        WAIT,
+      );
+      expect(existsSync(recordPath(a)), "written under a held lock").toBe(
+        false,
+      );
+      const interrupted = Date.now();
+      watch.interrupt();
+      await watch.exited();
+      expect(Date.now() - interrupted).toBeLessThan(3_000);
+      expect(watch.exitCode(), watch.stderr).toBe(130);
+      // Never written, so no `ended_at` was set either.
+      expect(existsSync(recordPath(a))).toBe(false);
+    } finally {
+      holder.kill("SIGKILL");
+    }
   });
 
   it("is never read half written, while two watches write it", async () => {
