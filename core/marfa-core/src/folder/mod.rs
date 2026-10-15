@@ -1915,8 +1915,8 @@ impl Folder {
                     let rewritten = retitle
                         .as_ref()
                         .and_then(|retitle| self.retitle_file(file, retitle));
-                    // Where the file shows no title line it could say this in,
-                    // the title goes beside its bytes.
+                    // Where the title line was not rewritten, the title goes
+                    // beside the file's bytes.
                     let sent_title = retitle.as_ref().filter(|_| rewritten.is_none());
                     let file = rewritten.as_ref().unwrap_or(file);
                     if self.queue_update(
@@ -2694,7 +2694,7 @@ impl Folder {
     }
 
     /// Whole only where the file's version line is the copy's. `retitle` is
-    /// the title a rename gives an item whose file shows no line to say it in.
+    /// the title a rename gives an item whose title line was not rewritten.
     #[allow(clippy::too_many_arguments)]
     fn queue_update(
         &self,
@@ -3044,8 +3044,9 @@ impl Folder {
     }
 
     /// The file as it is once its title line says the rename's title, every
-    /// other byte kept. `None` where it shows no title line, its frontmatter
-    /// cannot be edited in place, or it changed since the scan read it.
+    /// other byte kept. `None` where it shows no title line or the line says
+    /// it already, its frontmatter cannot be edited in place, or it changed
+    /// since the scan read it.
     fn retitle_file(&self, file: &Scanned, retitle: &Retitle) -> Option<Scanned> {
         let document = file.document();
         let shown = document.front.get(&retitle.field)?;
