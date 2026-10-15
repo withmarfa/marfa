@@ -2,9 +2,9 @@
  * Write the types a fresh server lists, as the core carries them: the item
  * types and the edge types Marfa ships, in the shape `GET /types` and
  * `GET /edge-types` answer them, the field types a type may declare, the names
- * a field cannot take and the roots a type cannot sit under, so a working copy
- * that has never reached a server holds the catalog it would have read from
- * one that has just started.
+ * a field cannot take, the names a thumbnail cannot take and the roots a type
+ * cannot sit under, so a working copy that has never reached a server holds
+ * the catalog it would have read from one that has just started.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
