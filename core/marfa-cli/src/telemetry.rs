@@ -23,7 +23,7 @@ use std::time::Duration;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::error::CliError;
-use crate::interrupt::{self, INTERRUPTED};
+use crate::interrupt::INTERRUPTED;
 
 use export::{Exporter, Sink};
 use settings::{Reading, Settings};
@@ -96,13 +96,12 @@ fn live(command: &str, settings: &Settings) -> Option<Live> {
 }
 
 /// Whether a run that ends with `status` failed. A command the person
-/// stopped with Ctrl-C did not, whether it ended through its own stop, as
-/// `canceled`, or as a command that runs until it is stopped does.
-fn failed(status: u8, error: Option<&CliError>, interrupted: bool) -> bool {
-    status != 0
-        && status != INTERRUPTED
-        && !interrupted
-        && !error.is_some_and(|error| error.code() == "canceled")
+/// stopped with Ctrl-C did not: it ended `canceled`, or, as a command that
+/// runs until it is stopped does, with the status of an interrupt. Whether
+/// Ctrl-C arrived does not decide it, so an error that comes in the same
+/// moment as an interrupt is still a failure.
+fn failed(status: u8, error: Option<&CliError>) -> bool {
+    status != 0 && status != INTERRUPTED && !error.is_some_and(|error| error.code() == "canceled")
 }
 
 impl Run {
@@ -124,7 +123,7 @@ impl Run {
             return;
         };
         live.root.record("exit_code", u64::from(status));
-        if failed(status, error, interrupt::signaled()) {
+        if failed(status, error) {
             match error {
                 Some(error) => tracing::error!(
                     parent: &live.root,
@@ -158,13 +157,19 @@ mod tests {
     fn a_stopped_command_is_not_a_failed_one() {
         let canceled = CliError::from(marfa_core::CoreError::Canceled);
         let refused = CliError::Usage("x".into());
-        assert!(failed(3, Some(&refused), false));
-        assert!(failed(3, None, false));
-        assert!(!failed(0, None, false));
-        assert!(!failed(INTERRUPTED, None, false));
-        assert!(!failed(3, Some(&canceled), false));
-        assert!(!failed(3, Some(&refused), true));
-        assert!(!failed(3, None, true));
+        assert!(failed(3, Some(&refused)));
+        assert!(failed(3, None));
+        assert!(!failed(0, None));
+        assert!(!failed(INTERRUPTED, None));
+        assert!(!failed(3, Some(&canceled)));
+        // The witness: a real failure is one whether or not Ctrl-C came with
+        // it, since the rule takes no account of the signal.
+        let credential = CliError::from(marfa_core::CoreError::SignedOut {
+            origin: "https://marfa.example".into(),
+        });
+        let local = CliError::from(marfa_core::CoreError::NoCursor);
+        assert!(failed(5, Some(&credential)));
+        assert!(failed(4, Some(&local)));
     }
 
     #[test]

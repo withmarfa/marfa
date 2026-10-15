@@ -2526,7 +2526,7 @@ When the CLI receives a second Ctrl-C before the call has stopped, the CLI MUST 
 
 ### `device/command-changes-interrupted`
 
-When `changes` is interrupted, the CLI MUST end it with status 130.
+When `marfa device changes` is interrupted after it reports that it is watching, the CLI MUST end it with status 130.
 
 **Reason:** a helper that is told to stop is not one whose time ran out, which ends with status 0, and a caller tells the two apart by the status.
 
