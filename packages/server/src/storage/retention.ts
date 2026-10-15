@@ -382,12 +382,9 @@ export class RateLimitWindowCleaner {
  * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
  * lets anyone register an `auth_oauth_client` row; without a reaper those
  * rows accumulate forever (DB growth) — most are abandoned registrations a
- * user never consented to. Each run deletes up to 200 clients that are BOTH:
- *
- *   - older than the retention window (`created_at < now - retentionDays`),
- *     AND
- *   - grantless — no access token, no refresh token, and no projected
- *     `system.connection { kind: "app" }` item for its `client_id`.
+ * user never consented to. Each run deletes, a batch at a time, every
+ * client that `OauthProviderStore.deleteGrantlessClientsOlderThan` finds
+ * idle past the retention window and grantless.
  *
  * Conservative: any single grant signal spares the row, so a client a user
  * actually authorized (or one with any live token) is never reaped. The
@@ -398,6 +395,9 @@ export class RateLimitWindowCleaner {
  * `retentionDays <= 0` switches the housekeeping job off: the operator can
  * leave the deployment running with no DCR reaper by setting the env var to 0.
  */
+/** Clients one write of the DCR reaper removes at most. */
+export const DCR_REAP_BATCH = 200;
+
 export class DcrClientCleaner {
   constructor(
     private storage: Storage,
@@ -415,18 +415,26 @@ export class DcrClientCleaner {
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    const deleted = await runAuditedTransaction(
-      this.storage,
-      () => provider.deleteGrantlessClientsOlderThan(cutoff),
-      (deleted) =>
-        deleted > 0
-          ? {
-              action: "auth.clients.purged",
-              resource_type: "oauth_client",
-              details: { count: deleted, cutoff },
-            }
-          : null,
-    );
+    // Batch by batch, each its own short write, until a batch comes back
+    // short: registration answers every origin, so a backlog can be larger
+    // than one batch and must not wait a whole cadence per batch.
+    let deleted = 0;
+    for (;;) {
+      const batch = await runAuditedTransaction(
+        this.storage,
+        () => provider.deleteGrantlessClientsOlderThan(cutoff, DCR_REAP_BATCH),
+        (count) =>
+          count > 0
+            ? {
+                action: "auth.clients.purged",
+                resource_type: "oauth_client",
+                details: { count, cutoff },
+              }
+            : null,
+      );
+      deleted += batch;
+      if (batch < DCR_REAP_BATCH) break;
+    }
     if (deleted > 0) {
       log("info", "DCR client cleanup", {
         deleted,

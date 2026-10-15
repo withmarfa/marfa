@@ -149,7 +149,7 @@ describe("GET /auth/device/consent", () => {
     const aged = withInstanceDatabase(server.sqlitePath, (db) =>
       db
         .prepare(
-          "UPDATE auth_oauth_client SET created_at = 0 WHERE client_id = ?",
+          "UPDATE auth_oauth_client SET created_at = 0, updated_at = 0 WHERE client_id = ?",
         )
         .run(registered.client_id),
     );

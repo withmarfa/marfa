@@ -297,12 +297,12 @@ export function registerHousekeepingJobs(
   // `auth_oauth_client` unbounded. Gated on a positive retention window
   // (`0` disables) and on the oauth-provider store being wired (test
   // contexts that skip better-auth omit it).
-  const dcrRetentionDays = config.dcrClientRetentionDays ?? 30;
+  const dcrRetentionDays = config.dcrClientRetentionDays ?? 1;
   if (dcrRetentionDays > 0 && storage.oauthProvider) {
     const dcrClientCleaner = new DcrClientCleaner(storage, dcrRetentionDays);
     housekeeping.register({
       name: "dcr-client-cleanup",
-      intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
+      intervalMs: config.dcrClientCleanupIntervalMs ?? 3_600_000,
       firstRunDelayMs: 25_000,
       run: async () => ({ deleted: await dcrClientCleaner.runOnce() }),
     });

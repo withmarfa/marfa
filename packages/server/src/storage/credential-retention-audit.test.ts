@@ -62,7 +62,7 @@ it.each(["grant", "key", "client"] as const)(
         const id = generateId();
         await client(id);
         await raw().__sqliteRun(
-          "UPDATE auth_oauth_client SET created_at = 1 WHERE client_id = ?",
+          "UPDATE auth_oauth_client SET created_at = 1, updated_at = 1 WHERE client_id = ?",
           [id],
         );
       }
@@ -95,9 +95,14 @@ it.each(["grant", "key", "client"] as const)(
     expect(await raw().__sqliteAll(query)).toEqual(before);
     expect((await ctx.storage.audit.list({ action })).data).toHaveLength(0);
     await raw().__sqliteRun("DROP TRIGGER reject_cleanup_audit", []);
-    expect(await sweep.runOnce()).toBe(200);
-    expect(await raw().__sqliteAll(query)).toHaveLength(1);
-    expect(await sweep.runOnce()).toBe(1);
+    if (family === "client") {
+      // The client reaper takes a backlog in one run, a batch per write.
+      expect(await sweep.runOnce()).toBe(201);
+    } else {
+      expect(await sweep.runOnce()).toBe(200);
+      expect(await raw().__sqliteAll(query)).toHaveLength(1);
+      expect(await sweep.runOnce()).toBe(1);
+    }
     expect(await raw().__sqliteAll(query)).toHaveLength(0);
     expect(await sweep.runOnce()).toBe(0);
     const audits = (await ctx.storage.audit.list({ action })).data;

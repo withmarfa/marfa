@@ -191,15 +191,17 @@
     }
   },
   "routes/auth-consent.ts": {
-    "boundary": "Audited consent approval and silent reuse contain provider consent, token and grant projection changes under the consent lock; credential-audit.test.ts and auth-consent-skip.test.ts.",
+    "boundary": "Audited consent approval and silent reuse contain provider consent, token and grant projection changes under the consent lock; credential-audit.test.ts and auth-consent-skip.test.ts. Operational exemption: the stamp that keeps a client from the registration reaper while an approval page offers it.",
     "calls": {
+      "OauthProviderStore.markClientOffered": 1,
       "OauthProviderStore.setConsentScopes": 1,
       "runAuditedTransaction": 2
     }
   },
   "routes/auth-pages.ts": {
-    "boundary": "Audited device approval contains consent, narrowed code and grant projection; shared audited grant revocation handles security disconnect. credential-audit.test.ts and device-grant.test.ts.",
+    "boundary": "Audited device approval contains consent, narrowed code and grant projection; shared audited grant revocation handles security disconnect. credential-audit.test.ts and device-grant.test.ts. Operational exemption: the stamp that keeps a client from the registration reaper while the device approval page offers it.",
     "calls": {
+      "OauthProviderStore.markClientOffered": 1,
       "OauthProviderStore.narrowDeviceCodeScope": 1,
       "OauthProviderStore.upsertConsent": 1,
       "runAuditedTransaction": 1,

@@ -14,6 +14,7 @@ import { itemWrites } from "./item-writes.js";
 import type { RetentionOverride } from "./retention.js";
 import {
   AuthSessionCleaner,
+  DCR_REAP_BATCH,
   DcrClientCleaner,
   RevokedGrantPurger,
   RevokedKeyReaper,
@@ -158,6 +159,66 @@ describe("TrashPurger.runOnce — behavioral", () => {
     expect(await rowExists(ids.archivedAncient)).toBe(true);
     expect(await rowExists(ids.oldTrash)).toBe(false);
     expect(await rowExists(ids.ancientTrash)).toBe(false);
+  });
+
+  it("keeps a client an approval page offered within the window, and one a revoked grant names", async () => {
+    const offered = "client_old_offered";
+    const revoked = "client_old_revoked_grant";
+    const idle = "client_old_idle";
+    await seedOauthClient({
+      clientId: offered,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+      offeredAt: new Date(FIXED_NOW.getTime() - 3_600_000),
+    });
+    await seedOauthClient({
+      clientId: revoked,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+    });
+    await itemWrites(ctx.storage).create({
+      writer: null,
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: revoked,
+        user_id: "some-user",
+        scopes: ["core.note:read"],
+        status: "revoked",
+        granted_at: new Date().toISOString(),
+        revoked_at: new Date().toISOString(),
+      },
+      source: "test/dcr-reaper",
+    });
+    // The witness: as old, never offered and with no grant, it goes.
+    await seedOauthClient({
+      clientId: idle,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+    });
+
+    const cleaner = new DcrClientCleaner(ctx.storage, 1, () => FIXED_NOW);
+    expect(await cleaner.runOnce()).toBe(1);
+    expect(await oauthClientExists(idle)).toBe(false);
+    expect(await oauthClientExists(offered)).toBe(true);
+    expect(await oauthClientExists(revoked)).toBe(true);
+  });
+
+  it("removes a backlog larger than one batch in one run", async () => {
+    const backlog = DCR_REAP_BATCH * 2 + 5;
+    for (let i = 0; i < backlog; i++) {
+      await seedOauthClient({
+        clientId: `client_backlog_${String(i).padStart(4, "0")}`,
+        createdAt: new Date(FIXED_NOW.getTime() - 2 * MS_PER_DAY),
+      });
+    }
+    const cleaner = new DcrClientCleaner(ctx.storage, 1, () => FIXED_NOW);
+    expect(await cleaner.runOnce()).toBe(backlog);
+    expect(await oauthClientExists("client_backlog_0000")).toBe(false);
+    expect(
+      await oauthClientExists(
+        `client_backlog_${String(backlog - 1).padStart(4, "0")}`,
+      ),
+    ).toBe(false);
   });
 
   it("is a no-op when retentionDays <= 0", async () => {
@@ -476,12 +537,14 @@ describe("AuthSessionCleaner.runOnce — drops expired auth_session rows", () =>
 
 /**
  * Seed an `auth_oauth_client` row via the typed store, then force its
- * `created_at` to a contrived value via the SQL escape hatch (the store
- * always stamps `now`). Public client by default — that's the DCR shape.
+ * `created_at`, and its `updated_at` unless `offeredAt` names a later one,
+ * to a contrived value via the SQL escape hatch (the store always stamps
+ * `now`). Public client by default — that's the DCR shape.
  */
 async function seedOauthClient(opts: {
   clientId: string;
   createdAt: Date;
+  offeredAt?: Date;
 }): Promise<void> {
   const provider = ctx.storage.oauthProvider;
   if (!provider) throw new Error("storage.oauthProvider not wired");
@@ -499,8 +562,12 @@ async function seedOauthClient(opts: {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
   await s.__sqliteRun(
-    `UPDATE auth_oauth_client SET created_at = ? WHERE client_id = ?`,
-    [Math.floor(opts.createdAt.getTime() / 1000), opts.clientId],
+    `UPDATE auth_oauth_client SET created_at = ?, updated_at = ? WHERE client_id = ?`,
+    [
+      Math.floor(opts.createdAt.getTime() / 1000),
+      Math.floor((opts.offeredAt ?? opts.createdAt).getTime() / 1000),
+      opts.clientId,
+    ],
   );
 }
 
@@ -589,6 +656,66 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
     expect(await oauthClientExists(recentGrantless)).toBe(true);
     expect(await oauthClientExists(oldWithToken)).toBe(true);
     expect(await oauthClientExists(oldWithAppGrant)).toBe(true);
+  });
+
+  it("keeps a client an approval page offered within the window, and one a revoked grant names", async () => {
+    const offered = "client_old_offered";
+    const revoked = "client_old_revoked_grant";
+    const idle = "client_old_idle";
+    await seedOauthClient({
+      clientId: offered,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+      offeredAt: new Date(FIXED_NOW.getTime() - 3_600_000),
+    });
+    await seedOauthClient({
+      clientId: revoked,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+    });
+    await itemWrites(ctx.storage).create({
+      writer: null,
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: revoked,
+        user_id: "some-user",
+        scopes: ["core.note:read"],
+        status: "revoked",
+        granted_at: new Date().toISOString(),
+        revoked_at: new Date().toISOString(),
+      },
+      source: "test/dcr-reaper",
+    });
+    // The witness: as old, never offered and with no grant, it goes.
+    await seedOauthClient({
+      clientId: idle,
+      createdAt: new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY),
+    });
+
+    const cleaner = new DcrClientCleaner(ctx.storage, 1, () => FIXED_NOW);
+    expect(await cleaner.runOnce()).toBe(1);
+    expect(await oauthClientExists(idle)).toBe(false);
+    expect(await oauthClientExists(offered)).toBe(true);
+    expect(await oauthClientExists(revoked)).toBe(true);
+  });
+
+  it("removes a backlog larger than one batch in one run", async () => {
+    const backlog = DCR_REAP_BATCH * 2 + 5;
+    for (let i = 0; i < backlog; i++) {
+      await seedOauthClient({
+        clientId: `client_backlog_${String(i).padStart(4, "0")}`,
+        createdAt: new Date(FIXED_NOW.getTime() - 2 * MS_PER_DAY),
+      });
+    }
+    const cleaner = new DcrClientCleaner(ctx.storage, 1, () => FIXED_NOW);
+    expect(await cleaner.runOnce()).toBe(backlog);
+    expect(await oauthClientExists("client_backlog_0000")).toBe(false);
+    expect(
+      await oauthClientExists(
+        `client_backlog_${String(backlog - 1).padStart(4, "0")}`,
+      ),
+    ).toBe(false);
   });
 
   it("is a no-op when retentionDays <= 0", async () => {
