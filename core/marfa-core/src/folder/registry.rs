@@ -92,8 +92,10 @@ impl Registry {
     }
 
     /// The folders listed, read without the lock or a rewrite, since every
-    /// write lands whole, and without any whose state was removed, as
-    /// [`Registry::folders`] drops it. `None` where there is no registry file.
+    /// write lands whole. Unlike [`Registry::folders`], it opens no listed
+    /// directory, so a volume that does not answer cannot hold it up: an
+    /// entry whose state was removed is listed still. `None` where there is
+    /// no registry file.
     pub fn read(&self) -> Result<Option<Vec<Registered>>> {
         let path = resolved(&self.path);
         let parent = path
@@ -115,13 +117,7 @@ impl Registry {
                 self.path.display()
             ))
         })?;
-        Ok(Some(
-            listing
-                .folders
-                .into_iter()
-                .filter(|entry| !gone(entry))
-                .collect(),
-        ))
+        Ok(Some(listing.folders))
     }
 
     /// Lists a folder again where the registry lost it or the directory
@@ -850,6 +846,35 @@ mod tests {
         std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
         std::fs::write(dir.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
         dir
+    }
+
+    #[test]
+    fn a_plain_read_lists_every_entry_without_opening_its_directory() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join(FILE_NAME));
+        let kept = folder_at(temp.path(), "kept");
+        let removed = folder_at(temp.path(), "removed");
+        add(&registry, &kept, "kept", Some("store-kept")).unwrap();
+        add(&registry, &removed, "removed", Some("store-removed")).unwrap();
+        std::fs::remove_file(removed.join(STATE_DIR).join("core.sqlite")).unwrap();
+        // A directory may sit on a volume that does not answer, so only a
+        // folder's own watch looks at it.
+        let read: Vec<PathBuf> = registry
+            .read()
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.dir)
+            .collect();
+        assert_eq!(read, vec![kept.clone(), removed.clone()]);
+        // The witness: a read that looks at each directory drops it.
+        let looked: Vec<PathBuf> = registry
+            .folders()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.dir)
+            .collect();
+        assert_eq!(looked, vec![kept]);
     }
 
     #[test]
