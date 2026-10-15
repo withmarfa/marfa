@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::elsewhere;
 use super::registry::{self, Reached, Registered};
@@ -176,11 +177,26 @@ impl Folder {
     /// only where the store at its listed path is the one the registry lists
     /// for it; otherwise its entry alone is taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<Removal> {
-        let dir = dir.as_ref();
+        Folder::remove_waiting(dir.as_ref(), None)
+    }
+
+    /// `remove_at`, but where another process holds the folder, asks it to
+    /// let the folder go and waits up to `HANDOVER_WAIT`, as `open_asking`
+    /// does.
+    pub fn remove_at_asking(dir: impl AsRef<Path>) -> Result<Removal> {
+        Folder::remove_waiting(dir.as_ref(), Some(super::HANDOVER_WAIT))
+    }
+
+    /// Whether `dir` holds a folder's store, read without opening it.
+    pub fn is_at(dir: impl AsRef<Path>) -> bool {
+        held(dir.as_ref())
+    }
+
+    fn remove_waiting(dir: &Path, wait: Option<Duration>) -> Result<Removal> {
         let spelled = registry::absolute(dir);
         let listed = registry::listing();
         if let Some(entry) = listed.iter().find(|entry| entry.dir == spelled) {
-            return Folder::remove_listed(entry.clone());
+            return Folder::remove_listed(entry.clone(), wait);
         }
         if let Some(link) = registry::first_link(&spelled) {
             let instead = match registry::reach(dir)? {
@@ -198,9 +214,9 @@ impl Folder {
         }
         let root = registry::named(dir)?;
         match registry::listed_at(&root, &listed) {
-            Some(entry) => Folder::remove_listed(entry),
+            Some(entry) => Folder::remove_listed(entry, wait),
             None => {
-                Folder::open_without_listing(root.clone(), None)?.remove()?;
+                Folder::open_without_listing(root.clone(), None, wait)?.remove()?;
                 Ok(Removal::Deleted(root))
             }
         }
@@ -208,13 +224,13 @@ impl Folder {
 
     /// Bound to the store the registry lists for `entry`, so a folder that
     /// has taken its directory's place is never removed in its stead.
-    fn remove_listed(entry: Registered) -> Result<Removal> {
+    fn remove_listed(entry: Registered, wait: Option<Duration>) -> Result<Removal> {
         let reason = if let Some(link) = registry::first_link(&entry.dir) {
             format!("{} is now a symbolic link", link.display())
         } else if !held(&entry.dir) {
             "no folder state is there".to_string()
         } else {
-            let folder = Folder::open_without_listing(entry.dir.clone(), None)?;
+            let folder = Folder::open_without_listing(entry.dir.clone(), None, wait)?;
             match (&entry.store, elsewhere::listed_store(&folder.core)) {
                 (Some(listed), Some(found)) if *listed == found => {
                     folder.remove()?;

@@ -22,7 +22,7 @@ use super::Folder;
 use super::health::{Problem, Snapshot};
 use super::landing::land_at;
 use super::registry::{Registry, open_lock, resolved};
-use super::watch::{Raise, WatchError, WatchEvent};
+use super::watch::{Raise, WatchEnd, WatchError, WatchEvent};
 use crate::directory::Directory;
 use crate::store;
 
@@ -312,23 +312,29 @@ impl WatchRecord {
         })
     }
 
-    /// Keeps the record of one folder's watch, as `folders watch DIR` does.
+    /// Keeps the record of one folder's watch, as `folders watch DIR` does,
+    /// with [`Folder::watch_handing_over`]: a folder let go to a command is
+    /// recorded as not watched, with the reason `handed_over`.
     pub fn watch_folder<E>(
         &self,
         folder: &Folder,
         stop: &AtomicBool,
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
-    ) -> Result<(), WatchError<E>> {
+    ) -> Result<WatchEnd, WatchError<E>> {
         let dir = folder.root();
         self.listed(dir, folder.folder_id());
-        self.beating(dir, folder, || {
-            folder.watch(stop, |event| {
+        let watched = self.beating(dir, folder, || {
+            folder.watch_handing_over(stop, |event| {
                 if matches!(event, WatchEvent::Watching { .. }) {
                     self.watching(dir);
                 }
                 tell(event)
             })
-        })
+        });
+        if let Ok(WatchEnd::HandedOver) = watched {
+            self.unwatched(dir, Some(super::HANDED_OVER));
+        }
+        watched
     }
 
     /// Writes the record when something changed and as often as the heartbeat

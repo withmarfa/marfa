@@ -29,6 +29,14 @@ pub enum CliError {
         .0.display()
     )]
     FolderHeld(std::path::PathBuf),
+    /// `FolderHeld`, for a command that asked the process holding the folder
+    /// to let it go and waited.
+    #[error(
+        "{} is held by another process, which did not let it go within {} seconds of being asked; a `folders watch` lets a folder go when asked, unless it is stopped or a step of its pass takes longer than that, and any other command holds a folder until it ends, so run this again once it does",
+        .0.display(),
+        marfa_core::folder::HANDOVER_WAIT.as_secs()
+    )]
+    FolderNotHandedOver(std::path::PathBuf),
     #[error("{0}")]
     Watch(String),
     #[error("output closed")]
@@ -241,7 +249,7 @@ macro_rules! own_codes {
 own_codes! {
     CliError::Io(_) => "io",
     CliError::NotHeld(_) => "not_held",
-    CliError::FolderHeld(_) => "reading_handle",
+    CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) => "reading_handle",
     CliError::Watch(_) => "watch",
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
@@ -356,7 +364,9 @@ impl CliError {
             | CliError::NoStoreAt(_)
             | CliError::NoServerNamed => Exit::Usage,
             CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
-            CliError::NoKeychain(_) | CliError::FolderHeld(_) => Exit::Local,
+            CliError::NoKeychain(_)
+            | CliError::FolderHeld(_)
+            | CliError::FolderNotHandedOver(_) => Exit::Local,
         }
     }
 
@@ -652,6 +662,7 @@ mod tests {
             CliError::Io(io::Error::other("x")),
             CliError::NotHeld(String::new()),
             CliError::FolderHeld(std::path::PathBuf::new()),
+            CliError::FolderNotHandedOver(std::path::PathBuf::new()),
             CliError::Watch(String::new()),
             CliError::Usage(String::new()),
             CliError::NoStoreNamed,

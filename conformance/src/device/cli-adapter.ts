@@ -1329,6 +1329,12 @@ export class CliFolder {
     ]);
   }
 
+  /** A folder command left running, such as one waiting for a watch to let
+   *  the folder go, which the caller stops. */
+  hold(args: string[]): HeldCommand {
+    return this.device().hold(args, "root");
+  }
+
   /** A watch left running, which the caller stops. */
   watch(): HeldCommand {
     return this.device().hold(["folders", "watch", this.dir], "root");

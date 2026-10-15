@@ -8,9 +8,9 @@ use std::thread::{Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use super::registry::Registry;
-use super::watch::{WatchError, WatchEvent};
+use super::watch::{WatchEnd, WatchError, WatchEvent};
 use super::watch_record::{Observed, WatchRecord};
-use super::{Folder, STATE_DIR, StorageCause, first};
+use super::{Folder, STATE_DIR, StorageCause, first, handover};
 use crate::directory::Directory;
 use crate::error::CoreError;
 use crate::{Core, store};
@@ -26,11 +26,18 @@ const RETRY_UNOPENED: Duration = Duration::from_secs(5);
 /// few seconds would only ask again.
 const RETRY_ENDED: Duration = Duration::from_secs(60);
 
+/// How often a folder let go to a command is tried again, so it is taken back
+/// soon after the command ends.
+pub const RETRY_HANDED: Duration = Duration::from_secs(1);
+
 /// How long a folder tried again is watched before it is said to be watched,
 /// so one that fails the same way at every try is said to fail once.
 const RECOVERED: Duration = Duration::from_secs(10);
 
 const POLL: Duration = Duration::from_millis(100);
+
+/// The code of a folder let go to a command that asked for it.
+pub const HANDED_OVER: &str = "handed_over";
 
 /// Why a listed folder is not watched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +77,16 @@ impl Unwatched {
         })
     }
 
+    /// A command asks for the folder.
+    pub fn handed_over() -> Unwatched {
+        Unwatched {
+            code: HANDED_OVER.into(),
+            message:
+                "a command asked for this folder; it is watched again once that command lets it go"
+                    .into(),
+        }
+    }
+
     fn fault() -> Unwatched {
         Unwatched {
             code: "watch".into(),
@@ -107,6 +124,12 @@ pub enum Every<'a, F = Folder> {
         dir: &'a Path,
         reason: &'a Unwatched,
     },
+    /// A command asked for the folder at `dir`, and its watch let it go. It
+    /// is tried again every second, quietly while the command holds it.
+    HandedOver { dir: &'a Path },
+    /// The folder at `dir`, let go to a command, is watched again. Told in
+    /// place of [`Every::Watching`].
+    TakenBack { dir: &'a Path },
     /// The registry no longer lists the folder at `dir`, and its watch ended.
     Left { dir: &'a Path },
     /// The registry lists no folder. Told once each time it comes to.
@@ -182,6 +205,8 @@ fn read(registry: &Registry) -> Listing {
 struct Recorded {
     origin: Option<String>,
     first_sync_waiting: bool,
+    /// A command waits for the folder, so the watch must not take it.
+    asked: bool,
 }
 
 fn recorded(dir: &Path) -> crate::Result<Recorded> {
@@ -208,6 +233,7 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
     Ok(Recorded {
         origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
         first_sync_waiting: first::waiting(&conn)?,
+        asked: handover::asked_at(&state_dir),
     })
 }
 
@@ -226,6 +252,7 @@ struct Timing {
     reread: Duration,
     unopened: Duration,
     ended: Duration,
+    handed: Duration,
     recovered: Duration,
 }
 
@@ -236,6 +263,7 @@ impl Default for Timing {
             reread: REREAD,
             unopened: RETRY_UNOPENED,
             ended: RETRY_ENDED,
+            handed: RETRY_HANDED,
             recovered: RECOVERED,
         }
     }
@@ -247,7 +275,7 @@ trait Watched: Observed {
         &self,
         stop: &AtomicBool,
         tell: impl FnMut(WatchEvent) -> Result<(), E>,
-    ) -> Result<(), WatchError<E>>;
+    ) -> Result<WatchEnd, WatchError<E>>;
 }
 
 impl Watched for Folder {
@@ -255,8 +283,8 @@ impl Watched for Folder {
         &self,
         stop: &AtomicBool,
         tell: impl FnMut(WatchEvent) -> Result<(), E>,
-    ) -> Result<(), WatchError<E>> {
-        Folder::watch(self, stop, tell)
+    ) -> Result<WatchEnd, WatchError<E>> {
+        Folder::watch_handing_over(self, stop, tell)
     }
 }
 
@@ -281,6 +309,10 @@ impl<W: EveryFolder> Supervised for Machine<'_, W> {
         if recorded.first_sync_waiting {
             return Err(Unwatched::of(&CoreError::FirstSyncWaiting));
         }
+        // Taken now, it would only be let go again at once.
+        if recorded.asked {
+            return Err(Unwatched::handed_over());
+        }
         self.0.open(dir, recorded.origin.as_deref())
     }
 
@@ -298,6 +330,8 @@ struct Start {
     /// Held back until the watch lasts or tells something else, for a folder
     /// tried again after it was said not to be watched.
     quiet: bool,
+    /// Said as [`Every::TakenBack`], for a folder let go to a command.
+    taken_back: bool,
     said: Said,
 }
 
@@ -311,6 +345,8 @@ enum Said {
 enum Outcome<E> {
     /// Its stop was raised.
     Stopped,
+    /// A command asked for it, and the folder was let go.
+    HandedOver,
     Unopened(Unwatched),
     Ended(Unwatched),
     Told(E),
@@ -333,6 +369,8 @@ struct Entry<'scope, E> {
     told: Option<Unwatched>,
     /// Its watch was stopped because the registry no longer lists it.
     leaving: bool,
+    /// Let go to a command, and taken back once that command lets it go.
+    parked: bool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -367,6 +405,12 @@ fn supervise<S: Supervised>(
             }
             if let Err(error) = reap(&mut entries, every, stop, record, timing) {
                 break Err(error);
+            }
+            // A folder let go is tried again only on a fresh reading, so one
+            // the command took off the registry leaves rather than being
+            // said to be no folder.
+            if parked_due(&entries) {
+                next_read = Instant::now();
             }
             if Instant::now() >= next_read {
                 next_read = Instant::now() + timing.reread;
@@ -404,6 +448,13 @@ fn supervise<S: Supervised>(
     })
 }
 
+fn parked_due<E>(entries: &BTreeMap<PathBuf, Entry<'_, E>>) -> bool {
+    let now = Instant::now();
+    entries
+        .values()
+        .any(|entry| entry.parked && matches!(entry.run, Run::Waiting { until } if until <= now))
+}
+
 /// Takes in the watches that ended, and decides what comes of each.
 fn reap<S: Supervised>(
     entries: &mut BTreeMap<PathBuf, Entry<'_, S::Error>>,
@@ -430,7 +481,8 @@ fn reap<S: Supervised>(
         else {
             unreachable!("only a watching entry finishes");
         };
-        if lock(&start).said == Said::Told {
+        let said = lock(&start).said == Said::Told;
+        if said {
             entry.told = None;
         }
         let ended = handle
@@ -445,6 +497,40 @@ fn reap<S: Supervised>(
             every.tell(Every::Left { dir: &dir })?;
             continue;
         }
+        let handed = match &ended {
+            Outcome::HandedOver => true,
+            Outcome::Unopened(reason) => {
+                reason.code == HANDED_OVER
+                    || (entry.parked && reason.code == CoreError::ReadingHandle.code())
+            }
+            _ => false,
+        };
+        if handed {
+            let first = !entry.parked;
+            entry.parked = true;
+            record.unwatched(&dir, Some(HANDED_OVER));
+            entry.run = Run::Waiting {
+                until: now + timing.handed,
+            };
+            match ended {
+                // Said again only where it was taken back in between.
+                Outcome::HandedOver if first || said => {
+                    every.tell(Every::HandedOver { dir: &dir })?;
+                }
+                // Never watched since this process began: why is said as for
+                // any folder that cannot be opened.
+                Outcome::Unopened(reason) if first && entry.told.as_ref() != Some(&reason) => {
+                    every.tell(Every::Unwatched {
+                        dir: &dir,
+                        reason: &reason,
+                    })?;
+                    entry.told = Some(reason);
+                }
+                _ => {}
+            }
+            continue;
+        }
+        entry.parked = false;
         let (reason, wait) = match ended {
             // Raised for a folder the registry lists again since: it starts
             // again at once.
@@ -465,6 +551,7 @@ fn reap<S: Supervised>(
                 (reason, timing.ended)
             }
             Outcome::Told(_) => unreachable!("a failed tell ended the watch above"),
+            Outcome::HandedOver => unreachable!("a folder let go is parked above"),
         };
         entry.run = Run::Waiting { until: now + wait };
         record.unwatched(&dir, Some(&reason.code));
@@ -513,6 +600,7 @@ fn reconcile<S: Supervised>(
                 run: Run::Waiting { until: now },
                 told: None,
                 leaving: false,
+                parked: false,
             });
     }
     let unlisted: Vec<PathBuf> = entries
@@ -560,7 +648,8 @@ fn start_due<'scope, 'env, S: Supervised>(
             Run::Waiting { until } if *until <= now && !entry.leaving => {
                 let stop = Arc::new(AtomicBool::new(false));
                 let start = Arc::new(Mutex::new(Start {
-                    quiet: entry.told.is_some(),
+                    quiet: entry.told.is_some() && !entry.parked,
+                    taken_back: entry.parked && entry.told.is_none(),
                     said: Said::NotYet,
                 }));
                 let handle = {
@@ -616,7 +705,11 @@ fn run<S: Supervised>(
                         start.said = Said::Held(Instant::now());
                         return Ok(());
                     }
-                    every.tell(Every::Watching { dir })?;
+                    if start.taken_back {
+                        every.tell(Every::TakenBack { dir })?;
+                    } else {
+                        every.tell(Every::Watching { dir })?;
+                    }
                     start.said = Said::Told;
                     record.watching(dir);
                     return Ok(());
@@ -635,7 +728,8 @@ fn run<S: Supervised>(
         })
     });
     match watched {
-        Ok(()) => Outcome::Stopped,
+        Ok(WatchEnd::Stopped) => Outcome::Stopped,
+        Ok(WatchEnd::HandedOver) => Outcome::HandedOver,
         Err(error) => match Unwatched::ended(error) {
             Ok(reason) => Outcome::Ended(reason),
             Err(told) => Outcome::Told(told),
@@ -666,6 +760,10 @@ mod tests {
         Synced,
         /// Tells it is watched in synced storage, then ends with this.
         EndsSynced(Unwatched),
+        /// Lets the folder go to a command, after telling it is watched.
+        HandsOver,
+        /// Lets the folder go to a command that asked as it opened.
+        HandsOverAtOnce,
     }
 
     struct Fake {
@@ -684,7 +782,10 @@ mod tests {
             &self,
             stop: &AtomicBool,
             mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
-        ) -> Result<(), WatchError<E>> {
+        ) -> Result<WatchEnd, WatchError<E>> {
+            if matches!(self.goes, Goes::HandsOverAtOnce) {
+                return Ok(WatchEnd::HandedOver);
+            }
             let storage = matches!(self.goes, Goes::Synced | Goes::EndsSynced(_))
                 .then_some(StorageCause::CloudService);
             tell(WatchEvent::Watching {
@@ -693,6 +794,7 @@ mod tests {
             })
             .map_err(WatchError::Told)?;
             match &self.goes {
+                Goes::HandsOver | Goes::HandsOverAtOnce => return Ok(WatchEnd::HandedOver),
                 Goes::Ends(reason) | Goes::EndsSynced(reason) => {
                     return Err(WatchError::Unwatchable(reason.message.clone()));
                 }
@@ -709,7 +811,7 @@ mod tests {
             while !stop.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(2));
             }
-            Ok(())
+            Ok(WatchEnd::Stopped)
         }
     }
 
@@ -779,6 +881,8 @@ mod tests {
                     format!("unwatched {} {}", dir.display(), reason.code)
                 }
                 Every::Left { dir } => format!("left {}", dir.display()),
+                Every::HandedOver { dir } => format!("handed {}", dir.display()),
+                Every::TakenBack { dir } => format!("taken back {}", dir.display()),
                 Every::NoFolders => "no folders".into(),
                 Every::Registry(reason) => format!("registry {reason:?}"),
                 Every::Record { reason, .. } => format!("record {reason}"),
@@ -812,6 +916,7 @@ mod tests {
             reread: Duration::from_millis(10),
             unopened: Duration::from_millis(20),
             ended: Duration::from_millis(40),
+            handed: Duration::from_millis(15),
             recovered: Duration::from_millis(150),
         }
     }
@@ -1349,6 +1454,122 @@ mod tests {
                 && count(machine, "watching /a") == 2
         })
         .unwrap();
+    }
+
+    #[test]
+    fn a_folder_let_go_to_a_command_is_taken_back_once_free_while_the_others_go_on() {
+        let machine = Machine::default();
+        machine.opens(
+            "/asked",
+            vec![
+                Ok(Goes::HandsOver),
+                // The command holds it, then another asks as it ends.
+                Err(reason("reading_handle")),
+                Err(reason("reading_handle")),
+                Err(Unwatched::handed_over()),
+                Ok(Goes::HandsOverAtOnce),
+                Err(reason("reading_handle")),
+                Ok(Goes::Lasts),
+            ],
+        );
+        machine.opens("/a", vec![Ok(Goes::Passes)]);
+        let listing = listed(&["/a", "/asked"]);
+        supervised(&machine, &listing, |machine| {
+            count(machine, "taken back /asked") == 1
+        })
+        .unwrap();
+        let asked: Vec<String> = machine
+            .told()
+            .into_iter()
+            .filter(|told| told.contains("/asked"))
+            .collect();
+        assert_eq!(
+            asked,
+            vec!["watching /asked", "handed /asked", "taken back /asked"],
+            "a folder held by the command it was let go to was said not to be watched, or let go twice"
+        );
+        // The witness that it was tried at every turn, though told once.
+        assert_eq!(machine.opened("/asked"), 7);
+        assert_eq!(count(&machine, "watching /a"), 1);
+        assert_eq!(count(&machine, "/a reach"), 1);
+        assert!(
+            lock(&machine.ended).is_empty(),
+            "a handover was taken for an end"
+        );
+    }
+
+    #[test]
+    fn a_folder_let_go_and_taken_back_is_said_to_be_let_go_again() {
+        let machine = Machine::default();
+        machine.opens(
+            "/asked",
+            vec![Ok(Goes::HandsOver), Ok(Goes::HandsOver), Ok(Goes::Lasts)],
+        );
+        let listing = listed(&["/asked"]);
+        supervised(&machine, &listing, |machine| machine.opened("/asked") == 3).unwrap();
+        assert_eq!(
+            machine.told(),
+            vec![
+                "watching /asked",
+                "handed /asked",
+                "taken back /asked",
+                "handed /asked",
+                "taken back /asked",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_folder_let_go_that_the_command_took_off_the_registry_leaves_unsaid() {
+        let machine = Machine::default();
+        machine.opens(
+            "/asked",
+            vec![
+                Ok(Goes::HandsOver),
+                Err(reason("reading_handle")),
+                Err(reason("invalid")),
+            ],
+        );
+        machine.opens("/a", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/a", "/asked"]);
+        supervised(&machine, &listing, |machine| {
+            if count(machine, "handed /asked") == 1 && machine.opened("/asked") == 2 {
+                // The command removes the folder, and its state with it.
+                *lock(&listing) = Listing::Listed(vec![PathBuf::from("/a")]);
+            }
+            count(machine, "left /asked") == 1
+        })
+        .unwrap();
+        assert!(
+            machine
+                .told()
+                .iter()
+                .all(|told| !told.starts_with("unwatched")),
+            "{:?}",
+            machine.told()
+        );
+    }
+
+    #[test]
+    fn a_folder_a_command_asks_for_as_the_watch_begins_is_said_once_and_watched_after() {
+        let machine = Machine::default();
+        machine.opens(
+            "/asked",
+            vec![
+                Err(Unwatched::handed_over()),
+                Err(reason("reading_handle")),
+                Ok(Goes::Lasts),
+            ],
+        );
+        let listing = listed(&["/asked"]);
+        supervised(&machine, &listing, |machine| {
+            count(machine, "watching /asked") == 1
+        })
+        .unwrap();
+        assert_eq!(
+            machine.told(),
+            vec!["unwatched /asked handed_over", "watching /asked"]
+        );
     }
 
     #[test]

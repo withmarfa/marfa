@@ -17,6 +17,9 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::Io(_) => "reading or writing a file or a stream failed",
         CliError::NotHeld(_) => "the item asked for is not in the local working copy",
         CliError::FolderHeld(_) => "another process is working the folder",
+        CliError::FolderNotHandedOver(_) => {
+            "another process is working the folder, and did not let it go when asked"
+        }
         CliError::Watch(_) => "the folder watch failed",
         CliError::ClosedOutput => "the output was closed",
         CliError::Refused { status, .. } => refused(refused_code(*status)),

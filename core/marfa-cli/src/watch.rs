@@ -4,15 +4,17 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
-use marfa_core::folder::{Every, EveryFolder, RETRY_MOST, Registry, Unwatched, WatchRecord};
-use marfa_core::{CoreError, Folder, WatchError, WatchEvent, WatchPass};
+use marfa_core::folder::{
+    Every, EveryFolder, RETRY_HANDED, RETRY_MOST, Registry, Unwatched, WatchRecord,
+};
+use marfa_core::{CoreError, Folder, WatchEnd, WatchError, WatchEvent, WatchPass};
 use serde_json::Value;
 
 use crate::error::CliError;
 use crate::folders;
 use crate::interrupt;
 use crate::output;
-use crate::remote::{Named, Session};
+use crate::remote::Named;
 use crate::storage;
 
 /// How long a pass under way gets to finish once Ctrl-C has arrived. A pass
@@ -24,10 +26,11 @@ const POLL: Duration = Duration::from_millis(100);
 
 pub fn watch(
     dir: &Path,
-    session: Session,
+    named: &Named,
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
+    let session = named.session()?;
     let server = session.server.url.clone();
     let folder = folders::opened(dir, Some(session))?;
     // Once the folder is open, so that an interrupt before then ends the
@@ -42,9 +45,12 @@ pub fn watch(
     }
     let (done, ended) = mpsc::channel();
     let kept = record.clone();
+    let (dir, named) = (dir.to_path_buf(), named.clone());
     std::thread::spawn(move || {
         let _ = done.send(keep_in_step(
-            &folder,
+            folder,
+            &dir,
+            &named,
             &server,
             stop_after,
             json,
@@ -220,6 +226,10 @@ impl EveryFolder for Machine {
                     },
                 )
             }
+            Every::HandedOver { dir } => say(json, dir).line(handed_over(), || {
+                HANDED_OVER_LINE.into()
+            }),
+            Every::TakenBack { dir } => say(json, dir).line(taken_back(), || TAKEN_BACK_LINE.into()),
             Every::Left { dir } => {
                 self.folders().remove(dir);
                 say(json, dir).line(
@@ -263,6 +273,23 @@ fn record_unwritten(json: bool, path: &Path, reason: &str) {
     } else {
         eprintln!("{reason}; the watch goes on without it");
     }
+}
+
+const HANDED_OVER_LINE: &str =
+    "let go to a command that asked for it; taken back once that command ends";
+
+const TAKEN_BACK_LINE: &str = "taken back from the command it was let go to, and watched again";
+
+fn handed_over() -> Value {
+    serde_json::json!({
+        "watching": false,
+        "code": marfa_core::folder::HANDED_OVER,
+        "reason": HANDED_OVER_LINE,
+    })
+}
+
+fn taken_back() -> Value {
+    serde_json::json!({ "watching": true, "taken_back": true })
 }
 
 /// How a watch says what happens: a watch of one folder as it always has, and
@@ -347,36 +374,97 @@ fn await_end(
     }
 }
 
+/// Watches `folder` until the stop, letting it go to a command that asks
+/// for it and taking it back once that command ends.
 fn keep_in_step(
-    folder: &Folder,
+    mut folder: Folder,
+    dir: &Path,
+    named: &Named,
     server: &str,
     stop_after: Option<Duration>,
     json: bool,
     record: Option<&WatchRecord>,
 ) -> Result<(), CliError> {
     let stop = interrupt::stop();
+    let say = Say { json, dir: None };
     let mut conflicts = folders::Conflicts::default();
-    let tell_event = |event| {
-        if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
-            // Detached: the process ends with the watch.
-            std::thread::spawn(move || {
-                std::thread::sleep(limit);
-                stop.store(true, Ordering::SeqCst);
-            });
+    let mut timed = false;
+    // Whether the last thing said of the folder is that it was let go.
+    let mut let_go = false;
+    loop {
+        let end = {
+            let tell_event = |event: WatchEvent| {
+                if let WatchEvent::Watching { .. } = &event {
+                    if let (false, Some(limit)) = (timed, stop_after) {
+                        timed = true;
+                        // Detached: the process ends with the watch.
+                        std::thread::spawn(move || {
+                            std::thread::sleep(limit);
+                            stop.store(true, Ordering::SeqCst);
+                        });
+                    }
+                    if let_go {
+                        let_go = false;
+                        return say.line(taken_back(), || TAKEN_BACK_LINE.into());
+                    }
+                }
+                tell(server, say, &folder, &mut conflicts, event)
+            };
+            match record {
+                Some(record) => record.watch_folder(&folder, stop, tell_event),
+                None => folder.watch_handing_over(stop, tell_event),
+            }
         }
-        tell(
-            server,
-            Say { json, dir: None },
-            folder,
-            &mut conflicts,
-            event,
-        )
-    };
-    match record {
-        Some(record) => record.watch_folder(folder, stop, tell_event),
-        None => folder.watch(stop, tell_event),
+        .map_err(|error| ended(server, error))?;
+        if end == WatchEnd::Stopped {
+            return Ok(());
+        }
+        drop(folder);
+        if !let_go {
+            let_go = true;
+            say.line(handed_over(), || HANDED_OVER_LINE.into())?;
+        }
+        folder = match take_back(dir, named, stop)? {
+            Some(folder) => folder,
+            None if stop.load(Ordering::SeqCst) => return Ok(()),
+            None => {
+                return say.line(
+                    serde_json::json!({ "watching": false, "listed": false }),
+                    || "no longer a folder, so no longer watched".into(),
+                );
+            }
+        };
     }
-    .map_err(|error| match error {
+}
+
+/// The folder let go to a command, once that command lets it go: `None`
+/// where the stop is raised first, or where the command removed it.
+fn take_back(
+    dir: &Path,
+    named: &Named,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<Option<Folder>, CliError> {
+    loop {
+        let until = Instant::now() + RETRY_HANDED;
+        while Instant::now() < until {
+            if stop.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            std::thread::sleep(POLL);
+        }
+        if !Folder::is_at(dir) {
+            return Ok(None);
+        }
+        match folders::opened(dir, Some(named.session()?)) {
+            Ok(folder) => return Ok(Some(folder)),
+            Err(CliError::FolderHeld(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn ended(server: &str, error: WatchError<CliError>) -> CliError {
+    match error {
         WatchError::CredentialRefused(error) => refused_credential(server, &error),
         WatchError::FollowEnded(error) => CliError::Watch(format!(
             "the server's changes stopped reaching this folder: {error}"
@@ -384,7 +472,7 @@ fn keep_in_step(
         WatchError::Unwatchable(reason) => CliError::Watch(reason),
         WatchError::Core(error) => error.into(),
         WatchError::Told(error) => error,
-    })
+    }
 }
 
 fn tell(

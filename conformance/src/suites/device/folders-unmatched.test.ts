@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   copyItemEvent,
   copyLiveReplay,
@@ -436,15 +436,20 @@ describe("a folder's unmatched files", () => {
     ).toEqual(["Note 1.md", "Note 2.md"]);
   });
 
-  it("is refused while a watch holds the folder, and while the first sync waits", async () => {
+  it("takes files away from a folder a watch holds, and is refused while the first sync waits", async () => {
     const { harness: made } = await unmatchedFolder("unmatched-held");
     const watched = made.folder.watch();
     try {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      const refused = await made.folder.removeUnmatched({ yes: true });
-      expect(refused.ok).toBe(false);
-      if (!refused.ok) expect(refused.refusal.code).toBe("reading_handle");
-      expect(files(made)).toEqual(["Note 1.md", "Note 2.md", "Note 3.md"]);
+      await vi.waitFor(() => expect(watched.stderr).toContain("watching"), {
+        timeout: 30_000,
+        interval: 100,
+      });
+      const removed = await made.folder.removeUnmatched({ yes: true });
+      expect(removed.ok, JSON.stringify(removed)).toBe(true);
+      expect(files(made)).toEqual([]);
+      // The watch let the folder go for the removal, and goes on.
+      expect(watched.running(), watched.stderr).toBe(true);
+      expect(watched.stdout).toContain('"code":"handed_over"');
     } finally {
       await watched.stop();
     }

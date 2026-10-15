@@ -6,6 +6,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod handover;
 pub mod identity;
 mod landing;
 mod lines;
@@ -29,14 +30,15 @@ mod sync;
 mod transfer;
 mod watch;
 mod watch_record;
-pub use every::{Every, EveryFolder, Unwatched, watch_every};
+pub use every::{Every, EveryFolder, HANDED_OVER, RETRY_HANDED, Unwatched, watch_every};
+pub use handover::HANDOVER_WAIT;
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
 pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use unmatched::{Unmatched, UnmatchedRemoved};
-pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
+pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass};
 pub use watch_record::WatchRecord;
 pub mod state;
 
@@ -361,8 +363,22 @@ impl Folder {
         Ok(added)
     }
 
+    /// Refused with `ReadingHandle` at once where another process holds the
+    /// folder.
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
-        let opened = Folder::open_without_listing(reached(root.as_ref())?, server)?;
+        Folder::open_waiting(root.as_ref(), server, None)
+    }
+
+    /// `open`, but where another process holds the folder, asks it to let
+    /// the folder go and waits up to `handover::HANDOVER_WAIT` for it. A
+    /// watch lets go when asked; a watch must not ask, or two would take a
+    /// folder from each other in turn.
+    pub fn open_asking(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
+        Folder::open_waiting(root.as_ref(), server, Some(handover::HANDOVER_WAIT))
+    }
+
+    fn open_waiting(root: &Path, server: Option<Server>, wait: Option<Duration>) -> Result<Folder> {
+        let opened = Folder::open_without_listing(reached(root)?, server, wait)?;
         // A lost registry is the scan's to notice before listing again.
         if let Some(registry) = Registry::located()
             && !elsewhere::lost(&opened.core, &registry)
@@ -373,22 +389,43 @@ impl Folder {
     }
 
     /// Opens `root` as given, without resolving it again or listing the
-    /// folder found there.
-    fn open_without_listing(root: PathBuf, server: Option<Server>) -> Result<Folder> {
+    /// folder found there. With a `wait`, asks the process holding it to let
+    /// it go and waits that long.
+    fn open_without_listing(
+        root: PathBuf,
+        server: Option<Server>,
+        wait: Option<Duration>,
+    ) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
         let state_dir = root_dir
             .child(Path::new(STATE_DIR), false)
             .map_err(|_| not_a_folder(&root))?;
-        state_dir
+        let store = state_dir
             .entry_identity(Path::new("core.sqlite"))
             .map_err(|_| not_a_folder(&root))?;
-        let core = working(Core::open_directory(
-            &state_dir,
-            &state.join("core.sqlite"),
-            server,
-        )?)?;
+        let core = match wait {
+            None => working(Core::open_directory(
+                &state_dir,
+                &state.join("core.sqlite"),
+                server,
+            )?)?,
+            Some(wait) => {
+                let lock = handover::claim_asking(&state_dir, &root, wait)?;
+                // The holder may have removed the folder, or put another
+                // store in its place, while this waited.
+                if state_dir.entry_identity(Path::new("core.sqlite")).ok() != Some(store) {
+                    return Err(not_a_folder(&root));
+                }
+                working(Core::open_claimed(
+                    &state_dir,
+                    &state.join("core.sqlite"),
+                    server,
+                    Arc::new(lock),
+                )?)?
+            }
+        };
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         Ok(Folder {
             root,

@@ -152,6 +152,9 @@ export function scriptFolderWrites(
     edges?: EdgeDoor;
     /** An answer standing in for the tag doors', a refusal say. */
     tagging?: (request: RecordedRequest) => Answer | undefined;
+    /** The answer a create is given in place of the door's own, which it is
+     *  handed: a gated one, say. */
+    creating?: (answer: Answer, request: RecordedRequest) => Answer;
   } = {},
 ): Map<string, DoorRow> {
   // What the hydration served, so a write to one of those rows is answered
@@ -185,7 +188,7 @@ export function scriptFolderWrites(
       (request) => {
         const { answer } = door.create(JSON.parse(request.body) as DoorCreate);
         edges.logItem("item.created", answer);
-        return answer;
+        return options.creating?.(answer, request) ?? answer;
       },
     ],
     update: [

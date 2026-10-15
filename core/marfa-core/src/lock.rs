@@ -45,12 +45,23 @@ impl WriterLock {
     pub(crate) fn claim_directory(
         vfs: &crate::directory_vfs::DirectoryVfs,
     ) -> Result<Self, CoreError> {
-        Self::claim_connection(vfs.open(
-            DIRECTORY_LOCK,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?)
+        Self::claim_named(vfs, DIRECTORY_LOCK, true)
+    }
+
+    /// The lock in the file `name` of the directory `vfs` reaches. Without
+    /// `create`, a file that is not there is an error.
+    #[cfg(unix)]
+    pub(crate) fn claim_named(
+        vfs: &crate::directory_vfs::DirectoryVfs,
+        name: &str,
+        create: bool,
+    ) -> Result<Self, CoreError> {
+        let mut flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        if create {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
+        }
+        Self::claim_connection(vfs.open(name, flags)?)
     }
 
     fn claim_connection(claim: Connection) -> Result<Self, CoreError> {
