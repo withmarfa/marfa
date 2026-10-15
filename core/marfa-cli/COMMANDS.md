@@ -3172,6 +3172,27 @@ marfa folders push [OPTIONS] <DIR>
 | --- | --- |
 | `<DIR>` | The folder. |
 
+| Option | Description |
+| --- | --- |
+| `--send-only` | Send what the folder holds and go no further: scan and drain, catch up with nothing and pull nothing, so no file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes no file. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
+
+### marfa folders unmatched
+
+List the files the folder keeps whose items its search no longer matches, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. Refused while another process, such as a watch, works the folder. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+
+```text
+marfa folders unmatched [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The folder. |
+
+| Option | Description |
+| --- | --- |
+| `--remove` | Take the files away, after a confirmation. |
+| `--yes` | Confirm the removal without asking, for scripts. Without it, a removal asks at a terminal and is refused anywhere else. |
+
 ### marfa folders create
 
 Create a folder's settings on the server, as a `system.folder`. Needs write on `system.folder`.

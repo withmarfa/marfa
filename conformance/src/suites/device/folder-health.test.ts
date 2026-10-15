@@ -113,6 +113,23 @@ it("preserves successful content sync when reporting fails and coalesces across 
   expect(delivered[1].last_success_at).not.toBeNull();
 });
 
+it("does not report a send-only run as a full success, where a push that pulls does", async () => {
+  harness = await folderHarness("health-send-only");
+  scriptWrites(harness.server);
+  expect((await harness.folder.pushSendOnly()).ok).toBe(true);
+  const [sent] = reports(harness);
+  expect(
+    sent.last_success_at,
+    "a run that caught up with nothing and pulled nothing was reported as a complete sync",
+  ).toBeNull();
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(
+    reports(harness).at(-1)?.last_success_at,
+    "the witness: the same folder, pushed in full, reports a full success",
+  ).not.toBeNull();
+});
+
 it("distinguishes two directories following the same folder and sign-in", async () => {
   harness = await folderHarness("health-copy-one");
   second = await folderHarness("health-copy-two", {

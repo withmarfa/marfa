@@ -28,6 +28,16 @@ pub struct SyncReport {
     pub pull: Option<PullReport>,
 }
 
+/// What a send-only run of a folder did, step by step.
+#[derive(Debug, Clone)]
+pub struct SendReport {
+    /// The hydration a copy that did not answer for its slice took first.
+    pub hydrated: Option<HydrateReport>,
+    pub settings: SettingsFileReport,
+    pub scan: ScanReport,
+    pub drain: Drained,
+}
+
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
     /// an edit of the settings file, scans, drains, catches up, pulls, and
@@ -58,25 +68,7 @@ impl Folder {
                     .as_ref()
                     .err()
                     .cloned()
-                    .or_else(|| {
-                        report
-                            .drain
-                            .report
-                            .unavailable
-                            .as_ref()
-                            .map(|_| CoreError::Network("unavailable".into()))
-                    })
-                    .or_else(|| {
-                        report
-                            .drain
-                            .report
-                            .stopped
-                            .as_ref()
-                            .map(|_| CoreError::Unauthorized {
-                                code: "unauthorized".into(),
-                                message: "credential refused".into(),
-                            })
-                    });
+                    .or_else(|| stopped_by(&report.drain.report));
                 self.health_observe(
                     complete,
                     true,
@@ -94,6 +86,43 @@ impl Folder {
         }
         self.health_send();
         result
+    }
+
+    /// Scans the folder and sends what it holds, and goes no further: it
+    /// catches up with nothing and pulls nothing, so it writes no file into
+    /// the directory and removes none. A copy that never hydrated hydrates
+    /// first, which writes only the store. A later `sync` pulls what this
+    /// left. Refused while the first sync waits to be confirmed, before
+    /// anything is sent.
+    pub fn send_only(&self) -> Result<SendReport> {
+        self.refuse_while_waiting()?;
+        let result = self.send_only_observed();
+        match &result {
+            Ok(report) => self.health_observe(
+                // Never a complete pass: the copy was not caught up or pulled.
+                false,
+                true,
+                None,
+                stopped_by(&report.drain.report).as_ref(),
+                report.settings.flagged.is_some() || report.settings.unwritten.is_some(),
+            ),
+            Err(error) => self.health_observe(false, true, None, Some(error), false),
+        }
+        self.health_send();
+        result
+    }
+
+    fn send_only_observed(&self) -> Result<SendReport> {
+        let hydrated = self.resume()?;
+        let settings = self.send_settings_edit()?;
+        let scan = self.scan()?;
+        let drain = self.drain()?;
+        Ok(SendReport {
+            hydrated,
+            settings,
+            scan,
+            drain,
+        })
     }
 
     fn sync_observed(&self) -> Result<Synced> {
@@ -236,6 +265,20 @@ fn held(root: &Path) -> bool {
         .and_then(|root| root.child(Path::new(STATE_DIR), false))
         .and_then(|state| state.entry_identity(Path::new("core.sqlite")))
         .is_ok()
+}
+
+/// The failure a drain that could not finish shows, for the folder's health.
+fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
+    drain
+        .unavailable
+        .as_ref()
+        .map(|_| CoreError::Network("unavailable".into()))
+        .or_else(|| {
+            drain.stopped.as_ref().map(|_| CoreError::Unauthorized {
+                code: "unauthorized".into(),
+                message: "credential refused".into(),
+            })
+        })
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take

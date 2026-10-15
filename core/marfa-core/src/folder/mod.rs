@@ -14,6 +14,7 @@ mod names;
 pub(crate) mod placement;
 mod preserve;
 mod removal;
+mod unmatched;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
 pub use removal::{Confirmed, Restored};
@@ -26,7 +27,8 @@ mod sync;
 mod transfer;
 mod watch;
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
-pub use sync::{Removal, SyncReport};
+pub use sync::{Removal, SendReport, SyncReport};
+pub use unmatched::{Unmatched, UnmatchedRemoved};
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
 
@@ -398,7 +400,12 @@ impl Folder {
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        let root = reached(root.as_ref())?;
+        Folder::reading(root.as_ref())?.status()
+    }
+
+    /// The folder at `root` with a store opened to read only.
+    fn reading(root: &Path) -> Result<Folder> {
+        let root = reached(root)?;
         let state = root.join(STATE_DIR);
         let root_dir = Directory::open(&root).map_err(|_| not_a_folder(&root))?;
         admitted_root(&root_dir).map_err(io_error)?;
@@ -407,7 +414,7 @@ impl Folder {
             .map_err(|_| not_a_folder(&root))?;
         let core = Core::read_directory(&state_dir, &state.join("core.sqlite"))?;
         let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
-        Folder {
+        Ok(Folder {
             root,
             root_dir,
             store_mark: state_dir
@@ -419,8 +426,7 @@ impl Folder {
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             permissions: std::sync::OnceLock::new(),
-        }
-        .status()
+        })
     }
 
     /// Answers whether the directory was listed.

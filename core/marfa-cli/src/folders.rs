@@ -1,10 +1,11 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::Subcommand;
 use marfa_core::Confirmed;
 use marfa_core::folder::Registry;
-use marfa_core::{CoreError, FirstSync, Folder, Removal, SyncReport, Synced};
+use marfa_core::{CoreError, FirstSync, Folder, Removal, SendReport, SyncReport, Synced};
 
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
@@ -87,6 +88,35 @@ pub enum FoldersCommand {
     Push {
         /// The folder.
         dir: PathBuf,
+        /// Send what the folder holds and go no further: scan and drain,
+        /// catch up with nothing and pull nothing, so no file is written into
+        /// the directory or removed from it. A copy never hydrated hydrates
+        /// first, which writes no file. A later push without this pulls what
+        /// the server holds. Refused while the first sync waits to be
+        /// confirmed.
+        #[arg(long)]
+        send_only: bool,
+    },
+    /// List the files the folder keeps whose items its search no longer
+    /// matches, as the last pull left them, and with `--remove` take them
+    /// away. A file goes only after a confirmation at a terminal or `--yes`,
+    /// and only while its bytes are the ones the folder wrote and no edit of
+    /// it waits to be sent; any other is kept and said. The item stays in
+    /// Marfa as it was, and the folder's placement of it ends, sent at the
+    /// next push. Takes away no `held`, `outside` or `unreached` file. Refused
+    /// while another process, such as a watch, works the folder. Delete an
+    /// unmatched file with this, not by hand: a file deleted by hand sends a
+    /// delete of its item.
+    Unmatched {
+        /// The folder.
+        dir: PathBuf,
+        /// Take the files away, after a confirmation.
+        #[arg(long)]
+        remove: bool,
+        /// Confirm the removal without asking, for scripts. Without it, a
+        /// removal asks at a terminal and is refused anywhere else.
+        #[arg(long, requires = "remove")]
+        yes: bool,
     },
     /// Create a folder's settings on the server, as a `system.folder`.
     /// Needs write on `system.folder`.
@@ -276,7 +306,49 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let report = opened(&dir, named.session_if_named()?)?.pull()?;
             output::report(&report, json, || describe_pull(&report))
         }
-        FoldersCommand::Push { dir } => {
+        FoldersCommand::Push {
+            dir,
+            send_only: true,
+        } => {
+            let folder = opened(&dir, Some(named.session()?))?;
+            let SendReport {
+                hydrated,
+                settings,
+                scan: scanned,
+                drain: drained,
+            } = folder.send_only()?;
+            output::report(
+                &serde_json::json!({
+                    "send_only": true,
+                    "pulled": false,
+                    "hydrated": hydrated,
+                    "settings": settings,
+                    "scan": scanned,
+                    "drain": drained,
+                }),
+                json,
+                || {
+                    let mut lines = Vec::new();
+                    if let Some(hydrated) = &hydrated {
+                        lines.push(format!("hydrated {} item(s) first", hydrated.items));
+                    }
+                    lines.extend(settings_lines(&settings, None));
+                    lines.push(describe_scan(&scanned));
+                    lines.extend(flagged_lines(&scanned.flagged));
+                    lines.extend(embed_lines(&scanned.embeds));
+                    lines.extend(drain_lines(&folder, &drained));
+                    lines.push(
+                        "send-only run: nothing was pulled, no file was written or removed, and the next `folders push` pulls what the server holds"
+                            .into(),
+                    );
+                    lines.join("\n")
+                },
+            )
+        }
+        FoldersCommand::Push {
+            dir,
+            send_only: false,
+        } => {
             let folder = opened(&dir, Some(named.session()?))?;
             let SyncReport {
                 hydrated,
@@ -339,19 +411,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                             .iter()
                             .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
                     ));
-                    lines.push(output::counts(&drained.report));
-                    lines.extend(Conflicts::default().say(&folder, &drained.report));
-                    lines.extend(output::undelivered(&drained.report));
-                    if let Some(stopped) = &drained.report.stopped {
-                        lines.push(stopped.clone());
-                    }
-                    lines.extend(output::unclaimed(&drained.report));
-                    if drained.rebased > 0 {
-                        lines.push(rebased_line(drained.rebased));
-                    }
-                    if drained.gave_way > 0 {
-                        lines.push(gave_way_line(drained.gave_way));
-                    }
+                    lines.extend(drain_lines(&folder, &drained));
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
                     }
@@ -370,6 +430,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 },
             )
         }
+        FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
         FoldersCommand::Watch { dir, r#for } => {
             watch::watch(&dir, named.session()?, r#for.map(Duration::from_secs), json)
         }
@@ -381,6 +442,126 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             json,
         ),
     }
+}
+
+fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliError> {
+    if !remove {
+        let files = Folder::unmatched_of(dir)?;
+        return output::report(&serde_json::json!({ "unmatched": files }), json, || {
+            describe_unmatched(&files)
+        });
+    }
+    let at_terminal = !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if !yes && !at_terminal {
+        return Err(CliError::Usage(
+            "`folders unmatched --remove` asks at a terminal and takes away nothing anywhere else; pass --yes to confirm it for a script".into(),
+        ));
+    }
+    let folder = Folder::open(dir, None).map_err(held(dir))?;
+    let files = folder.unmatched_files()?;
+    let going: Vec<String> = files
+        .iter()
+        .filter(|file| file.kept.is_none())
+        .map(|file| file.path.clone())
+        .collect();
+    let agreed = going.is_empty() || yes || asks_to_remove(dir, &going)?;
+    let done = if agreed {
+        folder.remove_unmatched(&going)?
+    } else {
+        Default::default()
+    };
+    // What was kept before the question is kept still, whether or not it was asked.
+    let kept: Vec<_> = files
+        .iter()
+        .filter(|file| file.kept.is_some())
+        .cloned()
+        .chain(done.kept.iter().cloned())
+        .collect();
+    output::report(
+        &serde_json::json!({
+            "removed": done.removed,
+            "kept": kept,
+            "ended": done.ended,
+            "declined": !agreed,
+        }),
+        json,
+        || {
+            let mut lines = vec![if !agreed {
+                "nothing was removed".to_string()
+            } else {
+                format!(
+                    "{} file(s) removed; their items are unchanged in Marfa, and the folder's placement of each ends, sent at the next `folders push`",
+                    done.removed.len()
+                )
+            }];
+            lines.extend(kept_lines(&kept));
+            lines.join("\n")
+        },
+    )
+}
+
+fn kept_lines(kept: &[marfa_core::Unmatched]) -> Vec<String> {
+    kept.iter()
+        .filter_map(|file| {
+            file.kept
+                .as_ref()
+                .map(|reason| format!("{} is kept: {reason}", file.path))
+        })
+        .collect()
+}
+
+fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
+    if files.is_empty() {
+        return "no unmatched files".into();
+    }
+    let removable = files.iter().filter(|file| file.kept.is_none()).count();
+    let mut lines = vec![format!(
+        "{} unmatched file(s), {removable} of them removable with `folders unmatched --remove`",
+        files.len()
+    )];
+    lines.extend(files.iter().map(|file| match &file.kept {
+        Some(reason) => format!("{} would be kept: {reason}", file.path),
+        None => file.path.clone(),
+    }));
+    lines.join("\n")
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = std::io::stderr();
+    writeln!(
+        question,
+        "{} unmatched file(s) in {} would be removed; their items stay in Marfa as they are:",
+        going.len(),
+        dir.display()
+    )?;
+    for path in going {
+        writeln!(question, "  {path}")?;
+    }
+    write!(question, "Remove them? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// What a drain sent and what came of it, said once.
+fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
+    let mut lines = vec![output::counts(&drained.report)];
+    lines.extend(Conflicts::default().say(folder, &drained.report));
+    lines.extend(output::undelivered(&drained.report));
+    if let Some(stopped) = &drained.report.stopped {
+        lines.push(stopped.clone());
+    }
+    lines.extend(output::unclaimed(&drained.report));
+    if drained.rebased > 0 {
+        lines.push(rebased_line(drained.rebased));
+    }
+    if drained.gave_way > 0 {
+        lines.push(gave_way_line(drained.gave_way));
+    }
+    lines
 }
 
 fn describe_health(report: &serde_json::Value) -> String {

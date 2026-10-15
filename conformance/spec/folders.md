@@ -302,6 +302,12 @@ While a folder’s first sync waits, a device MUST refuse restoration of removal
 
 **Tests:** `device/folders-contract-b.test.ts › refuses restore while first sync waits and confirms without a server request`.
 
+### `folders/first-sync-unmatched-refused`
+
+While a folder's first sync waits, a device MUST refuse removal of unmatched files with `first_sync_waiting`.
+
+**Tests:** `device/folders-unmatched.test.ts › is refused while a watch holds the folder, and while the first sync waits`.
+
 ### `folders/first-sync-terminal-question`
 
 When `folders add` has a nonempty first-sync plan at a terminal without `--yes` or `--json`, the CLI MUST ask for confirmation.
@@ -3652,7 +3658,7 @@ When a folder is added and the registry’s existing contents cannot be parsed, 
 
 While a process holds a folder for work, the CLI MUST refuse another working command on that folder with `reading_handle` before changing local or server state.
 
-**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder a watch holds`, `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
+**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder a watch holds`, `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`, `device/folders-unmatched.test.ts › is refused while a watch holds the folder, and while the first sync waits`.
 
 ### `folders/status-beside-watch`
 
@@ -4095,6 +4101,198 @@ When `folders push` or `folders watch` has reported a conflicted write, the CLI 
 When a conflicted write belongs to an item with no file in the watched or pushed folder, the CLI MUST NOT report that conflict as the folder's.
 
 **Tests:** `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a push`, `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a watch`.
+
+## Sending without pulling
+
+A send-only run is `folders push --send-only`.
+
+### `folders/send-only-scans-and-sends`
+
+When `folders push` is given `--send-only`, the CLI MUST send the writes that a scan of the folder queues.
+
+**Reason:** a person who adds files or edits them while away can send them without the server's items arriving in the directory.
+
+**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › keeps its writes queued where the server cannot be reached, and sends them at the next run`.
+
+### `folders/send-only-writes-no-file`
+
+When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory.
+
+**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
+
+### `folders/send-only-removes-no-file`
+
+When `folders push` is given `--send-only`, the CLI MUST NOT remove a file from the folder's directory.
+
+**Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`.
+
+### `folders/send-only-report-sent`
+
+When `folders push --send-only` finishes, the CLI MUST report the writes it sent in the `drain` of its JSON report.
+
+**Tests:** `device/folders-send-only.test.ts › says what it sent and that it did not pull, in JSON and in words`.
+
+### `folders/send-only-report-not-pulled`
+
+When `folders push --send-only` finishes, the CLI MUST report `pulled` as `false` in its JSON report.
+
+**Tests:** `device/folders-send-only.test.ts › says what it sent and that it did not pull, in JSON and in words`.
+
+### `folders/send-only-report-words`
+
+When `folders push --send-only` finishes, the CLI MUST say in its text report that nothing was pulled.
+
+**Tests:** `device/folders-send-only.test.ts › says what it sent and that it did not pull, in JSON and in words`.
+
+### `folders/send-only-later-push-pulls`
+
+When a `folders push` without `--send-only` follows a send-only run, the CLI MUST write the files of the items that run left unpulled.
+
+**Tests:** `device/folders-send-only.test.ts › leaves what it did not pull for the next push`.
+
+### `folders/send-only-hydrates`
+
+When a folder's copy has not hydrated, the CLI MUST hydrate it before `folders push --send-only` sends.
+
+**Reason:** a drain on a copy that has not hydrated is refused with `no_cursor`; hydrating writes no file.
+
+**Tests:** `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
+
+### `folders/send-only-first-sync-refused`
+
+While a folder's first sync waits for confirmation, the CLI MUST refuse `folders push --send-only` with `first_sync_waiting`.
+
+**Tests:** `device/folders-send-only.test.ts › is refused while the first sync waits, before it sends anything`.
+
+### `folders/send-only-first-sync-nothing-sent`
+
+While a folder's first sync waits for confirmation, the CLI MUST NOT send a write to the server when `folders push --send-only` is run.
+
+**Tests:** `device/folders-send-only.test.ts › is refused while the first sync waits, before it sends anything`.
+
+### `folders/send-only-offline-queued`
+
+If the server cannot be reached, then the CLI MUST keep the folder's unsent writes queued when `folders push --send-only` is run.
+
+**Tests:** `device/folders-send-only.test.ts › keeps its writes queued where the server cannot be reached, and sends them at the next run`.
+
+### `folders/send-only-offline-reported`
+
+If the server cannot be reached, then the CLI MUST report the writes it could not deliver in `drain.undelivered` when `folders push --send-only` is run.
+
+**Tests:** `device/folders-send-only.test.ts › keeps its writes queued where the server cannot be reached, and sends them at the next run`.
+
+## Removing unmatched files
+
+An unmatched file is one a folder keeps because its item left the search for a reason other than its state or purge (`folders/unmatched-file-kept`).
+
+### `folders/unmatched-list`
+
+When `folders unmatched` is run, the CLI MUST list each unmatched file with its path and its item's ID.
+
+**Tests:** `device/folders-unmatched.test.ts › lists them, and says which removing would keep`.
+
+### `folders/unmatched-list-kept`
+
+When `folders unmatched` lists an unmatched file that removal would keep, the CLI MUST state in `kept` why removal would keep it.
+
+**Tests:** `device/folders-unmatched.test.ts › lists them, and says which removing would keep`, `device/folders-unmatched.test.ts › keeps a file as the folder wrote it while a write to its item waits to be sent, and removes it once sent`.
+
+### `folders/unmatched-list-beside-watch`
+
+While another process watches a folder, the CLI MUST answer `folders unmatched` without acquiring the folder's working handle.
+
+**Reason:** like `folders status`, listing reads the store and changes nothing.
+
+**Tests:** `device/folders-unmatched.test.ts › lists beside a running watch, which holds the folder`.
+
+### `folders/unmatched-remove-terminal-question`
+
+When `folders unmatched --remove` is run at a terminal without `--yes` or `--json`, the CLI MUST ask for confirmation before it removes a file.
+
+**Tests:** `device/folders-unmatched.test.ts › asks at a terminal before removing, and obeys %s`.
+
+### `folders/unmatched-remove-terminal-answer`
+
+When `folders unmatched --remove` asks for confirmation at a terminal, the CLI MUST remove files only for the answer `y` or `yes` without regard to case.
+
+**Tests:** `device/folders-unmatched.test.ts › asks at a terminal before removing, and obeys %s`.
+
+### `folders/unmatched-remove-yes`
+
+When `folders unmatched --remove` is given `--yes`, the CLI MUST remove the files it may without asking for input.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › refuses to remove anything without a terminal and without --yes`.
+
+### `folders/unmatched-remove-no-terminal`
+
+If `folders unmatched --remove` is run with neither a terminal nor `--yes`, then the CLI MUST refuse with `usage`.
+
+**Reason:** a script that has not said `--yes` has not agreed.
+
+**Tests:** `device/folders-unmatched.test.ts › refuses to remove anything without a terminal and without --yes`.
+
+### `folders/unmatched-remove-no-terminal-kept`
+
+If `folders unmatched --remove` is refused for lack of a terminal and `--yes`, then a device MUST NOT remove a file or queue the end of a placement.
+
+**Tests:** `device/folders-unmatched.test.ts › refuses to remove anything without a terminal and without --yes`.
+
+### `folders/unmatched-remove-file`
+
+When removal of an unmatched file is confirmed and the file may be removed, a device MUST delete the file from the directory.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › asks at a terminal before removing, and obeys %s`.
+
+### `folders/unmatched-remove-placement`
+
+When removal of an unmatched file is confirmed and the file is removed, a device MUST queue the deletion of the folder's `in-folder` edge for the file's item.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`.
+
+### `folders/unmatched-remove-item-unchanged`
+
+When removal of an unmatched file is confirmed and the file is removed, a device MUST NOT queue a write to the file's item.
+
+**Reason:** removing the file ends the folder's placement of the item and nothing else; the item stays in Marfa as it was.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`.
+
+### `folders/unmatched-remove-edited-kept`
+
+When an unmatched file holds bytes other than those the device last wrote, a device MUST keep the file when asked to remove unmatched files.
+
+**Reason:** the bytes are the person's.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
+
+### `folders/unmatched-remove-waiting-kept`
+
+While the item of an unmatched file has a write waiting to be sent, a device MUST keep the file when asked to remove unmatched files.
+
+**Reason:** removing the file would end its placement while an edit of it is still on its way.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › keeps a file as the folder wrote it while a write to its item waits to be sent, and removes it once sent`.
+
+### `folders/unmatched-remove-kept-reported`
+
+When an unmatched file named for removal is kept, a device MUST report the file with its reason in `kept`.
+
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
+
+### `folders/unmatched-remove-gone-kept`
+
+If an unmatched file is missing from the directory when its removal is reached, then a device MUST report the file in `kept`.
+
+**Reason:** a missing file is the scan's to settle (`folders/unmatched-missing-not-rewritten`).
+
+**Tests:** `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
+
+### `folders/unmatched-remove-gone-continues`
+
+If an unmatched file is missing from the directory or has changed when its removal is reached, then a device MUST go on to remove the other files named.
+
+**Tests:** `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
 
 ## Paused removals, size and status
 
@@ -4739,6 +4937,14 @@ While a folder's first sync awaits confirmation, a device MUST report `first_syn
 While no fully successful folder sync has completed, a device MUST report `last_success_at: null`.
 
 **Tests:** `device/folder-health.test.ts › reports first-sync waiting without claiming a successful content pass`.
+
+### `folders/report-send-only`
+
+When `folders push --send-only` finishes, a device MUST NOT advance `last_success_at`.
+
+**Reason:** a run that caught up with nothing and pulled nothing is not a complete sync.
+
+**Tests:** `device/folder-health.test.ts › does not report a send-only run as a full success, where a push that pulls does`.
 
 ### `folders/report-independent`
 
