@@ -71,6 +71,8 @@ export function pageOriginLine(origins: readonly string[]): string {
   const list =
     named.length === 0
       ? `the web page at ${last}`
-      : `web pages at ${named.join(", ")} and ${last}`;
+      : named.length === 1
+        ? `web pages at ${named[0]} and ${last}`
+        : `web pages at ${named.join(", ")}, and ${last}`;
   return `<p class="sub">Allowing access also lets ${list} reach your server from a browser.</p>`;
 }
