@@ -4116,7 +4116,7 @@ When `folders push` is given `--send-only`, the CLI MUST send the writes that a 
 
 ### `folders/send-only-writes-no-file`
 
-When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory.
+When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory outside its `.marfa` state directory.
 
 **Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
 
@@ -4200,7 +4200,7 @@ When `folders unmatched` lists an unmatched file that removal would keep, the CL
 
 ### `folders/unmatched-list-beside-watch`
 
-While another process watches a folder, the CLI MUST answer `folders unmatched` without acquiring the folder's working handle.
+While another process watches a folder, the CLI MUST answer `folders unmatched` without `--remove` without acquiring the folder's working handle.
 
 **Reason:** like `folders status`, listing reads the store and changes nothing.
 
