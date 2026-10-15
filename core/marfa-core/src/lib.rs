@@ -29,6 +29,7 @@ mod read_view;
 mod refusal_tests;
 #[cfg(test)]
 mod relocation_tests;
+mod scaffold;
 #[cfg(test)]
 mod scripted;
 mod search;
@@ -74,6 +75,7 @@ pub use model::{
     SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail,
     Tier, UnregisteredType, Verdict, WriteKind,
 };
+pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
