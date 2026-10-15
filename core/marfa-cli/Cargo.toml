@@ -14,7 +14,7 @@ path = "src/main.rs"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap.workspace = true
 keyring = "4"
-marfa-core.workspace = true
+marfa-core = { workspace = true, features = ["telemetry"] }
 sha2.workspace = true
 hex.workspace = true
 serde.workspace = true
@@ -25,6 +25,9 @@ fd-lock = "4"
 rpassword = "7"
 libc = "0.2"
 url = "2"
+getrandom = "0.4"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 # keyring reaches only the login keychain; a keychain file by path needs this.
 [target.'cfg(target_os = "macos")'.dependencies]

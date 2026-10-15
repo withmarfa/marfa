@@ -1,6 +1,5 @@
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use marfa_core::folder::RETRY_MOST;
@@ -8,6 +7,7 @@ use marfa_core::{CoreError, Folder, WatchError, WatchEvent, WatchPass};
 
 use crate::error::CliError;
 use crate::folders;
+use crate::interrupt;
 use crate::output;
 use crate::remote::Session;
 
@@ -17,14 +17,14 @@ pub fn watch(
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
+    interrupt::stop_on_interrupt();
     let server = session.server.url.clone();
     let folder = folders::opened(dir, Some(session))?;
-    let stop = Arc::new(AtomicBool::new(false));
+    let stop = interrupt::stop();
     let mut conflicts = folders::Conflicts::default();
     folder
-        .watch(&stop, |event| {
+        .watch(stop, |event| {
             if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
-                let stop = Arc::clone(&stop);
                 // Detached: the process ends with the watch.
                 std::thread::spawn(move || {
                     std::thread::sleep(limit);
@@ -33,6 +33,7 @@ pub fn watch(
             }
             tell(&server, json, &folder, &mut conflicts, event)
         })
+        .inspect(|()| interrupt::ended_by_interrupt())
         .map_err(|error| match error {
             WatchError::CredentialRefused(error) => refused_credential(&server, &error),
             WatchError::FollowEnded(error) => CliError::Watch(format!(

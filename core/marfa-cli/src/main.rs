@@ -7,17 +7,19 @@ mod device;
 mod door;
 mod error;
 mod folders;
+mod interrupt;
 mod local;
 mod output;
 #[cfg(test)]
 mod reference;
 mod remote;
+mod telemetry;
 mod values;
 mod watch;
 
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
@@ -202,28 +204,68 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
+    let (cli, command) = match parse() {
+        Ok(parsed) => parsed,
         Err(error) => match usage(&error, std::env::args_os()) {
             Some(refusal) => return refused(&refusal, true),
             None => error.exit(),
         },
     };
     let json = cli.json;
-    match run(cli) {
-        Ok(exit) => ExitCode::from(exit as u8),
-        Err(CliError::ClosedOutput) => ExitCode::SUCCESS,
-        Err(error) => refused(&error, json),
+    let telemetry = telemetry::start(&command);
+    let result = telemetry.within(|| run(cli));
+    let status = match &result {
+        Ok(exit) => interrupt::status(*exit as u8),
+        Err(CliError::ClosedOutput) => 0,
+        Err(error) => {
+            print_refusal(error, json);
+            error.exit() as u8
+        }
+    };
+    telemetry.finish(
+        status,
+        result
+            .as_ref()
+            .err()
+            .filter(|error| !matches!(error, CliError::ClosedOutput)),
+    );
+    ExitCode::from(status)
+}
+
+/// What `Cli::try_parse` does, and the command's names as well, which are the
+/// only part of a command line that is safe to report: the subcommands the
+/// parser matched, never an argument or a value.
+fn parse() -> Result<(Cli, String), clap::Error> {
+    let mut command = Cli::command();
+    let mut matches = command.try_get_matches_from_mut(std::env::args_os())?;
+    let path = command_path(&matches);
+    let cli =
+        Cli::from_arg_matches_mut(&mut matches).map_err(|error| error.format(&mut command))?;
+    Ok((cli, path))
+}
+
+fn command_path(matches: &ArgMatches) -> String {
+    let mut path = String::from("marfa");
+    let mut at = matches;
+    while let Some((name, within)) = at.subcommand() {
+        path.push(' ');
+        path.push_str(name);
+        at = within;
     }
+    path
 }
 
 fn refused(error: &CliError, json: bool) -> ExitCode {
+    print_refusal(error, json);
+    ExitCode::from(error.exit() as u8)
+}
+
+fn print_refusal(error: &CliError, json: bool) {
     if json {
         eprintln!("{}", error.envelope());
     } else {
         eprintln!("marfa: {error}");
     }
-    ExitCode::from(error.exit() as u8)
 }
 
 /// `--json` is read from the raw arguments: a refused command line has no

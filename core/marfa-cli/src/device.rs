@@ -7,6 +7,7 @@ use marfa_core::{
 };
 
 use crate::error::{CliError, Exit};
+use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
 use crate::values::{ItemState, SliceTier, SortDirection, SortField, Tier, properties};
@@ -831,6 +832,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Changes { r#for } => {
+            stop_on_interrupt();
             let core = Store {
                 reader: true,
                 ..store
@@ -861,6 +863,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     })?;
                 }
             }
+            crate::interrupt::ended_by_interrupt();
             Ok(())
         }
         DeviceCommand::CatchUp => {
@@ -1513,57 +1516,6 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
 }
 
 const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
-
-/// Shared by the signal-waiting thread and the command it stops.
-static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
-    if let Some(seconds) = seconds {
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(seconds));
-            STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
-    }
-    &STOP
-}
-
-/// Ctrl-C raises the stop and does not interrupt what the process is doing: a
-/// handler would fail a request in flight with `EINTR`, which reads as the
-/// network failing rather than as a stop. The signal is blocked here, which
-/// every thread made afterwards inherits, and one thread waits for it. That
-/// makes this the first thing a command does, before any thread is made.
-///
-/// A second Ctrl-C ends the process at once, with the status a shell gives
-/// one that died of it.
-fn stop_on_interrupt() {
-    // SAFETY: the set is initialized before it is used, and the waiting thread
-    // only stores to an atomic and then exits the process.
-    unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGINT);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        std::thread::spawn(move || {
-            // Where the platform lets `sigwait` fail with `EINTR`, a wait that
-            // gave up would leave the signal blocked for good.
-            let wait = || loop {
-                let mut signal = 0;
-                match libc::sigwait(&set, &mut signal) {
-                    0 => return true,
-                    libc::EINTR => continue,
-                    _ => return false,
-                }
-            };
-            if !wait() {
-                return;
-            }
-            STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-            if wait() {
-                libc::_exit(130);
-            }
-        });
-    }
-}
 
 struct Store {
     db: Option<PathBuf>,
