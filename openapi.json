@@ -6735,7 +6735,7 @@
               "format": "uri"
             },
             "minItems": 1,
-            "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`."
+            "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`."
           },
           "scope": {
             "type": "string",

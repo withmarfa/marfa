@@ -1,4 +1,5 @@
 import { credentialRequest } from "./credential-adapter.js";
+import { MAX_REGISTERED_REDIRECT_URIS } from "../middleware/body-cap.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * @better-auth/oauth-provider plugin wiring.
@@ -679,6 +680,15 @@ export function buildOauthProjectionPlugin(opts: {
                 error: "invalid_client_metadata",
                 error_description:
                   "private_key_jwt is not supported; use none, client_secret_basic or client_secret_post.",
+              });
+            const redirects = ctx.body?.redirect_uris;
+            if (
+              Array.isArray(redirects) &&
+              redirects.length > MAX_REGISTERED_REDIRECT_URIS
+            )
+              throw new APIError("BAD_REQUEST", {
+                error: "invalid_redirect_uri",
+                error_description: `A registration names at most ${String(MAX_REGISTERED_REDIRECT_URIS)} redirect URIs.`,
               });
             settleRegistrationScope(ctx, liveScopes);
             return Promise.resolve();

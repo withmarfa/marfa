@@ -965,6 +965,22 @@ If a registration names a redirect URI that does not parse, then the server MUST
 
 **Tests:** `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
 
+### `keys-and-oauth/register-body-cap`
+
+If a body sent to `POST /auth/oauth2/register` is larger than 32768 bytes, then the server MUST answer `413 request_too_large`.
+
+**Reason:** Registration takes no credential and answers every origin, and what it stores lives until the reaper removes it, so one request is bounded well below the general cap. Marfa's own clients register in about 200 bytes.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses a registration over 32768 bytes, and takes one just under it`.
+
+### `keys-and-oauth/register-redirect-limit`
+
+If a registration at `POST /auth/oauth2/register` names more than 10 redirect URIs, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
+
+**Reason:** The consent screen names every origin a client's redirect URIs span, and a web page or hosted assistant registers one or two.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses a registration naming more than 10 redirect URIs, and takes one naming 10`.
+
 ### `keys-and-oauth/register-session-ignored`
 
 When a registration at `POST /auth/oauth2/register` carries the owner's browser session cookie, from any origin, the server MUST register the client as it registers the same metadata sent without one.
@@ -995,7 +1011,7 @@ When the consent screen or the device approval page offers a registered client, 
 
 **Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
 
-**Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
+**Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`, `› keeps a registration the device approval page offered after it aged`.
 
 ### `keys-and-oauth/no-backchannel-registered`
 

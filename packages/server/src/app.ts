@@ -101,6 +101,7 @@ import {
   bodyCapFor,
   bulkBodyCap,
   CONNECTOR_STATE_BODY_CAP,
+  REGISTRATION_BODY_CAP,
 } from "./middleware/body-cap.js";
 import { jsonDepthLimit } from "./middleware/json-depth.js";
 import { CONTRACT_VERSION } from "./contract.js";
@@ -391,6 +392,10 @@ export function createApp(
     maxSize: CONNECTOR_STATE_BODY_CAP,
     onError: tooLarge,
   });
+  const registrationBodyLimit = bodyLimit({
+    maxSize: REGISTRATION_BODY_CAP,
+    onError: tooLarge,
+  });
   app.use(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
@@ -398,6 +403,7 @@ export function createApp(
       if (cap === "none" || cap === "inbound") return next();
       if (cap === "bulk") return bulkBodyLimit(c, next);
       if (cap === "connector-state") return connectorStateBodyLimit(c, next);
+      if (cap === "registration") return registrationBodyLimit(c, next);
       return requestBodyLimit(c, next);
     }),
   );

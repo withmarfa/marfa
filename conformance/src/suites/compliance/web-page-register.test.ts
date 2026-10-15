@@ -334,4 +334,108 @@ describe("registrations nobody approves", () => {
       );
     }
   });
+
+  it("keeps a registration the device approval page offered after it aged", async () => {
+    const registered = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Aged Device App",
+        application_type: "native",
+        grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registered.status).toBe(201);
+    const { client_id: clientId } = (await registered.json()) as {
+      client_id: string;
+    };
+    const code = await fetch(`${server.apiUrl}/auth/device/code`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: clientId, scope: SCOPE }),
+    });
+    expect(code.status).toBe(200);
+    const { user_code: userCode } = (await code.json()) as {
+      user_code: string;
+    };
+    const aged = withInstanceDatabase(server.sqlitePath, (db) =>
+      db
+        .prepare(
+          "UPDATE auth_oauth_client SET created_at = 0, updated_at = 0 WHERE client_id = ?",
+        )
+        .run(clientId),
+    );
+    expect(Number(aged.changes)).toBe(1);
+    const page = `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`;
+    const offered = await fetch(page, { headers: { cookie } });
+    await offered.body?.cancel();
+    expect(offered.status).toBe(200);
+
+    const swept = await fetch(
+      `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${server.managementKey}` },
+      },
+    );
+    expect(swept.status).toBe(200);
+    expect(await swept.json()).toMatchObject({ outcome: "ok" });
+    const again = await fetch(page, { headers: { cookie } });
+    await again.body?.cancel();
+    expect(again.status).toBe(200);
+  });
+});
+
+describe("the size of a registration", () => {
+  const body = (redirects: number, padding = 0) =>
+    JSON.stringify({
+      client_name: "Sized Page",
+      redirect_uris: Array.from(
+        { length: redirects },
+        (_, i) => `https://sized.web-page-register.test/callback/${String(i)}`,
+      ),
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      software_version: "x".repeat(padding),
+    });
+  const register = (text: string) =>
+    fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: text,
+    });
+
+  it("refuses a registration over 32768 bytes, and takes one just under it", async () => {
+    const under = body(1, 32_000);
+    expect(Buffer.byteLength(under)).toBeLessThanOrEqual(32_768);
+    const taken = await register(under);
+    await taken.body?.cancel();
+    expect(taken.status).toBe(201);
+    const over = body(1, 33_000);
+    expect(Buffer.byteLength(over)).toBeGreaterThan(32_768);
+    const refused = await register(over);
+    expect(refused.status).toBe(413);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("request_too_large");
+  });
+
+  it("refuses a registration naming more than 10 redirect URIs, and takes one naming 10", async () => {
+    const taken = await register(body(10));
+    expect(taken.status).toBe(201);
+    expect(
+      ((await taken.json()) as { redirect_uris: string[] }).redirect_uris,
+    ).toHaveLength(10);
+    const refused = await register(body(11));
+    expect(refused.status).toBe(400);
+    const answer = (await refused.json()) as {
+      error: string;
+      error_description: string;
+    };
+    expect(answer.error).toBe("invalid_redirect_uri");
+    expect(answer.error_description).toContain("10");
+  });
 });

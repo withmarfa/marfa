@@ -23,6 +23,7 @@ describe("bodyCapFor", () => {
         "/connectors/:id/agreements",
         "/connectors/{id}/agreements/lookup",
         "/connectors/{id}/state",
+        "/auth/oauth2/register",
       ].map((path) => [path, bodyCapFor(path)]),
     );
     expect(caps).toEqual({
@@ -44,6 +45,7 @@ describe("bodyCapFor", () => {
       "/connectors/:id/agreements": "bulk",
       "/connectors/{id}/agreements/lookup": "request",
       "/connectors/{id}/state": "connector-state",
+      "/auth/oauth2/register": "registration",
     });
   });
 });

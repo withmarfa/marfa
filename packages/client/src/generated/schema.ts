@@ -4297,7 +4297,7 @@ export interface components {
         };
         /** @description An OAuth client: its app metadata and the grants it uses. */
         OAuthClientRegistration: {
-            /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
+            /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
             /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use. */
             scope?: string;

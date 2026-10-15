@@ -3,10 +3,10 @@ import { createRoute, z } from "@hono/zod-openapi";
 import type { MarfaAuth } from "../auth/instance.js";
 import { makeErrorResponseSchema, REFUSAL_TEXT } from "../openapi.js";
 import { CHAIN_REFUSALS } from "../openapi-finalize.js";
+import { MAX_REGISTERED_REDIRECT_URIS } from "../middleware/body-cap.js";
 
 const REQUEST_TEXT: Record<string, string> = {
-  redirect_uris:
-    "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
+  redirect_uris: `The addresses Marfa may send a person back to after authorization. Required for \`authorization_code\`. At most ${String(MAX_REGISTERED_REDIRECT_URIS)}. A \`web\` client's URIs must use \`https\` off the loopback; a \`native\` client may use \`http\` on \`localhost\`, \`127.0.0.1\` or \`[::1]\`.`,
   grant_types:
     "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`.",
   response_types:
