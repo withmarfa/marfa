@@ -1139,45 +1139,60 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-unprinted");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
+    let release: () => void = () => {};
+    const readerClosed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     server.copyAnswer(
       "GET",
       "/events",
-      // The first stream ends at once, so the change arrives on the next,
-      // after the reader of what the follow prints has gone.
-      { kind: "sse", frames: [connected] },
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "printed" })),
+      ]),
       {
-        kind: "sse",
-        hold: true,
-        frames: [
-          connected,
-          copyStreamCursor("11"),
-          copyItemEvent("11", "item.created", wireItem({ id: "arrived" })),
-        ],
+        kind: "gated",
+        until: readerClosed,
+        then: copyLiveReplay("12", [
+          copyItemEvent("12", "item.created", wireItem({ id: "arrived" })),
+        ]),
       },
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     const follow = device.holdFollow(60);
-    follow.closeStdout();
-    const ended = await Promise.race([
-      follow.exited().then(() => true),
-      new Promise<boolean>((resolve) =>
-        setTimeout(() => {
-          resolve(false);
-        }, 20_000),
-      ),
-    ]);
-    await follow.stop();
-    expect(
-      ended,
-      "a follow that could not print a change went on following, applying changes nobody is told of",
-    ).toBe(true);
-    // A reader that went away is not a failure, as it is not for any
-    // command whose output is cut off.
-    expect(follow.exitCode(), follow.stderr).toBe(0);
-    // The witness: the change it could not print had arrived and been
-    // applied, so the follow did meet a line it could not write.
-    expect((await device.get("arrived")).ok).toBe(true);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(follow.stdout, follow.stderr).toContain('"cursor":"11"');
+          expect(follow.stdout).toContain('"item_id":"printed"');
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      expect(
+        follow.running(),
+        "the follow ended before its reader closed",
+      ).toBe(true);
+      follow.closeStdout();
+      release();
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.running(),
+            "the follow continued after it could not print a change",
+          ).toBe(false);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      await follow.exited();
+      expect(follow.exitCode(), follow.stderr).toBe(0);
+    } finally {
+      release();
+      await follow.stop();
+    }
+    expect(lastEventIds(harness)).toEqual(["(none)", "10", "10", "11"]);
+    const held = await device.get("arrived");
+    expect(held.ok && held.value).toMatchObject({ id: "arrived", version: 1 });
+    expect(follow.stdout).not.toContain('"item_id":"arrived"');
   });
 
   it("prints its report when interrupted, as it does when its time is up", async () => {
