@@ -53,9 +53,16 @@ impl Sampler {
     }
 }
 
+/// A variable's value without its surrounding space, where it has one: an
+/// empty variable is an unset one.
+pub fn text(get: &impl Fn(&str) -> Option<String>, name: &str) -> Option<String> {
+    get(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn read(get: impl Fn(&str) -> Option<String>) -> Reading {
-    let set = |name: &str| get(name).map(|value| value.trim().to_string());
-    let set = |name: &str| set(name).filter(|value| !value.is_empty());
+    let set = |name: &str| text(&get, name);
     if set("OTEL_SDK_DISABLED").is_some_and(|value| value.eq_ignore_ascii_case("true")) {
         return Reading::Off;
     }

@@ -110,6 +110,25 @@ pub fn request(resource: &Resource, spans: &[Finished]) -> Vec<u8> {
 /// answers at costs less than the whole budget.
 const CONNECT_LIMIT: Duration = Duration::from_secs(1);
 
+/// An HTTP client for a post that must go to the address named and nowhere
+/// else, since it can carry a credential: it follows no redirect, and no
+/// post it makes takes longer than `total`.
+pub fn agent(total: Duration) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    ureq::Agent::config_builder()
+        .tls_config(tls)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .timeout_global(Some(total))
+        .timeout_connect(Some(total.min(CONNECT_LIMIT)))
+        .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into()
+}
+
 pub struct Poster {
     agent: ureq::Agent,
     url: String,
@@ -118,23 +137,8 @@ pub struct Poster {
 
 impl Poster {
     pub fn new(settings: &Settings) -> Poster {
-        let tls = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-            .build();
-        // The credential a header carries goes to the address named and
-        // nowhere else, so no redirect is followed.
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .max_redirects_will_error(false)
-            .timeout_global(Some(settings.timeout))
-            .timeout_connect(Some(settings.timeout.min(CONNECT_LIMIT)))
-            .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
         Poster {
-            agent,
+            agent: agent(settings.timeout),
             url: settings.url.clone(),
             headers: settings.headers.clone(),
         }

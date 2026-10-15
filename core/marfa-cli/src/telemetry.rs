@@ -1,6 +1,8 @@
 //! Traces of a command run, over OTLP, when the standard `OTEL_EXPORTER_OTLP_*`
-//! variables name where to send them. Without them nothing here starts: no
-//! subscriber, no thread, no request, and no output of its own.
+//! variables name where to send them, and a failed run's exception to PostHog
+//! when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are set as well.
+//! Without a collector nothing here starts: no subscriber, no thread, no
+//! request, and no output of its own.
 //!
 //! A run is one trace. Its root span is named for the command path
 //! (`marfa items create`), the core's spans hang beneath it, and a failure
@@ -12,9 +14,11 @@
 //! This module and its children are the only files in the binary that name
 //! `tracing`.
 
+mod describe;
 mod export;
 mod layer;
 mod otlp;
+mod posthog;
 mod settings;
 
 use std::sync::Arc;
@@ -31,6 +35,7 @@ use settings::{Reading, Settings};
 /// One run of one command.
 pub struct Run {
     live: Option<Live>,
+    exceptions: Option<posthog::Reporter>,
 }
 
 struct Live {
@@ -49,19 +54,40 @@ pub fn start(command: &str, json: bool) -> Run {
 }
 
 fn start_with(command: &str, json: bool, get: impl Fn(&str) -> Option<String>) -> Run {
-    match settings::read(get) {
-        Reading::Off => Run { live: None },
+    match settings::read(&get) {
+        Reading::Off => Run::off(),
         Reading::Ignored(variable) => {
             if !json {
                 eprintln!(
                     "marfa: {variable} is not an http or https address, so this run sends no telemetry"
                 );
             }
-            Run { live: None }
+            Run::off()
         }
         Reading::On(settings) => Run {
+            exceptions: exceptions(command, json, &settings, &get),
             live: live(command, &settings),
         },
+    }
+}
+
+/// PostHog is asked for only where a collector is named too, and its trouble
+/// is said on standard error unless `json` is set, as a collector's is.
+fn exceptions(
+    command: &str,
+    json: bool,
+    settings: &Settings,
+    get: &impl Fn(&str) -> Option<String>,
+) -> Option<posthog::Reporter> {
+    match posthog::read(get, &settings.service, settings.timeout) {
+        posthog::Reading::Off => None,
+        posthog::Reading::Said(said) => {
+            if !json {
+                eprintln!("marfa: {said}");
+            }
+            None
+        }
+        posthog::Reading::On(posthog) => Some(posthog::Reporter::new(posthog, command)),
     }
 }
 
@@ -105,6 +131,13 @@ fn failed(status: u8, error: Option<&CliError>) -> bool {
 }
 
 impl Run {
+    fn off() -> Run {
+        Run {
+            live: None,
+            exceptions: None,
+        }
+    }
+
     /// Runs the command inside the run's root span, so that the core's spans
     /// on this thread are beneath it.
     pub fn within<T>(&self, command: impl FnOnce() -> T) -> T {
@@ -119,31 +152,40 @@ impl Run {
     /// pending. Waits no longer than the timeout, and changes nothing the
     /// command has said or will exit with.
     pub fn finish(self, status: u8, error: Option<&CliError>) {
-        let Some(live) = self.live else {
-            return;
-        };
-        live.root.record("exit_code", u64::from(status));
-        if failed(status, error) {
-            match error {
-                Some(error) => tracing::error!(
-                    parent: &live.root,
-                    code = error.code(),
-                    exit_code = u64::from(status),
-                    "the command failed"
-                ),
-                None => tracing::error!(
-                    parent: &live.root,
-                    exit_code = u64::from(status),
-                    "the command failed"
-                ),
+        let failure = failed(status, error);
+        // Sent beside the trace's last send, not after it, so that the two
+        // together wait no longer than one timeout.
+        let exception = self
+            .exceptions
+            .filter(|_| failure)
+            .and_then(|reporter| reporter.report(status, error));
+        if let Some(live) = self.live {
+            live.root.record("exit_code", u64::from(status));
+            if failure {
+                match error {
+                    Some(error) => tracing::error!(
+                        parent: &live.root,
+                        code = error.code(),
+                        exit_code = u64::from(status),
+                        "the command failed"
+                    ),
+                    None => tracing::error!(
+                        parent: &live.root,
+                        exit_code = u64::from(status),
+                        "the command failed"
+                    ),
+                }
             }
+            let dropped = live.exporter.dropped();
+            if dropped > 0 {
+                live.root.record("dropped_spans", dropped);
+            }
+            drop(live.root);
+            live.exporter.close(live.budget);
         }
-        let dropped = live.exporter.dropped();
-        if dropped > 0 {
-            live.root.record("dropped_spans", dropped);
+        if let Some(exception) = exception {
+            exception.wait();
         }
-        drop(live.root);
-        live.exporter.close(live.budget);
     }
 }
 
@@ -176,6 +218,7 @@ mod tests {
     fn without_an_endpoint_a_run_starts_nothing() {
         let run = start_with("marfa status", false, |_| None);
         assert!(run.live.is_none());
+        assert!(run.exceptions.is_none());
         assert_eq!(run.within(|| 7), 7);
         run.finish(3, None);
     }

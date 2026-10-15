@@ -258,7 +258,7 @@ own_codes! {
 }
 
 /// What the server's own refusal is named by, from its status.
-fn refused_code(status: u16) -> &'static str {
+pub(crate) fn refused_code(status: u16) -> &'static str {
     match status {
         400 | 422 => "validation",
         401 => "unauthorized",
@@ -272,7 +272,7 @@ fn refused_code(status: u16) -> &'static str {
 }
 
 /// Every name `refused_code` answers.
-const REFUSED_CODES: &[&str] = &[
+pub(crate) const REFUSED_CODES: &[&str] = &[
     "validation",
     "unauthorized",
     "forbidden",
