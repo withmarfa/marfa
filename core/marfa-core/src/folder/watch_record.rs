@@ -549,6 +549,17 @@ mod tests {
 
     use super::*;
 
+    /// Ends the record's keeping when dropped, a panic unwinding included,
+    /// so that a failed assertion fails the test and does not leave the
+    /// thread scope waiting for ever.
+    struct Finishing<'a>(&'a WatchRecord);
+
+    impl Drop for Finishing<'_> {
+        fn drop(&mut self) {
+            self.0.finish();
+        }
+    }
+
     fn read(path: &Path) -> File {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
     }
@@ -732,6 +743,7 @@ mod tests {
         let beats = Mutex::new(Vec::new());
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|_| {}));
+            let _end = Finishing(&record);
             let until = Instant::now() + Duration::from_millis(1500);
             while Instant::now() < until {
                 if let Ok(bytes) = std::fs::read(temp.path().join(FILE_NAME))
@@ -828,8 +840,10 @@ mod tests {
         let warnings = Mutex::new(Vec::new());
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|reason| warnings.lock().unwrap().push(reason.to_string())));
+            let _end = Finishing(&record);
             std::thread::sleep(Duration::from_millis(800));
-            assert_eq!(warnings.lock().unwrap().len(), 1, "{:?}", warnings.lock());
+            let now = warnings.lock().unwrap().clone();
+            assert_eq!(now.len(), 1, "{now:?}");
             std::fs::remove_file(&blocked).unwrap();
             let until = Instant::now() + Duration::from_secs(5);
             while !blocked.join(FILE_NAME).exists() {
@@ -894,6 +908,7 @@ mod tests {
         let mut beats: Vec<String> = Vec::new();
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|_| {}));
+            let _end = Finishing(&record);
             let until = Instant::now() + Duration::from_millis(5500);
             while Instant::now() < until {
                 if let Ok(bytes) = std::fs::read(temp.path().join(FILE_NAME))
@@ -933,6 +948,7 @@ mod tests {
         };
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|_| {}));
+            let _end = Finishing(&record);
             // Long enough for the first beat to meet the lock.
             std::thread::sleep(Duration::from_millis(500));
             for n in 0..20 {
@@ -959,6 +975,7 @@ mod tests {
         free.listed(Path::new("/kept"), "folder-kept");
         std::thread::scope(|scope| {
             scope.spawn(|| free.keep(|_| {}));
+            let _end = Finishing(&free);
             let until = Instant::now() + Duration::from_secs(5);
             while !path.exists() {
                 assert!(Instant::now() < until, "never written");
@@ -978,11 +995,14 @@ mod tests {
         let held = lock_held(temp.path());
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|reason| said.lock().unwrap().push(reason.to_string())));
+            let _end = Finishing(&record);
             // Not yet three intervals: nothing said.
             std::thread::sleep(Duration::from_millis(2500));
-            assert!(said.lock().unwrap().is_empty(), "{:?}", said.lock());
+            let now = said.lock().unwrap().clone();
+            assert!(now.is_empty(), "{now:?}");
             std::thread::sleep(Duration::from_millis(2000));
-            assert_eq!(said.lock().unwrap().len(), 1, "{:?}", said.lock());
+            let now = said.lock().unwrap().clone();
+            assert_eq!(now.len(), 1, "{now:?}");
             assert!(said.lock().unwrap()[0].contains("lock"));
             std::thread::sleep(Duration::from_millis(1200));
             assert_eq!(said.lock().unwrap().len(), 1, "said again unchanged");
@@ -995,7 +1015,8 @@ mod tests {
             // Held again, past three intervals: said again.
             let held = lock_held(temp.path());
             std::thread::sleep(Duration::from_millis(4500));
-            assert_eq!(said.lock().unwrap().len(), 2, "{:?}", said.lock());
+            let now = said.lock().unwrap().clone();
+            assert_eq!(now.len(), 2, "{now:?}");
             drop(held);
             record.finish();
         });
@@ -1010,6 +1031,7 @@ mod tests {
         let other = lock_held(temp.path());
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|_| {}));
+            let _end = Finishing(&record);
             std::thread::sleep(Duration::from_millis(600));
             assert!(!path.exists());
             drop(other);
