@@ -36,6 +36,9 @@ mod sse;
 #[cfg(test)]
 mod stop_tests;
 mod store;
+mod telemetry;
+#[cfg(all(test, feature = "telemetry"))]
+mod telemetry_tests;
 #[cfg(test)]
 mod tier_tests;
 mod time;
@@ -573,6 +576,24 @@ impl Core {
         &self,
         stop: &AtomicBool,
     ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
+        let op = telemetry::operation!("catch_up", applied, skipped);
+        let result = self.catch_up_pass(stop);
+        telemetry::ended!(
+            op,
+            result.as_ref().map_err(|failed| &failed.error),
+            |report| {
+                outcome = "ok",
+                applied = report.applied,
+                skipped = report.skipped,
+            }
+        );
+        result
+    }
+
+    fn catch_up_pass(
+        &self,
+        stop: &AtomicBool,
+    ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream(Mover::CatchUp)?;
         let mut catalog_changed = false;
@@ -836,10 +857,36 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
     ) -> Result<Vec<SearchHit>> {
+        self.find(query, filters, limit).map(|(_, hits)| hits)
+    }
+
+    /// The hits for `search` and the catalog they were found under.
+    fn find(
+        &self,
+        query: &str,
+        filters: &SearchFilters,
+        limit: usize,
+    ) -> Result<(catalog::Catalog, Vec<SearchHit>)> {
+        let op = telemetry::operation!("search", hits);
+        let result = self.find_in_copy(query, filters, limit);
+        telemetry::ended!(op, result.as_ref(), |found| {
+            outcome = "ok",
+            hits = found.1.len(),
+        });
+        result
+    }
+
+    fn find_in_copy(
+        &self,
+        query: &str,
+        filters: &SearchFilters,
+        limit: usize,
+    ) -> Result<(catalog::Catalog, Vec<SearchHit>)> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
-        search::search(&conn, &catalog, query, filters, limit)
+        let hits = search::search(&conn, &catalog, query, filters, limit)?;
+        Ok((catalog, hits))
     }
 
     /// `search`, each hit's item with the title and body it shows, under one
@@ -850,10 +897,8 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
     ) -> Result<Vec<(SearchHit, Shown)>> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        Ok(search::search(&conn, &catalog, query, filters, limit)?
+        let (catalog, hits) = self.find(query, filters, limit)?;
+        Ok(hits
             .into_iter()
             .map(|hit| {
                 let shown = catalog.shown(&hit.item);
@@ -5041,9 +5086,10 @@ mod tests {
                     "with_upload_reader",
                     "write_create",
                     "write_update",
+                    "catch_up_pass",
                 ][..],
             ),
-            (include_str!("drain.rs"), &["drain"][..]),
+            (include_str!("drain.rs"), &["drain_checked"][..]),
         ] {
             let mut current: Option<&str> = None;
             let mut in_tests = false;

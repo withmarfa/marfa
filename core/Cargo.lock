@@ -1293,6 +1293,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "tracing",
  "tree-sitter",
  "tree-sitter-yaml",
  "unicode-normalization",

@@ -8,9 +8,13 @@ use crate::{Core, CoreError, Result, Server, SliceTier, store};
 const WAIT: Duration = Duration::from_secs(2);
 
 pub(crate) fn copy(server: &Scripted) -> Arc<Core> {
+    copy_keyed(server, "k")
+}
+
+pub(crate) fn copy_keyed(server: &Scripted, key: &str) -> Arc<Core> {
     let core = Core::open_in_memory(Some(Server {
         url: server.url(),
-        key: "k".into(),
+        key: key.into(),
     }))
     .unwrap();
     {

@@ -92,6 +92,32 @@ A push to `main` runs `ci.yml` in full unless it reaches only the format check a
 
 A pull request that changes the server and leaves `openapi.json` alone runs none of the three. A server change that breaks the live tests or the Node binding's proof is therefore found on the push to `main`, not before the merge. The Ubuntu jobs in `ci.yml` that run the conformance suite and the CLI scenarios build the `marfa` binary and run no Rust tests.
 
+## Telemetry
+
+The core can report its own work, and sends it nowhere itself. It records through the [`tracing`](https://docs.rs/tracing) crate, and the host decides where the records go by installing a subscriber, such as an OpenTelemetry layer. Telemetry is off until a host turns it on in two steps:
+
+1. Enable the `telemetry` Cargo feature of `marfa-core`. Without it no tracing code or dependency is built, and the Swift and Node bindings leave it off.
+2. Install a `tracing` subscriber in the host process. Until one is installed, `tracing` drops every record.
+
+```toml
+marfa-core = { path = "marfa-core", features = ["telemetry"] }
+```
+
+Cargo builds a package with a feature when any package in the same build asks for it. A command such as `cargo build --workspace` therefore builds the Node module's copy of `marfa-core` with the feature too, as soon as the `marfa` binary enables it. Build the Node module from its own directory, as `pnpm run build` does.
+
+| Span       | Covers                                                | Fields                                                           |
+| ---------- | ----------------------------------------------------- | ---------------------------------------------------------------- |
+| `drain`    | One `Core::drain` pass                                | `outcome`, `answered`, `held`, `undelivered`, `unsent`, `unmade` |
+| `catch_up` | One `Core::catch_up`                                  | `outcome`, `applied`, `skipped`                                  |
+| `write`    | One queued write sent to the server, inside a `drain` | `outcome`, `kind`, `status`                                      |
+| `search`   | One `Core::search` or `Core::search_shown`            | `outcome`, `hits`                                                |
+
+`outcome` says how the operation ended. A `catch_up` ends `ok`, `error` or `canceled`, and a `search` ends `ok` or `error`. A `drain` can also end `unavailable`, where the server could not be reached or asked for time, or `credential_refused`. A `write` ends `answered`, `unavailable` or `error`. `kind` is the queued write's kind, such as `create_item`.
+
+Two events carry `code`, the same word `CoreError::code` gives everywhere else: an `ERROR` event when an operation returns an error, and a `WARN` event when a request the `drain` makes gets no answer or cannot get through, and the drain leaves the work for a later pass. A failure is recorded once: a write error that ends the drain is only the drain's `ERROR`. A write the server answers, even with a 5xx or a 429, records no event; its `write` span ends `unavailable` with the `status`. A stop the caller raises ends the span `canceled` and records no event.
+
+The core records only an operation's name, a count, an `outcome`, a write's kind, an HTTP status and an error `code`. It never records an item's content, title, tag, id, key or natural key, a credential, an address, a header, a path, a query or an error message. `marfa-core/src/telemetry.rs` is the only source file outside the tests that names `tracing`, and `marfa-core/src/telemetry_tests.rs` runs each operation with recognizable secrets and fails if any reaches a span or an event.
+
 ## Bindings
 
 Swift: `bindings/swift/build.sh` builds the XCFramework and its glue for macOS, iOS and the simulator. `withmarfa/marfa-swift` runs it at the commit it pins.

@@ -22,7 +22,7 @@ fn open(server: &Scripted, dir: &Path) -> Core {
 /// A copy of the library holding `core.note`, which holds no row under any
 /// natural key, and whose server answers every create unavailable, so a
 /// create stays sent and unanswered under the body it went with.
-fn library_copy(server: &Scripted, dir: &Path) -> Core {
+pub(crate) fn library_copy(server: &Scripted, dir: &Path) -> Core {
     let core = open(server, dir);
     {
         let conn = core.conn().unwrap();
@@ -41,7 +41,7 @@ fn library_copy(server: &Scripted, dir: &Path) -> Core {
     core
 }
 
-fn keyed(source_id: &str, tier: Option<Tier>) -> Draft {
+pub(crate) fn keyed(source_id: &str, tier: Option<Tier>) -> Draft {
     Draft {
         r#type: "core.note".into(),
         properties: json!({ "title": "Synced", "body": "again" })
@@ -57,7 +57,7 @@ fn keyed(source_id: &str, tier: Option<Tier>) -> Draft {
 
 /// What `POST /items/lookup` answers where the server holds `held`, each a
 /// row at the feed under the source `reader`.
-fn found(held: &[&str]) -> scripted::Answer {
+pub(crate) fn found(held: &[&str]) -> scripted::Answer {
     let data: Vec<Value> = held
         .iter()
         .enumerate()
