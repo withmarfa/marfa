@@ -479,6 +479,23 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
     }
 }
 
+/// Whether a failed request ends the drain, as an error, rather than leaving
+/// its write for the next pass. A renewal that failed for the environment's
+/// sake is carried on past; any other renewal failure is not.
+fn ends_the_drain(error: &CoreError) -> bool {
+    match error {
+        CoreError::RenewalFailed(_) => !error.is_environmental(),
+        CoreError::Redirected { .. }
+        | CoreError::ContractMismatch { .. }
+        | CoreError::SignedOut { .. }
+        | CoreError::NoKeychain(_)
+        | CoreError::StorageFull(_)
+        | CoreError::CopyExpired { .. }
+        | CoreError::StreamIncomplete { .. } => true,
+        _ => false,
+    }
+}
+
 /// No idempotency key: the door is idempotent by content and reads none.
 /// The stream is spent by a send, so a `401` renewed is sent again here from
 /// the start of the file.
@@ -883,7 +900,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                     },
                     status = answer.status,
                 },
-                unanswered
+                unanswered ends_the_drain
             );
             sent
         };
@@ -893,17 +910,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
         let answer = match answer {
-            Err(error @ CoreError::RenewalFailed(_)) if error.is_environmental() => Err(error),
-            Err(
-                error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
-                | CoreError::RenewalFailed(_)
-                | CoreError::SignedOut { .. }
-                | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)
-                | CoreError::CopyExpired { .. }
-                | CoreError::StreamIncomplete { .. }),
-            ) => return Err(error),
+            Err(error) if ends_the_drain(&error) => return Err(error),
             answer => answer,
         };
         if let Ok(answer) = &answer {
@@ -2121,7 +2128,13 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
             | CoreError::CopyExpired { .. }
             | CoreError::StreamIncomplete { .. }),
         ) => Err(error),
-        Err(error) => Ok(unreadable(&error)),
+        Err(error) => {
+            let unread = unreadable(&error);
+            if unread.is_some() {
+                telemetry::degraded!(&error);
+            }
+            Ok(unread)
+        }
         Ok(()) => Ok(None),
     }
 }
@@ -2218,6 +2231,7 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
             ) => return Err(error),
             Err(error) => {
                 if let Some(unread) = unreadable(&error) {
+                    telemetry::degraded!(&error);
                     return Ok(Some(unread));
                 }
             }

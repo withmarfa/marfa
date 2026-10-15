@@ -390,7 +390,106 @@ fn a_search_records_its_hit_count_and_a_refused_one_its_code() {
     assert_eq!(log.open_spans(), Vec::<&str>::new());
 }
 
-const SECRETS: [&str; 7] = [
+fn warnings(log: &Log) -> Vec<&EventLog> {
+    log.events
+        .iter()
+        .filter(|event| event.level == Level::WARN)
+        .collect()
+}
+
+#[test]
+fn a_write_error_that_ends_the_drain_is_recorded_once() {
+    let server = Scripted::start();
+    let (core, _) = copy_with_a_write(&server, &note(None), "k");
+    server.on(
+        "/items",
+        vec![scripted::Answer::Json {
+            status: 302,
+            body: String::new(),
+            headers: vec![("Location".into(), "http://127.0.0.1:1/".into())],
+        }],
+    );
+
+    let (result, log) = recorded(|| core.drain());
+
+    assert_eq!(result.unwrap_err().code(), "redirect");
+    let errors = error_events(&log);
+    assert_eq!(errors.len(), 1, "{log:?}");
+    assert_eq!(errors[0].fields["code"], "redirect");
+    assert_eq!(errors[0].within.as_deref(), Some("drain"));
+    assert_eq!(
+        warnings(&log).len(),
+        0,
+        "a request the drain did not carry on past was recorded as left for the next pass: {log:?}"
+    );
+    assert_eq!(log.one("write").fields["outcome"], "error");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+/// A create the server refuses, whose read-back the server cannot answer.
+fn copy_with_a_refused_write(server: &Scripted) -> Arc<Core> {
+    let (core, id) = copy_with_a_write(server, &note(None), "k");
+    server.on("/items", vec![scripted::refusal(400, "validation_error")]);
+    server.on(
+        &format!("/items/{id}"),
+        vec![scripted::refusal(503, "unavailable")],
+    );
+    core
+}
+
+#[test]
+fn a_read_back_that_fails_after_a_refusal_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    let core = copy_with_a_refused_write(&server);
+
+    let (result, log) = recorded(|| core.drain());
+
+    let report = result.unwrap();
+    assert!(report.unavailable.is_some(), "{report:?}");
+    assert_eq!(log.one("drain").fields["outcome"], "unavailable");
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(warned[0].within.as_deref(), Some("drain"));
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn an_owed_read_back_that_fails_again_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    let core = copy_with_a_refused_write(&server);
+    core.drain().unwrap();
+
+    let (result, log) = recorded(|| core.drain());
+
+    let report = result.unwrap();
+    assert!(report.unavailable.is_some(), "{report:?}");
+    assert_eq!(log.one("drain").fields["outcome"], "unavailable");
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_read_back_that_fails_after_an_accepted_write_records_a_warning_with_its_code() {
+    let server = Scripted::start();
+    let (core, id) = copy_with_a_write(&server, &note(None), "k");
+    server.on(
+        &format!("/items/{id}"),
+        vec![scripted::refusal(503, "unavailable")],
+    );
+
+    let (result, log) = recorded(|| core.drain());
+
+    assert!(result.unwrap().unavailable.is_some());
+    let warned = warnings(&log);
+    assert_eq!(warned.len(), 1, "{log:?}");
+    assert_eq!(warned[0].fields["code"], "server");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+const SECRETS: [&str; 8] = [
     "zq_secret_title",
     "zq_secret_body",
     "zq_secret_tag",
@@ -398,6 +497,7 @@ const SECRETS: [&str; 7] = [
     "zq_secret_source_id",
     "zq_secret_key",
     "zq_secret_query",
+    "zq_secret_message",
 ];
 
 #[test]
@@ -417,7 +517,17 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
         source_id: Some(SECRETS[4].into()),
         ..Default::default()
     };
-    let (core, _) = copy_with_a_write(&server, &draft, SECRETS[5]);
+    let (core, id) = copy_with_a_write(&server, &draft, SECRETS[5]);
+    server.on(
+        &format!("/items/{id}"),
+        vec![scripted::json(
+            503,
+            &format!(
+                r#"{{"error":{{"code":"unavailable","message":"{}"}}}}"#,
+                SECRETS[7]
+            ),
+        )],
+    );
     at_the_head(&server);
     server.on(
         "/items/lookup",
@@ -456,6 +566,17 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
         assert!(!log.spans(name).is_empty(), "no `{name}` span in {log:?}");
     }
     assert!(!error_events(&log).is_empty());
+    assert!(
+        drained
+            .unavailable
+            .as_deref()
+            .is_some_and(|why| why.contains(SECRETS[7])),
+        "the failed read-back did not carry its message into the core: {drained:?}"
+    );
+    assert!(
+        !warnings(&log).is_empty(),
+        "the failed read-back recorded no warning, so the test cannot show one is clean"
+    );
     let sent = server.seen("/items");
     let body = String::from_utf8(sent[0].body.clone()).unwrap();
     for secret in &SECRETS[..2] {

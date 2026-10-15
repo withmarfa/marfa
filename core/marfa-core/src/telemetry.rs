@@ -40,10 +40,14 @@ pub(crate) mod live {
         tracing::warn!(code = error.code(), "a request to the server failed");
     }
 
-    /// Ends the span of one request that got no answer.
-    pub(crate) fn unanswered(span: &tracing::Span, error: &CoreError) {
+    /// Ends the span of one request that got no answer. An error that ends
+    /// the operation is recorded by the operation, once; one it carries on
+    /// past is a warning here.
+    pub(crate) fn unanswered(span: &tracing::Span, error: &CoreError, ends_operation: bool) {
         span.record("outcome", "error");
-        degraded(error);
+        if !ends_operation {
+            degraded(error);
+        }
     }
 }
 
@@ -92,8 +96,10 @@ macro_rules! record {
 
 /// Closes out an operation from its result, a `Result<&T, &CoreError>`: on
 /// success the fields given. On failure the error's code goes out as an error
-/// event, or, with `unanswered`, as a warning for one request that got no
-/// answer and left the operation going.
+/// event, or, with `unanswered` and a predicate on the error, as a warning for
+/// one request that got no answer and left the operation going. The predicate
+/// says whether the error ends the operation, and is the one the operation
+/// itself decides by.
 #[cfg(feature = "telemetry")]
 macro_rules! ended {
     ($span:expr, $result:expr, |$ok:ident| { $($field:ident = $value:expr),+ $(,)? }) => {
@@ -104,19 +110,19 @@ macro_rules! ended {
             Err(error) => $crate::telemetry::live::failed(&$span, error),
         }
     };
-    ($span:expr, $result:expr, |$ok:ident| { $($field:ident = $value:expr),+ $(,)? }, unanswered) => {
+    ($span:expr, $result:expr, |$ok:ident| { $($field:ident = $value:expr),+ $(,)? }, unanswered $ends:path) => {
         match $result {
             Ok($ok) => {
                 $crate::telemetry::record!($span, $($field = $value),+);
             }
-            Err(error) => $crate::telemetry::live::unanswered(&$span, error),
+            Err(error) => $crate::telemetry::live::unanswered(&$span, error, $ends(error)),
         }
     };
 }
 
 #[cfg(not(feature = "telemetry"))]
 macro_rules! ended {
-    ($span:expr, $result:expr, |$ok:ident| { $($field:ident = $value:expr),+ $(,)? } $(, $unanswered:ident)?) => {{
+    ($span:expr, $result:expr, |$ok:ident| { $($field:ident = $value:expr),+ $(,)? } $(, unanswered $ends:path)?) => {{
         let _ = (&$span, &$result);
     }};
 }
