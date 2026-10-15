@@ -634,8 +634,10 @@ impl Core {
     /// it drains once, on a thread of its own so the stream is read
     /// meanwhile, and tells `queue.drained` or `queue.not_drained`
     /// (`device/follow-drains-reachable`). That drain waits for one under
-    /// way to end, and then does only the work left. The follow ending,
-    /// however it ends, stops that drain as `drain_until`'s stop does.
+    /// way to end, and then does only the work left. That drain watches
+    /// `stop` as `drain_until` does, and the follow raises `stop` itself
+    /// when it ends, however it ends, so no write goes out after either:
+    /// give each follow a flag of its own.
     pub fn follow(
         &self,
         stop: &AtomicBool,

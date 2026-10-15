@@ -1,5 +1,5 @@
 interface Operation {
-  parameters?: Array<{ name?: string; in?: string }>;
+  parameters?: { name?: string; in?: string }[];
 }
 
 /**
@@ -8,8 +8,8 @@ interface Operation {
  */
 export function keyedWrites(document: {
   paths: Record<string, Record<string, Operation>>;
-}): Array<[string, string]> {
-  const keyed: Array<[string, string]> = [];
+}): [string, string][] {
+  const keyed: [string, string][] = [];
   for (const [path, operations] of Object.entries(document.paths)) {
     for (const [method, operation] of Object.entries(operations)) {
       const named = (operation.parameters ?? []).some(

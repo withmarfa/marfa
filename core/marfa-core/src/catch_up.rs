@@ -726,15 +726,16 @@ fn follow_paced(
     on_live(false);
     let asked = Mutex::new(Asked::default());
     let (told, heard) = mpsc::channel();
-    // The drains' own stop: a follow that ends, however it ends, sends no
-    // further write.
-    let halted = AtomicBool::new(false);
     let result = thread::scope(|scope| -> Result<FollowReport> {
-        let _halt = Raise(&halted);
+        // The drains watch the caller's own stop, so none sends a write once
+        // it is raised; raised here too, so a follow that ends on an error
+        // sends no further write either. A folder's watch, which does not
+        // drain, keeps its stop for its own pass.
+        let _halt = drains.then(|| Raise(stop));
         let recovery = Recovery {
             scope: drains.then_some(scope),
             core,
-            stop: &halted,
+            stop,
             asked: &asked,
             told,
             heard: &heard,
@@ -1311,6 +1312,14 @@ mod tests {
         reconnect_most: Duration::from_millis(40),
     };
 
+    /// For a stream the test holds open with no keepalive while it looks at
+    /// what was told: with `QUICK`'s silence, a slow run would end that
+    /// stream on its own and tell the server lost and back again.
+    const STILL: Pace = Pace {
+        silence: Duration::from_secs(60),
+        ..QUICK
+    };
+
     fn hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(
@@ -1550,7 +1559,7 @@ mod tests {
         let (second, took_second) = queued_note(&core, &server, "second");
         server.on("/items", vec![took_first, took_second]);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         let (told, report) = drained(&run);
         assert!(
             matches!(
@@ -1599,7 +1608,7 @@ mod tests {
         let (_, took) = queued_note(&core, &server, "waiting");
         server.on("/items", vec![took]);
         server.on("/events", vec![held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         server.wait_for("/events", 1, Duration::from_secs(5));
         thread::sleep(MS(150));
         run.stop();
@@ -1619,7 +1628,7 @@ mod tests {
         server.on("/types", vec![types(&[(NOTE, None)])]);
         let (_dir, core) = hydrated(&server);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         assert!(matches!(
             run.change().event,
             ChangeEvent::ServerUnreachable(_)
@@ -1644,7 +1653,7 @@ mod tests {
         server.on("/items", vec![took]);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
         let (sent, heard) = mpsc::channel();
-        let run = follow_drains(&core, QUICK, None, false, false, move |change| {
+        let run = follow_drains(&core, STILL, None, false, false, move |change| {
             let _ = sent.send(change.event.clone());
         });
         wait_until("the server's return was not told", || {
@@ -1672,7 +1681,7 @@ mod tests {
         server.on("/items", vec![took]);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
         let running = core.one_drain();
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         assert!(matches!(
             run.change().event,
             ChangeEvent::ServerUnreachable(_)
@@ -1703,7 +1712,7 @@ mod tests {
         server.on("/items", vec![took]);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
         let running = core.one_drain();
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         assert!(matches!(
             run.change().event,
             ChangeEvent::ServerUnreachable(_)
@@ -1741,16 +1750,27 @@ mod tests {
                 took_second,
             ],
         );
+        // The stream ends, and its reopening is refused, only once the
+        // first write is in flight.
+        let in_flight = Arc::new(AtomicBool::new(false));
         server.on(
             "/events",
             vec![
                 refusal(503, "unavailable"),
-                stream(vec![connected()], Then::End),
+                stream(
+                    vec![connected()],
+                    Then::WaitFor {
+                        entered: Arc::new(AtomicBool::new(false)),
+                        ready: Arc::clone(&in_flight),
+                        then: Box::new(Then::End),
+                    },
+                ),
                 refusal(400, "validation_error"),
             ],
         );
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         server.wait_for("/items", 1, Duration::from_secs(5));
+        in_flight.store(true, Ordering::SeqCst);
         server.wait_for("/events", 3, Duration::from_secs(5));
         answer.store(true, Ordering::SeqCst);
         let ended = run.ended();
@@ -1785,7 +1805,7 @@ mod tests {
             }],
         );
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         let told = loop {
             match run.change().event {
                 ChangeEvent::QueueNotDrained(error) => break error,
@@ -1845,7 +1865,7 @@ mod tests {
                     held_open(),
                 ],
             );
-            let run = follow_on(&core, QUICK, None);
+            let run = follow_on(&core, STILL, None);
             assert!(matches!(
                 run.change().event,
                 ChangeEvent::ServerUnreachable(_)
@@ -1876,7 +1896,7 @@ mod tests {
         queued_note(&core, &server, "waiting");
         server.on("/items", vec![refusal(401, "unauthorized")]);
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         let (_, report) = drained(&run);
         assert!(
             report
@@ -1929,7 +1949,7 @@ mod tests {
                 held_open(),
             ],
         );
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         let (_, report) = drained(&run);
         assert_eq!((report.answered, report.undelivered), (1, 1), "{report:?}");
         second_back.store(true, Ordering::SeqCst);
@@ -1987,16 +2007,28 @@ mod tests {
             ],
         );
         let gone = || refusal(503, "unavailable");
+        // The server is lost again only once the first drain's write is in
+        // flight, so the second return comes while that drain runs.
+        let in_flight = Arc::new(AtomicBool::new(false));
         server.on(
             "/events",
             vec![
                 gone(),
-                stream(vec![connected()], Then::End),
+                stream(
+                    vec![connected()],
+                    Then::WaitFor {
+                        entered: Arc::new(AtomicBool::new(false)),
+                        ready: Arc::clone(&in_flight),
+                        then: Box::new(Then::End),
+                    },
+                ),
                 gone(),
                 held_open(),
             ],
         );
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items", 1, Duration::from_secs(5));
+        in_flight.store(true, Ordering::SeqCst);
         let mut told = Vec::new();
         while told
             .iter()
@@ -2050,7 +2082,7 @@ mod tests {
             ],
         );
         server.on("/events", vec![refusal(503, "unavailable"), held_open()]);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         server.wait_for("/items", 1, Duration::from_secs(5));
         run.stop();
         answer.store(true, Ordering::SeqCst);
@@ -2822,7 +2854,7 @@ mod tests {
             ],
         );
         let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, None);
+        let run = follow_on(&core, STILL, None);
         assert_eq!(run.change().item_id.as_deref(), Some("n1"));
         assert_eq!(run.change().item_id.as_deref(), Some("n2"));
         run.stop();
@@ -2835,7 +2867,7 @@ mod tests {
         assert_eq!(report.reconnects, 3);
         assert_eq!(
             run.waits(),
-            [QUICK.reconnect_first],
+            [STILL.reconnect_first],
             "a reopen for an image waited as a stream that ended early does"
         );
     }
