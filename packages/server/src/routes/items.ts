@@ -841,15 +841,15 @@ const updateItemRoute = createRoute({
               .describe(
                 "The version of the item you read, which this update is based on.",
               ),
-            /** Toggle the tier (`library` ↔ `feed`). Compared against the
-             *  version named like a property, so a stale flip collides with
-             *  one made since. */
             version_match: z
               .literal("exact")
               .optional()
               .describe(
                 "`exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields.",
               ),
+            /** Toggle the tier (`library` ↔ `feed`). Compared against the
+             *  version named like a property, so a stale flip collides with
+             *  one made since. */
             tier: TierEnum.optional().describe(
               "Moves the item between `library` and `feed`.",
             ),
