@@ -309,6 +309,34 @@ pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreE
         .collect())
 }
 
+/// One `meta` row per old buffer held at the path a pull moved a file from:
+/// the bytes it was held at and why. It stands until those bytes change or
+/// the file goes.
+const STALE_WAIT: &str = "folder_stale_wait:";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaleWait {
+    pub hash: String,
+    pub reason: String,
+}
+
+pub fn set_stale_wait(conn: &Connection, path: &str, wait: &StaleWait) -> Result<(), CoreError> {
+    let value = serde_json::to_string(wait).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{STALE_WAIT}{path}"), &value)
+}
+
+pub fn clear_stale_wait(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{STALE_WAIT}{path}"))
+}
+
+/// The old buffers held, by path. A row that does not read holds nothing.
+pub fn stale_waits(conn: &Connection) -> Result<HashMap<String, StaleWait>, CoreError> {
+    Ok(under(conn, STALE_WAIT)?
+        .into_iter()
+        .filter_map(|(path, value)| Some((path, serde_json::from_str(&value).ok()?)))
+        .collect())
+}
+
 /// The edge ends lines hold, each with whether the folder made its pin.
 pub fn edge_ends(conn: &Connection) -> Result<Vec<(String, bool)>, CoreError> {
     Ok(under(conn, EDGE_END)?

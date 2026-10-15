@@ -2754,6 +2754,12 @@ When a device renames a file to follow its item's title, a device MUST move the 
 
 **Tests:** `device/folders-placement.test.ts › renames a note's file when its title changes in Marfa`, `› renames a note's file when its title line is changed in the file`.
 
+### `folders/title-rename-refused-placement`
+
+If the rename that follows an item's title is refused, then a device MUST leave the item's placement at the path its file keeps.
+
+**Tests:** `device/folders-placement.test.ts › keeps the placement at the old name when the rename for a new title is refused`.
+
 ### `folders/title-rename-numbered`
 
 When the name the device makes from a document's new title is taken by another file or by another item's placement, a device MUST rename the file to the first free name numbered as `folders/placement-collision-number` numbers it.
@@ -2806,15 +2812,31 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 ### `folders/moved-save-held`
 
-When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds a change the device has not read, or one it holds unsent or refused, a device MUST hold the file, flagged `waiting`, without making an item of it.
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds a change the device has not read, or one it holds unsent or refused, a device MUST hold the file, flagged `waiting`, without making an item of it, until the person changes or removes that file.
 
-**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`.
+**Reason:** the person decides which of the two to keep, however the item's file changes meanwhile.
+
+**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`.
 
 ### `folders/moved-save-race`
 
 If an item's file is saved while a device puts an old buffer in its place, then a device MUST keep that save in the item's file and hold the old buffer, flagged `waiting`.
 
 **Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file while an old buffer is taken over it`.
+
+### `folders/moved-save-kept-beside`
+
+If another file takes an item's file's path while a device puts an old buffer in its place, and the item's file was saved meanwhile, then a device MUST move that save to the first free numbered name beside the path, as `folders/placement-collision-number` numbers it.
+
+**Reason:** the save is the person's, and a name the folder treats as its own scratch would lose it.
+
+**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file under a numbered name where another file took its path meanwhile`.
+
+### `folders/moved-save-not-missing`
+
+When a device puts an old buffer in an item's file's place, a device MUST NOT count the item's file missing.
+
+**Tests:** `device/folders-placement.test.ts › counts nothing missing when it finishes taking an old buffer after a crash`.
 
 ### `folders/moved-save-ends`
 

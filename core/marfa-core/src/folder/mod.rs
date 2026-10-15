@@ -1437,7 +1437,7 @@ impl Folder {
             .collect::<Result<Vec<String>>>()?;
         // Every file the walk found, whether or not it is pushed: leaving one
         // out journals it missing and deletes the item bound to it.
-        let seen: HashSet<String> = found.iter().cloned().collect();
+        let mut seen: HashSet<String> = found.iter().cloned().collect();
         let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
         let by_path: HashMap<&str, &state::Bound> = snapshot
             .iter()
@@ -1690,7 +1690,7 @@ impl Folder {
             report.root_gone = Some(gone);
             return Ok(report);
         }
-        let stale = self.fold_stale_saves(&mut files, &snapshot)?;
+        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen)?;
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().filter(|file| !file.deferred).any(|file| {
@@ -2102,15 +2102,34 @@ impl Folder {
         &self,
         files: &mut Vec<Scanned>,
         snapshot: &[state::Bound],
+        seen: &mut HashSet<String>,
     ) -> Result<HashMap<String, String>> {
         let mut waiting = HashMap::new();
-        let moved = state::moved_from(&*self.core.conn()?)?;
-        if moved.is_empty() {
+        let (moved, mut held) = {
+            let conn = self.core.conn()?;
+            (state::moved_from(&conn)?, state::stale_waits(&conn)?)
+        };
+        // Held until the person changes or removes the old buffer itself.
+        for path in held.keys() {
+            if !self.exists(self.root.join(path)) {
+                state::clear_stale_wait(&*self.core.conn()?, path)?;
+            }
+        }
+        held.retain(|path, _| self.exists(self.root.join(path)));
+        if moved.is_empty() && held.is_empty() {
             return Ok(waiting);
         }
         let mut at = 0;
         while at < files.len() {
             let file = &files[at];
+            if let Some(wait) = held.get(&file.key) {
+                if wait.hash == file.hash {
+                    waiting.insert(file.key.clone(), wait.reason.clone());
+                    at += 1;
+                    continue;
+                }
+                state::clear_stale_wait(&*self.core.conn()?, &file.key)?;
+            }
             let Some(bound) = file
                 .id
                 .as_deref()
@@ -2133,11 +2152,20 @@ impl Folder {
             };
             match self.take_stale_save(file, bound)? {
                 Err(reason) => {
+                    state::set_stale_wait(
+                        &*self.core.conn()?,
+                        &file.key,
+                        &state::StaleWait {
+                            hash: file.hash.clone(),
+                            reason: reason.clone(),
+                        },
+                    )?;
                     waiting.insert(file.key.clone(), reason);
                     at += 1;
                 }
                 Ok(()) => {
                     let path = bound.path.clone();
+                    seen.insert(path.clone());
                     let mut file = files.remove(at);
                     file.path = self.root.join(&path);
                     file.key = path;
@@ -2188,7 +2216,10 @@ impl Folder {
             Ok(_) => {
                 landing::save_meanwhile(&to_dir, to_name);
                 match landing::set_aside(&to_dir, to_name) {
-                    Ok(aside) => Some(aside),
+                    Ok(aside) => {
+                        landing::crash_if_named(to_name, "crash-after-aside");
+                        Some(aside)
+                    }
                     Err(error) => return Ok(failed(error)),
                 }
             }
@@ -2202,13 +2233,20 @@ impl Folder {
         {
             // Saved between the look and the rename: put back, or where
             // another file took the path meanwhile, left aside, whole.
+            landing::appear_at(&to_dir, to_name, "create-before-put-back")
+                .map_err(|error| CoreError::Io(error.to_string()))?;
             return Ok(
                 match landing::rename_new_at(&to_dir, aside, &to_dir, to_name) {
                     Ok(()) => edited(),
-                    Err(_) => own(&format!(
-                        "which was saved meanwhile and is kept as {}",
-                        aside.display()
-                    )),
+                    Err(_) => match self.keep_beside(&to_dir, aside, &bound.path) {
+                        Ok(kept) => own(&format!(
+                            "which was saved meanwhile while another file took its name; that save is kept as {kept}"
+                        )),
+                        Err(error) => own(&format!(
+                            "which was saved meanwhile and is kept as {}: {error}",
+                            aside.display()
+                        )),
+                    },
                 },
             );
         }
@@ -2228,6 +2266,20 @@ impl Folder {
             Ok(()) => Ok(()),
             Err(error) => failed(error),
         })
+    }
+
+    /// Moves a person's save left aside to the first free numbered name beside
+    /// `path`, where it is a file of theirs the folder takes as any other.
+    /// Answers that path.
+    fn keep_beside(&self, dir: &Directory, aside: &Path, path: &str) -> std::io::Result<String> {
+        loop {
+            let kept = beside(path, |candidate| self.exists(self.root.join(candidate)));
+            match landing::rename_new_at(dir, aside, dir, Path::new(name_of(&kept))) {
+                Ok(()) => return Ok(kept),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Held ids decide first; then the binding by identity across every file
