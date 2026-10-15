@@ -112,11 +112,11 @@ Cargo builds a package with a feature when any package in the same build asks fo
 | `write`    | One queued write sent to the server, inside a `drain` | `outcome`, `kind`, `status`                                      |
 | `search`   | One `Core::search` or `Core::search_shown`            | `outcome`, `hits`                                                |
 
-`outcome` says how the operation ended. A `catch_up` and a `search` end `ok`, `error` or `canceled`. A `drain` can also end `unavailable`, where the server could not be reached or asked for time, or `credential_refused`. A `write` ends `answered`, `unavailable` or `error`. `kind` is the queued write's kind, such as `create_item`.
+`outcome` says how the operation ended. A `catch_up` ends `ok`, `error` or `canceled`, and a `search` ends `ok` or `error`. A `drain` can also end `unavailable`, where the server could not be reached or asked for time, or `credential_refused`. A `write` ends `answered`, `unavailable` or `error`. `kind` is the queued write's kind, such as `create_item`.
 
 Two events carry `code`, the same word `CoreError::code` gives everywhere else: an `ERROR` event when an operation returns an error, and a `WARN` event when a request to the server fails and the `drain` leaves it for the next pass. A stop the caller raises ends the span `canceled` and records no event.
 
-The core records only an operation's name, a count, an `outcome`, a write's kind, an HTTP status and an error `code`. It never records an item's content, title, tag, id, key or natural key, a credential, an address, a header, a path, a query or an error message. `marfa-core/src/telemetry.rs` is the only file that names `tracing`, and `marfa-core/src/telemetry_tests.rs` runs each operation with recognizable secrets and fails if any reaches a span or an event.
+The core records only an operation's name, a count, an `outcome`, a write's kind, an HTTP status and an error `code`. It never records an item's content, title, tag, id, key or natural key, a credential, an address, a header, a path, a query or an error message. `marfa-core/src/telemetry.rs` is the only source file outside the tests that names `tracing`, and `marfa-core/src/telemetry_tests.rs` runs each operation with recognizable secrets and fails if any reaches a span or an event.
 
 ## Bindings
 

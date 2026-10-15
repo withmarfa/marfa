@@ -3,7 +3,7 @@
 //! The core owns no exporter and installs no subscriber: a host that wants
 //! the records installs one, and until it does `tracing` drops them. Without
 //! the `telemetry` feature every macro here expands to nothing, and the crate
-//! is not built, so this is the only file that names it.
+//! is not built, so no other source file outside the tests names it.
 //!
 //! What may be recorded is a closed list: the operation's name, a count, an
 //! outcome word, the kind of a queued write, an HTTP status, and a Marfa
