@@ -350,3 +350,148 @@ describe("the source filter on the edge listings", () => {
     expect(read.data.edge.id).toBe(hiddenEdge);
   });
 });
+
+describe("the source filter on the edges an item read carries", () => {
+  const about = (
+    blocks: Record<string, { data: MarfaEdge[] }> | undefined,
+  ): string[] => (blocks?.[edgeType]?.data ?? []).map((e) => e.id).sort();
+
+  it("leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target", async () => {
+    const target = await note(shownWriter);
+    const shownFrom = await note(shownWriter);
+    const hiddenFrom = await note(hiddenWriter);
+    const fromShown = await edge(shownWriter, shownFrom, target);
+    const fromHidden = await edge(hiddenWriter, hiddenFrom, target);
+
+    // The witness: with no filter the block and the neighbors hold both.
+    const whole = await unfiltered.getItemIncluding(target, [
+      "backrefs",
+      "neighbors",
+    ]);
+    expect(about(whole.data.backrefs)).toEqual(sorted([fromShown, fromHidden]));
+    expect(whole.data.neighbors?.map((n) => n.item.id).sort()).toEqual(
+      sorted([shownFrom, hiddenFrom]),
+    );
+
+    const narrowed = await filtered.getItemIncluding(target, [
+      "backrefs",
+      "neighbors",
+    ]);
+    expect(about(narrowed.data.backrefs)).toEqual([fromShown]);
+    expect(narrowed.data.neighbors?.map((n) => n.item.id)).toEqual([shownFrom]);
+  });
+
+  it("removes an inbound block whose every edge the filter hides", async () => {
+    const target = await note(shownWriter);
+    await edge(hiddenWriter, await note(hiddenWriter), target);
+
+    const whole = await unfiltered.getItemIncluding(target, ["backrefs"]);
+    expect(Object.keys(whole.data.backrefs ?? {})).toEqual([edgeType]);
+    const narrowed = await filtered.getItemIncluding(target, ["backrefs"]);
+    expect(narrowed.data.backrefs ?? {}).toEqual({});
+  });
+
+  it("judges the outbound edges of an item read by the source of that item, whatever the source of their targets", async () => {
+    const shown = await note(shownWriter);
+    const hidden = await note(hiddenWriter);
+    const hiddenTarget = await note(hiddenWriter);
+    const shownEdge = await edge(shownWriter, shown, hiddenTarget);
+    const hiddenEdge = await edge(hiddenWriter, hidden, hiddenTarget);
+
+    // The witness: with no filter each item carries its edge.
+    expect(
+      about((await unfiltered.getItemIncluding(hidden, [])).data.item.edges),
+    ).toEqual([hiddenEdge]);
+
+    expect(
+      about((await filtered.getItemIncluding(shown, [])).data.item.edges),
+    ).toEqual([shownEdge]);
+    // The item is read by id, which the filter does not narrow, and carries
+    // none of the edges a listing of its edges leaves out.
+    const read = await filtered.getItemIncluding(hidden, []);
+    expect(read.status).toBe(200);
+    expect(about(read.data.item.edges)).toEqual([]);
+  });
+
+  it("applies to the edges an item listing and a bulk read by id carry", async () => {
+    const shown = await note(shownWriter);
+    const hidden = await note(hiddenWriter);
+    const target = await note(shownWriter);
+    const shownEdge = await edge(shownWriter, shown, target);
+    const hiddenEdge = await edge(hiddenWriter, hidden, target);
+
+    const listed = await filtered.listItems({
+      include: "edges",
+      limit: 100,
+    });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data.find((i) => i.id === hidden)).toBeUndefined();
+    expect(about(listed.data.data.find((i) => i.id === shown)?.edges)).toEqual([
+      shownEdge,
+    ]);
+
+    const bulk = await filtered.bulkGet([shown, hidden], ["edges"]);
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(about(bulk.data.items.find((i) => i.id === shown)?.edges)).toEqual([
+      shownEdge,
+    ]);
+    expect(about(bulk.data.items.find((i) => i.id === hidden)?.edges)).toEqual(
+      [],
+    );
+
+    // The witness: with no filter the same read carries the hidden item's edge.
+    const whole = await unfiltered.bulkGet([hidden], ["edges"]);
+    expect(about(whole.data.items[0]?.edges)).toEqual([hiddenEdge]);
+  });
+
+  it("applies to the edges the answer to a write carries", async () => {
+    const source = await note(hiddenWriter);
+    const target = await note(shownWriter);
+    const hiddenEdge = await edge(hiddenWriter, source, target);
+
+    const patch = async (reader: MarfaClient) => {
+      const current = await reader.getItem(source);
+      expect(current.status, JSON.stringify(current.error)).toBe(200);
+      const r = await reader.updateItem(source, {
+        version: current.data.item.version,
+        properties: { body: `patched ${String(current.data.item.version)}` },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return about(r.data.item.edges);
+    };
+
+    // The witness: the same write by a key with no filter answers with the edge.
+    expect(await patch(unfiltered)).toEqual([hiddenEdge]);
+    expect(await patch(filtered)).toEqual([]);
+  });
+
+  it("fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing", async () => {
+    const target = await note(shownWriter);
+    const shownIds: string[] = [];
+    // Alternating, so a block cut before the filter would hold about half.
+    for (let n = 0; n < 60; n++) {
+      shownIds.push(await edge(shownWriter, await note(shownWriter), target));
+      await edge(hiddenWriter, await note(hiddenWriter), target);
+    }
+
+    // The witness: with no filter the block is full and has more to give.
+    const whole = (await unfiltered.getItemIncluding(target, ["backrefs"])).data
+      .backrefs?.[edgeType];
+    expect(whole?.data).toHaveLength(50);
+    expect(whole?.next_cursor).toBeTruthy();
+
+    const block = (await filtered.getItemIncluding(target, ["backrefs"])).data
+      .backrefs?.[edgeType];
+    expect(block?.data).toHaveLength(50);
+    expect(block?.next_cursor).toBeTruthy();
+    const rest = await filtered.listItemBackrefs(target, {
+      edge_type: edgeType,
+      cursor: block?.next_cursor ?? undefined,
+    });
+    expect(rest.status, JSON.stringify(rest.error)).toBe(200);
+    expect(rest.data.next_cursor).toBeNull();
+    expect(
+      sorted([...(block?.data ?? []), ...rest.data.data].map((e) => e.id)),
+    ).toEqual(sorted(shownIds));
+  });
+});

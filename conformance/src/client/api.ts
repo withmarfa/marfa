@@ -1219,6 +1219,27 @@ export class MarfaClient {
     }>(`/items/${id}?include=backrefs`);
   }
 
+  /**
+   * The item read with the extras named in `include` (`backrefs`,
+   * `neighbors`), the outbound `item.edges` always beside it.
+   */
+  async getItemIncluding(
+    id: string,
+    include: Array<"backrefs" | "neighbors">,
+  ): Promise<
+    ApiResponse<{
+      item: MarfaItem;
+      backrefs?: Record<string, PaginatedResult<MarfaEdge>>;
+      neighbors?: { item: MarfaItem }[];
+    }>
+  > {
+    return this.request<{
+      item: MarfaItem;
+      backrefs?: Record<string, PaginatedResult<MarfaEdge>>;
+      neighbors?: { item: MarfaItem }[];
+    }>(`/items/${id}?include=${include.join(",")}`);
+  }
+
   /** The item read with the first page of its version history beside it. */
   async getItemWithVersions(id: string): Promise<
     ApiResponse<{

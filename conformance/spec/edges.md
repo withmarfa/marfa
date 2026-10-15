@@ -1609,6 +1609,22 @@ If a source filter leaves out an edge, then the server MUST NOT count the edge a
 
 **Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`.
 
+### `edges/read-source-filter-hydrated`
+
+Where a source filter applies to the key, the server MUST leave an edge out of the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/bulk-get` and the answer to a write of an item carry when the filter leaves out its source item, and not when it leaves out only its target item.
+
+**Reason:** a block is the first page of the listing it continues at, so it holds what that listing holds. The item itself is read by id and the filter does not narrow that (`types/source-filter-by-id`), so an item the filter leaves out is answered with none of its own outbound edges, as `GET /items/{id}/edges` answers none. The `neighbors` an item read carries are the far ends of these blocks (`edges/neighbors`), so an edge left out brings no neighbor.
+
+**Tests:** `compliance/edge-source-filter.test.ts › leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target`, `› judges the outbound edges of an item read by the source of that item, whatever the source of their targets`, `› applies to the edges an item listing and a bulk read by id carry`, `› applies to the edges the answer to a write carries`.
+
+### `edges/read-source-filter-block`
+
+If a source filter leaves out an edge, then the server MUST NOT count the edge against the cap of a block that an item read carries.
+
+**Reason:** a block that took the cap before the filter would hold a fraction of it while the listing it continues at held more, and a caller stops on a block with no `next_cursor`.
+
+**Tests:** `compliance/edge-source-filter.test.ts › fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`.
+
 ### `edges/read-list-short`
 
 When `GET /edges` leaves out of a page an edge whose source item's type or whose edge type the credential may not read, the server MUST take `next_cursor` from the whole listing, so that a page can be shorter than `limit`, or empty with a `next_cursor` still to follow.
@@ -1639,11 +1655,11 @@ When an item read, an item listing or `POST /items/bulk-get` carries edges, the 
 
 ### `edges/read-hydrated-block`
 
-When every edge of a block an item read carries is one the credential may not read, the server MUST remove the block.
+When every edge of a block an item read carries is one the credential may not read or one a source filter leaves out, the server MUST remove the block.
 
 **Reason:** the key of a block is an edge type, so an empty block would say the item holds edges of that type the credential cannot see.
 
-**Tests:** `compliance/edge-permissions.test.ts › narrows the edges carried on an item read and on a bulk read`.
+**Tests:** `compliance/edge-permissions.test.ts › narrows the edges carried on an item read and on a bulk read`, `compliance/edge-source-filter.test.ts › removes an inbound block whose every edge the filter hides`.
 
 ### `edges/read-export`
 

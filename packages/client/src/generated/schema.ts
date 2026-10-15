@@ -1808,7 +1808,7 @@ export interface components {
             trashed_by_cascade?: boolean;
             /** @description The ID of the item whose trash took this one into the trash, beside `trashed_by_cascade`, whatever became of that item since. Present only if you can read that item's type. */
             trashed_with?: string;
-            /** @description The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`. */
+            /** @description The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. If `source_filter` leaves the item out, none of its edges appear. Absent where an operation doesn't return edges, such as a listing without `include=edges`. */
             edges?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
@@ -2249,7 +2249,7 @@ export interface components {
         ItemDetail: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`. */
+            /** @description The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. An edge whose source item `source_filter` leaves out doesn't appear. Present with `include=backrefs`. */
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };

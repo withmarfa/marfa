@@ -302,7 +302,7 @@ export const ItemSchema = z
       .record(z.string(), EdgePageSchema)
       .optional()
       .describe(
-        "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`.",
+        "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. If `source_filter` leaves the item out, none of its edges appear. Absent where an operation doesn't return edges, such as a listing without `include=edges`.",
       ),
     extensions: z
       .record(z.string(), z.record(z.string(), z.unknown()))
@@ -632,7 +632,7 @@ export const ItemDetailSchema = z
       .record(z.string(), EdgePageSchema)
       .optional()
       .describe(
-        "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`.",
+        "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. An edge whose source item `source_filter` leaves out doesn't appear. Present with `include=backrefs`.",
       ),
     listed: z.boolean().optional().describe(LISTED_TEXT),
     neighbors: z

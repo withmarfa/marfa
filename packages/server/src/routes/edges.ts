@@ -611,9 +611,10 @@ export function edgeRoutes(storage: Storage) {
     getTypeFilter(c);
 
     const q = c.req.valid("query");
+    const key = requireAuth(c);
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
-      source_filter: await edgeListingSourceFilter(c, storage),
+      source_filter: await edgeListingSourceFilter(storage, key),
       updated_after: q.updated_after,
       updated_before: q.updated_before,
       limit: q.limit,
@@ -625,7 +626,6 @@ export function edgeRoutes(storage: Storage) {
     // cursor is the store's and is untouched, so a page can come back
     // short — empty, even, with a cursor still to follow — and paging still
     // walks the whole listing.
-    const key = requireAuth(c);
     const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
   });
@@ -1096,7 +1096,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
-      source_filter: await edgeListingSourceFilter(c, storage),
+      source_filter: await edgeListingSourceFilter(storage, key),
       limit: q.limit,
       cursor: q.cursor,
     });
@@ -1140,7 +1140,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
-      source_filter: await edgeListingSourceFilter(c, storage),
+      source_filter: await edgeListingSourceFilter(storage, key),
       limit: q.limit,
       cursor: q.cursor,
     });

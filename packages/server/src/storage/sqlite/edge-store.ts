@@ -591,8 +591,10 @@ export class SqliteEdgeStore implements EdgeStore {
   async listFromSourcesBatched(
     sourceIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>> {
     if (sourceIds.length === 0) return new Map();
+    const sourceAdmitted = sourceFilterCondition(opts?.source_filter);
     // ROW_NUMBER() caps each (source_id, edge_type) bucket in one query;
     // raw SQL because Drizzle has no windowed query builder. The outer
     // ORDER BY is what the hydrated block's cursor rests on: the block is
@@ -619,6 +621,7 @@ export class SqliteEdgeStore implements EdgeStore {
                  ) AS rn
           FROM edges
           WHERE source_id IN ${sourceIds}
+          ${sourceAdmitted ? sql`AND ${sourceAdmitted}` : sql``}
         )
         WHERE rn <= ${perTypeLimit}
         ORDER BY source_id, edge_type, rn
@@ -635,8 +638,10 @@ export class SqliteEdgeStore implements EdgeStore {
   async listToTargetsBatched(
     targetIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>> {
     if (targetIds.length === 0) return new Map();
+    const sourceAdmitted = sourceFilterCondition(opts?.source_filter);
     // The inbound mirror of `listFromSourcesBatched`, ordered for the same
     // reason: the block's cursor is continued by `listToTarget`.
     const rows = await this.db.all<{
@@ -659,6 +664,7 @@ export class SqliteEdgeStore implements EdgeStore {
                  ) AS rn
           FROM edges
           WHERE target_id IN ${targetIds}
+          ${sourceAdmitted ? sql`AND ${sourceAdmitted}` : sql``}
         )
         WHERE rn <= ${perTypeLimit}
         ORDER BY target_id, edge_type, rn

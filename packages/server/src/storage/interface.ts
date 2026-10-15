@@ -2530,6 +2530,7 @@ export interface EdgeStore {
   listFromSourcesBatched(
     sourceIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>>;
   /**
    * Batched inbound-by-types fetch for hydration on item reads — the mirror of
@@ -2537,10 +2538,15 @@ export interface EdgeStore {
    * `(target_id, edge_type)` bucket at `perTypeLimit` so a hot item with many
    * inbound edges of one type can't return an unbounded set. Used to hydrate
    * the `backrefs` block on the single-item read.
+   *
+   * `source_filter` leaves out an edge whose source item the lever refuses
+   * before each bucket is cut at `perTypeLimit`, as `EdgeListFilters` does
+   * for a page, so a block holds as many admitted edges as the cap allows.
    */
   listToTargetsBatched(
     targetIds: string[],
     perTypeLimit: number,
+    opts?: { source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Edge[]>>;
 }
 

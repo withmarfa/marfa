@@ -76,22 +76,20 @@ function sourceTypeReadable(
 }
 
 /**
- * The source filter that applies to the caller, for the store to decide an
- * edge listing with.
+ * The source filter that applies to the key, for the store to decide an
+ * edge listing or an edge block with.
  *
  * It is handed to the store, not applied to the rows it returns, so the
- * filter is part of the query that cuts the page. An edge is decided by its
- * source item alone: an edge is a statement its source makes about its
- * target, so the target's source has no say.
+ * filter is part of the query that cuts the page or the block. An edge is
+ * decided by its source item alone: an edge is a statement its source makes
+ * about its target, so the target's source has no say.
  */
 export async function edgeListingSourceFilter(
-  c: Context<AppEnv>,
   storage: Storage,
+  key: ApiKey,
 ): Promise<SourceFilterSettings | undefined> {
-  return resolveEnforcement(
-    await readInstanceConfig(storage.settings),
-    c.get("apiKey"),
-  ).source_filter;
+  return resolveEnforcement(await readInstanceConfig(storage.settings), key)
+    .source_filter;
 }
 
 /**
