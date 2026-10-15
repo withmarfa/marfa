@@ -1687,7 +1687,7 @@
           "error",
           "current"
         ],
-        "description": "A stale write that carried nothing to merge: the error and the item now."
+        "description": "A failed exact version precondition: the error and the item now."
       },
       "LinkTakenOrSourceIdConflictOrTypeMismatchRefusal": {
         "type": "object",
@@ -9670,7 +9670,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.",
+        "description": "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.",
         "security": [
           {
             "bearerAuth": []
@@ -9739,6 +9739,13 @@
                     "type": "integer",
                     "minimum": 0,
                     "description": "The version of the item you read, which this update is based on."
+                  },
+                  "version_match": {
+                    "type": "string",
+                    "enum": [
+                      "exact"
+                    ],
+                    "description": "`exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields."
                   },
                   "tier": {
                     "allOf": [
@@ -9970,7 +9977,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
+            "description": "- `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.\n- `ancestor_unavailable`: no readable snapshot of `version`.\n- `source_id_conflict`: another item under the source holds `source_id`.\n- `link_taken`: another item of the type holds the link.\n- `type_mismatch`: `type` differs without `retype: true`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11085,6 +11092,17 @@
             "in": "path"
           },
           {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The item version you read. If it differs, nothing moves. Leave it out to move the item as it is."
+            },
+            "required": false,
+            "description": "The item version you read. If it differs, nothing moves. Leave it out to move the item as it is.",
+            "name": "version",
+            "in": "query"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -11277,11 +11295,18 @@
             }
           },
           "409": {
-            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
+            "description": "`version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -19063,10 +19088,33 @@
           "Edges"
         ],
         "summary": "Create an edge",
-        "description": "Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
+        "description": "Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is."
+            },
+            "required": false,
+            "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
+            "name": "source_version",
+            "in": "query"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
           }
         ],
         "requestBody": {
@@ -19110,7 +19158,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
+            "description": "Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19317,11 +19365,14 @@
             }
           },
           "409": {
-            "description": "`id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set.",
+            "description": "- `version_conflict`: `source_version` differs; `current` is the source now.\n- `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
                     {
                       "$ref": "#/components/schemas/IdReusedRefusal"
                     },
@@ -19545,19 +19596,7 @@
               }
             }
           }
-        },
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
-          }
-        ]
+        }
       }
     },
     "/edges/{id}": {
@@ -20389,6 +20428,17 @@
             "in": "path"
           },
           {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is."
+            },
+            "required": false,
+            "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
+            "name": "source_version",
+            "in": "query"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -20557,11 +20607,18 @@
             }
           },
           "409": {
-            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
+            "description": "`version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },

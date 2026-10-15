@@ -69,9 +69,9 @@ import { errorMessage } from "../error-text.js";
  *
  * **The query string is hashed as written**, so a door taking a free-text
  * query value would refuse a retry that re-encoded it. No door here takes
- * one: `PATCH /items/:id` carries `conflict`, a closed enum,
- * `DELETE /items/:id` and `POST /items/:id/purge` carry `version`, a whole
- * number, and the rest carry no query parameter.
+ * one: `PATCH /items/:id` carries `conflict`, a closed enum; item deletion,
+ * purge and transition carry `version`; edge creation and deletion carry
+ * `source_version`. Both version parameters are whole numbers.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -241,15 +241,9 @@ async function fingerprint(
     String(contract),
     c.req.method,
     canonicalPath(url.pathname),
-    // The query is left as written, and the reason is checkable rather
-    // than a judgment: no door in IDEMPOTENT_WRITE_DOORS carries a query
-    // value whose spelling can vary: PATCH /items/{id} takes `conflict`, a
-    // closed enum, and DELETE /items/{id} and its purge door take `version`,
-    // a whole number. A door that later accepts a free-text query value
-    // reopens exactly this bug on that axis, and
-    // canonicalizing the query then also means deciding whether parameter
-    // order is part of the request, which is a wider question than the
-    // path's.
+    // These doors accept only a closed enum or whole-number version query
+    // values. A free-text query parameter would need canonicalization to
+    // let retries re-encode it, including a decision about parameter order.
     url.search,
     // Whether a body is read as JSON decides whether the write happens at
     // all, so the same text under another type is another request; two

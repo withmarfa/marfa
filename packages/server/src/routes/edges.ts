@@ -52,6 +52,8 @@ import {
   edgeSourceNotFound,
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
+import { StaleVersionSchema } from "./_item-conflict.js";
+import { exactItemVersion } from "../storage/conflict.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { publishEdge } from "../pubsub.js";
 import { requestBlobProof } from "./_blob-reach.js";
@@ -293,6 +295,23 @@ const listEdgesRoute = createRoute({
   },
 });
 
+const sourceVersionQuery = z.object({
+  source_version: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
+    ),
+});
+
+const sourceConflictResponse = {
+  content: { "application/json": { schema: StaleVersionSchema } },
+  description:
+    "`version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed.",
+};
+
 const createEdgeRoute = createRoute({
   method: "post",
   path: "/",
@@ -300,10 +319,11 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
+    "Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
+    query: sourceVersionQuery,
     body: {
       content: {
         "application/json": {
@@ -342,7 +362,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
+        "Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
     },
     201: {
       content: {
@@ -401,11 +421,14 @@ const createEdgeRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["id_reused"]),
+          schema: z.union([
+            StaleVersionSchema,
+            makeErrorResponseSchema(["id_reused"]),
+          ]),
         },
       },
       description:
-        "`id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set.",
+        "- `version_conflict`: `source_version` differs; `current` is the source now.\n- `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.",
     },
   },
 });
@@ -567,9 +590,11 @@ const deleteEdgeRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
+    query: sourceVersionQuery,
     params: z.object({ id: z.string().describe("The ID of the edge.") }),
   },
   responses: {
+    409: sourceConflictResponse,
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
       description: "Returns `ok: true`.",
@@ -638,6 +663,7 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(createEdgeRoute, async (c) => {
     requireAuth(c);
     const body = c.req.valid("json");
+    const { source_version } = c.req.valid("query");
     if (!isValidId(body.source_id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid source_id");
     }
@@ -668,6 +694,9 @@ export function edgeRoutes(storage: Storage) {
         );
         requireTypeAccess(c, sourceItem, "write");
         requireEdgePermission(c, body.edge_type, "write");
+
+        const conflict = exactItemVersion(sourceItem, source_version);
+        if (conflict) return { conflict };
 
         // A create arriving a second time under an id the caller minted.
         //
@@ -738,23 +767,27 @@ export function edgeRoutes(storage: Storage) {
           sourceType: sourceItem.type,
         };
       },
-      ({ edge, acknowledged }) =>
-        acknowledged
+      (result) =>
+        "conflict" in result || result.acknowledged
           ? null
           : {
               client_ip: c.get("clientIp") ?? null,
               key_id: c.get("apiKey")?.id,
               action: "edge.create",
               resource_type: "edge",
-              resource_id: edge.id,
+              resource_id: result.edge.id,
               details: {
-                edge_type: edge.edge_type,
-                source_id: edge.source_id,
-                target_id: edge.target_id,
+                edge_type: result.edge.edge_type,
+                source_id: result.edge.source_id,
+                target_id: result.edge.target_id,
               },
             },
     );
 
+    if ("conflict" in outcome) {
+      c.header("X-Error-Code", "version_conflict");
+      return c.json(outcome.conflict, 409);
+    }
     rememberEdgeSubject(outcome.edge, "write", outcome.sourceType);
     return outcome.acknowledged
       ? c.json({ edge: outcome.edge, acknowledged: true }, 200)
@@ -896,7 +929,8 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    await runAuditedTransaction(
+    const { source_version } = c.req.valid("query");
+    const result = await runAuditedTransaction(
       storage,
       async () => {
         const { edge: existing, source: srcItem } = await readableEdge(
@@ -906,6 +940,13 @@ export function edgeRoutes(storage: Storage) {
         );
         if (srcItem) requireTypeAccess(c, srcItem, "write");
         requireEdgePermission(c, existing.edge_type, "write");
+        if (source_version !== undefined && !srcItem)
+          throw new MarfaError(
+            ErrorCode.EDGE_NOT_FOUND,
+            "Edge source not found",
+          );
+        const conflict = srcItem && exactItemVersion(srcItem, source_version);
+        if (conflict) return { conflict };
         rememberEdgeSubject(existing, "write", srcItem?.type);
         const removed = await storage.edges.delete(id);
         if (!removed) {
@@ -919,18 +960,25 @@ export function edgeRoutes(storage: Storage) {
           edge: removed,
           sourceType: srcItem?.type,
         });
-        return removed;
+        return { removed };
       },
-      (removed) => ({
-        client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "edge.delete",
-        resource_type: "edge",
-        resource_id: id,
-        details: { edge_type: removed.edge_type },
-      }),
+      (result) =>
+        "conflict" in result
+          ? null
+          : {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "edge.delete",
+              resource_type: "edge",
+              resource_id: id,
+              details: { edge_type: result.removed.edge_type },
+            },
     );
 
+    if ("conflict" in result) {
+      c.header("X-Error-Code", "version_conflict");
+      return c.json(result.conflict, 409);
+    }
     return c.json({ ok: true as const }, 200);
   });
 

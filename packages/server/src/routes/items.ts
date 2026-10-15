@@ -1,3 +1,8 @@
+import {
+  ConflictSnapshotSchema,
+  CONFLICT_SIDES,
+  StaleVersionSchema,
+} from "./_item-conflict.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { itemListed } from "../storage/read-view.js";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -66,7 +71,6 @@ import {
   createOpenAPIRouter,
   IDEMPOTENCY_IN_FLIGHT,
   OkResponseSchema,
-  REFUSAL_TEXT,
   makeErrorResponseSchema,
 } from "../openapi.js";
 import {
@@ -80,7 +84,6 @@ import {
   TierEnum,
   VersionConflictErrorSchema,
   AncestorUnavailableErrorSchema,
-  AT_THIS_VERSION,
   pageOf,
   resolveStateFilter,
   TagSchema,
@@ -117,39 +120,8 @@ const EDGE_SHORTHAND_KEYS: QueryKeyFamily = {
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
-// imported above. The conflict-response schemas are local to items.ts since
-// no other route uses them.)
+// imported above.)
 // ---------------------------------------------------------------------------
-
-const ConflictSnapshotSchema = z
-  .object({
-    // The row, because a create names a natural key and not an id: refused
-    // here, it learns which row the key resolved from this and nothing else.
-    id: z.string().describe("The ID of the item."),
-    version: z.number().describe("The item version this side shows."),
-    properties: z
-      .record(z.string(), z.unknown())
-      .describe(AT_THIS_VERSION.properties),
-    // The version check covers these three beside the properties, so a
-    // collision can name one; without them here the refusal names a field
-    // the caller has no way to read either side of.
-    tier: TierEnum.describe(AT_THIS_VERSION.tier),
-    occurred_at: z.string().describe(AT_THIS_VERSION.occurred_at),
-    source_id: z.string().nullable().describe(AT_THIS_VERSION.source_id),
-    // And the type, because a stale move onto a row moved since collides
-    // on it: the refusal shows the type the row has and the one the
-    // caller read.
-    type: z.string().describe("The item's type identifier at this version."),
-  })
-  .describe("An item as it stood at one version, as a conflict shows it.")
-  .openapi("ConflictSnapshot");
-
-/** The two sides of a conflict, worded once for every conflict answer. */
-const CONFLICT_SIDES = {
-  error: REFUSAL_TEXT.error,
-  current: "The item as it stands now.",
-  ancestor: "The item at the `version` you sent.",
-} as const;
 
 export const ConflictResponseSchema = z
   .object({
@@ -169,24 +141,6 @@ export const ConflictResponseSchema = z
     "A stale write whose changes collide: the item now, the item at your version, and what collided.",
   )
   .openapi("ItemVersionConflict");
-
-/**
- * The refusal for a stale write that carried nothing to merge.
- *
- * `current` and `error.status` are here because every `version_conflict`
- * carries them, whichever door answered and whatever the write held. What is
- * absent is what a merge would need and this write has none of: there is no
- * ancestor to compare against and no field that could have collided.
- */
-const StaleVersionSchema = z
-  .object({
-    error: VersionConflictErrorSchema.describe(CONFLICT_SIDES.error),
-    current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
-  })
-  .describe(
-    "A stale write that carried nothing to merge: the error and the item now.",
-  )
-  .openapi("ItemStaleVersion");
 
 /** The refusal for a write whose base version cannot be merged against. */
 export const AncestorUnavailableSchema = z
@@ -760,7 +714,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.",
+    "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -840,6 +794,12 @@ const updateItemRoute = createRoute({
               .min(0)
               .describe(
                 "The version of the item you read, which this update is based on.",
+              ),
+            version_match: z
+              .literal("exact")
+              .optional()
+              .describe(
+                "`exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields.",
               ),
             /** Toggle the tier (`library` ↔ `feed`). Compared against the
              *  version named like a property, so a stale flip collides with
@@ -961,7 +921,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
+        "- `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.\n- `ancestor_unavailable`: no readable snapshot of `version`.\n- `source_id_conflict`: another item under the source holds `source_id`.\n- `link_taken`: another item of the type holds the link.\n- `type_mismatch`: `type` differs without `retype: true`.",
     },
   },
 });
@@ -2100,6 +2060,9 @@ export function itemRoutes(storage: Storage) {
             ...(hasSourceId && { source_id: body.source_id }),
             ...(hasEdges && { edges: body.edges }),
             version: body.version,
+            ...(body.version_match !== undefined && {
+              version_match: body.version_match,
+            }),
             ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
             // The key that makes a re-executed write produce one keep-both
             // sibling rather than two.

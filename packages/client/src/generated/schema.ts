@@ -91,7 +91,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.
+         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -487,7 +487,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
+         * @description Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -2331,7 +2331,7 @@ export interface components {
                 };
             };
         };
-        /** @description A stale write that carried nothing to merge: the error and the item now. */
+        /** @description A failed exact version precondition: the error and the item now. */
         ItemStaleVersion: {
             error: components["schemas"]["VersionConflictError"] & unknown;
             current: components["schemas"]["ConflictSnapshot"] & unknown;
@@ -5838,6 +5838,11 @@ export interface operations {
                     retype?: boolean;
                     /** @description The version of the item you read, which this update is based on. */
                     version: number;
+                    /**
+                     * @description `exact` requires the item to still hold `version`, even if the fields changed do not collide. If omitted, a stale write can merge over changes to other fields.
+                     * @enum {string}
+                     */
+                    version_match?: "exact";
                     tier?: components["schemas"]["Tier"] & unknown;
                     /** @description When the item occurred, as an ISO 8601 time. */
                     occurred_at?: string;
@@ -5953,11 +5958,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.
-             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.
-             *     - `source_id_conflict`: another item under the source holds this `source_id`.
-             *     - `link_taken`: another item of the type holds this link.
-             *     - `type_mismatch`: `type` differs and `retype` isn't `true`.
+             * @description - `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.
+             *     - `ancestor_unavailable`: no readable snapshot of `version`.
+             *     - `source_id_conflict`: another item under the source holds `source_id`.
+             *     - `link_taken`: another item of the type holds the link.
+             *     - `type_mismatch`: `type` differs without `retype: true`.
              */
             409: {
                 headers: {
@@ -6284,7 +6289,10 @@ export interface operations {
     };
     transitionItem: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The item version you read. If it differs, nothing moves. Leave it out to move the item as it is. */
+                version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -6393,7 +6401,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
+            /** @description `version_conflict`: `version` differs from the item. `current` is the item now; nothing moved. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6406,7 +6414,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -10214,7 +10222,10 @@ export interface operations {
     };
     createEdge: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                source_version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -10241,7 +10252,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
+            /** @description Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10348,7 +10359,10 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set. */
+            /**
+             * @description - `version_conflict`: `source_version` differs; `current` is the source now.
+             *     - `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10361,7 +10375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdReusedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdReusedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -10634,7 +10648,10 @@ export interface operations {
     };
     deleteEdge: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                source_version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -10727,7 +10744,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
+            /** @description `version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10740,7 +10757,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */

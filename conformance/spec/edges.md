@@ -29,7 +29,7 @@ Where one request meets more than one refusal below, `edges/create-order` says w
 
 ### `edges/create-order`
 
-When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
+When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; a stale `source_version`; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
 
 **Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `› acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
 
@@ -119,11 +119,11 @@ When `POST /edges` names an `id` that is a lowercase UUIDv7 and that no edge hol
 
 ### `edges/id-repeat`
 
-When a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin, naming an `id` that an edge the key may read holds and the triple of that edge, the server MUST answer `200` with the stored `edge` and `acknowledged: true`.
+When a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `source_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and the triple of that edge, the server MUST answer `200` with the stored `edge` and `acknowledged: true`.
 
 **Reason:** a client that lost the answer to its create sends it again, and gets the edge it made.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 
 ### `edges/id-repeat-unchanged`
 
@@ -147,7 +147,7 @@ If `POST /edges` repeats the `id` and triple of an edge whose source is now in t
 
 ### `edges/id-reused`
 
-If a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin, naming an `id` that an edge the key may read holds and another triple, then the server MUST answer `409 id_reused`.
+If a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `source_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and another triple, then the server MUST answer `409 id_reused`.
 
 **Reason:** the same code `POST /items` answers for a reused item id, because it is the same mistake: a caller minted an id that names a row it is not describing (`items/create-id-other-type`).
 

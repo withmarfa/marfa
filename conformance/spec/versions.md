@@ -86,7 +86,7 @@ When two `PATCH /items/{id}` writes that name one version, name no `conflict=aut
 
 ### `versions/update-order`
 
-When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an item no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; a `version` other than the item's where nothing writes the row; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks.
+When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an item no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; a failed exact version precondition; a `version` other than the item's where nothing writes the row; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks.
 
 **Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at.
 
@@ -338,7 +338,67 @@ If an archive names a writer that is neither `null` nor an object holding a `kin
 
 **Tests:** `compliance/version-writers.test.ts › refuses an archive that names a malformed writer`.
 
+## An exact version precondition
+
+### `versions/exact-match`
+
+When `PATCH /items/{id}` names `version_match: exact` and a `version` other than the item's current version, the server MUST answer `409 version_conflict` before attempting a merge, including under `conflict=auto`.
+
+**Reason:** an app can base a write on fields it inspected without writing those fields itself, such as an ownership marker. Merging disjoint changes would invalidate that decision.
+
+**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`.
+
+### `versions/exact-envelope`
+
+When `PATCH /items/{id}` refuses an exact version precondition, the server MUST carry `current`, with the item's `id`, `version`, `properties`, `type`, `tier`, `occurred_at` and `source_id`, and none of `ancestor`, `conflicting_fields`, `merge_policy` or `requested_version`.
+
+**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`.
+
+### `versions/exact-current`
+
+When an otherwise valid `PATCH /items/{id}` names `version_match: exact` and the item's current `version`, the server MUST apply the write.
+
+**Tests:** `compliance/version-exact.test.ts › accepts the current exact version and merges disjoint changes when exact is absent`.
+
+### `versions/exact-atomic`
+
+When two otherwise valid `PATCH /items/{id}` writes name `version_match: exact` and the same current `version` and each changes the row, the server MUST accept one and refuse the other `409 version_conflict`.
+
+**Tests:** `compliance/version-exact.test.ts › admits only one concurrent exact write to different fields`.
+
+## Exact preconditions for lifecycle and edge writes
+
+### `versions/transition-exact`
+
+When `POST /items/{id}/transition` names a `version` query parameter other than the item's current version, the server MUST answer `409 version_conflict` before moving the item or anything its lifecycle move would take with it.
+
+**Reason:** a lifecycle decision can depend on the properties the caller read; the optional precondition is checked in the same transaction as the move.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/edge-source-exact`
+
+When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
+
+**Reason:** apps can own some rows and observe others under the same type; replacing a whole edge set to check row ownership would risk unrelated edges.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/source-exact-envelope`
+
+When a lifecycle or edge write refuses a `version` or `source_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
+### `versions/source-exact-current`
+
+When an otherwise valid lifecycle or edge write names the current item version in its `version` or `source_version` query parameter, the server MUST apply that individual write.
+
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+
 ## A stale write that collides
+
+The stale merge and collision rules below apply when `version_match` is absent. An exact precondition does not need an ancestor snapshot and cannot select a conflict resolution strategy instead of satisfying the precondition.
 
 A write is stale when it names a version the item no longer holds.
 

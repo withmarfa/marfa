@@ -482,11 +482,10 @@ export function versionConflict(
 }
 
 /**
- * What a stale write is answered with when there is nothing to merge.
+ * What a stale write is answered with when its version must match exactly.
  *
  * The same envelope as {@link versionConflict} minus the three fields that
- * describe a merge, because a request carrying no properties has no ancestor
- * to compare against and no fields that could have collided. What it does
+ * describe a merge, because no merge is attempted. What it does
  * carry is `error.status` and `current`, so a client reading
  * `body.current.version` off one single-write refusal reads it off all of
  * them, whichever door answered. The bulk doors are not in that set: they
@@ -497,7 +496,7 @@ export interface StaleVersionResponse {
   current: ConflictSnapshot;
 }
 
-/** The 409 for a stale write with nothing to merge: a failed precondition. */
+/** The 409 for a failed exact version precondition. */
 export function staleVersion(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
@@ -510,8 +509,7 @@ export function staleVersion(
       status: 409,
       message:
         `Version ${String(requestedVersion)} is stale; current version is ` +
-        `${String(currentVersion)}. This write carried nothing to merge, so ` +
-        `re-read the item and send again at version ${String(currentVersion)}.`,
+        `${String(currentVersion)}. Re-read the item and send again at version ${String(currentVersion)}.`,
     },
     current: {
       version: currentVersion,
@@ -592,4 +590,16 @@ export function attachResolution(
     ...(siblingEdges !== undefined &&
       siblingEdges.length > 0 && { conflict_sibling_edges: siblingEdges }),
   };
+}
+
+/** A source decision can depend on properties outside the requested write. */
+export function exactItemVersion(row: Item, version: number | undefined) {
+  if (version === undefined || version === row.version) return undefined;
+  return staleVersion(row.version, row.properties, version, {
+    id: row.id,
+    type: row.type,
+    tier: row.tier ?? "library",
+    occurred_at: row.occurred_at,
+    source_id: row.source_id ?? null,
+  });
 }

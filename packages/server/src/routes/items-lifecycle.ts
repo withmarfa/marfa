@@ -2,11 +2,18 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, readsSomeType } from "../middleware/auth.js";
+import {
+  requireAuth,
+  readsSomeType,
+  requireReadableRow,
+  requireTypeAccess,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
+import { StaleVersionSchema } from "./_item-conflict.js";
+import { exactItemVersion } from "../storage/conflict.js";
 import { writeItem } from "../storage/item-write.js";
 import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 
@@ -94,6 +101,16 @@ const transitionItemRoute = createRoute({
   middleware: readsSomeType,
   request: {
     params: IdParam,
+    query: z.object({
+      version: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "The item version you read. If it differs, nothing moves. Leave it out to move the item as it is.",
+        ),
+    }),
     body: {
       content: {
         "application/json": {
@@ -107,6 +124,11 @@ const transitionItemRoute = createRoute({
     },
   },
   responses: {
+    409: {
+      content: { "application/json": { schema: StaleVersionSchema } },
+      description:
+        "`version_conflict`: `version` differs from the item. `current` is the item now; nothing moved.",
+    },
     200: {
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
@@ -208,6 +230,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const state = body.state;
+    const { version } = c.req.valid("query");
     // body.state is constrained to the lifecycle enum by the route Zod;
     // typeof / truthiness check would be unreachable.
 
@@ -215,9 +238,17 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // Read past the trash, so a transition out of it is judged by the type's
     // graph: `trashed` admits `active` alone. A move into the bin takes what
     // a delete takes and is held by what holds a delete.
-    const { updated, metadata } = await runAuditedTransaction(
+    const result = await runAuditedTransaction(
       storage,
       async () => {
+        const row = requireReadableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+        );
+        requireTypeAccess(c, row, "write");
+        const conflict = exactItemVersion(row, version);
+        if (conflict) return { conflict };
         const { item: updated, from } = await writeItem(
           storage,
           { kind: "credential", key },
@@ -225,20 +256,27 @@ export function itemsLifecycleRoutes(storage: Storage) {
         );
         return { updated, from, metadata: await storage.metadata.get(id) };
       },
-      ({ from }) => ({
-        client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "item.transition",
-        resource_type: "item",
-        resource_id: id,
-        details: { from_state: from, to_state: state },
-      }),
+      (result) =>
+        "conflict" in result
+          ? null
+          : {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "item.transition",
+              resource_type: "item",
+              resource_id: id,
+              details: { from_state: result.from, to_state: state },
+            },
     );
 
+    if ("conflict" in result) {
+      c.header("X-Error-Code", "version_conflict");
+      return c.json(result.conflict, 409);
+    }
     return c.json(
       {
-        item: updated,
-        metadata: readableMetadata(metadata, c.get("apiKey")),
+        item: result.updated,
+        metadata: readableMetadata(result.metadata, c.get("apiKey")),
       },
       200,
     );
