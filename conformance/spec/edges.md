@@ -135,7 +135,7 @@ When `POST /edges` answers `acknowledged: true`, the server MUST leave the edge 
 
 When `POST /edges` answers `acknowledged: true`, the server MUST NOT announce an event for it.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
 
 ### `edges/id-repeat-source-in-bin`
 
