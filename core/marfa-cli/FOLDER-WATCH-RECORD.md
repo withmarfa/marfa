@@ -49,11 +49,11 @@ An entry is **current** when both hold:
 1. `ended_at` is `null`.
 2. `heartbeat_at` is less than three `heartbeat_interval_seconds` before now.
 
-A running watch rewrites its entry at least once every `heartbeat_interval_seconds` (5), so a current entry is never older than that interval, and three intervals allow for a slow write.
+A running watch rewrites its entry about every `heartbeat_interval_seconds` (5). Three intervals allow for a late or slow write.
 
 An entry that is not current describes a watch that has ended:
 
-- A watch stopped with Ctrl-C sets `ended_at` and marks each of its folders `watching: false`.
+- A watch that stops with Ctrl-C, at the end of `--for` or because its watch failed sets `ended_at` and marks each of its folders `watching: false`.
 - A watch that was killed, or whose machine lost power, cannot write. Its entry stays as it was, with `watching: true` and `ended_at: null`, and its `heartbeat_at` ages until it passes three intervals. Trust `watching` only for a current entry.
 
 To be sure at once, check that `pid` still names a running process. The check can be wrong when the system reuses a process ID, so the heartbeat decides.
