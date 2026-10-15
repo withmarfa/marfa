@@ -134,7 +134,7 @@ pub enum FoldersCommand {
     /// Watch a folder and keep it in step, or every folder on this machine.
     Watch {
         /// The directory to watch, recursively. Without one, the command
-        /// watches every folder that `folders list` shows, in one process.
+        /// watches every folder the folder registry lists, in one process.
         /// Each folder uses the server its copy came from, and each line names
         /// its folder. A folder added or removed while the watch runs joins or
         /// leaves it. A folder that can't be watched is reported once and
