@@ -91,6 +91,39 @@ impl Registry {
             .map(|(listed, _)| listed)
     }
 
+    /// The folders listed, read without the lock or a rewrite, since every
+    /// write lands whole, and without any whose state was removed, as
+    /// [`Registry::folders`] drops it. `None` where there is no registry file.
+    pub fn read(&self) -> Result<Option<Vec<Registered>>> {
+        let path = resolved(&self.path);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| CoreError::Invalid("registry needs a file name".into()))?;
+        let bytes =
+            match Directory::open(parent).and_then(|directory| directory.read(Path::new(name))) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(self.failed("read", &error)),
+            };
+        let listing = serde_json::from_slice::<Listing>(&bytes).map_err(|error| {
+            CoreError::Store(format!(
+                "the folder registry {} cannot be read ({error})",
+                self.path.display()
+            ))
+        })?;
+        Ok(Some(
+            listing
+                .folders
+                .into_iter()
+                .filter(|entry| !gone(entry))
+                .collect(),
+        ))
+    }
+
     /// Lists a folder again where the registry lost it or the directory
     /// moved. A registry that cannot be read is left as it is.
     pub fn register(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
